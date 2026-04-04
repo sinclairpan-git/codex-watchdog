@@ -3,6 +3,7 @@ from __future__ import annotations
 import uvicorn
 from fastapi import FastAPI
 
+from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import progress as progress_routes
 from watchdog.api import supervision as supervision_routes
 from watchdog.services.a_client.client import AControlAgentClient
@@ -16,6 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.a_client = AControlAgentClient(settings)
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
+    app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
