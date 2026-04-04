@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+from fastapi import APIRouter, Depends, Query, Request
+
+from a_control_agent.envelope import err
+from watchdog.api.deps import require_token
+from watchdog.settings import Settings
+
+router = APIRouter(prefix="/watchdog", tags=["approvals"])
+
+
+def get_settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
+def _a_headers(settings: Settings) -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.a_agent_token}"}
+
+
+@router.get("/approvals")
+def list_approvals_watchdog(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    status: str | None = Query(default=None),
+    _: None = Depends(require_token),
+) -> dict[str, Any]:
+    rid = request.headers.get("x-request-id")
+    url = f"{settings.a_agent_base_url.rstrip('/')}/api/v1/approvals"
+    params = {}
+    if status:
+        params["status"] = status
+    try:
+        with httpx.Client(timeout=settings.http_timeout_s) as client:
+            r = client.get(url, headers=_a_headers(settings), params=params)
+            body = r.json()
+    except httpx.RequestError:
+        return err(
+            rid,
+            {
+                "code": "CONTROL_LINK_ERROR",
+                "message": "无法连接 A-Control-Agent",
+            },
+        )
+    except ValueError:
+        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "A 侧响应非 JSON"})
+    if isinstance(body, dict):
+        return body
+    return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "响应格式异常"})
+
+
+@router.post("/approvals/{approval_id}/decision")
+def decision_watchdog(
+    approval_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    _: None = Depends(require_token),
+) -> dict[str, Any]:
+    rid = request.headers.get("x-request-id")
+    url = f"{settings.a_agent_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
+    try:
+        with httpx.Client(timeout=settings.http_timeout_s) as client:
+            r = client.post(url, json=body, headers=_a_headers(settings))
+            out = r.json()
+    except httpx.RequestError:
+        return err(
+            rid,
+            {
+                "code": "CONTROL_LINK_ERROR",
+                "message": "无法连接 A-Control-Agent",
+            },
+        )
+    except ValueError:
+        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "A 侧响应非 JSON"})
+    if isinstance(out, dict):
+        return out
+    return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "响应格式异常"})
