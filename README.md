@@ -2,6 +2,8 @@
 
 需求真值见根目录 `openclaw-codex-watchdog-prd.md`。本仓库以 AI-SDLC 工作项递进交付：**M1** 基础链路、`specs/002-*` M2 监管、`specs/004-*` M3 审批、`specs/005-*` M4 恢复、`specs/006-*` **M5 加固**（指标、集成测试、OpenAPI 与 OpenClaw 调用示例等，不含飞书/OpenClaw 渠道插件）。
 
+**部署与 A/B 机使用说明（含对接参数清单）**：见 [`docs/getting-started.zh-CN.md`](docs/getting-started.zh-CN.md)。
+
 ## 组件
 
 | 目录 | 说明 |

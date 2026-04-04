@@ -1,0 +1,182 @@
+# OpenClaw × Codex 双机监管：部署与使用指引
+
+本文说明本仓库**实际交付了什么**、**A 机 / B 机各自跑什么**、**两机如何对接**，以及若要继续完善集成，你需要向开发侧提供哪些信息。
+
+---
+
+## 1. 本仓库交付了什么（边界）
+
+| 交付物 | 说明 |
+|--------|------|
+| **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。**不内置** Codex 桌面或 Codex app-server 的私有协议实现；`CodexClient` 为占位，便于日后对接。 |
+| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 progress / evaluate（卡顿+steer）/ recover / 审批代理等，以及 `/metrics`。 |
+| **OpenClaw 侧** | 本仓库**不包含**飞书机器人、也不包含 OpenClaw 插件；仅提供 **HTTP API** 与 `examples/openclaw_watchdog_client.py` 示例，由你在 OpenClaw 里配置「调用 Watchdog 的 URL + Token」。 |
+
+**数据流（目标架构）**：
+
+```text
+飞书 → OpenClaw(B) → Watchdog(B) ──HTTPS+Bearer──→ A-Control-Agent(A) →（未来）Codex app-server
+```
+
+当前实现中，**OpenClaw 只需对接 Watchdog**；Watchdog 再对接 A-Control-Agent。
+
+---
+
+## 2. A 机（跑 Codex 的开发机）怎么用
+
+### 2.1 你需要准备什么
+
+- Python **≥ 3.11**，建议用 [uv](https://github.com/astral-sh/uv) 或 venv。
+- 本仓库克隆到 A 机（或仅部署打包后的服务与配置）。
+- 与 B 机 **网络互通**（同局域网 / VPN / Tailscale 等），且 A 上服务监听地址能被 B 访问（勿把服务只绑在 `127.0.0.1` 若 B 在另一台机器）。
+
+### 2.2 安装与启动（开发态示例）
+
+```bash
+cd openclaw-codex-watchdog
+uv sync
+# 或: pip install -e ".[dev]"
+```
+
+从 **`config/examples/a-agent.env.example`** 复制一份，例如 `.env.a`，设置：
+
+| 变量 | 含义 |
+|------|------|
+| `A_AGENT_API_TOKEN` | **强随机**共享密钥；所有访问 A 的 API 都要带 `Authorization: Bearer <token>` |
+| `A_AGENT_HOST` | 监听地址；跨机访问时常用 `0.0.0.0` |
+| `A_AGENT_PORT` | 默认 `8710` |
+| `A_AGENT_DATA_DIR` | 任务与审计落盘目录（默认 `.data/a_control_agent`） |
+
+加载环境变量后启动（`--app-dir src` 指向包路径）：
+
+```bash
+set -a && source .env.a && set +a
+uv run uvicorn a_control_agent.main:app --host "$A_AGENT_HOST" --port "$A_AGENT_PORT" --app-dir src
+```
+
+健康检查：`GET http://<A的IP>:<端口>/healthz`
+
+### 2.3 与「Codex」的关系（重要）
+
+- 本服务 **不会自动替你操作 Codex UI**。
+- 任务里的 `project_id`、`cwd`、`thread_id` 等由你方流程写入（或通过后续脚本对接 Codex）。  
+- **若要「真·会话控制」**，需要另行对接 **Codex app-server**（或官方文档中的控制面）；当前代码里仅为 **Protocol 占位**，便于以后接 HTTP/gRPC。
+
+---
+
+## 3. B 机（跑 OpenClaw 的机器）怎么用
+
+### 3.1 Watchdog 安装与启动
+
+同样在本仓库目录：
+
+```bash
+uv sync
+```
+
+从 **`config/examples/watchdog.env.example`** 复制，例如 `.env.w`：
+
+| 变量 | 含义 |
+|------|------|
+| `WATCHDOG_API_TOKEN` | Watchdog 自身 API 的密钥；**OpenClaw 调 Watchdog** 时使用 |
+| `WATCHDOG_HOST` / `WATCHDOG_PORT` | B 上监听地址与端口（默认 `8720`） |
+| `WATCHDOG_A_AGENT_BASE_URL` | **A-Control-Agent 的根 URL**，例如 `http://10.0.0.5:8710` 或 `https://a-agent.internal` |
+| `WATCHDOG_A_AGENT_TOKEN` | **必须与 `A_AGENT_API_TOKEN` 一致**（Watchdog 代表 B 去调用 A） |
+| `WATCHDOG_HTTP_TIMEOUT_S` | 调用 A 的超时（秒） |
+| `WATCHDOG_DATA_DIR` | Watchdog 侧审计等（默认 `.data/watchdog`） |
+| `WATCHDOG_RECOVER_AUTO_RESUME` | `context_pressure` 为 critical 时，handoff 成功后是否再自动调 A 的 `resume`（`true`/`false`） |
+
+启动：
+
+```bash
+set -a && source .env.w && set +a
+uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT" --app-dir src
+```
+
+健康检查：`GET http://<B的IP>:<端口>/healthz`
+
+### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
+
+OpenClaw 侧应配置为：对 **Watchdog 基址** 发 HTTP，典型只读路径例如：
+
+- `GET /api/v1/watchdog/tasks/{project_id}/progress` — 进展（需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）
+
+仓库内示例：
+
+```bash
+export WATCHDOG_BASE_URL=http://<B的IP>:8720
+export WATCHDOG_API_TOKEN=<与 WATCHDOG_API_TOKEN 相同>
+uv run python examples/openclaw_watchdog_client.py <project_id>
+```
+
+更多路径见 `docs/openapi/watchdog.json`（运行 `uv run python scripts/export_openapi.py` 可重新生成）。
+
+---
+
+## 4. 两机服务如何对接（ checklist）
+
+1. **网络**：从 B `curl` 到 `WATCHDOG_A_AGENT_BASE_URL/healthz` 成功。  
+2. **Token**：`WATCHDOG_A_AGENT_TOKEN` **等于** A 的 `A_AGENT_API_TOKEN`。  
+3. **防火墙 / 安全组**：A 的 `A_AGENT_PORT` 仅对 B（或 VPN 网段）开放。  
+4. **生产建议**：前面加 **反向代理 + TLS**（如 nginx/Caddy），对外只暴露 HTTPS；Token 用密钥管理。  
+5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/tasks/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
+
+---
+
+## 5. 监控与文档
+
+- **Prometheus**：`GET /metrics`（A、Watchdog 各一份）。  
+- **OpenAPI**：`uv run python scripts/export_openapi.py` → `docs/openapi/`。  
+- **需求真值**：仓库根目录 `openclaw-codex-watchdog-prd.md`。
+
+---
+
+## 6. 若要「完善开发」——请你提供的信息清单
+
+下面这些会显著减少对接试错时间；能提供的尽量结构化给出（可脱敏）。
+
+### 6.1 环境与网络
+
+- A、B 的 **操作系统**、是否用 **Docker**、是否用 **Tailscale/固定内网 IP**。  
+- Watchdog 访问 A 的 **最终 URL**（含是否 HTTPS）、**是否经 mTLS**。  
+- 允许的 **延迟与超时** 要求（默认 `WATCHDOG_HTTP_TIMEOUT_S=3`）。
+
+### 6.2 安全与鉴权
+
+- 是否沿用 **单 Bearer Token**，还是需要 **每环境多 Token**、**轮换策略**。  
+- OpenClaw 调用 Watchdog 时，是否还有 **网关层鉴权**（API Key、JWT）。
+
+### 6.3 Codex 侧（对接真实控制面时必备）
+
+- **Codex app-server**（或等价服务）的 **Base URL**、**鉴权方式**（Header/Token）。  
+- **线程 / 会话** 与 `project_id` 的映射规则（谁创建、谁更新）。  
+- **事件或轮询**：是否有 transcript、turn、审批事件；**字段名与样例 JSON**（哪怕一条真实脱敏样本）。  
+- 期望 A-Control-Agent **向下调用** 的能力列表（只读状态 / steer / handoff 等）。
+
+### 6.4 OpenClaw 侧
+
+- 飞书消息到 OpenClaw 后，**路由到哪个 HTTP 路径**（只读 progress 还是也要 evaluate/审批决策）。  
+- **project_id** 从哪里来（用户口令解析、固定映射表等）。  
+- 是否需要 **Webhook 回写** 或 **仅轮询**。
+
+### 6.5 运维
+
+- **日志聚合**（是否必须 JSON）、**指标** 接入 Prometheus 的 job 名。  
+- **数据目录** 是否必须放在持久卷（`A_AGENT_DATA_DIR`、`WATCHDOG_DATA_DIR`）。
+
+---
+
+## 7. 常见问答
+
+**Q：B 能直接调 A 吗？**  
+可以（同一套 Bearer），但架构上推荐 **只让 OpenClaw → Watchdog**，由 Watchdog 统一策略与审计。
+
+**Q：没有 Codex app-server 能用吗？**  
+能。用 API 手动创建任务、更新字段做联调；真实「跟 Codex 会话联动」需要再对接 app-server。
+
+**Q：Token 泄露怎么办？**  
+轮换 `A_AGENT_API_TOKEN` / `WATCHDOG_API_TOKEN`，并限制源 IP / 使用 TLS。
+
+---
+
+若你后续提供 **§6** 中的网络地址、Token 策略、以及 Codex/OpenClaw 的接口样例，可以在新工作项里继续实现 **真实 Codex 客户端**、**OpenClaw 路由模板** 等（仍以 PRD 与 `specs/` 为准）。
