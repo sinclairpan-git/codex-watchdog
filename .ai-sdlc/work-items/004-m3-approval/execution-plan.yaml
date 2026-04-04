@@ -1,0 +1,61 @@
+total_tasks: 3
+total_batches: 1
+tasks:
+- task_id: T31
+  title: 风险分级与审批存储
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/a_control_agent/risk/classifier.py`'
+  - '`src/a_control_agent/storage/approvals_store.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T32
+  title: A-Control-Agent 审批 API
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/a_control_agent/api/approvals.py`'
+  - '`src/a_control_agent/main.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T31
+- task_id: T33
+  title: Watchdog 审批代理
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/api/approvals_proxy.py`'
+  - '`src/watchdog/main.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T32
+batches:
+- batch_id: 1
+  phase: 3
+  tasks:
+  - T31
+  - T32
+  - T33
+  status: completed
+  started_at: '2026-04-04T09:17:37+00:00'
+  completed_at: '2026-04-04T09:17:37+00:00'
+current_batch: 1

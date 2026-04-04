@@ -1,0 +1,23 @@
+prd_path: openclaw-codex-watchdog-prd.md
+constitution_path: .ai-sdlc/memory/constitution.md
+tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+spec_path: specs/004-m3-approval/spec.md
+plan_path: specs/004-m3-approval/plan.md
+tasks_path: specs/004-m3-approval/tasks.md
+active_files:
+- '`src/a_control_agent/risk/classifier.py`'
+- '`src/a_control_agent/storage/approvals_store.py`'
+- '`src/a_control_agent/api/approvals.py`'
+- '`src/a_control_agent/main.py`'
+- '`src/watchdog/api/approvals_proxy.py`'
+- '`src/watchdog/main.py`'
+context_summary: '# Latest Summary
+
+
+  Current Batch: 1/1
+
+
+  Last Task: T33
+
+
+  Phase 3 complete: 3/3 tasks completed, 0 halted.'

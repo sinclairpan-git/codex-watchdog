@@ -1,8 +1,8 @@
 {
-  "event_count": 64,
-  "last_event_id": "evt_fc16bacc7adb4a818d7788fe02c68956",
-  "last_timestamp": "2026-04-04T09:12:28Z",
-  "latest_goal_session_id": "gs_f293f419f7114775b4daef4f9b1a70fa",
-  "latest_step_id": "st_8732290d720d49958e437c96968d31d8",
-  "latest_workflow_run_id": "wr_032c0e1149c643089c47e8895d357b2b"
+  "event_count": 85,
+  "last_event_id": "evt_30b97505f3774ce486fd899c488322eb",
+  "last_timestamp": "2026-04-04T09:17:37Z",
+  "latest_goal_session_id": "gs_9f64c5105e7e4ddd8b433c33bb8ba7a9",
+  "latest_step_id": "st_ee182ed83d4a4a6b9f977b0766d913bf",
+  "latest_workflow_run_id": "wr_5e4215a2bc16414789aa39b85dee304f"
 }
