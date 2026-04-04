@@ -8,3 +8,5 @@
 
 Phase 1 complete: 3/3 tasks completed, 0 halted.
 
+- 关联 branch/worktree disposition 计划：feature/001-openclaw-codex-watchdog 合入 main 后收口
+- 当前批次 branch disposition 状态：merged

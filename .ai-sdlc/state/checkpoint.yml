@@ -6,7 +6,7 @@ feature:
   spec_dir: specs/001-openclaw-codex-watchdog
   design_branch: design/001-openclaw-codex-watchdog-docs
   feature_branch: feature/001-openclaw-codex-watchdog
-  current_branch: feature/001-openclaw-codex-watchdog
+  current_branch: main
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
