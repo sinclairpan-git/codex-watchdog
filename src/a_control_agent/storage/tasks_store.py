@@ -39,6 +39,10 @@ class TaskStore:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self._path)
 
+    def count_projects(self) -> int:
+        with self._lock:
+            return len(self._read())
+
     def get(self, project_id: str) -> TaskRecord | None:
         with self._lock:
             data = self._read()

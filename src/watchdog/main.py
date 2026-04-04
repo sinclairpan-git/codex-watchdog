@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import uvicorn
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, Request, Response
 
 from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
 from watchdog.api import progress as progress_routes
 from watchdog.api import supervision as supervision_routes
+from watchdog.observability.metrics_export import PROM_CONTENT_TYPE, build_watchdog_metrics_text
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.settings import Settings
 
@@ -24,6 +27,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    def metrics(request: Request) -> Response:
+        s: Settings = request.app.state.settings
+        body = build_watchdog_metrics_text(Path(s.data_dir) / "audit.jsonl")
+        return Response(content=body, media_type=PROM_CONTENT_TYPE)
 
     return app
 
