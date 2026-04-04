@@ -1,0 +1,24 @@
+prd_path: openclaw-codex-watchdog-prd.md
+constitution_path: .ai-sdlc/memory/constitution.md
+tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+spec_path: specs/002-m2-supervision/spec.md
+plan_path: specs/002-m2-supervision/plan.md
+tasks_path: specs/002-m2-supervision/tasks.md
+active_files:
+- '`src/a_control_agent/api/tasks.py`'
+- '`src/a_control_agent/storage/tasks_store.py`'
+- '`src/a_control_agent/audit.py`'
+- '`src/watchdog/services/status_analyzer/stuck.py`'
+- '`src/watchdog/services/audit.py`'
+- '`src/watchdog/services/action_executor/steer.py`'
+- '`src/watchdog/api/supervision.py`'
+context_summary: '# Latest Summary
+
+
+  Current Batch: 1/1
+
+
+  Last Task: T23
+
+
+  Phase 2 complete: 3/3 tasks completed, 0 halted.'

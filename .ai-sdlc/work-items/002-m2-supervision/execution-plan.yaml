@@ -1,0 +1,62 @@
+total_tasks: 3
+total_batches: 1
+tasks:
+- task_id: T21
+  title: A-Control-Agent：steer API 与审计事件追加
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/a_control_agent/api/tasks.py`'
+  - '`src/a_control_agent/storage/tasks_store.py`'
+  - '`src/a_control_agent/audit.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T22
+  title: Watchdog：stuck 规则与循环失败计数
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/services/status_analyzer/stuck.py`'
+  - '`src/watchdog/services/audit.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T21
+- task_id: T23
+  title: Watchdog：对 A 侧发起 steer 的编排入口
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/services/action_executor/steer.py`'
+  - '`src/watchdog/api/supervision.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T22
+batches:
+- batch_id: 1
+  phase: 2
+  tasks:
+  - T21
+  - T22
+  - T23
+  status: completed
+  started_at: '2026-04-04T09:12:28+00:00'
+  completed_at: '2026-04-04T09:12:28+00:00'
+current_batch: 1

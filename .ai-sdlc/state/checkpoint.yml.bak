@@ -1,11 +1,11 @@
 pipeline_started_at: '2026-04-04T06:21:31+00:00'
-pipeline_last_updated: '2026-04-04T09:07:35+00:00'
+pipeline_last_updated: '2026-04-04T09:12:28+00:00'
 current_stage: execute
 feature:
-  id: 001-openclaw-codex-watchdog
-  spec_dir: specs/001-openclaw-codex-watchdog
-  design_branch: design/001-openclaw-codex-watchdog-docs
-  feature_branch: feature/001-openclaw-codex-watchdog
+  id: 002-m2-supervision
+  spec_dir: specs/002-m2-supervision
+  design_branch: design/002-m2-supervision-docs
+  feature_branch: feature/002-m2-supervision
   current_branch: main
   docs_baseline_ref: ''
   docs_baseline_at: ''
@@ -16,28 +16,28 @@ multi_agent:
 prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
 - stage: init
-  completed_at: '2026-04-04T09:07:26+00:00'
+  completed_at: '2026-04-04T09:12:27+00:00'
   artifacts: []
 - stage: refine
-  completed_at: '2026-04-04T09:07:26+00:00'
+  completed_at: '2026-04-04T09:12:27+00:00'
   artifacts:
   - spec.md
 - stage: design
-  completed_at: '2026-04-04T09:07:26+00:00'
+  completed_at: '2026-04-04T09:12:27+00:00'
   artifacts:
   - data-model.md
   - plan.md
   - research.md
 - stage: decompose
-  completed_at: '2026-04-04T09:07:26+00:00'
+  completed_at: '2026-04-04T09:12:27+00:00'
   artifacts:
   - tasks.md
 - stage: verify
-  completed_at: '2026-04-04T09:07:35+00:00'
+  completed_at: '2026-04-04T09:12:28+00:00'
   artifacts: []
 execute_progress: null
 ai_decisions_count: 0
 execution_mode: auto
-linked_wi_id: 001-openclaw-codex-watchdog
+linked_wi_id: 002-m2-supervision
 linked_plan_uri: null
-last_synced_at: '2026-04-04T06:26:59+00:00'
+last_synced_at: null
