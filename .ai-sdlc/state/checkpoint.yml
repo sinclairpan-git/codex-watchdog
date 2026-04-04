@@ -2,8 +2,8 @@ pipeline_started_at: '2026-04-04T06:21:31+00:00'
 pipeline_last_updated: '2026-04-04T10:30:00+00:00'
 current_stage: refine
 feature:
-  id: 003-m3-approval
-  spec_dir: specs/003-m3-approval
+  id: 004-m3-approval
+  spec_dir: specs/004-m3-approval
   design_branch: design/003-m3-approval-docs
   feature_branch: feature/003-m3-approval
   current_branch: main
@@ -21,6 +21,6 @@ completed_stages:
 execute_progress: null
 ai_decisions_count: 0
 execution_mode: auto
-linked_wi_id: 003-m3-approval
+linked_wi_id: 004-m3-approval
 linked_plan_uri: null
 last_synced_at: null

@@ -1,6 +1,6 @@
-# 任务分解：003-m3-approval
+# 任务分解：004-m3-approval
 
-> 对应规格：`specs/003-m3-approval/spec.md`
+> 对应规格：`specs/004-m3-approval/spec.md`
 
 ## Batch 1：M3 审批实现
 
