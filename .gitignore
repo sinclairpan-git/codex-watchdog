@@ -8,3 +8,9 @@ __pycache__/
 .cursor/plugins/
 .cursor/cache/
 .cursor/tmp/
+
+# AI-SDLC 本地遥测（非产品代码，不提交）
+.ai-sdlc/local/telemetry/
+
+# 框架生成的 checkpoint 备份
+.ai-sdlc/state/*.bak
