@@ -1,0 +1,26 @@
+pipeline_started_at: '2026-04-04T06:21:31+00:00'
+pipeline_last_updated: '2026-04-04T06:24:15+00:00'
+current_stage: refine
+feature:
+  id: 001-openclaw-codex-watchdog
+  spec_dir: specs/001-openclaw-codex-watchdog
+  design_branch: design/001-openclaw-codex-watchdog-docs
+  feature_branch: feature/001-openclaw-codex-watchdog
+  current_branch: main
+  docs_baseline_ref: ''
+  docs_baseline_at: ''
+multi_agent:
+  supported: false
+  max_parallel: 1
+  tool_capability: ''
+prd_source: openclaw-codex-watchdog-prd.md
+completed_stages:
+- stage: init
+  completed_at: '2026-04-04T06:24:15+00:00'
+  artifacts: []
+execute_progress: null
+ai_decisions_count: 0
+execution_mode: auto
+linked_wi_id: 001-openclaw-codex-watchdog
+linked_plan_uri: null
+last_synced_at: null
