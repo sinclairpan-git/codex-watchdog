@@ -1,5 +1,5 @@
 pipeline_started_at: '2026-04-04T06:21:31+00:00'
-pipeline_last_updated: '2026-04-04T14:00:00+00:00'
+pipeline_last_updated: '2026-04-04T09:59:31+00:00'
 current_stage: close
 feature:
   id: 006-m5-hardening
@@ -57,4 +57,4 @@ ai_decisions_count: 0
 execution_mode: auto
 linked_wi_id: 006-m5-hardening
 linked_plan_uri: null
-last_synced_at: '2026-04-04T13:59:00+00:00'
+last_synced_at: '2026-04-04T09:59:31+00:00'
