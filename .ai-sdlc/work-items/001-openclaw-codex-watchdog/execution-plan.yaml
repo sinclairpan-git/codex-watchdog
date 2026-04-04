@@ -1,0 +1,63 @@
+total_tasks: 3
+total_batches: 1
+tasks:
+- task_id: T11
+  title: 初始化 A-Control-Agent 与 Watchdog 仓库骨架及配置样例
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`src/a_control_agent/`'
+  - '`src/watchdog/`'
+  - '`config/examples/`'
+  - '`README.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T12
+  title: 实现 PRD §9.3 最小任务 API（创建任务、查询状态）
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`src/a_control_agent/api/`'
+  - '`src/a_control_agent/storage/`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T11
+- task_id: T13
+  title: Watchdog 进展查询代理与 A 侧不可达错误语义
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`src/watchdog/api/`'
+  - '`src/watchdog/services/a_client/`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T12
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T11
+  - T12
+  - T13
+  status: completed
+  started_at: '2026-04-04T06:28:42+00:00'
+  completed_at: '2026-04-04T06:28:42+00:00'
+current_batch: 1

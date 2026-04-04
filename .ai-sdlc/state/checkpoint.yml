@@ -1,6 +1,6 @@
 pipeline_started_at: '2026-04-04T06:21:31+00:00'
-pipeline_last_updated: '2026-04-04T06:26:59+00:00'
-current_stage: refine
+pipeline_last_updated: '2026-04-04T06:28:42+00:00'
+current_stage: execute
 feature:
   id: 001-openclaw-codex-watchdog
   spec_dir: specs/001-openclaw-codex-watchdog
@@ -16,7 +16,24 @@ multi_agent:
 prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
 - stage: init
-  completed_at: '2026-04-04T06:24:15+00:00'
+  completed_at: '2026-04-04T06:28:35+00:00'
+  artifacts: []
+- stage: refine
+  completed_at: '2026-04-04T06:28:35+00:00'
+  artifacts:
+  - spec.md
+- stage: design
+  completed_at: '2026-04-04T06:28:35+00:00'
+  artifacts:
+  - data-model.md
+  - plan.md
+  - research.md
+- stage: decompose
+  completed_at: '2026-04-04T06:28:35+00:00'
+  artifacts:
+  - tasks.md
+- stage: verify
+  completed_at: '2026-04-04T06:28:42+00:00'
   artifacts: []
 execute_progress: null
 ai_decisions_count: 0
