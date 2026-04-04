@@ -6,7 +6,7 @@ feature:
   spec_dir: specs/002-m2-supervision
   design_branch: design/002-m2-supervision-docs
   feature_branch: feature/002-m2-supervision
-  current_branch: feature/002-m2-supervision
+  current_branch: main
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
