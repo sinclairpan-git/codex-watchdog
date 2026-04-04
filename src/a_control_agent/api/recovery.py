@@ -83,6 +83,14 @@ def resume(
     store.merge_update(
         project_id,
         {
+            "status": "resuming",
+            "context_pressure": str(rec.get("context_pressure", "low")),
+            "phase": str(rec.get("phase", "planning")),
+        },
+    )
+    store.merge_update(
+        project_id,
+        {
             "status": "running",
             "context_pressure": "medium",
             "phase": str(rec.get("phase", "planning")),

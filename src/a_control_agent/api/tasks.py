@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from a_control_agent.api.deps import require_token
 from a_control_agent.envelope import err, ok
+from a_control_agent.repo_activity import summarize_workspace_activity
 from a_control_agent.settings import Settings
 from a_control_agent.storage.tasks_store import TaskStore
 
@@ -59,6 +61,32 @@ def get_task(
             {"code": "NOT_FOUND", "message": f"unknown project_id: {project_id}"},
         )
     return ok(request.headers.get("x-request-id"), dict(rec))
+
+
+@router.get("/{project_id}/workspace-activity")
+def workspace_activity(
+    project_id: str,
+    request: Request,
+    store: TaskStore = Depends(get_store),
+    recent_minutes: int = Query(default=15, ge=1, le=24 * 60),
+    _: None = Depends(require_token),
+) -> dict[str, Any]:
+    """基于任务 cwd 的文件 mtime 摘要（不执行 shell）。"""
+    rec = store.get(project_id)
+    if rec is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "NOT_FOUND", "message": f"unknown project_id: {project_id}"},
+        )
+    cwd = rec.get("cwd") or ""
+    summary = summarize_workspace_activity(
+        Path(str(cwd)),
+        recent_minutes=recent_minutes,
+    )
+    return ok(
+        request.headers.get("x-request-id"),
+        {"project_id": project_id, "activity": summary},
+    )
 
 
 @router.post("/{project_id}/steer")
