@@ -11,3 +11,4 @@ class Settings(BaseSettings):
     a_agent_token: str = "dev-token-change-me"
     http_timeout_s: float = 3.0
     data_dir: str = ".data/watchdog"
+    recover_auto_resume: bool = False

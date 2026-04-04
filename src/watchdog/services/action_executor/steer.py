@@ -20,11 +20,14 @@ def post_steer(
     *,
     message: str,
     reason: str,
+    stuck_level: int | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}/api/v1/tasks/{project_id}/steer"
     headers = {"Authorization": f"Bearer {token}"}
-    body = {"message": message, "source": "watchdog", "reason": reason}
+    body: dict[str, Any] = {"message": message, "source": "watchdog", "reason": reason}
+    if stuck_level is not None:
+        body["stuck_level"] = stuck_level
     with httpx.Client(timeout=timeout) as client:
         r = client.post(url, json=body, headers=headers)
         r.raise_for_status()

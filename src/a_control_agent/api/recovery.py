@@ -40,7 +40,10 @@ def handoff(
             request.headers.get("x-request-id"),
             {"code": "NOT_FOUND", "message": project_id},
         )
-    store.merge_update(project_id, {"status": "handoff_in_progress", "phase": "handoff"})
+    store.merge_update(
+        project_id,
+        {"status": "handoff_in_progress", "phase": "handoff", "stuck_level": 4},
+    )
     rec2 = store.get(project_id)
     assert rec2 is not None
     handoffs_dir = Path(settings.data_dir) / "handoffs"
