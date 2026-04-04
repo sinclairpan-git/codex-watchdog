@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -13,12 +14,14 @@ class AControlAgentClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._settings.a_agent_token}"}
+
     def get_envelope(self, project_id: str) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}"
-        headers = {"Authorization": f"Bearer {self._settings.a_agent_token}"}
         with httpx.Client(timeout=self._settings.http_timeout_s) as client:
             try:
-                resp = client.get(url, headers=headers)
+                resp = client.get(url, headers=self._auth_headers())
             except httpx.RequestError as exc:
                 raise exc
             try:
@@ -28,3 +31,68 @@ class AControlAgentClient:
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
+
+    def list_tasks(self) -> list[dict[str, Any]]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks"
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.get(url, headers=self._auth_headers())
+            except httpx.RequestError as exc:
+                raise exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if not isinstance(body, dict):
+                raise RuntimeError("invalid_envelope_shape")
+            if not body.get("success"):
+                return []
+            data = body.get("data")
+            if not isinstance(data, dict):
+                raise RuntimeError("invalid_envelope_shape")
+            tasks = data.get("tasks")
+            if not isinstance(tasks, list):
+                raise RuntimeError("invalid_envelope_shape")
+            return [dict(task) for task in tasks if isinstance(task, dict)]
+
+    def get_events_snapshot(
+        self,
+        project_id: str,
+        *,
+        poll_interval: float = 0.5,
+    ) -> tuple[str, str] | dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
+        params = {"follow": "false", "poll_interval": str(poll_interval)}
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.get(url, headers=self._auth_headers(), params=params)
+            except httpx.RequestError as exc:
+                raise exc
+        content_type = str(resp.headers.get("content-type", ""))
+        if content_type.startswith("text/event-stream"):
+            return resp.text, content_type
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise RuntimeError("invalid_json_from_a_agent") from exc
+        if isinstance(body, dict):
+            return body
+        raise RuntimeError("invalid_envelope_shape")
+
+    def iter_events(
+        self,
+        project_id: str,
+        *,
+        poll_interval: float = 0.5,
+    ) -> Iterator[str]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
+        params = {"follow": "true", "poll_interval": str(poll_interval)}
+        timeout = httpx.Timeout(self._settings.http_timeout_s, read=None)
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream("GET", url, headers=self._auth_headers(), params=params) as resp:
+                content_type = str(resp.headers.get("content-type", ""))
+                if not content_type.startswith("text/event-stream"):
+                    raise RuntimeError("invalid_event_stream_from_a_agent")
+                for chunk in resp.iter_text():
+                    if chunk:
+                        yield chunk

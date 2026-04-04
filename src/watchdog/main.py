@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import uvicorn
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, Request, Response
 
 from watchdog.api import approvals_proxy as approvals_proxy_routes
+from watchdog.api import events_proxy as events_proxy_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
 from watchdog.api import progress as progress_routes
 from watchdog.api import supervision as supervision_routes
@@ -14,12 +16,25 @@ from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.settings import Settings
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    a_client: AControlAgentClient | None = None,
+    start_background_workers: bool = False,
+) -> FastAPI:
     settings = settings or Settings()
-    app = FastAPI(title="Watchdog", version="0.1.0")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if start_background_workers:
+            supervision_routes.run_background_supervision(app.state.settings, app.state.a_client)
+        yield
+
+    app = FastAPI(title="Watchdog", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
-    app.state.a_client = AControlAgentClient(settings)
+    app.state.a_client = a_client or AControlAgentClient(settings)
     app.include_router(progress_routes.router, prefix="/api/v1")
+    app.include_router(events_proxy_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
     app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
     app.include_router(recover_watchdog_routes.router, prefix="/api/v1")

@@ -8,6 +8,7 @@ __pycache__/
 .cursor/plugins/
 .cursor/cache/
 .cursor/tmp/
+.worktrees/
 
 # AI-SDLC 本地遥测（非产品代码，不提交）
 .ai-sdlc/local/telemetry/

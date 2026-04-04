@@ -1,0 +1,24 @@
+current_stage: close
+current_batch: 1
+last_committed_task: T84
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: /Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/memory/constitution.md
+  tech_stack_path: /Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/profiles/tech-stack.yml
+  spec_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/008-codex-live-control-plane/spec.md
+  plan_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/008-codex-live-control-plane/plan.md
+  tasks_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/008-codex-live-control-plane/tasks.md
+  active_files:
+  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/services/codex/stdio_transport.py
+  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/main.py
+  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/settings.py
+  - /Users/sinclairpan/project/openclaw-codex-watchdog/README.md
+  - /Users/sinclairpan/project/openclaw-codex-watchdog/docs/getting-started.zh-CN.md
+  context_summary: "008 已完成控制面闭环：bridge 支持 thread/read、turn/start、turn/steer、审批回写；A-Control-Agent 可按配置启动本地 codex app-server stdio bridge；文档、OpenAPI、测试与框架校验已同步通过。"
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-04T22:39:56+00:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: '2026-04-04T22:39:56+00:00'
+checkpoint_fingerprint: aa42a1576b06383a23e65764633196f7e477166c4b00ad6a52ddee592e503cd3

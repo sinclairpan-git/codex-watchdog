@@ -24,6 +24,10 @@ def get_store(request: Request) -> TaskStore:
     return request.app.state.task_store
 
 
+def get_bridge(request: Request) -> Any:
+    return getattr(request.app.state, "codex_bridge", None)
+
+
 @router.post("/{project_id}/handoff")
 def handoff(
     project_id: str,
@@ -48,6 +52,18 @@ def handoff(
     assert rec2 is not None
     handoffs_dir = Path(settings.data_dir) / "handoffs"
     hf_path, summary = write_handoff_file(handoffs_dir, project_id, reason, dict(rec2))
+    store.append_event(
+        project_id,
+        thread_id=str(rec2.get("thread_id") or ""),
+        event_type="handoff",
+        event_source="a_control_agent",
+        payload_json={
+            "reason": reason,
+            "handoff_file": hf_path,
+            "status": rec2.get("status"),
+            "phase": rec2.get("phase"),
+        },
+    )
     now = datetime.now(timezone.utc).isoformat()
     append_jsonl(
         Path(settings.data_dir) / "audit.jsonl",
@@ -67,16 +83,17 @@ def handoff(
 
 
 @router.post("/{project_id}/resume")
-def resume(
+async def resume(
     project_id: str,
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
     store: TaskStore = Depends(get_store),
+    bridge: Any = Depends(get_bridge),
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
     mode = str(body.get("mode", "resume_or_new_thread"))
-    _summary = body.get("handoff_summary", "")
+    summary = str(body.get("handoff_summary", ""))
     rec = store.get(project_id)
     if rec is None:
         return err(
@@ -91,6 +108,56 @@ def resume(
             "phase": str(rec.get("phase", "planning")),
         },
     )
+    now = datetime.now(timezone.utc).isoformat()
+    append_jsonl(
+        Path(settings.data_dir) / "audit.jsonl",
+        {
+            "ts": now,
+            "project_id": project_id,
+            "action": "resume_requested",
+            "reason": mode,
+            "source": "a_control_agent",
+            "payload": {"handoff_summary_len": len(summary)},
+        },
+    )
+    thread_id = str(rec.get("thread_id") or "")
+    try:
+        if bridge is not None and thread_id:
+            await bridge.resume_thread(thread_id)
+            if summary:
+                if bridge.active_turn_id(thread_id):
+                    await bridge.steer_turn(thread_id, message=summary)
+                else:
+                    await bridge.start_turn(thread_id, prompt=summary)
+    except Exception as exc:
+        store.merge_update(
+            project_id,
+            {
+                "status": "resume_failed",
+                "phase": "recovery",
+            },
+        )
+        append_jsonl(
+            Path(settings.data_dir) / "audit.jsonl",
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "project_id": project_id,
+                "action": "resume_failed",
+                "reason": mode,
+                "source": "a_control_agent",
+                "payload": {"error": str(exc)},
+            },
+        )
+        rec_failed = store.get(project_id)
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "RESUME_FAILED", "message": str(exc)},
+            {
+                "project_id": project_id,
+                "status": rec_failed.get("status") if rec_failed else "resume_failed",
+                "mode": mode,
+            },
+        )
     store.merge_update(
         project_id,
         {
@@ -99,19 +166,31 @@ def resume(
             "phase": str(rec.get("phase", "planning")),
         },
     )
-    now = datetime.now(timezone.utc).isoformat()
     append_jsonl(
         Path(settings.data_dir) / "audit.jsonl",
         {
-            "ts": now,
+            "ts": datetime.now(timezone.utc).isoformat(),
             "project_id": project_id,
             "action": "resume",
             "reason": mode,
             "source": "a_control_agent",
-            "payload": {"handoff_summary_len": len(str(_summary))},
+            "payload": {"handoff_summary_len": len(summary)},
         },
     )
     rec3 = store.get(project_id)
+    if rec3 is not None:
+        store.append_event(
+            project_id,
+            thread_id=str(rec3.get("thread_id") or ""),
+            event_type="resume",
+            event_source="a_control_agent",
+            payload_json={
+                "mode": mode,
+                "handoff_summary_len": len(summary),
+                "status": rec3.get("status"),
+                "phase": rec3.get("phase"),
+            },
+        )
     return ok(
         request.headers.get("x-request-id"),
         {

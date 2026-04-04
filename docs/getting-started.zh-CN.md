@@ -8,14 +8,14 @@
 
 | 交付物 | 说明 |
 |--------|------|
-| **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。**不内置** Codex 桌面或 Codex app-server 的私有协议实现；`CodexClient` 为占位，便于日后对接。 |
+| **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。已内置两层 Codex 集成：`1)` 默认读取同机 `~/.codex` 自动发现当前 active workspace 的 thread；`2)` 可选启动本地 `codex app-server --listen stdio://` bridge，执行下行控制与审批回写。 |
 | **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 progress / evaluate（卡顿+steer）/ recover / 审批代理等，以及 `/metrics`。 |
 | **OpenClaw 侧** | 本仓库**不包含**飞书机器人、也不包含 OpenClaw 插件；仅提供 **HTTP API** 与 `examples/openclaw_watchdog_client.py` 示例，由你在 OpenClaw 里配置「调用 Watchdog 的 URL + Token」。 |
 
 **数据流（目标架构）**：
 
 ```text
-飞书 → OpenClaw(B) → Watchdog(B) ──HTTPS+Bearer──→ A-Control-Agent(A) →（未来）Codex app-server
+飞书 → OpenClaw(B) → Watchdog(B) ──HTTPS+Bearer──→ A-Control-Agent(A) ──stdio/本地子进程──→ Codex app-server（可选）
 ```
 
 当前实现中，**OpenClaw 只需对接 Watchdog**；Watchdog 再对接 A-Control-Agent。
@@ -46,6 +46,11 @@ uv sync
 | `A_AGENT_HOST` | 监听地址；跨机访问时常用 `0.0.0.0` |
 | `A_AGENT_PORT` | 默认 `8710` |
 | `A_AGENT_DATA_DIR` | 任务与审计落盘目录（默认 `.data/a_control_agent`） |
+| `A_AGENT_CODEX_HOME` | Codex Desktop 本地状态目录；默认 `~/.codex` |
+| `A_AGENT_CODEX_SYNC_INTERVAL_SECONDS` | 采集当前本地 Codex thread 的轮询周期（默认 `30` 秒） |
+| `A_AGENT_CODEX_BRIDGE_ENABLED` | 是否启用本地 Codex app-server bridge（默认 `false`） |
+| `A_AGENT_CODEX_BRIDGE_COMMAND` | 启动命令；默认 `codex app-server --listen stdio://` |
+| `A_AGENT_CODEX_BRIDGE_REQUEST_TIMEOUT_SECONDS` | bridge 请求超时（默认 `10` 秒） |
 
 加载环境变量后启动（`--app-dir src` 指向包路径）：
 
@@ -59,8 +64,44 @@ uv run uvicorn a_control_agent.main:app --host "$A_AGENT_HOST" --port "$A_AGENT_
 ### 2.3 与「Codex」的关系（重要）
 
 - 本服务 **不会自动替你操作 Codex UI**。
-- 任务里的 `project_id`、`cwd`、`thread_id` 等由你方流程写入（或通过后续脚本对接 Codex）。  
-- **若要「真·会话控制」**，需要另行对接 **Codex app-server**（或官方文档中的控制面）；当前代码里仅为 **Protocol 占位**，便于以后接 HTTP/gRPC。
+- 但如果 A-Control-Agent 与 Codex Desktop 在**同一台机器**，默认启动路径会读取
+  `A_AGENT_CODEX_HOME`（默认 `~/.codex`）：
+  - 从本地 `state_5.sqlite` 找出当前 active workspace 的 thread
+  - 读取 rollout JSONL，提取 `last_summary`、`phase`、`files_touched`、`pending_approval`、`context_pressure`
+  - 以 `thread_id` upsert 到 A-Control-Agent 的任务存储
+- 若设置 `A_AGENT_CODEX_BRIDGE_ENABLED=true`，A-Control-Agent 会以子进程方式启动本地
+  `codex app-server --listen stdio://`，并通过 stdio bridge 执行：
+  - `thread/read`
+  - `turn/start`
+  - `turn/steer`
+  - 审批请求登记与审批决策回写
+- 若不启用 bridge，服务仍然可以只依赖本地 `~/.codex` 采集与手动注册工作。
+
+### 2.4 未启用 app-server bridge 时，如何接当前原生 Codex thread
+
+现在有两条路：
+
+1. **自动采集（推荐）**  
+   A-Control-Agent 跑在 Codex Desktop 同机时，直接启动即可；默认会自动读取 `~/.codex`，
+   按 `A_AGENT_CODEX_SYNC_INTERVAL_SECONDS` 周期同步当前 active workspace 的 thread。
+
+2. **手动/外部注册**  
+   如果你要接入的 thread 不在本机 `~/.codex`，或希望由外部流程显式推送状态，继续使用：
+   - `POST /api/v1/tasks/native-threads`
+   - 示例 payload：`examples/native_thread_payload.json`
+   - 示例脚本：`examples/register_native_thread.py`
+
+手动注册示例：
+
+```bash
+export A_AGENT_BASE_URL=http://<A的IP>:8710
+export A_AGENT_API_TOKEN=<与 A_AGENT_API_TOKEN 相同>
+uv run python examples/register_native_thread.py \
+  --payload examples/native_thread_payload.json
+```
+
+如果要更新同一个 thread 的最新状态，继续对同一路径重复 `POST` 即可；以同一个
+`thread_id` 上报时会执行 upsert，而不是创建新 thread。
 
 ---
 
@@ -100,6 +141,7 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 OpenClaw 侧应配置为：对 **Watchdog 基址** 发 HTTP，典型只读路径例如：
 
 - `GET /api/v1/watchdog/tasks/{project_id}/progress` — 进展（需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）
+- `GET /api/v1/watchdog/tasks/{project_id}/events` — 由 Watchdog 代理的任务事件流（支持 `follow=true|false`）
 
 仓库内示例：
 
@@ -110,6 +152,16 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 ```
 
 更多路径见 `docs/openapi/watchdog.json`（运行 `uv run python scripts/export_openapi.py` 可重新生成）。
+
+若 B 侧需要更实时地感知 A 的任务变化，A-Control-Agent 现已提供：
+
+- `GET /api/v1/tasks/{project_id}/events` — 基础 SSE 事件流
+
+若 OpenClaw 不直接访问 A，也可通过 Watchdog 代理：
+
+- `GET /api/v1/watchdog/tasks/{project_id}/events` — B 侧透传 A 的 SSE 事件流
+
+默认会持续跟随新事件；若只想读取当前已落盘事件，可加 `?follow=false`。
 
 ---
 
@@ -146,9 +198,9 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 - 是否沿用 **单 Bearer Token**，还是需要 **每环境多 Token**、**轮换策略**。  
 - OpenClaw 调用 Watchdog 时，是否还有 **网关层鉴权**（API Key、JWT）。
 
-### 6.3 Codex 侧（对接真实控制面时必备）
+### 6.3 Codex 侧（扩展到远端或非本地控制面时）
 
-- **Codex app-server**（或等价服务）的 **Base URL**、**鉴权方式**（Header/Token）。  
+- 若不用本地子进程 bridge，而要接入**远端 Codex app-server**（或等价服务），请提供其 **Base URL**、**鉴权方式**（Header/Token）。  
 - **线程 / 会话** 与 `project_id` 的映射规则（谁创建、谁更新）。  
 - **事件或轮询**：是否有 transcript、turn、审批事件；**字段名与样例 JSON**（哪怕一条真实脱敏样本）。  
 - 期望 A-Control-Agent **向下调用** 的能力列表（只读状态 / steer / handoff 等）。
@@ -172,7 +224,15 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 可以（同一套 Bearer），但架构上推荐 **只让 OpenClaw → Watchdog**，由 Watchdog 统一策略与审计。
 
 **Q：没有 Codex app-server 能用吗？**  
-能。用 API 手动创建任务、更新字段做联调；真实「跟 Codex 会话联动」需要再对接 app-server。
+能。若 A-Control-Agent 与 Codex Desktop 同机，可直接走本地 `~/.codex` 自动采集；否则也能用
+`POST /api/v1/tasks/native-threads` 手动/外部注册。若要下行控制 Codex 会话，则开启
+`A_AGENT_CODEX_BRIDGE_ENABLED=true` 以启动本地 app-server bridge。
+
+**Q：任务事件流现在支持到什么程度？**
+当前已提供 A 侧 `GET /api/v1/tasks/{project_id}/events` 与 Watchdog 侧
+`GET /api/v1/watchdog/tasks/{project_id}/events` 的基础 SSE 输出，事件源覆盖
+`task_created`、`native_thread_registered`、`steer`、`handoff`、`resume`、`approval_decided`。
+未提供 WebSocket，也还不是完整 transcript 流。
 
 **Q：Token 泄露怎么办？**  
 轮换 `A_AGENT_API_TOKEN` / `WATCHDOG_API_TOKEN`，并限制源 IP / 使用 TLS。
