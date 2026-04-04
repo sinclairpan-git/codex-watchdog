@@ -59,3 +59,33 @@ def get_task(
             {"code": "NOT_FOUND", "message": f"unknown project_id: {project_id}"},
         )
     return ok(request.headers.get("x-request-id"), dict(rec))
+
+
+@router.post("/{project_id}/steer")
+def steer_task(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    store: TaskStore = Depends(get_store),
+    _: None = Depends(require_token),
+) -> dict[str, Any]:
+    message = body.get("message")
+    source = body.get("source", "watchdog")
+    reason = body.get("reason", "policy")
+    if not message or not isinstance(message, str):
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "message required"},
+        )
+    rec = store.apply_steer(
+        project_id, message=message, source=str(source), reason=str(reason)
+    )
+    if rec is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "NOT_FOUND", "message": f"unknown project_id: {project_id}"},
+        )
+    return ok(
+        request.headers.get("x-request-id"),
+        {"project_id": rec["project_id"], "status": rec.get("status", "running")},
+    )

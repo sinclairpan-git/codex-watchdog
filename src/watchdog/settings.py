@@ -10,3 +10,4 @@ class Settings(BaseSettings):
     a_agent_base_url: str = "http://127.0.0.1:8710"
     a_agent_token: str = "dev-token-change-me"
     http_timeout_s: float = 3.0
+    data_dir: str = ".data/watchdog"
