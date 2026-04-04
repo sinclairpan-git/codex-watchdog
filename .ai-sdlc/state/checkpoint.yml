@@ -1,6 +1,6 @@
 pipeline_started_at: '2026-04-04T06:21:31+00:00'
 pipeline_last_updated: '2026-04-04T09:12:28+00:00'
-current_stage: execute
+current_stage: close
 feature:
   id: 002-m2-supervision
   spec_dir: specs/002-m2-supervision
@@ -35,7 +35,24 @@ completed_stages:
 - stage: verify
   completed_at: '2026-04-04T09:12:28+00:00'
   artifacts: []
-execute_progress: null
+- stage: execute
+  completed_at: '2026-04-04T09:12:28+00:00'
+  artifacts: []
+- stage: close
+  completed_at: '2026-04-04T09:12:28+00:00'
+  artifacts: []
+execute_progress:
+  total_batches: 1
+  completed_batches: 1
+  current_batch: 1
+  last_committed_task: T23
+  tasks_file: specs/002-m2-supervision/tasks.md
+  execution_log: specs/002-m2-supervision/task-execution-log.md
+  last_log_at: '2026-04-04T09:12:28+00:00'
+  last_commit_at: '2026-04-04T17:12:28+08:00'
+  last_commit_hash: 33698f6
+  halted: false
+  error: ''
 ai_decisions_count: 0
 execution_mode: auto
 linked_wi_id: 002-m2-supervision
