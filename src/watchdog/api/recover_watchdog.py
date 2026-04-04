@@ -83,8 +83,28 @@ def recover(
         )
 
     if isinstance(hj, dict) and hj.get("success"):
-        return ok(
-            rid,
-            {"project_id": project_id, "action": "handoff_triggered", "result": hj.get("data")},
-        )
+        data_out: dict[str, Any] = {
+            "project_id": project_id,
+            "action": "handoff_triggered",
+            "result": hj.get("data"),
+        }
+        if settings.recover_auto_resume:
+            resume_url = f"{settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/resume"
+            try:
+                with httpx.Client(timeout=settings.http_timeout_s) as h2:
+                    rr = h2.post(
+                        resume_url,
+                        json={
+                            "mode": "resume_or_new_thread",
+                            "handoff_summary": "",
+                        },
+                        headers={"Authorization": f"Bearer {settings.a_agent_token}"},
+                    )
+                    rr.raise_for_status()
+                    rj = rr.json()
+                data_out["action"] = "handoff_and_resume"
+                data_out["resume"] = rj.get("data") if isinstance(rj, dict) else rj
+            except (httpx.RequestError, httpx.HTTPError, ValueError):
+                data_out["resume_error"] = "resume_call_failed"
+        return ok(rid, data_out)
     return err(rid, hj.get("error") if isinstance(hj, dict) else {"code": "HANDOFF_FAILED"})

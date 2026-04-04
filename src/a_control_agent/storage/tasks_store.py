@@ -86,6 +86,7 @@ class TaskStore:
         message: str,
         source: str,
         reason: str,
+        stuck_level: int | None = None,
     ) -> TaskRecord | None:
         with self._lock:
             data = self._read()
@@ -95,6 +96,8 @@ class TaskStore:
             now = _now_iso()
             rec["last_summary"] = f"[steer:{reason}] {message}"[:4000]
             rec["last_progress_at"] = now
+            if stuck_level is not None:
+                rec["stuck_level"] = int(stuck_level)
             data[project_id] = rec
             self._write(data)
 

@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+
+from a_control_agent.repo_activity import summarize_workspace_activity
 from fastapi import APIRouter, Depends, Request
 
 from a_control_agent.envelope import err, ok
@@ -64,16 +66,30 @@ def evaluate_task(
             {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"},
         )
 
-    ev = evaluate_stuck(task)
+    repo_n: int | None = None
+    cwd = task.get("cwd")
+    if isinstance(cwd, str) and cwd.strip():
+        try:
+            repo_n = int(
+                summarize_workspace_activity(Path(cwd), recent_minutes=15).get(
+                    "recent_change_count", 0
+                )
+            )
+        except OSError:
+            repo_n = None
+    ev = evaluate_stuck(task, repo_recent_change_count=repo_n)
     steer_sent = False
     if ev.get("should_steer"):
         try:
+            nsl = ev.get("next_stuck_level")
+            sl = int(nsl) if isinstance(nsl, int) else None
             steer_body = post_steer(
                 settings.a_agent_base_url,
                 settings.a_agent_token,
                 project_id,
                 message=SOFT_STEER_MESSAGE,
                 reason=str(ev.get("reason", "stuck_soft")),
+                stuck_level=sl,
             )
             if not steer_body.get("success"):
                 return err(

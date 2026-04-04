@@ -27,22 +27,30 @@ def evaluate_stuck(
     *,
     now: datetime | None = None,
     thresholds: StuckThresholds | None = None,
+    repo_recent_change_count: int | None = None,
 ) -> dict[str, Any]:
     """返回是否建议 soft steer 及目标 stuck_level。"""
     thresholds = thresholds or StuckThresholds()
     now = now or datetime.now(timezone.utc)
+    level = int(task.get("stuck_level", 0))
+    if repo_recent_change_count is not None and repo_recent_change_count > 0:
+        return {
+            "should_steer": False,
+            "reason": "filesystem_activity_recent",
+            "next_stuck_level": level,
+            "detail": f"repo mtime changes in window: {repo_recent_change_count}",
+        }
     lp = _parse_ts(task.get("last_progress_at"))
     if lp is None:
         return {
             "should_steer": False,
             "reason": "no_last_progress_at",
-            "next_stuck_level": int(task.get("stuck_level", 0)),
+            "next_stuck_level": level,
             "detail": "missing timestamp",
         }
     if lp.tzinfo is None:
         lp = lp.replace(tzinfo=timezone.utc)
     delta_min = (now - lp.astimezone(timezone.utc)).total_seconds() / 60.0
-    level = int(task.get("stuck_level", 0))
     if delta_min >= thresholds.soft_steer_after_minutes and level < 2:
         return {
             "should_steer": True,

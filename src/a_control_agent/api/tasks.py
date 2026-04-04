@@ -100,13 +100,32 @@ def steer_task(
     message = body.get("message")
     source = body.get("source", "watchdog")
     reason = body.get("reason", "policy")
+    sl_raw = body.get("stuck_level")
+    stuck_level: int | None = None
+    if sl_raw is not None:
+        try:
+            stuck_level = int(sl_raw)
+        except (TypeError, ValueError):
+            return err(
+                request.headers.get("x-request-id"),
+                {"code": "INVALID_ARGUMENT", "message": "stuck_level must be int"},
+            )
+        if stuck_level < 0 or stuck_level > 4:
+            return err(
+                request.headers.get("x-request-id"),
+                {"code": "INVALID_ARGUMENT", "message": "stuck_level must be 0..4"},
+            )
     if not message or not isinstance(message, str):
         return err(
             request.headers.get("x-request-id"),
             {"code": "INVALID_ARGUMENT", "message": "message required"},
         )
     rec = store.apply_steer(
-        project_id, message=message, source=str(source), reason=str(reason)
+        project_id,
+        message=message,
+        source=str(source),
+        reason=str(reason),
+        stuck_level=stuck_level,
     )
     if rec is None:
         return err(
