@@ -1,11 +1,11 @@
 pipeline_started_at: '2026-04-04T06:21:31+00:00'
-pipeline_last_updated: '2026-04-04T09:17:37+00:00'
-current_stage: execute
+pipeline_last_updated: '2026-04-04T10:00:00+00:00'
+current_stage: close
 feature:
-  id: 004-m3-approval
-  spec_dir: specs/004-m3-approval
-  design_branch: design/003-m3-approval-docs
-  feature_branch: feature/003-m3-approval
+  id: 005-m4-recovery
+  spec_dir: specs/005-m4-recovery
+  design_branch: design/005-m4-recovery-docs
+  feature_branch: feature/005-m4-recovery
   current_branch: main
   docs_baseline_ref: ''
   docs_baseline_at: ''
@@ -16,28 +16,45 @@ multi_agent:
 prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
 - stage: init
-  completed_at: '2026-04-04T09:17:36+00:00'
+  completed_at: '2026-04-04T09:50:00+00:00'
   artifacts: []
 - stage: refine
-  completed_at: '2026-04-04T09:17:36+00:00'
+  completed_at: '2026-04-04T09:50:00+00:00'
   artifacts:
   - spec.md
 - stage: design
-  completed_at: '2026-04-04T09:17:36+00:00'
+  completed_at: '2026-04-04T09:50:00+00:00'
   artifacts:
   - data-model.md
   - plan.md
   - research.md
 - stage: decompose
-  completed_at: '2026-04-04T09:17:36+00:00'
+  completed_at: '2026-04-04T09:50:00+00:00'
   artifacts:
   - tasks.md
 - stage: verify
-  completed_at: '2026-04-04T09:17:37+00:00'
+  completed_at: '2026-04-04T09:55:00+00:00'
   artifacts: []
-execute_progress: null
+- stage: execute
+  completed_at: '2026-04-04T09:58:00+00:00'
+  artifacts: []
+- stage: close
+  completed_at: '2026-04-04T10:00:00+00:00'
+  artifacts: []
+execute_progress:
+  total_batches: 1
+  completed_batches: 1
+  current_batch: 1
+  last_committed_task: T42
+  tasks_file: specs/005-m4-recovery/tasks.md
+  execution_log: specs/005-m4-recovery/task-execution-log.md
+  last_log_at: '2026-04-04T10:00:00+00:00'
+  last_commit_at: '2026-04-04T10:00:00+00:00'
+  last_commit_hash: 3420685
+  halted: false
+  error: ''
 ai_decisions_count: 0
 execution_mode: auto
-linked_wi_id: 004-m3-approval
+linked_wi_id: 005-m4-recovery
 linked_plan_uri: null
-last_synced_at: '2026-04-04T09:17:34+00:00'
+last_synced_at: '2026-04-04T09:59:00+00:00'

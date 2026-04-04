@@ -6,6 +6,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from a_control_agent.api import approvals as approvals_routes
+from a_control_agent.api import recovery as recovery_routes
 from a_control_agent.api import tasks as tasks_routes
 from a_control_agent.settings import Settings
 from a_control_agent.storage.approvals_store import ApprovalsStore
@@ -22,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.approvals_store = ApprovalsStore(base / "approvals.json")
     app.include_router(tasks_routes.router, prefix="/api/v1")
     app.include_router(approvals_routes.router, prefix="/api/v1")
+    app.include_router(recovery_routes.router, prefix="/api/v1")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

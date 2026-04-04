@@ -146,3 +146,15 @@ class TaskStore:
             },
         )
         return TaskRecord(rec)
+
+    def merge_update(self, project_id: str, fields: dict[str, Any]) -> TaskRecord | None:
+        with self._lock:
+            data = self._read()
+            rec = data.get(project_id)
+            if rec is None:
+                return None
+            rec.update(fields)
+            rec["last_progress_at"] = _now_iso()
+            data[project_id] = rec
+            self._write(data)
+            return TaskRecord(rec)
