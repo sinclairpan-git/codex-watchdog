@@ -46,6 +46,37 @@ def _result(
     )
 
 
+def _invalid_action_arguments(action: WatchdogAction, message: str) -> WatchdogActionResult:
+    return _result(
+        action,
+        action_status=ActionStatus.ERROR,
+        effect=Effect.NOOP,
+        reply_code=ReplyCode.ACTION_NOT_AVAILABLE,
+        message=message,
+    )
+
+
+def _normalize_operator_guidance_arguments(
+    action: WatchdogAction,
+) -> tuple[str, str, int | None] | WatchdogActionResult:
+    message = str(action.arguments.get("message") or "").strip()
+    if not message:
+        return _invalid_action_arguments(action, "arguments.message is required")
+    reason_code = str(action.arguments.get("reason_code") or "operator_guidance").strip()
+    if not reason_code:
+        reason_code = "operator_guidance"
+    stuck_level_raw = action.arguments.get("stuck_level")
+    if stuck_level_raw in (None, ""):
+        return message, reason_code, None
+    try:
+        stuck_level = int(stuck_level_raw)
+    except (TypeError, ValueError):
+        return _invalid_action_arguments(action, "arguments.stuck_level must be an integer in 0..4")
+    if stuck_level < 0 or stuck_level > 4:
+        return _invalid_action_arguments(action, "arguments.stuck_level must be an integer in 0..4")
+    return message, reason_code, stuck_level
+
+
 def _execute_continue(
     action: WatchdogAction,
     *,
@@ -83,6 +114,41 @@ def _execute_continue(
         effect=Effect.STEER_POSTED,
         reply_code=ReplyCode.ACTION_RESULT,
         message="continue request accepted",
+        facts=bundle.facts,
+    )
+
+
+def _execute_operator_guidance(
+    action: WatchdogAction,
+    *,
+    settings: Settings,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    normalized = _normalize_operator_guidance_arguments(action)
+    if isinstance(normalized, WatchdogActionResult):
+        return normalized
+    message, reason_code, stuck_level = normalized
+    bundle = build_session_read_bundle(client, action.project_id)
+    try:
+        post_steer(
+            settings.a_agent_base_url,
+            settings.a_agent_token,
+            action.project_id,
+            message=message,
+            reason=reason_code,
+            stuck_level=stuck_level,
+            timeout=settings.http_timeout_s,
+        )
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
+        ) from exc
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.STEER_POSTED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="operator guidance posted",
         facts=bundle.facts,
     )
 
@@ -208,6 +274,8 @@ def execute_watchdog_action(
 
     if action.action_code == ActionCode.CONTINUE_SESSION:
         result = _execute_continue(action, settings=settings, client=client)
+    elif action.action_code == ActionCode.POST_OPERATOR_GUIDANCE:
+        result = _execute_operator_guidance(action, settings=settings, client=client)
     elif action.action_code == ActionCode.REQUEST_RECOVERY:
         result = _execute_request_recovery(action, client=client)
     elif action.action_code == ActionCode.EXECUTE_RECOVERY:

@@ -65,6 +65,7 @@ class EventCode(str, Enum):
 
 class ActionCode(str, Enum):
     CONTINUE_SESSION = "continue_session"
+    POST_OPERATOR_GUIDANCE = "post_operator_guidance"
     APPROVE_APPROVAL = "approve_approval"
     REJECT_APPROVAL = "reject_approval"
     REQUEST_RECOVERY = "request_recovery"

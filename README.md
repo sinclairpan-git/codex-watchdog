@@ -50,7 +50,7 @@ python scripts/export_openapi.py
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
 
-010-019 收口后的 OpenClaw 最小稳定接口面：
+010-020 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions` 返回稳定跨项目 `SessionProjection[]` 目录
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
@@ -66,6 +66,7 @@ python scripts/export_openapi.py
 - `POST /api/v1/watchdog/actions` 是 canonical write surface，提交 `WatchdogAction`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/continue`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/evaluate-supervision`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/execute-recovery`
 - `GET /api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}`
@@ -108,6 +109,14 @@ A 侧 raw `GET /api/v1/tasks/by-thread/{thread_id}` 继续保留，但不承担 
 供 OpenClaw adapter 的 `get_workspace_activity` intent 与 HTTP read surface 共用同一份
 L2 builder。A 侧 raw `GET /api/v1/tasks/{project_id}/workspace-activity` 继续保留，
 但不承担 stable contract 角色。
+020 在此基础上新增了 `post_operator_guidance` 稳定动作；canonical 写面仍是
+`POST /api/v1/watchdog/actions`，其 `WatchdogAction.arguments` 以 `message` 为必填，
+可选 `reason_code`（默认 `operator_guidance`）与 `stuck_level`（`0..4`）。
+人类友好的 alias route 是
+`POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance`，它只是包装 canonical
+动作契约。动作成功时返回
+`WatchdogActionResult(reply_code=action_result, effect=steer_posted)`；A 侧 raw
+`POST /api/v1/tasks/{project_id}/steer` 继续保留，但不承担 stable contract 角色。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成

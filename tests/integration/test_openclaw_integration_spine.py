@@ -283,6 +283,47 @@ def test_integration_request_recovery_is_advisory_only(tmp_path: Path) -> None:
     assert reply.message == "recovery is available"
 
 
+def test_integration_post_operator_guidance_success(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 1,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        reply = adapter.handle_intent(
+            "post_operator_guidance",
+            project_id="repo-a",
+            operator="openclaw",
+            idempotency_key="idem-guidance-int-1",
+            arguments={
+                "message": "Summarize the blocker and next exact command.",
+                "reason_code": "operator_guidance",
+                "stuck_level": 2,
+            },
+        )
+
+    assert steer_mock.call_count == 1
+    assert reply.reply_code == "action_result"
+    assert reply.action_result is not None
+    assert reply.action_result.action_code == "post_operator_guidance"
+    assert reply.action_result.effect == "steer_posted"
+
+
 def test_integration_api_and_adapter_share_stuck_explanation_semantics(tmp_path: Path) -> None:
     task = {
         "project_id": "repo-a",

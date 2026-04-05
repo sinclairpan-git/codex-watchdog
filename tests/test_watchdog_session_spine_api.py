@@ -530,6 +530,98 @@ def test_session_spine_action_routes_reject_empty_idempotency_key(tmp_path) -> N
     assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def test_session_spine_operator_guidance_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 1,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        canonical = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "post_operator_guidance",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-guidance-api-1",
+                "arguments": {
+                    "message": "Summarize the current blocker and next command.",
+                    "reason_code": "operator_guidance",
+                    "stuck_level": 2,
+                },
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.post(
+            "/api/v1/watchdog/sessions/repo-a/actions/post-guidance",
+            json={
+                "operator": "openclaw",
+                "idempotency_key": "idem-guidance-api-1",
+                "message": "Summarize the current blocker and next command.",
+                "reason_code": "operator_guidance",
+                "stuck_level": 2,
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert steer_mock.call_count == 1
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["action_code"] == "post_operator_guidance"
+    assert canonical.json()["data"]["effect"] == "steer_posted"
+
+
+def test_session_spine_operator_guidance_requires_non_empty_message(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "post_operator_guidance",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-guidance-api-2",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/post-guidance",
+        json={"operator": "openclaw", "idempotency_key": "idem-guidance-api-3"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert canonical.json()["success"] is True
+    assert canonical.json()["data"]["action_status"] == "error"
+    assert canonical.json()["data"]["reply_code"] == "action_not_available"
+    assert alias.status_code == 200
+    assert alias.json()["success"] is True
+    assert alias.json()["data"]["action_status"] == "error"
+    assert alias.json()["data"]["reply_code"] == "action_not_available"
+
+
 def test_session_spine_receipt_query_routes_share_same_stable_reply_without_reexecution(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

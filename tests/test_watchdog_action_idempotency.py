@@ -284,6 +284,67 @@ def test_execute_recovery_is_idempotent_and_can_resume_once(tmp_path: Path) -> N
     assert first.reply_code == "recovery_execution_result"
 
 
+def test_post_operator_guidance_is_idempotent_and_posts_steer_once(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.POST_OPERATOR_GUIDANCE,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-guidance-1",
+        arguments={
+            "message": "Please summarize the blocker and propose the next exact command.",
+            "reason_code": "operator_guidance",
+            "stuck_level": 2,
+        },
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        first = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+        )
+        second = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+        )
+
+    assert steer_mock.call_count == 1
+    assert steer_mock.call_args.kwargs["message"] == (
+        "Please summarize the blocker and propose the next exact command."
+    )
+    assert steer_mock.call_args.kwargs["reason"] == "operator_guidance"
+    assert steer_mock.call_args.kwargs["stuck_level"] == 2
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert first.action_status == "completed"
+    assert first.effect == "steer_posted"
+    assert first.reply_code == "action_result"
+
+
 def test_approval_action_uses_approval_id_in_idempotency_key(tmp_path: Path) -> None:
     settings = Settings(
         api_token="wt",

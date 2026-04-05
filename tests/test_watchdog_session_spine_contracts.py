@@ -28,7 +28,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.019"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.020"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -166,6 +166,7 @@ def test_action_receipt_query_and_reply_model_expose_stable_receipt_shape() -> N
 
 def test_recovery_execution_enum_extensions_are_stable() -> None:
     assert ActionCode.EXECUTE_RECOVERY == "execute_recovery"
+    assert ActionCode.POST_OPERATOR_GUIDANCE == "post_operator_guidance"
     assert ReplyCode.RECOVERY_EXECUTION_RESULT == "recovery_execution_result"
     assert Effect.HANDOFF_TRIGGERED == "handoff_triggered"
     assert Effect.HANDOFF_AND_RESUME == "handoff_and_resume"

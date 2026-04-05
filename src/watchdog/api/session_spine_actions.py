@@ -43,13 +43,18 @@ def _build_alias_action(
     project_id: str,
     body: dict[str, Any],
     approval_id: str | None = None,
+    top_level_argument_keys: tuple[str, ...] = (),
 ) -> WatchdogAction | None:
+    arguments = dict(body.get("arguments") or {})
+    for key in top_level_argument_keys:
+        if key in body:
+            arguments[key] = body.get(key)
     action_body: dict[str, Any] = {
         "action_code": action_code,
         "project_id": project_id,
         "operator": str(body.get("operator") or "openclaw"),
         "idempotency_key": str(body.get("idempotency_key") or ""),
-        "arguments": dict(body.get("arguments") or {}),
+        "arguments": arguments,
         "note": str(body.get("note") or ""),
     }
     if approval_id:
@@ -179,6 +184,44 @@ def request_recovery_alias(
         action_code=ActionCode.REQUEST_RECOVERY,
         project_id=project_id,
         body=body,
+    )
+    if action is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
+        )
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/post-guidance",
+    summary="Alias: post operator guidance",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=post_operator_guidance and folds top-level "
+        "message/reason_code/stuck_level fields into canonical action arguments."
+    ),
+)
+def post_operator_guidance_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.POST_OPERATOR_GUIDANCE,
+        project_id=project_id,
+        body=body,
+        top_level_argument_keys=("message", "reason_code", "stuck_level"),
     )
     if action is None:
         return err(
