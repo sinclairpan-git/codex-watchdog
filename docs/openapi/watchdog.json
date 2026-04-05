@@ -1365,6 +1365,79 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions/{project_id}/actions/post-guidance": {
+      "post": {
+        "tags": [
+          "session-spine-actions"
+        ],
+        "summary": "Alias: post operator guidance",
+        "description": "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route maps to action_code=post_operator_guidance and folds top-level message/reason_code/stuck_level fields into canonical action arguments.",
+        "operationId": "post_operator_guidance_alias_api_v1_watchdog_sessions__project_id__actions_post_guidance_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Post Operator Guidance Alias Api V1 Watchdog Sessions  Project Id  Actions Post Guidance Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/sessions/{project_id}/actions/execute-recovery": {
       "post": {
         "tags": [
