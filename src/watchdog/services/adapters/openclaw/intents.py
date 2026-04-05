@@ -10,6 +10,8 @@ READ_INTENTS = {
     "list_pending_approvals",
 }
 
+RECEIPT_INTENTS = {"get_action_receipt"}
+
 WRITE_INTENT_TO_ACTION = {
     "continue_session": ActionCode.CONTINUE_SESSION,
     "request_recovery": ActionCode.REQUEST_RECOVERY,
@@ -18,4 +20,4 @@ WRITE_INTENT_TO_ACTION = {
     "reject_approval": ActionCode.REJECT_APPROVAL,
 }
 
-ALL_SUPPORTED_INTENTS = READ_INTENTS.union(WRITE_INTENT_TO_ACTION)
+ALL_SUPPORTED_INTENTS = READ_INTENTS.union(RECEIPT_INTENTS, WRITE_INTENT_TO_ACTION)

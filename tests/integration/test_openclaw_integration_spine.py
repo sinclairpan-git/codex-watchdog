@@ -264,6 +264,43 @@ def test_integration_execute_recovery_triggers_stable_recovery_action(tmp_path: 
     assert reply.message == "recovery handoff triggered"
 
 
+def test_integration_can_query_execute_recovery_receipt_after_action(tmp_path: Path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    adapter = _adapter(tmp_path, client)
+
+    execute_reply = adapter.handle_intent(
+        "execute_recovery",
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-execute-recovery-lookup-1",
+    )
+    receipt_reply = adapter.handle_intent(
+        "get_action_receipt",
+        project_id="repo-a",
+        idempotency_key="idem-execute-recovery-lookup-1",
+        arguments={"action_code": "execute_recovery"},
+    )
+
+    assert execute_reply.reply_code == "recovery_execution_result"
+    assert receipt_reply.reply_code == "action_receipt"
+    assert receipt_reply.action_result is not None
+    assert receipt_reply.action_result.effect == "handoff_triggered"
+
+
 def test_integration_approval_actions_cover_approve_and_reject(tmp_path: Path) -> None:
     client = FakeAClient(
         task={

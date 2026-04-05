@@ -3,9 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from watchdog.contracts.session_spine.enums import (
+    ActionCode,
+    ActionStatus,
+    Effect,
+    ReplyCode,
+)
+from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.settings import Settings
-from watchdog.storage.action_receipts import ActionReceiptStore
+from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 
 
 class FakeAClient:
@@ -273,6 +280,73 @@ def test_adapter_execute_recovery_maps_stable_action_result_to_reply_model(tmp_p
 
     assert reply.reply_code == "recovery_execution_result"
     assert reply.message == "recovery handoff triggered"
+
+
+def test_adapter_get_action_receipt_uses_stable_receipt_store_without_upstream_reads(
+    tmp_path: Path,
+) -> None:
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    result = WatchdogActionResult(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="idem-continue-lookup-1",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.STEER_POSTED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="continue request accepted",
+        facts=[
+            FactRecord(
+                fact_id="fact_continue_posted",
+                fact_code="steer_posted",
+                fact_kind="action",
+                severity="info",
+                summary="continue posted",
+                detail="continue request accepted",
+                source="watchdog_action",
+                observed_at="2026-04-05T05:23:00Z",
+            )
+        ],
+    )
+    receipt_store.put(
+        receipt_key(
+            action_code=result.action_code,
+            project_id=result.project_id,
+            approval_id=result.approval_id,
+            idempotency_key=result.idempotency_key,
+        ),
+        result,
+    )
+
+    class NoReadAClient:
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            raise AssertionError(f"unexpected upstream read for {project_id}")
+
+        def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
+            _ = status
+            raise AssertionError("unexpected approval read")
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=NoReadAClient(),
+        receipt_store=receipt_store,
+    )
+
+    reply = adapter.handle_intent(
+        "get_action_receipt",
+        project_id="repo-a",
+        idempotency_key="idem-continue-lookup-1",
+        arguments={"action_code": "continue_session"},
+    )
+
+    assert reply.reply_code == "action_receipt"
+    assert reply.action_result is not None
+    assert reply.action_result.effect == "steer_posted"
 
 
 def test_adapter_returns_unsupported_intent_for_unknown_request(tmp_path: Path) -> None:

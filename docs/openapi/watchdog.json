@@ -589,6 +589,196 @@
         }
       }
     },
+    "/api/v1/watchdog/action-receipts": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Get stable action receipt",
+        "description": "Canonical stable read surface for persisted action receipts. Reads the local receipt store by action_code, project_id, approval_id, and idempotency_key.",
+        "operationId": "get_action_receipt_api_v1_watchdog_action_receipts_get",
+        "parameters": [
+          {
+            "name": "action_code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Action Code"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "idempotency_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency Key"
+            }
+          },
+          {
+            "name": "approval_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Approval Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Action Receipt Api V1 Watchdog Action Receipts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Alias: get stable action receipt",
+        "description": "Human-friendly wrapper over GET /api/v1/watchdog/action-receipts. This route reuses the canonical receipt lookup semantics.",
+        "operationId": "get_action_receipt_alias_api_v1_watchdog_sessions__project_id__action_receipts__action_code___idempotency_key__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "action_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Action Code"
+            }
+          },
+          {
+            "name": "idempotency_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency Key"
+            }
+          },
+          {
+            "name": "approval_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Approval Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Action Receipt Alias Api V1 Watchdog Sessions  Project Id  Action Receipts  Action Code   Idempotency Key  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/actions": {
       "post": {
         "tags": [

@@ -30,6 +30,8 @@ class ReplyCode(str, Enum):
     APPROVAL_QUEUE = "approval_queue"
     APPROVAL_RESULT = "approval_result"
     ACTION_RESULT = "action_result"
+    ACTION_RECEIPT = "action_receipt"
+    ACTION_RECEIPT_NOT_FOUND = "action_receipt_not_found"
     STUCK_EXPLANATION = "stuck_explanation"
     BLOCKER_EXPLANATION = "blocker_explanation"
     RECOVERY_AVAILABILITY = "recovery_availability"

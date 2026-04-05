@@ -104,6 +104,13 @@ class SessionProjection(SessionSpineModel):
     available_intents: list[str] = Field(default_factory=list)
 
 
+class ActionReceiptQuery(SessionSpineModel):
+    action_code: ActionCode
+    project_id: str
+    approval_id: str | None = None
+    idempotency_key: str = Field(min_length=1)
+
+
 class ReplyModel(SessionSpineModel):
     reply_kind: ReplyKind
     reply_code: ReplyCode
@@ -111,6 +118,7 @@ class ReplyModel(SessionSpineModel):
     message: str
     session: SessionProjection | None = None
     progress: TaskProgressView | None = None
+    action_result: WatchdogActionResult | None = None
     approvals: list[ApprovalProjection] = Field(default_factory=list)
     facts: list[FactRecord] = Field(default_factory=list)
 

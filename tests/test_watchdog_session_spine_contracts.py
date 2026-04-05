@@ -10,6 +10,7 @@ from watchdog.contracts.session_spine.enums import (
     SessionState,
 )
 from watchdog.contracts.session_spine.models import (
+    ActionReceiptQuery,
     FactRecord,
     ReplyModel,
     SessionProjection,
@@ -25,7 +26,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.012"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.013"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -114,6 +115,53 @@ def test_reply_and_action_models_expose_stable_semantic_keys() -> None:
     assert result_payload["reply_code"] == "recovery_execution_result"
 
 
+def test_action_receipt_query_and_reply_model_expose_stable_receipt_shape() -> None:
+    fact = FactRecord(
+        fact_id="fact_continue_posted",
+        fact_code="steer_posted",
+        fact_kind="action",
+        severity="info",
+        summary="continue posted",
+        detail="continue request accepted",
+        source="watchdog_action",
+        observed_at="2026-04-05T05:23:00Z",
+    )
+    query = ActionReceiptQuery(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="idem-continue-1",
+    )
+    result = WatchdogActionResult(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="idem-continue-1",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.STEER_POSTED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="continue request accepted",
+        facts=[fact],
+    )
+    reply = ReplyModel(
+        reply_kind=ReplyKind.ACTION_RESULT,
+        reply_code=ReplyCode.ACTION_RECEIPT,
+        intent_code="get_action_receipt",
+        message="stored action receipt found",
+        action_result=result,
+        facts=[fact],
+    )
+
+    query_payload = query.model_dump(mode="json")
+    reply_payload = reply.model_dump(mode="json")
+
+    assert query_payload["action_code"] == "continue_session"
+    assert query_payload["idempotency_key"] == "idem-continue-1"
+    assert reply_payload["reply_code"] == "action_receipt"
+    assert reply_payload["action_result"]["effect"] == "steer_posted"
+    assert reply_payload["facts"][0]["fact_code"] == "steer_posted"
+
+
 def test_recovery_execution_enum_extensions_are_stable() -> None:
     assert ActionCode.EXECUTE_RECOVERY == "execute_recovery"
     assert ReplyCode.RECOVERY_EXECUTION_RESULT == "recovery_execution_result"
@@ -122,3 +170,5 @@ def test_recovery_execution_enum_extensions_are_stable() -> None:
     assert ActionCode.REQUEST_RECOVERY == "request_recovery"
     assert ReplyCode.RECOVERY_AVAILABILITY == "recovery_availability"
     assert Effect.ADVISORY_ONLY == "advisory_only"
+    assert ReplyCode.ACTION_RECEIPT == "action_receipt"
+    assert ReplyCode.ACTION_RECEIPT_NOT_FOUND == "action_receipt_not_found"

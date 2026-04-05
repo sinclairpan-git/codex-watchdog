@@ -232,6 +232,91 @@ def test_session_spine_action_routes_reject_empty_idempotency_key(tmp_path) -> N
     assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def test_session_spine_receipt_query_routes_share_same_stable_reply_without_reexecution(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        create_receipt = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-lookup-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert create_receipt.status_code == 200
+    assert create_receipt.json()["success"] is True
+    assert steer_mock.call_count == 1
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as query_steer_mock:
+        canonical = c.get(
+            "/api/v1/watchdog/action-receipts",
+            params={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "idempotency_key": "idem-continue-lookup-1",
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.get(
+            "/api/v1/watchdog/sessions/repo-a/action-receipts/continue_session/idem-continue-lookup-1",
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert query_steer_mock.call_count == 0
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["reply_code"] == "action_receipt"
+    assert canonical.json()["data"]["action_result"]["effect"] == "steer_posted"
+
+
+def test_session_spine_receipt_query_route_returns_stable_not_found_reply(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/action-receipts",
+        params={
+            "action_code": "continue_session",
+            "project_id": "repo-a",
+            "idempotency_key": "missing-idem",
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["reply_code"] == "action_receipt_not_found"
+    assert response.json()["data"]["action_result"] is None
+
+
 def test_session_spine_execute_recovery_canonical_and_alias_share_the_same_result(tmp_path) -> None:
     client = FakeAClient(
         task={

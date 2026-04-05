@@ -7,15 +7,29 @@ from pathlib import Path
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
 
 
-def receipt_key_for_action(action: WatchdogAction, approval_id: str | None = None) -> str:
-    approval_part = approval_id or str(action.arguments.get("approval_id") or "")
+def receipt_key(
+    *,
+    action_code: str,
+    project_id: str,
+    idempotency_key: str,
+    approval_id: str | None = None,
+) -> str:
     return "|".join(
         [
-            str(action.action_code),
-            action.project_id,
-            approval_part,
-            action.idempotency_key,
+            str(action_code),
+            project_id,
+            approval_id or "",
+            idempotency_key,
         ]
+    )
+
+
+def receipt_key_for_action(action: WatchdogAction, approval_id: str | None = None) -> str:
+    return receipt_key(
+        action_code=str(action.action_code),
+        project_id=action.project_id,
+        approval_id=approval_id or str(action.arguments.get("approval_id") or "") or None,
+        idempotency_key=action.idempotency_key,
     )
 
 

@@ -83,6 +83,7 @@ def build_action_reply(intent_code: str, result: WatchdogActionResult) -> ReplyM
         reply_code=result.reply_code or ReplyCode.ACTION_RESULT,
         intent_code=intent_code,
         message=result.message,
+        action_result=result,
         facts=result.facts,
     )
 

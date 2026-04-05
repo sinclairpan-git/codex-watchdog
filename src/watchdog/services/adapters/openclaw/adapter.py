@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-from watchdog.contracts.session_spine.models import ReplyModel, SessionEvent, WatchdogAction
+from pydantic import ValidationError
+
+from watchdog.contracts.session_spine.models import (
+    ActionReceiptQuery,
+    ReplyModel,
+    SessionEvent,
+    WatchdogAction,
+)
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.adapters.openclaw.intents import READ_INTENTS, WRITE_INTENT_TO_ACTION
 from watchdog.services.adapters.openclaw.reply_model import (
@@ -22,6 +29,7 @@ from watchdog.services.session_spine.events import (
     iter_session_events as iter_projected_session_events,
     list_session_events as list_projected_session_events,
 )
+from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.service import SessionSpineUpstreamError, build_session_read_bundle
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -51,6 +59,22 @@ class OpenClawAdapter:
         arguments: dict[str, Any] | None = None,
     ) -> ReplyModel:
         try:
+            if intent_code == "get_action_receipt":
+                receipt_arguments = dict(arguments or {})
+                query_body: dict[str, Any] = {
+                    "action_code": receipt_arguments.get("action_code"),
+                    "project_id": project_id,
+                    "approval_id": approval_id or receipt_arguments.get("approval_id"),
+                    "idempotency_key": idempotency_key or receipt_arguments.get("idempotency_key"),
+                }
+                try:
+                    query = ActionReceiptQuery.model_validate(query_body)
+                except ValidationError:
+                    return build_action_not_available_reply(
+                        intent_code,
+                        "action_code and idempotency_key are required",
+                    )
+                return lookup_action_receipt(query, receipt_store=self._receipt_store)
             if intent_code in READ_INTENTS:
                 bundle = build_session_read_bundle(self._client, project_id)
                 if intent_code == "get_session":

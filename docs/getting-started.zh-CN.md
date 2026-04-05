@@ -138,17 +138,19 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
-OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-012 收口后的 stable surface
+OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-013 收口后的 stable surface
 （需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）：
 
 - `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` — 读取稳定审批队列
 - `GET /api/v1/watchdog/sessions/{project_id}/events` — 读取稳定、版本化 `SessionEvent` SSE
+- `GET /api/v1/watchdog/action-receipts?action_code=...&project_id=...&idempotency_key=...` — 读取稳定 action receipt reply
 - `POST /api/v1/watchdog/actions` — canonical write surface，提交 `WatchdogAction`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` — continue 的 alias wrapper
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery` — request_recovery 的 alias wrapper，仅 advisory-only
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/execute-recovery` — execute_recovery 的 alias wrapper，触发稳定 recovery execution
+- `GET /api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}` — action receipt 的 alias wrapper
 - `POST /api/v1/watchdog/approvals/{approval_id}/approve` — approve 的 alias wrapper
 - `POST /api/v1/watchdog/approvals/{approval_id}/reject` — reject 的 alias wrapper
 
@@ -174,6 +176,7 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 
 - canonical 动作面始终是 `POST /api/v1/watchdog/actions`，路径级动作只是便于人工调用的包装。
 - `request_recovery` 仍只返回恢复可用性说明，不会触发真实恢复执行；真实执行动作是 012 新增的 `execute_recovery`。
+- 013 新增的 action receipt 读面只查询本地持久化 receipt，返回 `ReplyModel(reply_code=action_receipt|action_receipt_not_found)`；它不会重放动作，也不会借道 legacy recover / approvals / steer 路由推断结果。
 - 原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续存在，但不再承担 stable contract 角色；`/watchdog/tasks/{project_id}/events` 仍是 raw/legacy，`/watchdog/sessions/{project_id}/events` 才是 011 引入的 stable 事件面，`/watchdog/tasks/{project_id}/recover` 则是复用 012 recovery kernel 的兼容入口。
 
 若 B 侧需要更实时地感知 A 的任务变化，A-Control-Agent 现已提供：

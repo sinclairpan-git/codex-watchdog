@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import ValidationError
 
 from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
-from watchdog.contracts.session_spine.models import ReplyModel
+from watchdog.contracts.session_spine.models import ActionReceiptQuery, ReplyModel
 from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.service import SessionSpineUpstreamError, build_session_read_bundle
+from watchdog.storage.action_receipts import ActionReceiptStore
 
 router = APIRouter(prefix="/watchdog", tags=["session-spine"])
 
 
 def get_client(request: Request) -> AControlAgentClient:
     return request.app.state.a_client
+
+
+def get_receipt_store(request: Request) -> ActionReceiptStore:
+    return request.app.state.action_receipt_store
 
 
 def _session_reply(bundle) -> ReplyModel:
@@ -48,6 +55,13 @@ def _approvals_reply(bundle) -> ReplyModel:
         approvals=bundle.approval_queue,
         facts=bundle.facts,
     )
+
+
+def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuery | None:
+    try:
+        return ActionReceiptQuery.model_validate(payload)
+    except ValidationError:
+        return None
 
 
 @router.get(
@@ -114,3 +128,64 @@ def get_pending_approvals(
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, _approvals_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/action-receipts",
+    summary="Get stable action receipt",
+    description=(
+        "Canonical stable read surface for persisted action receipts. Reads the "
+        "local receipt store by action_code, project_id, approval_id, and idempotency_key."
+    ),
+)
+def get_action_receipt(
+    action_code: str,
+    project_id: str,
+    idempotency_key: str,
+    request: Request,
+    approval_id: str | None = None,
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    query = _parse_action_receipt_query(
+        {
+            "action_code": action_code,
+            "project_id": project_id,
+            "approval_id": approval_id,
+            "idempotency_key": idempotency_key,
+        }
+    )
+    if query is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "query must satisfy ActionReceiptQuery"},
+        )
+    reply = lookup_action_receipt(query, receipt_store=receipt_store)
+    return ok(request.headers.get("x-request-id"), reply.model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}",
+    summary="Alias: get stable action receipt",
+    description=(
+        "Human-friendly wrapper over GET /api/v1/watchdog/action-receipts. This "
+        "route reuses the canonical receipt lookup semantics."
+    ),
+)
+def get_action_receipt_alias(
+    project_id: str,
+    action_code: str,
+    idempotency_key: str,
+    request: Request,
+    approval_id: str | None = None,
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    return get_action_receipt(
+        action_code=action_code,
+        project_id=project_id,
+        approval_id=approval_id,
+        idempotency_key=idempotency_key,
+        request=request,
+        receipt_store=receipt_store,
+    )

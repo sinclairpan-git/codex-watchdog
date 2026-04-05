@@ -10,6 +10,7 @@ from watchdog.contracts.session_spine.enums import (
     SessionState,
 )
 from watchdog.contracts.session_spine.models import (
+    ActionReceiptQuery,
     ApprovalProjection,
     FactRecord,
     ReplyModel,
@@ -29,6 +30,7 @@ from watchdog.contracts.session_spine.versioning import (
 __all__ = [
     "ActionCode",
     "ActionStatus",
+    "ActionReceiptQuery",
     "ApprovalProjection",
     "AttentionState",
     "Effect",
