@@ -9,7 +9,7 @@
 | 目录 | 说明 |
 |------|------|
 | `src/a_control_agent/` | A 机侧：任务 / steer / handoff / resume / 审批、持久化、`/metrics` |
-| `src/watchdog/` | B 机侧：progress / evaluate / recover / 审批代理、`/metrics` |
+| `src/watchdog/` | B 机侧：stable session spine、progress / evaluate / recover / 审批代理、`/metrics` |
 | `docs/openapi/` | OpenAPI JSON（`python scripts/export_openapi.py` 生成） |
 | `examples/` | OpenClaw 侧调用 Watchdog 的 HTTP 示例（无飞书） |
 
@@ -50,6 +50,21 @@ python scripts/export_openapi.py
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
 
+010 冻结后的 OpenClaw 最小稳定接口面：
+
+- `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
+- `GET /api/v1/watchdog/sessions/{project_id}/progress` 返回稳定 `TaskProgressView`
+- `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` 返回稳定审批队列
+- `POST /api/v1/watchdog/actions` 是 canonical write surface，提交 `WatchdogAction`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/continue`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery`
+- `POST /api/v1/watchdog/approvals/{approval_id}/approve`
+- `POST /api/v1/watchdog/approvals/{approval_id}/reject`
+
+其中路径级动作接口只是 alias wrapper；真正稳定的动作契约是
+`WatchdogAction -> WatchdogActionResult`。`request_recovery` 在 010 仍是
+advisory-only，只返回恢复可用性说明，不触发真实 handoff / resume。
+
 基础事件流接口已提供：`GET /api/v1/tasks/{project_id}/events`
 会以 `text/event-stream` 返回当前任务事件；默认持续跟随新事件，也可用
 `?follow=false` 只回放当前快照。
@@ -57,6 +72,9 @@ python scripts/export_openapi.py
 `handoff`、`resume`、`approval_decided`。
 若 OpenClaw 不直接连 A，也可经 Watchdog 代理读取
 `GET /api/v1/watchdog/tasks/{project_id}/events`。
+
+原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续保留，
+但不再承担 OpenClaw 稳定契约角色。
 
 若 A-Control-Agent 与 Codex Desktop 跑在同一台机器，默认启动路径现在会直接读取
 `~/.codex`（可由 `A_AGENT_CODEX_HOME` 覆盖），自动发现当前 active workspace 的 thread，

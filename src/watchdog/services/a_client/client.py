@@ -55,6 +55,60 @@ class AControlAgentClient:
                 raise RuntimeError("invalid_envelope_shape")
             return [dict(task) for task in tasks if isinstance(task, dict)]
 
+    def list_approvals(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/approvals"
+        params: dict[str, str] = {}
+        if status:
+            params["status"] = status
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.get(url, headers=self._auth_headers(), params=params)
+            except httpx.RequestError as exc:
+                raise exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if not isinstance(body, dict):
+                raise RuntimeError("invalid_envelope_shape")
+            if not body.get("success"):
+                return []
+            data = body.get("data")
+            if not isinstance(data, dict):
+                raise RuntimeError("invalid_envelope_shape")
+            items = data.get("items")
+            if not isinstance(items, list):
+                raise RuntimeError("invalid_envelope_shape")
+            return [dict(item) for item in items if isinstance(item, dict)]
+
+    def decide_approval(
+        self,
+        approval_id: str,
+        *,
+        decision: str,
+        operator: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
+        payload: dict[str, Any] = {
+            "decision": decision,
+            "operator": operator,
+        }
+        if note:
+            payload["note"] = note
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.post(url, headers=self._auth_headers(), json=payload)
+            except httpx.RequestError as exc:
+                raise exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if isinstance(body, dict):
+                return body
+            raise RuntimeError("invalid_envelope_shape")
+
     def get_events_snapshot(
         self,
         project_id: str,

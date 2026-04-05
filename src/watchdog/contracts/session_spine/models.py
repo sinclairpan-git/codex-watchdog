@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from watchdog.contracts.session_spine.enums import (
+    ActionCode,
+    ActionStatus,
+    AttentionState,
+    Effect,
+    ReplyCode,
+    ReplyKind,
+    SessionState,
+)
+from watchdog.contracts.session_spine.versioning import (
+    SESSION_SPINE_CONTRACT_VERSION,
+    SESSION_SPINE_SCHEMA_VERSION,
+)
+
+
+class SessionSpineModel(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    contract_version: str = Field(default=SESSION_SPINE_CONTRACT_VERSION)
+    schema_version: str = Field(default=SESSION_SPINE_SCHEMA_VERSION)
+
+
+class FactRecord(SessionSpineModel):
+    fact_id: str
+    fact_code: str
+    fact_kind: str
+    severity: str
+    summary: str
+    detail: str
+    source: str
+    observed_at: str
+    related_ids: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApprovalProjection(SessionSpineModel):
+    approval_id: str
+    project_id: str
+    thread_id: str
+    native_thread_id: str | None = None
+    risk_level: str | None = None
+    command: str
+    reason: str
+    alternative: str = ""
+    status: str
+    requested_at: str
+    decided_at: str | None = None
+    decided_by: str | None = None
+
+
+class TaskProgressView(SessionSpineModel):
+    project_id: str
+    thread_id: str
+    native_thread_id: str | None = None
+    activity_phase: str
+    summary: str
+    files_touched: list[str] = Field(default_factory=list)
+    context_pressure: str
+    stuck_level: int
+    primary_fact_codes: list[str] = Field(default_factory=list)
+    blocker_fact_codes: list[str] = Field(default_factory=list)
+    last_progress_at: str | None = None
+
+
+class SessionProjection(SessionSpineModel):
+    project_id: str
+    thread_id: str
+    native_thread_id: str | None = None
+    session_state: SessionState
+    activity_phase: str
+    attention_state: AttentionState
+    headline: str
+    pending_approval_count: int
+    available_intents: list[str] = Field(default_factory=list)
+
+
+class ReplyModel(SessionSpineModel):
+    reply_kind: ReplyKind
+    reply_code: ReplyCode
+    intent_code: str
+    message: str
+    session: SessionProjection | None = None
+    progress: TaskProgressView | None = None
+    approvals: list[ApprovalProjection] = Field(default_factory=list)
+    facts: list[FactRecord] = Field(default_factory=list)
+
+
+class WatchdogAction(SessionSpineModel):
+    action_code: ActionCode
+    project_id: str
+    operator: str
+    idempotency_key: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    note: str = ""
+
+
+class WatchdogActionResult(SessionSpineModel):
+    action_code: ActionCode
+    project_id: str
+    approval_id: str | None = None
+    idempotency_key: str
+    action_status: ActionStatus
+    effect: Effect
+    reply_code: ReplyCode | None = None
+    message: str
+    facts: list[FactRecord] = Field(default_factory=list)

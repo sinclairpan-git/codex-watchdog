@@ -138,9 +138,20 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
-OpenClaw 侧应配置为：对 **Watchdog 基址** 发 HTTP，典型只读路径例如：
+OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010 冻结后的 stable surface
+（需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）：
 
-- `GET /api/v1/watchdog/tasks/{project_id}/progress` — 进展（需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）
+- `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
+- `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
+- `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` — 读取稳定审批队列
+- `POST /api/v1/watchdog/actions` — canonical write surface，提交 `WatchdogAction`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` — continue 的 alias wrapper
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery` — request_recovery 的 alias wrapper，仅 advisory-only
+- `POST /api/v1/watchdog/approvals/{approval_id}/approve` — approve 的 alias wrapper
+- `POST /api/v1/watchdog/approvals/{approval_id}/reject` — reject 的 alias wrapper
+
+如果 OpenClaw 只需要读事件流，legacy 代理路径仍可用：
+
 - `GET /api/v1/watchdog/tasks/{project_id}/events` — 由 Watchdog 代理的任务事件流（支持 `follow=true|false`）
 
 仓库内示例：
@@ -152,6 +163,12 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 ```
 
 更多路径见 `docs/openapi/watchdog.json`（运行 `uv run python scripts/export_openapi.py` 可重新生成）。
+
+说明：
+
+- canonical 动作面始终是 `POST /api/v1/watchdog/actions`，路径级动作只是便于人工调用的包装。
+- `request_recovery` 在 010 只返回恢复可用性说明，不会触发真实恢复执行。
+- 原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续存在，但不再承担 stable contract 角色。
 
 若 B 侧需要更实时地感知 A 的任务变化，A-Control-Agent 现已提供：
 
@@ -171,7 +188,7 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 2. **Token**：`WATCHDOG_A_AGENT_TOKEN` **等于** A 的 `A_AGENT_API_TOKEN`。  
 3. **防火墙 / 安全组**：A 的 `A_AGENT_PORT` 仅对 B（或 VPN 网段）开放。  
 4. **生产建议**：前面加 **反向代理 + TLS**（如 nginx/Caddy），对外只暴露 HTTPS；Token 用密钥管理。  
-5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/tasks/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
+5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/sessions/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
 
 ---
 
