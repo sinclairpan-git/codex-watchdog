@@ -37,6 +37,12 @@ def _parse_action(body: dict[str, Any]) -> WatchdogAction | None:
         return None
 
 
+def _alias_parse_error(body: dict[str, Any]) -> dict[str, str]:
+    if not str(body.get("idempotency_key") or "").strip():
+        return {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"}
+    return {"code": "INVALID_ARGUMENT", "message": "body must satisfy WatchdogAction"}
+
+
 def _build_alias_action(
     *,
     action_code: ActionCode,
@@ -45,7 +51,13 @@ def _build_alias_action(
     approval_id: str | None = None,
     top_level_argument_keys: tuple[str, ...] = (),
 ) -> WatchdogAction | None:
-    arguments = dict(body.get("arguments") or {})
+    raw_arguments = body.get("arguments")
+    if raw_arguments in (None, ""):
+        arguments: dict[str, Any] = {}
+    elif isinstance(raw_arguments, dict):
+        arguments = dict(raw_arguments)
+    else:
+        return None
     for key in top_level_argument_keys:
         if key in body:
             arguments[key] = body.get(key)
@@ -150,10 +162,7 @@ def continue_session_alias(
         body=body,
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,
@@ -186,10 +195,7 @@ def request_recovery_alias(
         body=body,
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,
@@ -224,10 +230,7 @@ def post_operator_guidance_alias(
         top_level_argument_keys=("message", "reason_code", "stuck_level"),
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,
@@ -261,10 +264,7 @@ def execute_recovery_alias(
         body=body,
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,
@@ -297,10 +297,7 @@ def evaluate_supervision_alias(
         body=body,
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,
@@ -340,10 +337,7 @@ def approve_alias(
         approval_id=approval_id,
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,
@@ -383,10 +377,7 @@ def reject_alias(
         approval_id=approval_id,
     )
     if action is None:
-        return err(
-            request.headers.get("x-request-id"),
-            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
-        )
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
     return handle_action(
         action,
         request=request,

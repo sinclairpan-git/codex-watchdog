@@ -56,6 +56,18 @@ def _invalid_action_arguments(action: WatchdogAction, message: str) -> WatchdogA
     )
 
 
+def _validate_steer_response_or_raise(steer_body: Any) -> None:
+    if isinstance(steer_body, dict) and steer_body.get("success"):
+        return
+    if isinstance(steer_body, dict):
+        error = steer_body.get("error")
+        if isinstance(error, dict):
+            raise SessionSpineUpstreamError(dict(error))
+    raise SessionSpineUpstreamError(
+        {"code": "CONTROL_LINK_ERROR", "message": "A 侧拒绝 steer"}
+    )
+
+
 def _normalize_operator_guidance_arguments(
     action: WatchdogAction,
 ) -> tuple[str, str, int | None] | WatchdogActionResult:
@@ -95,7 +107,7 @@ def _execute_continue(
             facts=bundle.facts,
         )
     try:
-        post_steer(
+        steer_body = post_steer(
             settings.a_agent_base_url,
             settings.a_agent_token,
             action.project_id,
@@ -108,6 +120,7 @@ def _execute_continue(
         raise SessionSpineUpstreamError(
             {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
         ) from exc
+    _validate_steer_response_or_raise(steer_body)
     return _result(
         action,
         action_status=ActionStatus.COMPLETED,
@@ -130,7 +143,7 @@ def _execute_operator_guidance(
     message, reason_code, stuck_level = normalized
     bundle = build_session_read_bundle(client, action.project_id)
     try:
-        post_steer(
+        steer_body = post_steer(
             settings.a_agent_base_url,
             settings.a_agent_token,
             action.project_id,
@@ -143,6 +156,7 @@ def _execute_operator_guidance(
         raise SessionSpineUpstreamError(
             {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
         ) from exc
+    _validate_steer_response_or_raise(steer_body)
     return _result(
         action,
         action_status=ActionStatus.COMPLETED,

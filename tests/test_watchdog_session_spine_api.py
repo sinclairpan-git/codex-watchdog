@@ -602,6 +602,70 @@ def test_session_spine_action_routes_reject_empty_idempotency_key(tmp_path) -> N
     assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def test_session_spine_continue_retries_after_rejected_steer_without_caching_receipt(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.side_effect = [
+            {
+                "success": False,
+                "error": {"code": "STEER_REJECTED", "message": "A side rejected steer"},
+            },
+            {"success": True, "data": {"accepted": True}},
+        ]
+        first = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-rejected-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        second = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-rejected-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert first.status_code == 200
+    assert first.json()["success"] is False
+    assert first.json()["error"] == {
+        "code": "STEER_REJECTED",
+        "message": "A side rejected steer",
+    }
+    assert second.status_code == 200
+    assert second.json()["success"] is True
+    assert second.json()["data"]["effect"] == "steer_posted"
+    assert steer_mock.call_count == 2
+
+
 def test_session_spine_operator_guidance_canonical_and_alias_share_the_same_result(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
@@ -660,6 +724,56 @@ def test_session_spine_operator_guidance_canonical_and_alias_share_the_same_resu
     assert canonical.json()["data"]["effect"] == "steer_posted"
 
 
+def test_session_spine_operator_guidance_surfaces_rejected_steer_envelope(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 1,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {
+            "success": False,
+            "error": {"code": "STEER_REJECTED", "message": "A side rejected guidance"},
+        }
+        response = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "post_operator_guidance",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-guidance-rejected-1",
+                "arguments": {
+                    "message": "Summarize the blocker.",
+                    "reason_code": "operator_guidance",
+                },
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"] == {
+        "code": "STEER_REJECTED",
+        "message": "A side rejected guidance",
+    }
+    assert steer_mock.call_count == 1
+
+
 def test_session_spine_operator_guidance_requires_non_empty_message(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
@@ -692,6 +806,31 @@ def test_session_spine_operator_guidance_requires_non_empty_message(tmp_path) ->
     assert alias.json()["success"] is True
     assert alias.json()["data"]["action_status"] == "error"
     assert alias.json()["data"]["reply_code"] == "action_not_available"
+
+
+def test_session_spine_alias_route_rejects_non_object_arguments_without_500(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/continue",
+        json={
+            "operator": "openclaw",
+            "idempotency_key": "idem-alias-invalid-args-1",
+            "arguments": "not-an-object",
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"] == {
+        "code": "INVALID_ARGUMENT",
+        "message": "body must satisfy WatchdogAction",
+    }
 
 
 def test_session_spine_receipt_query_routes_share_same_stable_reply_without_reexecution(tmp_path) -> None:

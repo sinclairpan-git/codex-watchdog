@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
     build_approval_projections,
@@ -106,3 +108,32 @@ def test_projection_surfaces_control_link_error_without_raw_task() -> None:
     assert session.session_state == "unavailable"
     assert session.attention_state == "unreachable"
     assert [fact.fact_code for fact in facts] == ["control_link_error"]
+
+
+def test_projection_facts_fallback_observed_at_when_approval_timestamps_are_missing() -> None:
+    approvals = [
+        {
+            "approval_id": "appr_001",
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "pending",
+        }
+    ]
+
+    with patch("watchdog.services.session_spine.facts._now_iso", return_value="2026-04-06T00:00:00Z"):
+        facts = build_fact_records(
+            project_id="repo-a",
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "pending_approval": True,
+                "last_progress_at": None,
+            },
+            approvals=approvals,
+        )
+
+    assert [fact.fact_code for fact in facts] == ["approval_pending", "awaiting_human_direction"]
+    assert [fact.observed_at for fact in facts] == [
+        "2026-04-06T00:00:00Z",
+        "2026-04-06T00:00:00Z",
+    ]
