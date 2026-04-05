@@ -474,6 +474,58 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "List stable session directory",
+        "description": "Stable read surface for cross-project session discovery. Returns a versioned ReplyModel carrying SessionProjection rows instead of the raw A-Control-Agent task list.",
+        "operationId": "list_sessions_api_v1_watchdog_sessions_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Sessions Api V1 Watchdog Sessions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/sessions/{project_id}": {
       "get": {
         "tags": [

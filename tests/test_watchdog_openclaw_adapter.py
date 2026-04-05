@@ -20,16 +20,23 @@ class FakeAClient:
         self,
         *,
         task: dict[str, object],
+        tasks: list[dict[str, object]] | None = None,
         approvals: list[dict[str, object]] | None = None,
     ) -> None:
         self._task = dict(task)
+        self._tasks = [dict(row) for row in tasks or [task]]
         self._approvals = [dict(approval) for approval in approvals or []]
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
-        assert project_id == self._task["project_id"]
-        return {"success": True, "data": dict(self._task)}
+        for task in self._tasks:
+            if project_id == task["project_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(project_id)
+
+    def list_tasks(self) -> list[dict[str, object]]:
+        return [dict(task) for task in self._tasks]
 
     def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
         rows = [dict(approval) for approval in self._approvals]
@@ -110,7 +117,13 @@ class FakeAClient:
         )
 
 
-def _adapter(tmp_path: Path, *, task: dict[str, object], approvals: list[dict[str, object]] | None = None) -> OpenClawAdapter:
+def _adapter(
+    tmp_path: Path,
+    *,
+    task: dict[str, object],
+    tasks: list[dict[str, object]] | None = None,
+    approvals: list[dict[str, object]] | None = None,
+) -> OpenClawAdapter:
     return OpenClawAdapter(
         settings=Settings(
             api_token="wt",
@@ -118,7 +131,7 @@ def _adapter(tmp_path: Path, *, task: dict[str, object], approvals: list[dict[st
             a_agent_base_url="http://a.test",
             data_dir=str(tmp_path),
         ),
-        client=FakeAClient(task=task, approvals=approvals),
+        client=FakeAClient(task=task, tasks=tasks, approvals=approvals),
         receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
     )
 
@@ -270,6 +283,74 @@ def test_adapter_list_approval_inbox_returns_stable_global_pending_queue(tmp_pat
     assert reply.reply_code == "approval_inbox"
     assert [approval.project_id for approval in reply.approvals] == ["repo-a", "repo-b"]
     assert [approval.thread_id for approval in reply.approvals] == ["session:repo-a", "session:repo-b"]
+
+
+def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b"]
+    assert [session.thread_id for session in reply.sessions] == ["session:repo-a", "session:repo-b"]
+    assert reply.sessions[1].pending_approval_count == 1
 
 
 def test_adapter_request_recovery_maps_advisory_action_result_to_reply_model(tmp_path: Path) -> None:

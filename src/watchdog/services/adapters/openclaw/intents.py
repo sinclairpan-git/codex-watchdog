@@ -3,6 +3,7 @@ from __future__ import annotations
 from watchdog.contracts.session_spine.enums import ActionCode
 
 READ_INTENTS = {
+    "list_sessions",
     "get_session",
     "get_progress",
     "why_stuck",

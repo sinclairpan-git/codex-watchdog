@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
 from watchdog.contracts.session_spine.models import ReplyModel
-from watchdog.services.session_spine.service import ApprovalInboxReadBundle, SessionReadBundle
+from watchdog.services.session_spine.service import (
+    ApprovalInboxReadBundle,
+    SessionDirectoryReadBundle,
+    SessionReadBundle,
+)
 
 
 def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
@@ -13,6 +17,16 @@ def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
         message=bundle.session.headline,
         session=bundle.session,
         facts=bundle.facts,
+    )
+
+
+def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:
+    return ReplyModel(
+        reply_kind=ReplyKind.SESSION,
+        reply_code=ReplyCode.SESSION_DIRECTORY,
+        intent_code="list_sessions",
+        message=f"{len(bundle.sessions)} session(s)",
+        sessions=bundle.sessions,
     )
 
 

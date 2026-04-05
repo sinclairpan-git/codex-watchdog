@@ -51,6 +51,13 @@ class ApprovalInboxReadBundle:
     approval_inbox: list[ApprovalProjection]
 
 
+@dataclass(frozen=True, slots=True)
+class SessionDirectoryReadBundle:
+    tasks: list[dict[str, Any]]
+    approvals: list[dict[str, Any]]
+    sessions: list[SessionProjection]
+
+
 def _load_task_or_raise(
     client: AControlAgentClient,
     project_id: str,
@@ -88,6 +95,13 @@ def _load_approvals_or_raise(
     if project_id is None:
         return rows
     return [row for row in rows if str(row.get("project_id") or "") == project_id]
+
+
+def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:
+    try:
+        return client.list_tasks()
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
 
 
 def build_session_read_bundle(
@@ -131,4 +145,40 @@ def build_approval_inbox_bundle(
         project_id=project_id,
         approvals=approvals,
         approval_inbox=build_approval_inbox_projections(approvals=approvals),
+    )
+
+
+def build_session_directory_bundle(
+    client: AControlAgentClient,
+) -> SessionDirectoryReadBundle:
+    tasks = _load_tasks_or_raise(client)
+    approvals = _load_approvals_or_raise(client)
+    tasks_by_project: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        project_id = str(task.get("project_id") or "")
+        if not project_id:
+            continue
+        if project_id in tasks_by_project:
+            tasks_by_project.pop(project_id)
+        tasks_by_project[project_id] = dict(task)
+
+    sessions: list[SessionProjection] = []
+    for project_id, task in tasks_by_project.items():
+        project_approvals = [
+            row for row in approvals if str(row.get("project_id") or "") == project_id
+        ]
+        facts = build_fact_records(project_id=project_id, task=task, approvals=project_approvals)
+        sessions.append(
+            build_session_projection(
+                project_id=project_id,
+                task=task,
+                approvals=project_approvals,
+                facts=facts,
+            )
+        )
+
+    return SessionDirectoryReadBundle(
+        tasks=list(tasks_by_project.values()),
+        approvals=approvals,
+        sessions=sessions,
     )

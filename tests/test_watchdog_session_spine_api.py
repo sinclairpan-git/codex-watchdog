@@ -13,19 +13,23 @@ class FakeAClient:
         self,
         *,
         task: dict[str, object],
+        tasks: list[dict[str, object]] | None = None,
         approvals: list[dict[str, object]] | None = None,
     ) -> None:
         self._task = dict(task)
+        self._tasks = [dict(row) for row in tasks or [task]]
         self._approvals = [dict(approval) for approval in approvals or []]
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
-        assert project_id == self._task["project_id"]
-        return {"success": True, "data": dict(self._task)}
+        for task in self._tasks:
+            if project_id == task["project_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(project_id)
 
     def list_tasks(self) -> list[dict[str, object]]:
-        return [dict(self._task)]
+        return [dict(task) for task in self._tasks]
 
     def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
         rows = [dict(approval) for approval in self._approvals]
@@ -151,6 +155,80 @@ def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
     ]
     assert approvals_data["reply_code"] == "approval_queue"
     assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
+
+
+def test_session_directory_route_returns_stable_session_projections(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "editing files",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:20:00Z",
+                },
+                {
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "status": "waiting_human",
+                    "phase": "approval",
+                    "pending_approval": True,
+                    "approval_risk": "L2",
+                    "last_summary": "waiting for approval",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:21:00Z",
+                },
+            ],
+            approvals=[
+                {
+                    "approval_id": "appr_001",
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                }
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["reply_code"] == "session_directory"
+    assert [item["project_id"] for item in data["sessions"]] == ["repo-a", "repo-b"]
+    assert [item["thread_id"] for item in data["sessions"]] == ["session:repo-a", "session:repo-b"]
+    assert data["sessions"][1]["pending_approval_count"] == 1
+    assert "list_pending_approvals" in data["sessions"][1]["available_intents"]
 
 
 def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(tmp_path) -> None:

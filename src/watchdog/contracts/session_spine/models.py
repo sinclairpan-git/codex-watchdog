@@ -118,6 +118,7 @@ class ReplyModel(SessionSpineModel):
     intent_code: str
     message: str
     session: SessionProjection | None = None
+    sessions: list[SessionProjection] = Field(default_factory=list)
     progress: TaskProgressView | None = None
     action_result: WatchdogActionResult | None = None
     approvals: list[ApprovalProjection] = Field(default_factory=list)

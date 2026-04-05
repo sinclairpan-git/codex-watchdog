@@ -12,15 +12,26 @@ from watchdog.services.session_spine.replies import (
     build_blocker_explanation_reply as build_blocker_explanation_read_reply,
 )
 from watchdog.services.session_spine.replies import build_progress_reply as build_progress_read_reply
+from watchdog.services.session_spine.replies import (
+    build_session_directory_reply as build_session_directory_read_reply,
+)
 from watchdog.services.session_spine.replies import build_session_reply as build_session_read_reply
 from watchdog.services.session_spine.replies import (
     build_stuck_explanation_reply as build_stuck_explanation_read_reply,
 )
-from watchdog.services.session_spine.service import ApprovalInboxReadBundle, SessionReadBundle
+from watchdog.services.session_spine.service import (
+    ApprovalInboxReadBundle,
+    SessionDirectoryReadBundle,
+    SessionReadBundle,
+)
 
 
 def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
     return build_session_read_reply(bundle)
+
+
+def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:
+    return build_session_directory_read_reply(bundle)
 
 
 def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:

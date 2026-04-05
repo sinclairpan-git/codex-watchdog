@@ -28,7 +28,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.016"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.017"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -216,3 +216,31 @@ def test_supervision_evaluation_contract_extensions_are_stable() -> None:
 def test_approval_inbox_contract_extension_is_stable() -> None:
     assert ReplyCode.APPROVAL_INBOX == "approval_inbox"
     assert ReplyKind.APPROVALS == "approvals"
+
+
+def test_session_directory_contract_extension_is_stable() -> None:
+    session = SessionProjection(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        session_state=SessionState.ACTIVE,
+        activity_phase="editing_source",
+        attention_state=AttentionState.NORMAL,
+        headline="editing files",
+        pending_approval_count=0,
+        available_intents=["get_session", "continue_session"],
+    )
+    reply = ReplyModel(
+        reply_kind=ReplyKind.SESSION,
+        reply_code=ReplyCode.SESSION_DIRECTORY,
+        intent_code="list_sessions",
+        message="1 session(s)",
+        sessions=[session],
+    )
+
+    payload = reply.model_dump(mode="json")
+
+    assert ReplyCode.SESSION_DIRECTORY == "session_directory"
+    assert payload["reply_kind"] == "session"
+    assert payload["sessions"][0]["project_id"] == "repo-a"
+    assert payload["sessions"][0]["thread_id"] == "session:repo-a"

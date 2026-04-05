@@ -17,17 +17,24 @@ class FakeAClient:
         self,
         *,
         task: dict[str, object],
+        tasks: list[dict[str, object]] | None = None,
         approvals: list[dict[str, object]] | None = None,
     ) -> None:
         self._task = dict(task)
+        self._tasks = [dict(row) for row in tasks or [task]]
         self._approvals = [dict(approval) for approval in approvals or []]
         self.decision_calls: list[tuple[str, str, str, str]] = []
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
-        assert project_id == self._task["project_id"]
-        return {"success": True, "data": dict(self._task)}
+        for task in self._tasks:
+            if project_id == task["project_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(project_id)
+
+    def list_tasks(self) -> list[dict[str, object]]:
+        return [dict(task) for task in self._tasks]
 
     def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
         rows = [dict(approval) for approval in self._approvals]
@@ -329,6 +336,71 @@ def test_integration_api_and_adapter_share_approval_inbox_semantics(tmp_path: Pa
     ]
     assert [item["thread_id"] for item in api_reply["approvals"]] == [
         approval.thread_id for approval in adapter_reply.approvals
+    ]
+
+
+def test_integration_api_and_adapter_share_session_directory_semantics(tmp_path: Path) -> None:
+    tasks = [
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        {
+            "project_id": "repo-b",
+            "thread_id": "thr_native_2",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "last_summary": "waiting for approval",
+            "files_touched": [],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:21:00Z",
+        },
+    ]
+    approvals = [
+        {
+            "approval_id": "appr_001",
+            "project_id": "repo-b",
+            "thread_id": "thr_native_2",
+            "status": "pending",
+            "command": "uv run pytest",
+            "reason": "verify tests",
+            "alternative": "",
+            "requested_at": "2026-04-05T05:22:00Z",
+        },
+    ]
+    adapter = _adapter(tmp_path, FakeAClient(task=tasks[0], tasks=tasks, approvals=approvals))
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(task=tasks[0], tasks=tasks, approvals=approvals),
+    )
+    client = TestClient(app)
+
+    adapter_reply = adapter.handle_intent("list_sessions")
+    api_response = client.get(
+        "/api/v1/watchdog/sessions",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert api_response.status_code == 200
+    api_reply = api_response.json()["data"]
+    assert api_reply["reply_code"] == adapter_reply.reply_code
+    assert [item["project_id"] for item in api_reply["sessions"]] == [
+        session.project_id for session in adapter_reply.sessions
+    ]
+    assert [item["pending_approval_count"] for item in api_reply["sessions"]] == [
+        session.pending_approval_count for session in adapter_reply.sessions
     ]
 
 

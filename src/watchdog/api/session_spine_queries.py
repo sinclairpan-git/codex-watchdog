@@ -13,12 +13,14 @@ from watchdog.services.session_spine.replies import (
     build_approval_queue_reply,
     build_blocker_explanation_reply,
     build_progress_reply,
+    build_session_directory_reply,
     build_session_reply,
     build_stuck_explanation_reply,
 )
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
     build_approval_inbox_bundle,
+    build_session_directory_bundle,
     build_session_read_bundle,
 )
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -62,6 +64,28 @@ def get_approval_inbox(
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_approval_inbox_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions",
+    summary="List stable session directory",
+    description=(
+        "Stable read surface for cross-project session discovery. Returns a "
+        "versioned ReplyModel carrying SessionProjection rows instead of the "
+        "raw A-Control-Agent task list."
+    ),
+)
+def list_sessions(
+    request: Request,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_session_directory_bundle(client)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_session_directory_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(

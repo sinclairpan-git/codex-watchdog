@@ -21,6 +21,7 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_blocker_explanation_reply,
     build_control_link_error_reply,
     build_progress_reply,
+    build_session_directory_reply,
     build_session_reply,
     build_stuck_explanation_reply,
     build_unsupported_intent_reply,
@@ -34,6 +35,7 @@ from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
     build_approval_inbox_bundle,
+    build_session_directory_bundle,
     build_session_read_bundle,
 )
 from watchdog.settings import Settings
@@ -83,6 +85,9 @@ class OpenClawAdapter:
                     )
                 return lookup_action_receipt(query, receipt_store=self._receipt_store)
             if intent_code in READ_INTENTS:
+                if intent_code == "list_sessions":
+                    bundle = build_session_directory_bundle(self._client)
+                    return build_session_directory_reply(bundle)
                 if intent_code == "list_approval_inbox":
                     bundle = build_approval_inbox_bundle(self._client, project_id)
                     return build_approval_inbox_reply(bundle)
