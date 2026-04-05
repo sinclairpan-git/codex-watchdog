@@ -138,11 +138,12 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
-OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-015 收口后的 stable surface
+OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-016 收口后的 stable surface
 （需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）：
 
 - `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
+- `GET /api/v1/watchdog/approval-inbox` — 读取稳定跨项目 pending approvals inbox；可选 `?project_id=...`
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` — 读取稳定审批队列
 - `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` — 读取稳定 stuck explanation reply
 - `GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation` — 读取稳定 blocker explanation reply
@@ -179,6 +180,7 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 
 - canonical 动作面始终是 `POST /api/v1/watchdog/actions`，路径级动作只是便于人工调用的包装。
 - 015 新增的两个 explanation route 仍然复用既有 `ReplyModel`，不会新增 explanation DTO，也不会推进 session spine contract/schema version；它们与 OpenClaw adapter 共享同一套 explanation builder。
+- 016 新增的 `GET /api/v1/watchdog/approval-inbox` 复用既有 `ApprovalProjection`，返回稳定 `ReplyModel(reply_code=approval_inbox)`；它只覆盖 pending approvals inbox，不提供 history / status passthrough，也不替换 legacy `/watchdog/approvals` raw proxy。
 - 014 新增的稳定监管评估动作是 `WatchdogAction(action_code=evaluate_supervision)`；它返回 `WatchdogActionResult(reply_code=supervision_evaluation)` 与 `SupervisionEvaluation`，必要时才执行一次 advisory steer。
 - `request_recovery` 仍只返回恢复可用性说明，不会触发真实恢复执行；真实执行动作是 012 新增的 `execute_recovery`。
 - 013 新增的 action receipt 读面只查询本地持久化 receipt，返回 `ReplyModel(reply_code=action_receipt|action_receipt_not_found)`；它不会重放动作，也不会借道 legacy recover / approvals / steer 路由推断结果。

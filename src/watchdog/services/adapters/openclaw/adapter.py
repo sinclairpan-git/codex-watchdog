@@ -16,6 +16,7 @@ from watchdog.services.adapters.openclaw.intents import READ_INTENTS, WRITE_INTE
 from watchdog.services.adapters.openclaw.reply_model import (
     build_action_not_available_reply,
     build_action_reply,
+    build_approval_inbox_reply,
     build_approval_queue_reply,
     build_blocker_explanation_reply,
     build_control_link_error_reply,
@@ -30,7 +31,11 @@ from watchdog.services.session_spine.events import (
     list_session_events as list_projected_session_events,
 )
 from watchdog.services.session_spine.receipts import lookup_action_receipt
-from watchdog.services.session_spine.service import SessionSpineUpstreamError, build_session_read_bundle
+from watchdog.services.session_spine.service import (
+    SessionSpineUpstreamError,
+    build_approval_inbox_bundle,
+    build_session_read_bundle,
+)
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -51,7 +56,7 @@ class OpenClawAdapter:
         self,
         intent_code: str,
         *,
-        project_id: str,
+        project_id: str | None = None,
         operator: str = "openclaw",
         idempotency_key: str | None = None,
         approval_id: str | None = None,
@@ -60,6 +65,8 @@ class OpenClawAdapter:
     ) -> ReplyModel:
         try:
             if intent_code == "get_action_receipt":
+                if not project_id:
+                    return build_action_not_available_reply(intent_code, "project_id is required")
                 receipt_arguments = dict(arguments or {})
                 query_body: dict[str, Any] = {
                     "action_code": receipt_arguments.get("action_code"),
@@ -76,6 +83,11 @@ class OpenClawAdapter:
                     )
                 return lookup_action_receipt(query, receipt_store=self._receipt_store)
             if intent_code in READ_INTENTS:
+                if intent_code == "list_approval_inbox":
+                    bundle = build_approval_inbox_bundle(self._client, project_id)
+                    return build_approval_inbox_reply(bundle)
+                if not project_id:
+                    return build_action_not_available_reply(intent_code, "project_id is required")
                 bundle = build_session_read_bundle(self._client, project_id)
                 if intent_code == "get_session":
                     return build_session_reply(bundle)
@@ -90,6 +102,8 @@ class OpenClawAdapter:
             action_code = WRITE_INTENT_TO_ACTION.get(intent_code)
             if action_code is None:
                 return build_unsupported_intent_reply(intent_code)
+            if not project_id:
+                return build_action_not_available_reply(intent_code, "project_id is required")
             if not idempotency_key:
                 return build_action_not_available_reply(intent_code, "idempotency_key is required")
             action_arguments = dict(arguments or {})

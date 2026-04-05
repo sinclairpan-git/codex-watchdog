@@ -14,6 +14,7 @@ from watchdog.contracts.session_spine.models import (
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
+    build_approval_inbox_projections,
     build_approval_projections,
     build_session_projection,
     build_task_progress_view,
@@ -43,6 +44,13 @@ class SessionReadBundle:
     approval_queue: list[ApprovalProjection]
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovalInboxReadBundle:
+    project_id: str | None
+    approvals: list[dict[str, Any]]
+    approval_inbox: list[ApprovalProjection]
+
+
 def _load_task_or_raise(
     client: AControlAgentClient,
     project_id: str,
@@ -66,17 +74,20 @@ def _load_task_or_raise(
 
 def _load_approvals_or_raise(
     client: AControlAgentClient,
-    project_id: str,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     try:
         items = client.list_approvals(status="pending")
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
-    return [
+    rows = [
         dict(item)
         for item in items
-        if str(item.get("project_id") or "") == project_id
+        if str(item.get("status") or "").lower() == "pending"
     ]
+    if project_id is None:
+        return rows
+    return [row for row in rows if str(row.get("project_id") or "") == project_id]
 
 
 def build_session_read_bundle(
@@ -108,4 +119,16 @@ def build_session_read_bundle(
             native_thread_id=native_thread_id,
             approvals=approvals,
         ),
+    )
+
+
+def build_approval_inbox_bundle(
+    client: AControlAgentClient,
+    project_id: str | None = None,
+) -> ApprovalInboxReadBundle:
+    approvals = _load_approvals_or_raise(client, project_id)
+    return ApprovalInboxReadBundle(
+        project_id=project_id,
+        approvals=approvals,
+        approval_inbox=build_approval_inbox_projections(approvals=approvals),
     )

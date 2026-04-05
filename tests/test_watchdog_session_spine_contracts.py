@@ -28,7 +28,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.014"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.016"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -211,3 +211,8 @@ def test_supervision_evaluation_contract_extensions_are_stable() -> None:
     assert payload["supervision_evaluation"]["thread_id"] == "session:repo-a"
     assert payload["supervision_evaluation"]["native_thread_id"] == "thr_native_1"
     assert payload["supervision_evaluation"]["reason_code"] == "stuck_soft"
+
+
+def test_approval_inbox_contract_extension_is_stable() -> None:
+    assert ReplyCode.APPROVAL_INBOX == "approval_inbox"
+    assert ReplyKind.APPROVALS == "approvals"

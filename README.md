@@ -50,10 +50,11 @@ python scripts/export_openapi.py
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
 
-010-015 收口后的 OpenClaw 最小稳定接口面：
+010-016 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` 返回稳定 `TaskProgressView`
+- `GET /api/v1/watchdog/approval-inbox` 返回稳定跨项目 pending approvals inbox
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` 返回稳定审批队列
 - `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` 返回稳定 `ReplyModel(reply_code=stuck_explanation)`
 - `GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation` 返回稳定 `ReplyModel(reply_code=blocker_explanation)`
@@ -83,6 +84,11 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 `GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation` 两个 stable read route；
 它们与 OpenClaw adapter 复用同一套 explanation builder，继续只基于稳定 `SessionReadBundle + FactRecord`
 产出 `ReplyModel(reply_code=stuck_explanation|blocker_explanation)`。
+016 在此基础上新增了 `GET /api/v1/watchdog/approval-inbox`，把跨项目待处理审批收敛为稳定
+`ReplyModel(reply_code=approval_inbox, approvals=ApprovalProjection[])`。它与 session 级
+`pending-approvals` 的区别是：前者面向全局 inbox，后者面向单项目会话视角；legacy
+`GET /api/v1/watchdog/approvals` 与 `POST /api/v1/watchdog/approvals/{approval_id}/decision`
+继续保留，但不承担 stable contract 角色。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成

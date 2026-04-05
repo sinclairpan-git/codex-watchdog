@@ -30,15 +30,40 @@ def build_approval_projections(
     native_thread_id: str | None,
     approvals: list[dict[str, Any]],
 ) -> list[ApprovalProjection]:
-    stable_thread_id = stable_thread_id_for_project(project_id)
     projections: list[ApprovalProjection] = []
     for approval in approvals:
         projections.append(
             ApprovalProjection(
                 approval_id=str(approval.get("approval_id") or ""),
                 project_id=project_id,
-                thread_id=stable_thread_id,
+                thread_id=stable_thread_id_for_project(project_id),
                 native_thread_id=native_thread_id or str(approval.get("thread_id") or "") or None,
+                risk_level=str(approval.get("risk_level") or "") or None,
+                command=str(approval.get("command") or ""),
+                reason=str(approval.get("reason") or ""),
+                alternative=str(approval.get("alternative") or ""),
+                status=str(approval.get("status") or ""),
+                requested_at=str(approval.get("requested_at") or ""),
+                decided_at=str(approval.get("decided_at") or "") or None,
+                decided_by=str(approval.get("decided_by") or "") or None,
+            )
+        )
+    return projections
+
+
+def build_approval_inbox_projections(
+    *,
+    approvals: list[dict[str, Any]],
+) -> list[ApprovalProjection]:
+    projections: list[ApprovalProjection] = []
+    for approval in approvals:
+        project_id = str(approval.get("project_id") or "")
+        projections.append(
+            ApprovalProjection(
+                approval_id=str(approval.get("approval_id") or ""),
+                project_id=project_id,
+                thread_id=stable_thread_id_for_project(project_id),
+                native_thread_id=str(approval.get("thread_id") or "") or None,
                 risk_level=str(approval.get("risk_level") or "") or None,
                 command=str(approval.get("command") or ""),
                 reason=str(approval.get("reason") or ""),

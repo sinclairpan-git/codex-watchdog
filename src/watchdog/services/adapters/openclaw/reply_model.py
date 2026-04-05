@@ -3,6 +3,9 @@ from __future__ import annotations
 from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
 from watchdog.contracts.session_spine.models import ReplyModel, WatchdogActionResult
 from watchdog.services.session_spine.replies import (
+    build_approval_inbox_reply as build_approval_inbox_read_reply,
+)
+from watchdog.services.session_spine.replies import (
     build_approval_queue_reply as build_approval_queue_read_reply,
 )
 from watchdog.services.session_spine.replies import (
@@ -13,7 +16,7 @@ from watchdog.services.session_spine.replies import build_session_reply as build
 from watchdog.services.session_spine.replies import (
     build_stuck_explanation_reply as build_stuck_explanation_read_reply,
 )
-from watchdog.services.session_spine.service import SessionReadBundle
+from watchdog.services.session_spine.service import ApprovalInboxReadBundle, SessionReadBundle
 
 
 def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
@@ -26,6 +29,10 @@ def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
 
 def build_approval_queue_reply(bundle: SessionReadBundle) -> ReplyModel:
     return build_approval_queue_read_reply(bundle)
+
+
+def build_approval_inbox_reply(bundle: ApprovalInboxReadBundle) -> ReplyModel:
+    return build_approval_inbox_read_reply(bundle)
 
 
 def build_stuck_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:

@@ -406,6 +406,74 @@
         }
       }
     },
+    "/api/v1/watchdog/approval-inbox": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "List pending approvals across projects via stable contract",
+        "description": "Stable read surface for a cross-project approval inbox. Returns a versioned ReplyModel carrying ApprovalProjection rows instead of the legacy raw approvals payload.",
+        "operationId": "get_approval_inbox_api_v1_watchdog_approval_inbox_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Approval Inbox Api V1 Watchdog Approval Inbox Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/sessions/{project_id}": {
       "get": {
         "tags": [

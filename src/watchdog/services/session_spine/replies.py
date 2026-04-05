@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
 from watchdog.contracts.session_spine.models import ReplyModel
-from watchdog.services.session_spine.service import SessionReadBundle
+from watchdog.services.session_spine.service import ApprovalInboxReadBundle, SessionReadBundle
 
 
 def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
@@ -35,6 +35,16 @@ def build_approval_queue_reply(bundle: SessionReadBundle) -> ReplyModel:
         message=f"{len(bundle.approval_queue)} pending approval(s)",
         approvals=bundle.approval_queue,
         facts=bundle.facts,
+    )
+
+
+def build_approval_inbox_reply(bundle: ApprovalInboxReadBundle) -> ReplyModel:
+    return ReplyModel(
+        reply_kind=ReplyKind.APPROVALS,
+        reply_code=ReplyCode.APPROVAL_INBOX,
+        intent_code="list_approval_inbox",
+        message=f"{len(bundle.approval_inbox)} pending approval(s)",
+        approvals=bundle.approval_inbox,
     )
 
 

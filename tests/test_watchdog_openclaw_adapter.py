@@ -222,6 +222,56 @@ def test_adapter_explain_blocker_uses_fact_records_and_stable_read_model(tmp_pat
     assert "approval required" in reply.message
 
 
+def test_adapter_list_approval_inbox_returns_stable_global_pending_queue(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "approval_id": "appr_002",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L3",
+                "command": "uv run ruff check",
+                "reason": "lint gate",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_approval_inbox")
+
+    assert reply.reply_code == "approval_inbox"
+    assert [approval.project_id for approval in reply.approvals] == ["repo-a", "repo-b"]
+    assert [approval.thread_id for approval in reply.approvals] == ["session:repo-a", "session:repo-b"]
+
+
 def test_adapter_request_recovery_maps_advisory_action_result_to_reply_model(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,

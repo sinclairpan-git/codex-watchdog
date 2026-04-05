@@ -8,6 +8,7 @@ READ_INTENTS = {
     "why_stuck",
     "explain_blocker",
     "list_pending_approvals",
+    "list_approval_inbox",
 }
 
 RECEIPT_INTENTS = {"get_action_receipt"}

@@ -153,6 +153,85 @@ def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
     assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
 
 
+def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            approvals=[
+                {
+                    "approval_id": "appr_001",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:21:00Z",
+                },
+                {
+                    "approval_id": "appr_002",
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "risk_level": "L3",
+                    "command": "uv run ruff check",
+                    "reason": "lint gate",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                },
+                {
+                    "approval_id": "appr_003",
+                    "project_id": "repo-c",
+                    "thread_id": "thr_native_3",
+                    "risk_level": "L1",
+                    "command": "echo ok",
+                    "reason": "already handled",
+                    "alternative": "",
+                    "status": "approved",
+                    "requested_at": "2026-04-05T05:23:00Z",
+                },
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    inbox_resp = c.get("/api/v1/watchdog/approval-inbox", headers={"Authorization": "Bearer wt"})
+    repo_a_resp = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert inbox_resp.status_code == 200
+    assert repo_a_resp.status_code == 200
+
+    inbox_data = inbox_resp.json()["data"]
+    repo_a_data = repo_a_resp.json()["data"]
+
+    assert inbox_data["reply_code"] == "approval_inbox"
+    assert [item["approval_id"] for item in inbox_data["approvals"]] == ["appr_001", "appr_002"]
+    assert [item["project_id"] for item in inbox_data["approvals"]] == ["repo-a", "repo-b"]
+    assert [item["thread_id"] for item in inbox_data["approvals"]] == ["session:repo-a", "session:repo-b"]
+
+    assert repo_a_data["reply_code"] == "approval_inbox"
+    assert [item["approval_id"] for item in repo_a_data["approvals"]] == ["appr_001"]
+    assert repo_a_data["approvals"][0]["native_thread_id"] == "thr_native_1"
+
+
 def test_session_spine_stuck_explanation_route_returns_stable_reply_model(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

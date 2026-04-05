@@ -9,13 +9,18 @@ from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.replies import (
+    build_approval_inbox_reply,
     build_approval_queue_reply,
     build_blocker_explanation_reply,
     build_progress_reply,
     build_session_reply,
     build_stuck_explanation_reply,
 )
-from watchdog.services.session_spine.service import SessionSpineUpstreamError, build_session_read_bundle
+from watchdog.services.session_spine.service import (
+    SessionSpineUpstreamError,
+    build_approval_inbox_bundle,
+    build_session_read_bundle,
+)
 from watchdog.storage.action_receipts import ActionReceiptStore
 
 router = APIRouter(prefix="/watchdog", tags=["session-spine"])
@@ -34,6 +39,29 @@ def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuer
         return ActionReceiptQuery.model_validate(payload)
     except ValidationError:
         return None
+
+
+@router.get(
+    "/approval-inbox",
+    summary="List pending approvals across projects via stable contract",
+    description=(
+        "Stable read surface for a cross-project approval inbox. Returns a "
+        "versioned ReplyModel carrying ApprovalProjection rows instead of the "
+        "legacy raw approvals payload."
+    ),
+)
+def get_approval_inbox(
+    request: Request,
+    project_id: str | None = None,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_approval_inbox_bundle(client, project_id)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_approval_inbox_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(
