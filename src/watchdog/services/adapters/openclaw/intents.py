@@ -4,6 +4,7 @@ from watchdog.contracts.session_spine.enums import ActionCode
 
 READ_INTENTS = {
     "list_sessions",
+    "list_session_events",
     "get_session",
     "get_session_by_native_thread",
     "get_progress",

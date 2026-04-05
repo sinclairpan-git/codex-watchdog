@@ -283,6 +283,49 @@ def test_integration_request_recovery_is_advisory_only(tmp_path: Path) -> None:
     assert reply.message == "recovery is available"
 
 
+def test_integration_list_session_events_returns_stable_reply_model(tmp_path: Path) -> None:
+    class EventsClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            assert project_id == "repo-a"
+            _ = poll_interval
+            return (
+                'id: evt_001\n'
+                "event: task_created\n"
+                'data: {"event_id":"evt_001","project_id":"repo-a","thread_id":"thr_native_1","event_type":"task_created","event_source":"a_control_agent","payload_json":{"status":"running","phase":"planning"},"created_at":"2026-04-05T10:00:00Z"}\n\n',
+                "text/event-stream",
+            )
+
+    adapter = _adapter(
+        tmp_path,
+        EventsClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+
+    reply = adapter.handle_intent("list_session_events", project_id="repo-a")
+
+    assert reply.reply_code == "session_event_snapshot"
+    assert len(reply.events) == 1
+    assert reply.events[0].event_code == "session_created"
+
+
 def test_integration_post_operator_guidance_success(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,

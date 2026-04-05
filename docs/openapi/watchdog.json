@@ -843,6 +843,67 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions/{project_id}/event-snapshot": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Get stable session event snapshot",
+        "description": "Stable JSON read surface for session events. Returns a versioned ReplyModel carrying SessionEvent rows while leaving the stable SSE route unchanged.",
+        "operationId": "get_session_event_snapshot_api_v1_watchdog_sessions__project_id__event_snapshot_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Session Event Snapshot Api V1 Watchdog Sessions  Project Id  Event Snapshot Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/sessions/{project_id}/stuck-explanation": {
       "get": {
         "tags": [

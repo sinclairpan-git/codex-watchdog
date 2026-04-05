@@ -19,6 +19,7 @@ class AttentionState(str, Enum):
 
 class ReplyKind(str, Enum):
     SESSION = "session"
+    EVENTS = "events"
     APPROVALS = "approvals"
     EXPLANATION = "explanation"
     ACTION_RESULT = "action_result"
@@ -27,6 +28,7 @@ class ReplyKind(str, Enum):
 class ReplyCode(str, Enum):
     SESSION_PROJECTION = "session_projection"
     SESSION_DIRECTORY = "session_directory"
+    SESSION_EVENT_SNAPSHOT = "session_event_snapshot"
     TASK_PROGRESS_VIEW = "task_progress_view"
     WORKSPACE_ACTIVITY_VIEW = "workspace_activity_view"
     APPROVAL_QUEUE = "approval_queue"

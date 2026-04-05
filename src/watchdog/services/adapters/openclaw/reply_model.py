@@ -11,6 +11,9 @@ from watchdog.services.session_spine.replies import (
 from watchdog.services.session_spine.replies import (
     build_blocker_explanation_reply as build_blocker_explanation_read_reply,
 )
+from watchdog.services.session_spine.replies import (
+    build_session_event_snapshot_reply as build_session_event_snapshot_read_reply,
+)
 from watchdog.services.session_spine.replies import build_progress_reply as build_progress_read_reply
 from watchdog.services.session_spine.replies import (
     build_session_directory_reply as build_session_directory_read_reply,
@@ -28,6 +31,7 @@ from watchdog.services.session_spine.service import (
     SessionReadBundle,
     WorkspaceActivityReadBundle,
 )
+from watchdog.contracts.session_spine.models import SessionEvent
 
 
 def build_session_reply(
@@ -40,6 +44,10 @@ def build_session_reply(
 
 def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:
     return build_session_directory_read_reply(bundle)
+
+
+def build_session_event_snapshot_reply(events: list[SessionEvent]) -> ReplyModel:
+    return build_session_event_snapshot_read_reply(events)
 
 
 def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:

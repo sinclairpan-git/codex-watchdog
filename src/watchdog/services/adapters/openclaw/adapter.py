@@ -21,6 +21,7 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_blocker_explanation_reply,
     build_control_link_error_reply,
     build_progress_reply,
+    build_session_event_snapshot_reply,
     build_session_directory_reply,
     build_session_reply,
     build_stuck_explanation_reply,
@@ -108,6 +109,9 @@ class OpenClawAdapter:
                     return build_session_reply(bundle, intent_code=intent_code)
                 if not project_id:
                     return build_action_not_available_reply(intent_code, "project_id is required")
+                if intent_code == "list_session_events":
+                    events = list_projected_session_events(self._client, project_id)
+                    return build_session_event_snapshot_reply(events)
                 if intent_code == "get_workspace_activity":
                     try:
                         recent_minutes = int((arguments or {}).get("recent_minutes") or 15)

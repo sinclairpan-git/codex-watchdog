@@ -5,6 +5,8 @@ from watchdog.contracts.session_spine.enums import (
     ActionStatus,
     AttentionState,
     Effect,
+    EventCode,
+    EventKind,
     ReplyCode,
     ReplyKind,
     SessionState,
@@ -14,6 +16,7 @@ from watchdog.contracts.session_spine.models import (
     ActionReceiptQuery,
     FactRecord,
     ReplyModel,
+    SessionEvent,
     SessionProjection,
     SupervisionEvaluation,
     TaskProgressView,
@@ -21,6 +24,7 @@ from watchdog.contracts.session_spine.models import (
     WatchdogActionResult,
 )
 from watchdog.contracts.session_spine.versioning import (
+    SESSION_EVENTS_SCHEMA_VERSION,
     SESSION_SPINE_CONTRACT_VERSION,
     SESSION_SPINE_SCHEMA_VERSION,
 )
@@ -28,7 +32,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.020"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.021"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -278,3 +282,34 @@ def test_native_thread_resolution_reuses_session_projection_reply_contract() -> 
 def test_workspace_activity_contract_extension_is_stable() -> None:
     assert "WORKSPACE_ACTIVITY_VIEW" in ReplyCode.__members__
     assert "workspace_activity" in ReplyModel.model_fields
+
+
+def test_session_event_snapshot_contract_extension_is_stable() -> None:
+    event = SessionEvent(
+        event_id="evt_001",
+        event_code=EventCode.SESSION_CREATED,
+        event_kind=EventKind.LIFECYCLE,
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        source="a_control_agent",
+        observed_at="2026-04-05T10:00:00Z",
+        summary="session created in planning",
+        attributes={"phase": "planning"},
+    )
+    reply = ReplyModel(
+        reply_kind=ReplyKind.EVENTS,
+        reply_code=ReplyCode.SESSION_EVENT_SNAPSHOT,
+        intent_code="list_session_events",
+        message="1 event(s)",
+        events=[event],
+    )
+
+    payload = reply.model_dump(mode="json")
+
+    assert ReplyKind.EVENTS == "events"
+    assert ReplyCode.SESSION_EVENT_SNAPSHOT == "session_event_snapshot"
+    assert payload["reply_kind"] == "events"
+    assert payload["reply_code"] == "session_event_snapshot"
+    assert payload["events"][0]["event_code"] == "session_created"
+    assert payload["events"][0]["schema_version"] == SESSION_EVENTS_SCHEMA_VERSION

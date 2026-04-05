@@ -446,6 +446,33 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
     assert reply.sessions[1].pending_approval_count == 1
 
 
+def test_adapter_list_session_events_returns_stable_reply_model(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent("list_session_events", project_id="repo-a")
+
+    assert reply.reply_code == "session_event_snapshot"
+    assert reply.reply_kind == "events"
+    assert len(reply.events) == 1
+    assert reply.events[0].event_code == "session_created"
+    assert reply.events[0].thread_id == "session:repo-a"
+
+
 def test_adapter_request_recovery_maps_advisory_action_result_to_reply_model(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,

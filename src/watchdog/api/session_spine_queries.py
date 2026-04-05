@@ -13,11 +13,13 @@ from watchdog.services.session_spine.replies import (
     build_approval_queue_reply,
     build_blocker_explanation_reply,
     build_progress_reply,
+    build_session_event_snapshot_reply,
     build_session_directory_reply,
     build_session_reply,
     build_stuck_explanation_reply,
     build_workspace_activity_reply,
 )
+from watchdog.services.session_spine.events import list_session_events as list_projected_session_events
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
     build_approval_inbox_bundle,
@@ -211,6 +213,28 @@ def get_pending_approvals(
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_approval_queue_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/{project_id}/event-snapshot",
+    summary="Get stable session event snapshot",
+    description=(
+        "Stable JSON read surface for session events. Returns a versioned ReplyModel "
+        "carrying SessionEvent rows while leaving the stable SSE route unchanged."
+    ),
+)
+def get_session_event_snapshot(
+    project_id: str,
+    request: Request,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        events = list_projected_session_events(client, project_id)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_session_event_snapshot_reply(events).model_dump(mode="json"))
 
 
 @router.get(

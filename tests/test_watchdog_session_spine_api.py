@@ -308,6 +308,29 @@ def test_workspace_activity_route_returns_stable_workspace_activity_view(tmp_pat
     assert a_client.workspace_activity_calls == [("repo-a", 30)]
 
 
+def test_session_event_snapshot_route_returns_stable_reply_model(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/event-snapshot",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["reply_kind"] == "events"
+    assert data["reply_code"] == "session_event_snapshot"
+    assert data["intent_code"] == "list_session_events"
+    assert len(data["events"]) == 1
+    assert data["events"][0]["event_code"] == "session_updated"
+    assert data["events"][0]["thread_id"] == "session:repo-a"
+    assert "payload_json" not in data["events"][0]
+
+
 def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

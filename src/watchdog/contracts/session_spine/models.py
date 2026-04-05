@@ -134,6 +134,7 @@ class ReplyModel(SessionSpineModel):
     workspace_activity: WorkspaceActivityView | None = None
     action_result: WatchdogActionResult | None = None
     approvals: list[ApprovalProjection] = Field(default_factory=list)
+    events: list[SessionEvent] = Field(default_factory=list)
     facts: list[FactRecord] = Field(default_factory=list)
 
 
