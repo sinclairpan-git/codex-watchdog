@@ -8,6 +8,7 @@ READ_INTENTS = {
     "get_session",
     "get_session_by_native_thread",
     "get_progress",
+    "list_session_facts",
     "get_workspace_activity",
     "why_stuck",
     "explain_blocker",

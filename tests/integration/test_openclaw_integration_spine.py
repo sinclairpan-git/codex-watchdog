@@ -403,6 +403,57 @@ def test_integration_api_and_adapter_share_stuck_explanation_semantics(tmp_path:
     assert api_reply["message"] == adapter_reply.message
 
 
+def test_integration_api_and_adapter_share_session_facts_semantics(tmp_path: Path) -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "waiting_human",
+        "phase": "approval",
+        "pending_approval": True,
+        "approval_risk": "L2",
+        "last_summary": "waiting for approval",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    approvals = [
+        {
+            "approval_id": "appr_001",
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "pending",
+            "command": "uv run pytest",
+            "reason": "verify tests",
+            "alternative": "",
+            "requested_at": "2026-04-05T05:21:00Z",
+        }
+    ]
+    adapter = _adapter(tmp_path, FakeAClient(task=task, approvals=approvals))
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(task=task, approvals=approvals),
+    )
+    client = TestClient(app)
+
+    adapter_reply = adapter.handle_intent("list_session_facts", project_id="repo-a")
+    api_response = client.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert api_response.status_code == 200
+    api_reply = api_response.json()["data"]
+    assert api_reply["reply_kind"] == adapter_reply.reply_kind
+    assert api_reply["reply_code"] == adapter_reply.reply_code
+    assert api_reply["intent_code"] == adapter_reply.intent_code
+    assert api_reply["message"] == adapter_reply.message
+    assert [fact["fact_code"] for fact in api_reply["facts"]] == [
+        fact.fact_code for fact in adapter_reply.facts
+    ]
+
+
 def test_integration_api_and_adapter_share_approval_inbox_semantics(tmp_path: Path) -> None:
     task = {
         "project_id": "repo-a",

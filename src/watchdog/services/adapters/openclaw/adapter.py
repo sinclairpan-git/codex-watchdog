@@ -21,6 +21,7 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_blocker_explanation_reply,
     build_control_link_error_reply,
     build_progress_reply,
+    build_session_facts_reply,
     build_session_event_snapshot_reply,
     build_session_directory_reply,
     build_session_reply,
@@ -131,6 +132,8 @@ class OpenClawAdapter:
                     return build_session_reply(bundle)
                 if intent_code == "get_progress":
                     return build_progress_reply(bundle)
+                if intent_code == "list_session_facts":
+                    return build_session_facts_reply(bundle)
                 if intent_code == "list_pending_approvals":
                     return build_approval_queue_reply(bundle)
                 if intent_code == "why_stuck":

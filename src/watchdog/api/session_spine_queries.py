@@ -13,6 +13,7 @@ from watchdog.services.session_spine.replies import (
     build_approval_queue_reply,
     build_blocker_explanation_reply,
     build_progress_reply,
+    build_session_facts_reply,
     build_session_event_snapshot_reply,
     build_session_directory_reply,
     build_session_reply,
@@ -163,6 +164,29 @@ def get_progress(
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_progress_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/{project_id}/facts",
+    summary="Get stable session facts truth source",
+    description=(
+        "Canonical stable facts read surface for OpenClaw and other callers. "
+        "Returns a versioned ReplyModel carrying FactRecord rows without "
+        "changing the explanation surfaces."
+    ),
+)
+def get_session_facts(
+    project_id: str,
+    request: Request,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_session_read_bundle(client, project_id)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_session_facts_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(

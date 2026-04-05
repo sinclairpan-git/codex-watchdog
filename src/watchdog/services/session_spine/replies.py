@@ -56,6 +56,16 @@ def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
     )
 
 
+def build_session_facts_reply(bundle: SessionReadBundle) -> ReplyModel:
+    return ReplyModel(
+        reply_kind=ReplyKind.FACTS,
+        reply_code=ReplyCode.SESSION_FACTS,
+        intent_code="list_session_facts",
+        message=f"{len(bundle.facts)} fact(s)",
+        facts=bundle.facts,
+    )
+
+
 def build_workspace_activity_reply(bundle: WorkspaceActivityReadBundle) -> ReplyModel:
     activity = bundle.workspace_activity
     if not activity.cwd_exists:

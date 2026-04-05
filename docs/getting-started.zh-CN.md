@@ -138,12 +138,13 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
-OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-021 收口后的 stable surface
+OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-022 收口后的 stable surface
 （需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）：
 
 - `GET /api/v1/watchdog/sessions` — 读取稳定跨项目 `SessionProjection[]` 目录
 - `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` — 在只知道 native thread_id 时解析稳定 `SessionProjection`
+- `GET /api/v1/watchdog/sessions/{project_id}/facts` — 读取稳定 `ReplyModel(reply_code=session_facts, facts=FactRecord[])`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
 - `GET /api/v1/watchdog/sessions/{project_id}/workspace-activity` — 读取稳定 `WorkspaceActivityView`
 - `GET /api/v1/watchdog/approval-inbox` — 读取稳定跨项目 pending approvals inbox；可选 `?project_id=...`
@@ -204,6 +205,11 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
   `WatchdogActionResult(reply_code=action_result, effect=steer_posted)`。alias route
   `POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance` 只是 canonical 动作的包装；
   A 侧 raw `POST /api/v1/tasks/{project_id}/steer` 继续存在，但不再承担 stable contract 角色。
+- 022 新增的 `GET /api/v1/watchdog/sessions/{project_id}/facts` 与 OpenClaw adapter
+  `list_session_facts` 复用同一份 stable facts builder，返回
+  `ReplyModel(reply_code=session_facts, facts=FactRecord[])`。它承担“事实真值层”角色；
+  015 引入的 `stuck-explanation` / `blocker-explanation` 继续承担“解释层”角色，二者并存，
+  不互相替代，也不引入 fact history / filter / 分页语义。
 - 015 新增的两个 explanation route 仍然复用既有 `ReplyModel`，不会新增 explanation DTO，也不会推进 session spine contract/schema version；它们与 OpenClaw adapter 共享同一套 explanation builder。
 - 016 新增的 `GET /api/v1/watchdog/approval-inbox` 复用既有 `ApprovalProjection`，返回稳定 `ReplyModel(reply_code=approval_inbox)`；它只覆盖 pending approvals inbox，不提供 history / status passthrough，也不替换 legacy `/watchdog/approvals` raw proxy。
 - 014 新增的稳定监管评估动作是 `WatchdogAction(action_code=evaluate_supervision)`；它返回 `WatchdogActionResult(reply_code=supervision_evaluation)` 与 `SupervisionEvaluation`，必要时才执行一次 advisory steer。

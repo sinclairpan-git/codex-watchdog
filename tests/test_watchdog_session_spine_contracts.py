@@ -28,11 +28,78 @@ from watchdog.contracts.session_spine.versioning import (
     SESSION_SPINE_CONTRACT_VERSION,
     SESSION_SPINE_SCHEMA_VERSION,
 )
+from watchdog.services.session_spine import replies as session_spine_replies
+from watchdog.services.session_spine.service import SessionReadBundle
 
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.021"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.022"
+    assert SESSION_EVENTS_SCHEMA_VERSION == "2026-04-05.011"
+
+
+def test_session_facts_contract_extension_is_stable() -> None:
+    fact = FactRecord(
+        fact_id="fact_approval_pending",
+        fact_code="approval_pending",
+        fact_kind="blocker",
+        severity="needs_human",
+        summary="approval required",
+        detail="waiting for approval",
+        source="approval_store",
+        observed_at="2026-04-05T05:22:00Z",
+        related_ids={"approval_id": "appr_001"},
+    )
+    session = SessionProjection(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        session_state=SessionState.AWAITING_APPROVAL,
+        activity_phase="approval",
+        attention_state=AttentionState.NEEDS_HUMAN,
+        headline="waiting for approval",
+        pending_approval_count=1,
+        available_intents=["list_session_facts", "explain_blocker"],
+    )
+    progress = TaskProgressView(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        activity_phase="approval",
+        summary="waiting for approval",
+        files_touched=["src/example.py"],
+        context_pressure="low",
+        stuck_level=0,
+        primary_fact_codes=["approval_pending"],
+        blocker_fact_codes=["approval_pending"],
+        last_progress_at="2026-04-05T05:20:00Z",
+    )
+    assert hasattr(ReplyKind, "FACTS")
+    assert hasattr(ReplyCode, "SESSION_FACTS")
+    assert hasattr(session_spine_replies, "build_session_facts_reply")
+
+    reply = session_spine_replies.build_session_facts_reply(
+        SessionReadBundle(
+            project_id="repo-a",
+            task={"project_id": "repo-a", "thread_id": "thr_native_1"},
+            approvals=[],
+            facts=[fact],
+            session=session,
+            progress=progress,
+            approval_queue=[],
+        )
+    )
+
+    payload = reply.model_dump(mode="json")
+
+    assert ReplyKind.FACTS == "facts"
+    assert ReplyCode.SESSION_FACTS == "session_facts"
+    assert payload["reply_kind"] == "facts"
+    assert payload["reply_code"] == "session_facts"
+    assert payload["intent_code"] == "list_session_facts"
+    assert payload["message"] == "1 fact(s)"
+    assert payload["facts"][0]["fact_code"] == "approval_pending"
+    assert payload["facts"][0]["schema_version"] == SESSION_SPINE_SCHEMA_VERSION
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:

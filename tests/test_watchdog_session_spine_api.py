@@ -185,6 +185,55 @@ def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
     assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
 
 
+def test_session_spine_facts_route_returns_stable_truth_source_without_touching_explanations(
+    tmp_path,
+) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+    session_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+    stuck_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+    blocker_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/blocker-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert facts_response.status_code == 200
+    assert session_response.status_code == 200
+    assert stuck_response.status_code == 200
+    assert blocker_response.status_code == 200
+
+    facts_data = facts_response.json()["data"]
+    session_data = session_response.json()["data"]
+    stuck_data = stuck_response.json()["data"]
+    blocker_data = blocker_response.json()["data"]
+
+    assert facts_data["reply_kind"] == "facts"
+    assert facts_data["reply_code"] == "session_facts"
+    assert facts_data["intent_code"] == "list_session_facts"
+    assert facts_data["message"] == "2 fact(s)"
+    assert [fact["fact_code"] for fact in facts_data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert facts_data["facts"] == session_data["facts"]
+    assert stuck_data["reply_code"] == "stuck_explanation"
+    assert blocker_data["reply_code"] == "blocker_explanation"
+
+
 def test_session_directory_route_returns_stable_session_projections(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

@@ -328,6 +328,56 @@ def test_adapter_explain_blocker_uses_fact_records_and_stable_read_model(tmp_pat
     assert "approval required" in reply.message
 
 
+def test_adapter_list_session_facts_returns_stable_truth_source(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+
+    facts_reply = adapter.handle_intent("list_session_facts", project_id="repo-a")
+    session_reply = adapter.handle_intent("get_session", project_id="repo-a")
+    blocker_reply = adapter.handle_intent("explain_blocker", project_id="repo-a")
+
+    assert facts_reply.reply_kind == "facts"
+    assert facts_reply.reply_code == "session_facts"
+    assert facts_reply.intent_code == "list_session_facts"
+    assert facts_reply.message == "2 fact(s)"
+    assert [fact.fact_code for fact in facts_reply.facts] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert [fact.fact_code for fact in facts_reply.facts] == [
+        fact.fact_code for fact in session_reply.facts
+    ]
+    assert blocker_reply.reply_code == "blocker_explanation"
+
+
 def test_adapter_list_approval_inbox_returns_stable_global_pending_queue(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
