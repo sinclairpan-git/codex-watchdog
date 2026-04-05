@@ -106,3 +106,39 @@ def test_session_events_route_returns_control_link_error_on_upstream_failure(tmp
     assert resp.status_code == 200
     assert resp.json()["success"] is False
     assert resp.json()["error"]["code"] == "CONTROL_LINK_ERROR"
+
+
+def test_session_events_follow_route_returns_control_link_error_on_stream_start_failure(tmp_path) -> None:
+    class BrokenEventsClient:
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ):
+            _ = (project_id, poll_interval)
+            return "", "text/event-stream"
+
+        def iter_events(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ):
+            _ = (project_id, poll_interval)
+            raise httpx.ConnectError("refused", request=httpx.Request("GET", "http://a.test"))
+
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=BrokenEventsClient(),
+    )
+    c = TestClient(app)
+
+    resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/events",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is False
+    assert resp.json()["error"]["code"] == "CONTROL_LINK_ERROR"

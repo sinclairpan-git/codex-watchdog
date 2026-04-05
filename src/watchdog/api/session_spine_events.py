@@ -10,7 +10,8 @@ from watchdog.envelope import err
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_spine.events import (
     _load_raw_events_snapshot_or_raise,
-    iter_stable_sse_stream,
+    iter_session_events,
+    render_stable_sse_event,
     render_stable_sse_snapshot,
 )
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
@@ -58,10 +59,18 @@ def get_session_events(
             headers=headers,
         )
 
-    def stream() -> Any:
-        yield from iter_stable_sse_stream(
-            client.iter_events(project_id, poll_interval=poll_interval)
+    try:
+        stable_events = iter_session_events(
+            client,
+            project_id,
+            poll_interval=poll_interval,
         )
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+
+    def stream() -> Any:
+        for event in stable_events:
+            yield render_stable_sse_event(event)
 
     return StreamingResponse(
         stream(),

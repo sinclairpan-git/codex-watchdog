@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 from collections.abc import Iterator
 from typing import Any
 
@@ -61,7 +62,7 @@ class AControlAgentClient:
             if not isinstance(body, dict):
                 raise RuntimeError("invalid_envelope_shape")
             if not body.get("success"):
-                return []
+                raise RuntimeError("task_list_failed")
             data = body.get("data")
             if not isinstance(data, dict):
                 raise RuntimeError("invalid_envelope_shape")
@@ -87,7 +88,7 @@ class AControlAgentClient:
             if not isinstance(body, dict):
                 raise RuntimeError("invalid_envelope_shape")
             if not body.get("success"):
-                return []
+                raise RuntimeError("approval_list_failed")
             data = body.get("data")
             if not isinstance(data, dict):
                 raise RuntimeError("invalid_envelope_shape")
@@ -233,11 +234,25 @@ class AControlAgentClient:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
         params = {"follow": "true", "poll_interval": str(poll_interval)}
         timeout = httpx.Timeout(self._settings.http_timeout_s, read=None)
-        with httpx.Client(timeout=timeout) as client:
-            with client.stream("GET", url, headers=self._auth_headers(), params=params) as resp:
-                content_type = str(resp.headers.get("content-type", ""))
-                if not content_type.startswith("text/event-stream"):
-                    raise RuntimeError("invalid_event_stream_from_a_agent")
+        stack = ExitStack()
+        try:
+            client = stack.enter_context(httpx.Client(timeout=timeout))
+            resp = stack.enter_context(
+                client.stream("GET", url, headers=self._auth_headers(), params=params)
+            )
+            content_type = str(resp.headers.get("content-type", ""))
+            if not content_type.startswith("text/event-stream"):
+                raise RuntimeError("invalid_event_stream_from_a_agent")
+        except Exception:
+            stack.close()
+            raise
+
+        def _iter_chunks() -> Iterator[str]:
+            try:
                 for chunk in resp.iter_text():
                     if chunk:
                         yield chunk
+            finally:
+                stack.close()
+
+        return _iter_chunks()

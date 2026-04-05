@@ -94,7 +94,7 @@ def project_raw_event(raw_event: dict[str, Any]) -> SessionEvent:
     )
 
 
-def _format_stable_sse_event(event: SessionEvent) -> str:
+def render_stable_sse_event(event: SessionEvent) -> str:
     body = json.dumps(event.model_dump(mode="json"), separators=(",", ":"))
     return f"id: {event.event_id}\nevent: {event.event_code}\ndata: {body}\n\n"
 
@@ -165,14 +165,14 @@ def _iter_projected_events_from_chunks(raw_chunks: Iterable[str]) -> Iterator[Se
 
 def render_stable_sse_snapshot(raw_snapshot: str) -> str:
     return "".join(
-        _format_stable_sse_event(event)
+        render_stable_sse_event(event)
         for event in _iter_projected_events_from_snapshot(raw_snapshot)
     )
 
 
 def iter_stable_sse_stream(raw_chunks: Iterable[str]) -> Iterator[str]:
     for event in _iter_projected_events_from_chunks(raw_chunks):
-        yield _format_stable_sse_event(event)
+        yield render_stable_sse_event(event)
 
 
 def _load_raw_events_snapshot_or_raise(
@@ -217,8 +217,14 @@ def iter_session_events(
     poll_interval: float = 0.5,
 ) -> Iterator[SessionEvent]:
     try:
-        yield from _iter_projected_events_from_chunks(
-            client.iter_events(project_id, poll_interval=poll_interval)
-        )
+        raw_chunks = client.iter_events(project_id, poll_interval=poll_interval)
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+
+    def _iter_events() -> Iterator[SessionEvent]:
+        try:
+            yield from _iter_projected_events_from_chunks(raw_chunks)
+        except (httpx.RequestError, RuntimeError, OSError) as exc:
+            raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+
+    return _iter_events()
