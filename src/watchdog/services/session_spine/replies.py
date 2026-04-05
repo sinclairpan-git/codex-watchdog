@@ -9,11 +9,15 @@ from watchdog.services.session_spine.service import (
 )
 
 
-def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
+def build_session_reply(
+    bundle: SessionReadBundle,
+    *,
+    intent_code: str = "get_session",
+) -> ReplyModel:
     return ReplyModel(
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.SESSION_PROJECTION,
-        intent_code="get_session",
+        intent_code=intent_code,
         message=bundle.session.headline,
         session=bundle.session,
         facts=bundle.facts,

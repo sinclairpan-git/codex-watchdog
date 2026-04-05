@@ -35,6 +35,12 @@ class FakeAClient:
                 return {"success": True, "data": dict(task)}
         raise AssertionError(project_id)
 
+    def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+        for task in self._tasks:
+            if thread_id == task["thread_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(thread_id)
+
     def list_tasks(self) -> list[dict[str, object]]:
         return [dict(task) for task in self._tasks]
 
@@ -158,6 +164,37 @@ def test_adapter_get_session_returns_stable_session_projection(tmp_path: Path) -
 
     assert reply.reply_code == "session_projection"
     assert reply.session is not None
+    assert reply.session.thread_id == "session:repo-a"
+    assert reply.session.native_thread_id == "thr_native_1"
+
+
+def test_adapter_get_session_by_native_thread_returns_stable_session_projection(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "get_session_by_native_thread",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+
+    assert reply.reply_code == "session_projection"
+    assert reply.intent_code == "get_session_by_native_thread"
+    assert reply.session is not None
+    assert reply.session.project_id == "repo-a"
     assert reply.session.thread_id == "session:repo-a"
     assert reply.session.native_thread_id == "thr_native_1"
 

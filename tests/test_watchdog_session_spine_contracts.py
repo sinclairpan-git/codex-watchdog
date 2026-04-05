@@ -244,3 +244,31 @@ def test_session_directory_contract_extension_is_stable() -> None:
     assert payload["reply_kind"] == "session"
     assert payload["sessions"][0]["project_id"] == "repo-a"
     assert payload["sessions"][0]["thread_id"] == "session:repo-a"
+
+
+def test_native_thread_resolution_reuses_session_projection_reply_contract() -> None:
+    session = SessionProjection(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        session_state=SessionState.ACTIVE,
+        activity_phase="editing_source",
+        attention_state=AttentionState.NORMAL,
+        headline="editing files",
+        pending_approval_count=0,
+        available_intents=["get_session", "continue_session"],
+    )
+    reply = ReplyModel(
+        reply_kind=ReplyKind.SESSION,
+        reply_code=ReplyCode.SESSION_PROJECTION,
+        intent_code="get_session_by_native_thread",
+        message="editing files",
+        session=session,
+    )
+
+    payload = reply.model_dump(mode="json")
+
+    assert payload["schema_version"] == SESSION_SPINE_SCHEMA_VERSION
+    assert payload["reply_code"] == "session_projection"
+    assert payload["intent_code"] == "get_session_by_native_thread"
+    assert payload["session"]["native_thread_id"] == "thr_native_1"

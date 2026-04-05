@@ -5,6 +5,7 @@ from watchdog.contracts.session_spine.enums import ActionCode
 READ_INTENTS = {
     "list_sessions",
     "get_session",
+    "get_session_by_native_thread",
     "get_progress",
     "why_stuck",
     "explain_blocker",

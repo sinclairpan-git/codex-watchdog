@@ -32,6 +32,21 @@ class AControlAgentClient:
                 return body
             raise RuntimeError("invalid_envelope_shape")
 
+    def get_envelope_by_thread(self, thread_id: str) -> dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/by-thread/{thread_id}"
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.get(url, headers=self._auth_headers())
+            except httpx.RequestError as exc:
+                raise exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if isinstance(body, dict):
+                return body
+            raise RuntimeError("invalid_envelope_shape")
+
     def list_tasks(self) -> list[dict[str, Any]]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks"
         with httpx.Client(timeout=self._settings.http_timeout_s) as client:

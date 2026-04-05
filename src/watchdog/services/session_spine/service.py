@@ -79,6 +79,27 @@ def _load_task_or_raise(
     return data
 
 
+def _load_task_by_native_thread_or_raise(
+    client: AControlAgentClient,
+    native_thread_id: str,
+) -> dict[str, Any] | None:
+    try:
+        body = client.get_envelope_by_thread(native_thread_id)
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+    if not body.get("success"):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise SessionSpineUpstreamError(dict(error))
+        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR))
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+        )
+    return data
+
+
 def _load_approvals_or_raise(
     client: AControlAgentClient,
     project_id: str | None = None,
@@ -104,12 +125,12 @@ def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
 
 
-def build_session_read_bundle(
-    client: AControlAgentClient,
+def _build_session_read_bundle(
+    *,
     project_id: str,
+    task: dict[str, Any] | None,
+    approvals: list[dict[str, Any]],
 ) -> SessionReadBundle:
-    task = _load_task_or_raise(client, project_id)
-    approvals = _load_approvals_or_raise(client, project_id)
     facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     native_thread_id = str(task.get("thread_id") or "") or None
     return SessionReadBundle(
@@ -133,6 +154,37 @@ def build_session_read_bundle(
             native_thread_id=native_thread_id,
             approvals=approvals,
         ),
+    )
+
+
+def build_session_read_bundle(
+    client: AControlAgentClient,
+    project_id: str,
+) -> SessionReadBundle:
+    task = _load_task_or_raise(client, project_id)
+    approvals = _load_approvals_or_raise(client, project_id)
+    return _build_session_read_bundle(
+        project_id=project_id,
+        task=task,
+        approvals=approvals,
+    )
+
+
+def build_session_read_bundle_by_native_thread(
+    client: AControlAgentClient,
+    native_thread_id: str,
+) -> SessionReadBundle:
+    task = _load_task_by_native_thread_or_raise(client, native_thread_id)
+    project_id = str(task.get("project_id") or "")
+    if not project_id:
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+        )
+    approvals = _load_approvals_or_raise(client, project_id)
+    return _build_session_read_bundle(
+        project_id=project_id,
+        task=task,
+        approvals=approvals,
     )
 
 

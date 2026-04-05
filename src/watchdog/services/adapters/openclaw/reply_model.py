@@ -26,8 +26,12 @@ from watchdog.services.session_spine.service import (
 )
 
 
-def build_session_reply(bundle: SessionReadBundle) -> ReplyModel:
-    return build_session_read_reply(bundle)
+def build_session_reply(
+    bundle: SessionReadBundle,
+    *,
+    intent_code: str = "get_session",
+) -> ReplyModel:
+    return build_session_read_reply(bundle, intent_code=intent_code)
 
 
 def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:

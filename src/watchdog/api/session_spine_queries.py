@@ -22,6 +22,7 @@ from watchdog.services.session_spine.service import (
     build_approval_inbox_bundle,
     build_session_directory_bundle,
     build_session_read_bundle,
+    build_session_read_bundle_by_native_thread,
 )
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -86,6 +87,34 @@ def list_sessions(
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_session_directory_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/by-native-thread/{native_thread_id}",
+    summary="Resolve stable session projection by native thread",
+    description=(
+        "Stable read surface for callers that only know the native thread_id. "
+        "Returns the canonical ReplyModel carrying SessionProjection and FactRecord data."
+    ),
+)
+def get_session_by_native_thread(
+    native_thread_id: str,
+    request: Request,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_session_read_bundle_by_native_thread(client, native_thread_id)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(
+        rid,
+        build_session_reply(
+            bundle,
+            intent_code="get_session_by_native_thread",
+        ).model_dump(mode="json"),
+    )
 
 
 @router.get(

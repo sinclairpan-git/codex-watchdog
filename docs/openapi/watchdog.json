@@ -526,6 +526,67 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions/by-native-thread/{native_thread_id}": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Resolve stable session projection by native thread",
+        "description": "Stable read surface for callers that only know the native thread_id. Returns the canonical ReplyModel carrying SessionProjection and FactRecord data.",
+        "operationId": "get_session_by_native_thread_api_v1_watchdog_sessions_by_native_thread__native_thread_id__get",
+        "parameters": [
+          {
+            "name": "native_thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Native Thread Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Session By Native Thread Api V1 Watchdog Sessions By Native Thread  Native Thread Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/sessions/{project_id}": {
       "get": {
         "tags": [

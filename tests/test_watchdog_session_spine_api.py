@@ -28,6 +28,12 @@ class FakeAClient:
                 return {"success": True, "data": dict(task)}
         raise AssertionError(project_id)
 
+    def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+        for task in self._tasks:
+            if thread_id == task["thread_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(thread_id)
+
     def list_tasks(self) -> list[dict[str, object]]:
         return [dict(task) for task in self._tasks]
 
@@ -229,6 +235,32 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
     assert [item["thread_id"] for item in data["sessions"]] == ["session:repo-a", "session:repo-b"]
     assert data["sessions"][1]["pending_approval_count"] == 1
     assert "list_pending_approvals" in data["sessions"][1]["available_intents"]
+
+
+def test_session_by_native_thread_route_returns_stable_session_projection(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/by-native-thread/thr_native_1",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "session_projection"
+    assert data["intent_code"] == "get_session_by_native_thread"
+    assert data["session"]["project_id"] == "repo-a"
+    assert data["session"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
 
 
 def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(tmp_path) -> None:

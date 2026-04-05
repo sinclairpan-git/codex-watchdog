@@ -37,6 +37,7 @@ from watchdog.services.session_spine.service import (
     build_approval_inbox_bundle,
     build_session_directory_bundle,
     build_session_read_bundle,
+    build_session_read_bundle_by_native_thread,
 )
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -91,6 +92,18 @@ class OpenClawAdapter:
                 if intent_code == "list_approval_inbox":
                     bundle = build_approval_inbox_bundle(self._client, project_id)
                     return build_approval_inbox_reply(bundle)
+                if intent_code == "get_session_by_native_thread":
+                    native_thread_id = str((arguments or {}).get("native_thread_id") or "")
+                    if not native_thread_id:
+                        return build_action_not_available_reply(
+                            intent_code,
+                            "arguments.native_thread_id is required",
+                        )
+                    bundle = build_session_read_bundle_by_native_thread(
+                        self._client,
+                        native_thread_id,
+                    )
+                    return build_session_reply(bundle, intent_code=intent_code)
                 if not project_id:
                     return build_action_not_available_reply(intent_code, "project_id is required")
                 bundle = build_session_read_bundle(self._client, project_id)

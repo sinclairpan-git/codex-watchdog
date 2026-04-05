@@ -138,11 +138,12 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
-OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-017 收口后的 stable surface
+OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-018 收口后的 stable surface
 （需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）：
 
 - `GET /api/v1/watchdog/sessions` — 读取稳定跨项目 `SessionProjection[]` 目录
 - `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
+- `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` — 在只知道 native thread_id 时解析稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
 - `GET /api/v1/watchdog/approval-inbox` — 读取稳定跨项目 pending approvals inbox；可选 `?project_id=...`
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` — 读取稳定审批队列
@@ -181,6 +182,11 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 
 - 017 新增的 `GET /api/v1/watchdog/sessions` 与 OpenClaw adapter `list_sessions`
   复用同一份 stable directory builder，适合在尚未知晓 `project_id` 时先拉取会话目录。
+
+- 018 新增的 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 与 OpenClaw
+  adapter `get_session_by_native_thread` 复用同一份 stable session builder，适合 OpenClaw
+  只有 native thread_id、尚未显式缓存 `project_id` 时做稳定会话解析；A 侧 raw
+  `GET /api/v1/tasks/by-thread/{thread_id}` 继续存在，但不再承担 stable contract 角色。
 
 - canonical 动作面始终是 `POST /api/v1/watchdog/actions`，路径级动作只是便于人工调用的包装。
 - 015 新增的两个 explanation route 仍然复用既有 `ReplyModel`，不会新增 explanation DTO，也不会推进 session spine contract/schema version；它们与 OpenClaw adapter 共享同一套 explanation builder。
