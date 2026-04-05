@@ -24,6 +24,7 @@ pip install -e ".[dev]"
 
 ```bash
 export A_AGENT_API_TOKEN=dev-token-change-me
+export A_AGENT_CODEX_HOME="${HOME}/.codex"
 python -m uvicorn a_control_agent.main:app --host 127.0.0.1 --port 8710 --app-dir src
 ```
 
@@ -48,6 +49,32 @@ python scripts/export_openapi.py
 ```
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
+
+基础事件流接口已提供：`GET /api/v1/tasks/{project_id}/events`
+会以 `text/event-stream` 返回当前任务事件；默认持续跟随新事件，也可用
+`?follow=false` 只回放当前快照。
+当前最小事件集包括 `task_created`、`native_thread_registered`、`steer`、
+`handoff`、`resume`、`approval_decided`。
+若 OpenClaw 不直接连 A，也可经 Watchdog 代理读取
+`GET /api/v1/watchdog/tasks/{project_id}/events`。
+
+若 A-Control-Agent 与 Codex Desktop 跑在同一台机器，默认启动路径现在会直接读取
+`~/.codex`（可由 `A_AGENT_CODEX_HOME` 覆盖），自动发现当前 active workspace 的 thread，
+并按 `A_AGENT_CODEX_SYNC_INTERVAL_SECONDS` 周期刷新到任务存储。
+
+若需要真实下行控制，可开启本地 bridge：
+
+```bash
+export A_AGENT_CODEX_BRIDGE_ENABLED=true
+export A_AGENT_CODEX_BRIDGE_COMMAND='codex app-server --listen stdio://'
+```
+
+A-Control-Agent 会以子进程方式拉起本地 Codex app-server，并通过 stdio bridge 执行
+`thread/read`、`turn/start`、`turn/steer` 与审批回写。
+
+若暂时不启用 bridge，仍可继续用 `POST /api/v1/tasks/native-threads` 或
+`python examples/register_native_thread.py --payload examples/native_thread_payload.json`
+把当前原生 Codex thread 注册进 A-Control-Agent，再经 Watchdog / OpenClaw 查询。
 
 ## 测试
 

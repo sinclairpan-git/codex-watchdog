@@ -1,0 +1,37 @@
+prd_path: openclaw-codex-watchdog-prd.md
+constitution_path: .ai-sdlc/memory/constitution.md
+tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+spec_path: specs/008-codex-live-control-plane/spec.md
+plan_path: specs/008-codex-live-control-plane/plan.md
+tasks_path: specs/008-codex-live-control-plane/tasks.md
+active_files:
+- '`src/a_control_agent/services/codex/stdio_transport.py`'
+- '`src/a_control_agent/main.py`'
+- '`src/a_control_agent/settings.py`'
+- '`README.md`'
+- '`docs/getting-started.zh-CN.md`'
+context_summary: '# Development Summary
+
+
+  Status: completed
+
+  Total Tasks: 4
+
+  Completed Tasks: 4
+
+  Halted Tasks: 0
+
+  Total Batches: 1
+
+  Completed Batches: 1
+
+  Last Committed Task: T84
+
+
+  ## Notes
+
+  - 已补齐本地 `codex app-server --listen stdio://` bridge 运行时装配。
+
+  - 已同步 README、接入文档、环境变量样例与 OpenAPI 导出物。
+
+  - 已通过 pytest、ruff 与 `ai_sdlc verify constraints`。'

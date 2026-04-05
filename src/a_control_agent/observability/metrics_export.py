@@ -25,7 +25,7 @@ def build_a_metrics_text(
         render_gauge(
             "aca_tasks_total",
             "Number of tasks persisted in A-Control-Agent.",
-            float(store.count_projects()),
+            float(store.count_tasks()),
         )
     ]
     label_vals = {k: float(v) for k, v in sorted(counts.items())}
@@ -66,11 +66,11 @@ def build_a_metrics_text(
         )
     )
     ap_c = counts.get("approval_created", 0)
-    ap_d = counts.get("decision", 0)
+    ap_d = counts.get("approval_decided", 0) + counts.get("decision", 0)
     parts.append(
         render_gauge(
             "aca_approval_events_total",
-            "Approval lifecycle (approval_created + decision).",
+            "Approval lifecycle (approval_created + approval_decided).",
             float(ap_c + ap_d),
         )
     )

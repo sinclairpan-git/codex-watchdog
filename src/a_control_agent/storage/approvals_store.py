@@ -55,6 +55,7 @@ class ApprovalsStore:
         command: str,
         reason: str,
         alternative: str = "",
+        bridge_request_id: str | None = None,
     ) -> dict[str, Any]:
         risk = classify_risk(command)
         aid = f"appr_{uuid.uuid4().hex[:12]}"
@@ -67,6 +68,7 @@ class ApprovalsStore:
             "command": command,
             "reason": reason,
             "alternative": alternative,
+            "bridge_request_id": bridge_request_id,
             "requested_at": now,
             "status": "pending",
             "decided_at": None,
@@ -125,7 +127,7 @@ class ApprovalsStore:
             {
                 "ts": now,
                 "approval_id": approval_id,
-                "action": "decision",
+                "action": "approval_decided",
                 "decision": decision,
                 "operator": operator,
             },

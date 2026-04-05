@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+
+class CodexTransport(Protocol):
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+    async def respond(self, request_id: str | int, result: dict[str, Any]) -> None: ...

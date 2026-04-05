@@ -27,6 +27,88 @@ def get_client(request: Request) -> AControlAgentClient:
     return request.app.state.a_client
 
 
+def _repo_recent_change_count(task: dict[str, object]) -> int | None:
+    cwd = task.get("cwd")
+    if isinstance(cwd, str) and cwd.strip():
+        try:
+            return int(
+                summarize_workspace_activity(Path(cwd), recent_minutes=15).get(
+                    "recent_change_count", 0
+                )
+            )
+        except OSError:
+            return None
+    return None
+
+
+def post_steer_thread(
+    base_url: str,
+    token: str,
+    thread_id: str,
+    project_id: str,
+    *,
+    message: str,
+    reason: str,
+    stuck_level: int | None = None,
+) -> dict[str, object]:
+    _ = thread_id
+    return post_steer(
+        base_url,
+        token,
+        project_id,
+        message=message,
+        reason=reason,
+        stuck_level=stuck_level,
+    )
+
+
+def run_background_supervision(settings: Settings, client: AControlAgentClient) -> None:
+    try:
+        tasks = client.list_tasks()
+    except (httpx.RequestError, RuntimeError, OSError):
+        return
+
+    for task in tasks:
+        status = task.get("status")
+        project_id = task.get("project_id")
+        thread_id = task.get("thread_id")
+        if status not in {"running", "waiting_human"}:
+            continue
+        if not isinstance(project_id, str) or not project_id:
+            continue
+        if not isinstance(thread_id, str) or not thread_id:
+            continue
+        ev = evaluate_stuck(task, repo_recent_change_count=_repo_recent_change_count(task))
+        if not ev.get("should_steer"):
+            continue
+        next_level = ev.get("next_stuck_level")
+        stuck_level = int(next_level) if isinstance(next_level, int) else None
+        try:
+            body = post_steer_thread(
+                settings.a_agent_base_url,
+                settings.a_agent_token,
+                thread_id,
+                project_id,
+                message=SOFT_STEER_MESSAGE,
+                reason=str(ev.get("reason", "stuck_soft")),
+                stuck_level=stuck_level,
+            )
+        except (httpx.HTTPError, RuntimeError):
+            continue
+        if not isinstance(body, dict) or not body.get("success"):
+            continue
+        append_watchdog_audit(
+            Path(settings.data_dir),
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "project_id": project_id,
+                "action": "steer_injected",
+                "reason": str(ev.get("reason")),
+                "payload": {"thread_id": thread_id, "detail": ev.get("detail")},
+            },
+        )
+
+
 @router.post("/tasks/{project_id}/evaluate")
 def evaluate_task(
     project_id: str,
@@ -66,18 +148,7 @@ def evaluate_task(
             {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"},
         )
 
-    repo_n: int | None = None
-    cwd = task.get("cwd")
-    if isinstance(cwd, str) and cwd.strip():
-        try:
-            repo_n = int(
-                summarize_workspace_activity(Path(cwd), recent_minutes=15).get(
-                    "recent_change_count", 0
-                )
-            )
-        except OSError:
-            repo_n = None
-    ev = evaluate_stuck(task, repo_recent_change_count=repo_n)
+    ev = evaluate_stuck(task, repo_recent_change_count=_repo_recent_change_count(task))
     steer_sent = False
     if ev.get("should_steer"):
         try:
