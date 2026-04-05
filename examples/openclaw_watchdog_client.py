@@ -18,7 +18,7 @@ import httpx
 def fetch_progress(project_id: str) -> dict:
     base = os.environ.get("WATCHDOG_BASE_URL", "http://127.0.0.1:8720").rstrip("/")
     token = os.environ.get("WATCHDOG_API_TOKEN", "")
-    url = f"{base}/api/v1/watchdog/tasks/{project_id}/progress"
+    url = f"{base}/api/v1/watchdog/sessions/{project_id}/progress"
     headers = {"Authorization": f"Bearer {token}"}
     with httpx.Client(timeout=30.0) as client:
         r = client.get(url, headers=headers)

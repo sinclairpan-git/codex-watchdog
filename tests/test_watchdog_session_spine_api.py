@@ -1,0 +1,1061 @@
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+from fastapi.testclient import TestClient
+
+from watchdog.main import create_app
+from watchdog.settings import Settings
+
+
+class FakeAClient:
+    def __init__(
+        self,
+        *,
+        task: dict[str, object],
+        tasks: list[dict[str, object]] | None = None,
+        approvals: list[dict[str, object]] | None = None,
+    ) -> None:
+        self._task = dict(task)
+        self._tasks = [dict(row) for row in tasks or [task]]
+        self._approvals = [dict(approval) for approval in approvals or []]
+        self.handoff_calls: list[tuple[str, str]] = []
+        self.resume_calls: list[tuple[str, str, str]] = []
+        self.workspace_activity_calls: list[tuple[str, int]] = []
+
+    def get_envelope(self, project_id: str) -> dict[str, object]:
+        for task in self._tasks:
+            if project_id == task["project_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(project_id)
+
+    def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+        for task in self._tasks:
+            if thread_id == task["thread_id"]:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(thread_id)
+
+    def list_tasks(self) -> list[dict[str, object]]:
+        return [dict(task) for task in self._tasks]
+
+    def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
+        rows = [dict(approval) for approval in self._approvals]
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        return rows
+
+    def decide_approval(
+        self,
+        approval_id: str,
+        *,
+        decision: str,
+        operator: str,
+        note: str = "",
+    ) -> dict[str, object]:
+        return {
+            "success": True,
+            "data": {
+                "approval_id": approval_id,
+                "status": "approved" if decision == "approve" else "rejected",
+                "operator": operator,
+                "note": note,
+            },
+        }
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        self.handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        self.resume_calls.append((project_id, mode, handoff_summary))
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "running", "mode": mode},
+        }
+
+    def get_events_snapshot(
+        self,
+        project_id: str,
+        *,
+        poll_interval: float = 0.5,
+    ) -> tuple[str, str]:
+        assert project_id == self._task["project_id"]
+        _ = poll_interval
+        return ('event: task_updated\ndata: {"project_id":"repo-a"}\n\n', "text/event-stream")
+
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        self.workspace_activity_calls.append((project_id, recent_minutes))
+        return {
+            "success": True,
+            "data": {
+                "project_id": project_id,
+                "activity": {
+                    "cwd_exists": True,
+                    "files_scanned": 12,
+                    "latest_mtime_iso": "2026-04-05T05:30:00Z",
+                    "recent_change_count": 3,
+                    "recent_window_minutes": recent_minutes,
+                },
+            },
+        }
+
+
+def _client() -> FakeAClient:
+    return FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+
+
+def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    progress_resp = c.get("/api/v1/watchdog/sessions/repo-a/progress", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert progress_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+
+    session_data = session_resp.json()["data"]
+    progress_data = progress_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+
+    assert session_data["reply_code"] == "session_projection"
+    assert session_data["session"]["thread_id"] == "session:repo-a"
+    assert session_data["session"]["native_thread_id"] == "thr_native_1"
+    assert progress_data["reply_code"] == "task_progress_view"
+    assert progress_data["progress"]["blocker_fact_codes"] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert approvals_data["reply_code"] == "approval_queue"
+    assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
+
+
+def test_session_spine_facts_route_returns_stable_truth_source_without_touching_explanations(
+    tmp_path,
+) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+    session_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+    stuck_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+    blocker_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/blocker-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert facts_response.status_code == 200
+    assert session_response.status_code == 200
+    assert stuck_response.status_code == 200
+    assert blocker_response.status_code == 200
+
+    facts_data = facts_response.json()["data"]
+    session_data = session_response.json()["data"]
+    stuck_data = stuck_response.json()["data"]
+    blocker_data = blocker_response.json()["data"]
+
+    assert facts_data["reply_kind"] == "facts"
+    assert facts_data["reply_code"] == "session_facts"
+    assert facts_data["intent_code"] == "list_session_facts"
+    assert facts_data["message"] == "2 fact(s)"
+    assert [fact["fact_code"] for fact in facts_data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert facts_data["facts"] == session_data["facts"]
+    assert stuck_data["reply_code"] == "stuck_explanation"
+    assert blocker_data["reply_code"] == "blocker_explanation"
+
+
+def test_session_directory_route_returns_stable_session_projections(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "editing files",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:20:00Z",
+                },
+                {
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "status": "waiting_human",
+                    "phase": "approval",
+                    "pending_approval": True,
+                    "approval_risk": "L2",
+                    "last_summary": "waiting for approval",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:21:00Z",
+                },
+            ],
+            approvals=[
+                {
+                    "approval_id": "appr_001",
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                }
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["reply_code"] == "session_directory"
+    assert [item["project_id"] for item in data["sessions"]] == ["repo-a", "repo-b"]
+    assert [item["thread_id"] for item in data["sessions"]] == ["session:repo-a", "session:repo-b"]
+    assert data["sessions"][1]["pending_approval_count"] == 1
+    assert "list_pending_approvals" in data["sessions"][1]["available_intents"]
+
+
+def test_session_by_native_thread_route_returns_stable_session_projection(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/by-native-thread/thr_native_1",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "session_projection"
+    assert data["intent_code"] == "get_session_by_native_thread"
+    assert data["session"]["project_id"] == "repo-a"
+    assert data["session"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+
+
+def test_workspace_activity_route_returns_stable_workspace_activity_view(tmp_path) -> None:
+    a_client = _client()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/workspace-activity?recent_minutes=30",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["reply_code"] == "workspace_activity_view"
+    assert data["intent_code"] == "get_workspace_activity"
+    assert data["session"]["project_id"] == "repo-a"
+    assert data["workspace_activity"]["recent_window_minutes"] == 30
+    assert data["workspace_activity"]["recent_change_count"] == 3
+    assert a_client.workspace_activity_calls == [("repo-a", 30)]
+
+
+def test_session_event_snapshot_route_returns_stable_reply_model(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/event-snapshot",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["reply_kind"] == "events"
+    assert data["reply_code"] == "session_event_snapshot"
+    assert data["intent_code"] == "list_session_events"
+    assert len(data["events"]) == 1
+    assert data["events"][0]["event_code"] == "session_updated"
+    assert data["events"][0]["thread_id"] == "session:repo-a"
+    assert "payload_json" not in data["events"][0]
+
+
+def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            approvals=[
+                {
+                    "approval_id": "appr_001",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:21:00Z",
+                },
+                {
+                    "approval_id": "appr_002",
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "risk_level": "L3",
+                    "command": "uv run ruff check",
+                    "reason": "lint gate",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                },
+                {
+                    "approval_id": "appr_003",
+                    "project_id": "repo-c",
+                    "thread_id": "thr_native_3",
+                    "risk_level": "L1",
+                    "command": "echo ok",
+                    "reason": "already handled",
+                    "alternative": "",
+                    "status": "approved",
+                    "requested_at": "2026-04-05T05:23:00Z",
+                },
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    inbox_resp = c.get("/api/v1/watchdog/approval-inbox", headers={"Authorization": "Bearer wt"})
+    repo_a_resp = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert inbox_resp.status_code == 200
+    assert repo_a_resp.status_code == 200
+
+    inbox_data = inbox_resp.json()["data"]
+    repo_a_data = repo_a_resp.json()["data"]
+
+    assert inbox_data["reply_code"] == "approval_inbox"
+    assert [item["approval_id"] for item in inbox_data["approvals"]] == ["appr_001", "appr_002"]
+    assert [item["project_id"] for item in inbox_data["approvals"]] == ["repo-a", "repo-b"]
+    assert [item["thread_id"] for item in inbox_data["approvals"]] == ["session:repo-a", "session:repo-b"]
+
+    assert repo_a_data["reply_code"] == "approval_inbox"
+    assert [item["approval_id"] for item in repo_a_data["approvals"]] == ["appr_001"]
+    assert repo_a_data["approvals"][0]["native_thread_id"] == "thr_native_1"
+
+
+def test_session_spine_stuck_explanation_route_returns_stable_reply_model(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "repeated failures",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "stuck_explanation"
+    assert data["progress"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "stuck_no_progress",
+        "repeat_failure",
+        "context_critical",
+        "recovery_available",
+    ]
+
+
+def test_session_spine_blocker_explanation_route_returns_stable_reply_model(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/blocker-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "blocker_explanation"
+    assert data["progress"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+
+
+def test_session_spine_canonical_and_alias_actions_share_the_same_result(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        canonical = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.post(
+            "/api/v1/watchdog/sessions/repo-a/actions/continue",
+            json={"operator": "openclaw", "idempotency_key": "idem-continue-1"},
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert steer_mock.call_count == 1
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "steer_posted"
+
+
+def test_session_spine_action_routes_reject_empty_idempotency_key(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "continue_session",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/continue",
+        json={"operator": "openclaw", "idempotency_key": ""},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert canonical.json()["success"] is False
+    assert canonical.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert alias.status_code == 200
+    assert alias.json()["success"] is False
+    assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_session_spine_continue_retries_after_rejected_steer_without_caching_receipt(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.side_effect = [
+            {
+                "success": False,
+                "error": {"code": "STEER_REJECTED", "message": "A side rejected steer"},
+            },
+            {"success": True, "data": {"accepted": True}},
+        ]
+        first = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-rejected-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        second = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-rejected-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert first.status_code == 200
+    assert first.json()["success"] is False
+    assert first.json()["error"] == {
+        "code": "STEER_REJECTED",
+        "message": "A side rejected steer",
+    }
+    assert second.status_code == 200
+    assert second.json()["success"] is True
+    assert second.json()["data"]["effect"] == "steer_posted"
+    assert steer_mock.call_count == 2
+
+
+def test_session_spine_operator_guidance_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 1,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        canonical = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "post_operator_guidance",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-guidance-api-1",
+                "arguments": {
+                    "message": "Summarize the current blocker and next command.",
+                    "reason_code": "operator_guidance",
+                    "stuck_level": 2,
+                },
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.post(
+            "/api/v1/watchdog/sessions/repo-a/actions/post-guidance",
+            json={
+                "operator": "openclaw",
+                "idempotency_key": "idem-guidance-api-1",
+                "message": "Summarize the current blocker and next command.",
+                "reason_code": "operator_guidance",
+                "stuck_level": 2,
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert steer_mock.call_count == 1
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["action_code"] == "post_operator_guidance"
+    assert canonical.json()["data"]["effect"] == "steer_posted"
+
+
+def test_session_spine_operator_guidance_surfaces_rejected_steer_envelope(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 1,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {
+            "success": False,
+            "error": {"code": "STEER_REJECTED", "message": "A side rejected guidance"},
+        }
+        response = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "post_operator_guidance",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-guidance-rejected-1",
+                "arguments": {
+                    "message": "Summarize the blocker.",
+                    "reason_code": "operator_guidance",
+                },
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"] == {
+        "code": "STEER_REJECTED",
+        "message": "A side rejected guidance",
+    }
+    assert steer_mock.call_count == 1
+
+
+def test_session_spine_operator_guidance_requires_non_empty_message(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "post_operator_guidance",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-guidance-api-2",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/post-guidance",
+        json={"operator": "openclaw", "idempotency_key": "idem-guidance-api-3"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert canonical.json()["success"] is True
+    assert canonical.json()["data"]["action_status"] == "error"
+    assert canonical.json()["data"]["reply_code"] == "action_not_available"
+    assert alias.status_code == 200
+    assert alias.json()["success"] is True
+    assert alias.json()["data"]["action_status"] == "error"
+    assert alias.json()["data"]["reply_code"] == "action_not_available"
+
+
+def test_session_spine_alias_route_rejects_non_object_arguments_without_500(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/continue",
+        json={
+            "operator": "openclaw",
+            "idempotency_key": "idem-alias-invalid-args-1",
+            "arguments": "not-an-object",
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"] == {
+        "code": "INVALID_ARGUMENT",
+        "message": "body must satisfy WatchdogAction",
+    }
+
+
+def test_session_spine_receipt_query_routes_share_same_stable_reply_without_reexecution(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        create_receipt = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-lookup-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert create_receipt.status_code == 200
+    assert create_receipt.json()["success"] is True
+    assert steer_mock.call_count == 1
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as query_steer_mock:
+        canonical = c.get(
+            "/api/v1/watchdog/action-receipts",
+            params={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "idempotency_key": "idem-continue-lookup-1",
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.get(
+            "/api/v1/watchdog/sessions/repo-a/action-receipts/continue_session/idem-continue-lookup-1",
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert query_steer_mock.call_count == 0
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["reply_code"] == "action_receipt"
+    assert canonical.json()["data"]["action_result"]["effect"] == "steer_posted"
+
+
+def test_session_spine_receipt_query_route_returns_stable_not_found_reply(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/action-receipts",
+        params={
+            "action_code": "continue_session",
+            "project_id": "repo-a",
+            "idempotency_key": "missing-idem",
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["reply_code"] == "action_receipt_not_found"
+    assert response.json()["data"]["action_result"] is None
+
+
+def test_session_spine_execute_recovery_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=client,
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "execute_recovery",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-execute-recovery-1",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/execute-recovery",
+        json={"operator": "openclaw", "idempotency_key": "idem-execute-recovery-1"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "handoff_triggered"
+    assert canonical.json()["data"]["reply_code"] == "recovery_execution_result"
+
+
+def test_session_spine_evaluate_supervision_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    old = "2026-04-05T05:20:00Z"
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": old,
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.supervision.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        canonical = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "evaluate_supervision",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-supervision-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.post(
+            "/api/v1/watchdog/sessions/repo-a/actions/evaluate-supervision",
+            json={"operator": "openclaw", "idempotency_key": "idem-supervision-1"},
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert steer_mock.call_count == 1
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["reply_code"] == "supervision_evaluation"
+    assert canonical.json()["data"]["supervision_evaluation"]["reason_code"] == "stuck_soft"
+    assert canonical.json()["data"]["supervision_evaluation"]["steer_sent"] is True
+
+
+def test_legacy_routes_remain_registered_and_basic_behaviour_is_compatible(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.api.approvals_proxy.httpx.Client") as approvals_http:
+        approvals_inst = MagicMock()
+        approvals_http.return_value.__enter__.return_value = approvals_inst
+        approvals_inst.get.return_value.json.return_value = {"success": True, "data": {"items": [], "count": 0}}
+        progress = c.get("/api/v1/watchdog/tasks/repo-a/progress", headers={"Authorization": "Bearer wt"})
+        evaluate = c.post("/api/v1/watchdog/tasks/repo-a/evaluate", headers={"Authorization": "Bearer wt"})
+        approvals = c.get("/api/v1/watchdog/approvals", headers={"Authorization": "Bearer wt"})
+        recover = c.post("/api/v1/watchdog/tasks/repo-a/recover", headers={"Authorization": "Bearer wt"})
+        events = c.get(
+            "/api/v1/watchdog/tasks/repo-a/events?follow=false",
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert progress.status_code == 200
+    assert progress.json()["success"] is True
+    assert evaluate.status_code == 200
+    assert evaluate.json()["success"] is True
+    assert approvals.status_code == 200
+    assert approvals.json()["success"] is True
+    assert recover.status_code == 200
+    assert recover.json()["data"]["action"] == "noop"
+    assert events.status_code == 200
+    assert events.headers["content-type"].startswith("text/event-stream")

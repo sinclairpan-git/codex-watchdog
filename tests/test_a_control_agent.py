@@ -280,3 +280,33 @@ def test_task_events_endpoint_returns_sse_snapshot(client: TestClient) -> None:
     assert "event: task_created" in response.text
     assert "event: steer" in response.text
     assert '"project_id":"ai-demo"' in response.text
+
+
+def test_workspace_activity_route_returns_legacy_raw_activity_summary(tmp_path: Path) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token"}
+
+    created = c.post(
+        "/api/v1/tasks",
+        json={"project_id": "repo-a", "cwd": str(repo), "task_title": "t"},
+        headers=h,
+    )
+    assert created.status_code == 200
+
+    response = c.get(
+        "/api/v1/tasks/repo-a/workspace-activity?recent_minutes=30",
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["project_id"] == "repo-a"
+    assert body["data"]["activity"]["cwd_exists"] is True
+    assert body["data"]["activity"]["files_scanned"] >= 1
+    assert body["data"]["activity"]["recent_window_minutes"] == 30

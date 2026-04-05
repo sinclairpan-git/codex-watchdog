@@ -9,7 +9,7 @@
 | 交付物 | 说明 |
 |--------|------|
 | **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。已内置两层 Codex 集成：`1)` 默认读取同机 `~/.codex` 自动发现当前 active workspace 的 thread；`2)` 可选启动本地 `codex app-server --listen stdio://` bridge，执行下行控制与审批回写。 |
-| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 progress / evaluate（卡顿+steer）/ recover / 审批代理等，以及 `/metrics`。 |
+| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。 |
 | **OpenClaw 侧** | 本仓库**不包含**飞书机器人、也不包含 OpenClaw 插件；仅提供 **HTTP API** 与 `examples/openclaw_watchdog_client.py` 示例，由你在 OpenClaw 里配置「调用 Watchdog 的 URL + Token」。 |
 
 **数据流（目标架构）**：
@@ -138,9 +138,39 @@ uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT"
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
-OpenClaw 侧应配置为：对 **Watchdog 基址** 发 HTTP，典型只读路径例如：
+OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010-022 收口后的 stable surface
+（需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）：
 
-- `GET /api/v1/watchdog/tasks/{project_id}/progress` — 进展（需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`）
+- `GET /api/v1/watchdog/sessions` — 读取稳定跨项目 `SessionProjection[]` 目录
+- `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
+- `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` — 在只知道 native thread_id 时解析稳定 `SessionProjection`
+- `GET /api/v1/watchdog/sessions/{project_id}/facts` — 读取稳定 `ReplyModel(reply_code=session_facts, facts=FactRecord[])`
+- `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
+- `GET /api/v1/watchdog/sessions/{project_id}/workspace-activity` — 读取稳定 `WorkspaceActivityView`
+- `GET /api/v1/watchdog/approval-inbox` — 读取稳定跨项目 pending approvals inbox；可选 `?project_id=...`
+- `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` — 读取稳定审批队列
+- `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` — 读取稳定 stuck explanation reply
+- `GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation` — 读取稳定 blocker explanation reply
+- `GET /api/v1/watchdog/sessions/{project_id}/events` — 读取稳定、版本化 `SessionEvent` SSE
+- `GET /api/v1/watchdog/sessions/{project_id}/event-snapshot` — 读取稳定 `ReplyModel(reply_code=session_event_snapshot, events=SessionEvent[])` JSON snapshot
+- `GET /api/v1/watchdog/action-receipts?action_code=...&project_id=...&idempotency_key=...` — 读取稳定 action receipt reply
+- `POST /api/v1/watchdog/actions` — canonical write surface，提交 `WatchdogAction`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` — continue 的 alias wrapper
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/evaluate-supervision` — evaluate_supervision 的 alias wrapper，返回稳定 `SupervisionEvaluation`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance` — post_operator_guidance 的 alias wrapper，提交稳定 operator guidance
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery` — request_recovery 的 alias wrapper，仅 advisory-only
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/execute-recovery` — execute_recovery 的 alias wrapper，触发稳定 recovery execution
+- `GET /api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}` — action receipt 的 alias wrapper
+- `POST /api/v1/watchdog/approvals/{approval_id}/approve` — approve 的 alias wrapper
+- `POST /api/v1/watchdog/approvals/{approval_id}/reject` — reject 的 alias wrapper
+
+如果 OpenClaw 需要稳定事件流，应优先使用：
+
+- `GET /api/v1/watchdog/sessions/{project_id}/events` — stable SSE，事件会从 raw `task_created / native_thread_registered / steer / handoff / resume / approval_decided` 投影为 `session_created / native_thread_bound / guidance_posted / handoff_requested / session_resumed / approval_resolved`，未知 raw 类型降级为 `session_updated`
+- `GET /api/v1/watchdog/sessions/{project_id}/event-snapshot` — stable JSON snapshot，返回 `ReplyModel(reply_code=session_event_snapshot, events=SessionEvent[])`；它与上面的 stable SSE 共享同一份事件投影与 schema version，但不提供 follow / cursor，只表达“一次性读取当前稳定事件快照”
+
+如果只需要 raw 透传，legacy 代理路径仍可用：
+
 - `GET /api/v1/watchdog/tasks/{project_id}/events` — 由 Watchdog 代理的任务事件流（支持 `follow=true|false`）
 
 仓库内示例：
@@ -152,6 +182,40 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 ```
 
 更多路径见 `docs/openapi/watchdog.json`（运行 `uv run python scripts/export_openapi.py` 可重新生成）。
+
+说明：
+
+- 017 新增的 `GET /api/v1/watchdog/sessions` 与 OpenClaw adapter `list_sessions`
+  复用同一份 stable directory builder，适合在尚未知晓 `project_id` 时先拉取会话目录。
+
+- 018 新增的 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 与 OpenClaw
+  adapter `get_session_by_native_thread` 复用同一份 stable session builder，适合 OpenClaw
+  只有 native thread_id、尚未显式缓存 `project_id` 时做稳定会话解析；A 侧 raw
+  `GET /api/v1/tasks/by-thread/{thread_id}` 继续存在，但不再承担 stable contract 角色。
+
+- 019 新增的 `GET /api/v1/watchdog/sessions/{project_id}/workspace-activity` 与 OpenClaw
+  adapter `get_workspace_activity` 复用同一份 stable workspace activity builder，返回
+  `ReplyModel(reply_code=workspace_activity_view, workspace_activity=WorkspaceActivityView)`；
+  它不会让 OpenClaw 直接消费 raw 工作区摘要，也不会引入新的动作面。A 侧 raw
+  `GET /api/v1/tasks/{project_id}/workspace-activity` 继续存在，但不再承担 stable contract 角色。
+
+- canonical 动作面始终是 `POST /api/v1/watchdog/actions`，路径级动作只是便于人工调用的包装。
+- 020 新增的稳定 operator guidance 动作是 `WatchdogAction(action_code=post_operator_guidance)`；
+  它要求 `arguments.message` 非空，可选 `reason_code` 与 `stuck_level`，成功时返回
+  `WatchdogActionResult(reply_code=action_result, effect=steer_posted)`。alias route
+  `POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance` 只是 canonical 动作的包装；
+  A 侧 raw `POST /api/v1/tasks/{project_id}/steer` 继续存在，但不再承担 stable contract 角色。
+- 022 新增的 `GET /api/v1/watchdog/sessions/{project_id}/facts` 与 OpenClaw adapter
+  `list_session_facts` 复用同一份 stable facts builder，返回
+  `ReplyModel(reply_code=session_facts, facts=FactRecord[])`。它承担“事实真值层”角色；
+  015 引入的 `stuck-explanation` / `blocker-explanation` 继续承担“解释层”角色，二者并存，
+  不互相替代，也不引入 fact history / filter / 分页语义。
+- 015 新增的两个 explanation route 仍然复用既有 `ReplyModel`，不会新增 explanation DTO，也不会推进 session spine contract/schema version；它们与 OpenClaw adapter 共享同一套 explanation builder。
+- 016 新增的 `GET /api/v1/watchdog/approval-inbox` 复用既有 `ApprovalProjection`，返回稳定 `ReplyModel(reply_code=approval_inbox)`；它只覆盖 pending approvals inbox，不提供 history / status passthrough，也不替换 legacy `/watchdog/approvals` raw proxy。
+- 014 新增的稳定监管评估动作是 `WatchdogAction(action_code=evaluate_supervision)`；它返回 `WatchdogActionResult(reply_code=supervision_evaluation)` 与 `SupervisionEvaluation`，必要时才执行一次 advisory steer。
+- `request_recovery` 仍只返回恢复可用性说明，不会触发真实恢复执行；真实执行动作是 012 新增的 `execute_recovery`。
+- 013 新增的 action receipt 读面只查询本地持久化 receipt，返回 `ReplyModel(reply_code=action_receipt|action_receipt_not_found)`；它不会重放动作，也不会借道 legacy recover / approvals / steer 路由推断结果。
+- 原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续存在，但不再承担 stable contract 角色；`/watchdog/tasks/{project_id}/events` 仍是 raw/legacy，`/watchdog/sessions/{project_id}/events` 才是 011 引入的 stable 事件面，`/watchdog/tasks/{project_id}/recover` 是复用 012 recovery kernel 的兼容入口，`/watchdog/tasks/{project_id}/evaluate` 则是复用 014 supervision evaluation kernel 的兼容入口。
 
 若 B 侧需要更实时地感知 A 的任务变化，A-Control-Agent 现已提供：
 
@@ -171,7 +235,7 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 2. **Token**：`WATCHDOG_A_AGENT_TOKEN` **等于** A 的 `A_AGENT_API_TOKEN`。  
 3. **防火墙 / 安全组**：A 的 `A_AGENT_PORT` 仅对 B（或 VPN 网段）开放。  
 4. **生产建议**：前面加 **反向代理 + TLS**（如 nginx/Caddy），对外只暴露 HTTPS；Token 用密钥管理。  
-5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/tasks/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
+5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/sessions/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
 
 ---
 
@@ -229,10 +293,14 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 `A_AGENT_CODEX_BRIDGE_ENABLED=true` 以启动本地 app-server bridge。
 
 **Q：任务事件流现在支持到什么程度？**
-当前已提供 A 侧 `GET /api/v1/tasks/{project_id}/events` 与 Watchdog 侧
-`GET /api/v1/watchdog/tasks/{project_id}/events` 的基础 SSE 输出，事件源覆盖
-`task_created`、`native_thread_registered`、`steer`、`handoff`、`resume`、`approval_decided`。
-未提供 WebSocket，也还不是完整 transcript 流。
+当前已提供三层读面：
+- A 侧 `GET /api/v1/tasks/{project_id}/events` — 原始 SSE
+- Watchdog 侧 `GET /api/v1/watchdog/tasks/{project_id}/events` — raw 透传 SSE
+- Watchdog 侧 `GET /api/v1/watchdog/sessions/{project_id}/events` — 011 新增 stable SSE
+
+stable 事件当前覆盖 `session_created`、`native_thread_bound`、`guidance_posted`、
+`handoff_requested`、`session_resumed`、`approval_resolved`，未知 raw 类型降级为
+`session_updated`。未提供 WebSocket，也还不是完整 transcript 流。
 
 **Q：Token 泄露怎么办？**  
 轮换 `A_AGENT_API_TOKEN` / `WATCHDOG_API_TOKEN`，并限制源 IP / 使用 TLS。

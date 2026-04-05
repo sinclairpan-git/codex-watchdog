@@ -76,7 +76,7 @@ def test_evaluate_suppressed_when_repo_activity(tmp_path: Path) -> None:
         mcli.return_value.__enter__.return_value = mock_inst
         mock_inst.get.return_value.json.return_value = {"success": True, "data": task_data}
         with patch(
-            "watchdog.api.supervision.summarize_workspace_activity",
+            "watchdog.services.session_spine.supervision.summarize_workspace_activity",
             return_value={"recent_change_count": 2, "cwd_exists": True},
         ):
             r = c.post(

@@ -10,9 +10,13 @@ from fastapi import APIRouter, Depends, Request
 
 from a_control_agent.envelope import err, ok
 from watchdog.api.deps import require_token
+from watchdog.contracts.session_spine.enums import ActionCode
+from watchdog.contracts.session_spine.models import SupervisionEvaluation, WatchdogAction
 from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
 from watchdog.services.audit import append_watchdog_audit
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_spine.service import SessionSpineUpstreamError
+from watchdog.services.session_spine.supervision import execute_supervision_evaluation
 from watchdog.services.status_analyzer.stuck import evaluate_stuck
 from watchdog.settings import Settings
 
@@ -60,6 +64,15 @@ def post_steer_thread(
         reason=reason,
         stuck_level=stuck_level,
     )
+
+
+def _legacy_evaluation_payload(evaluation: SupervisionEvaluation) -> dict[str, object]:
+    return {
+        "should_steer": evaluation.should_steer,
+        "reason": str(evaluation.reason_code),
+        "next_stuck_level": evaluation.next_stuck_level,
+        "detail": evaluation.detail,
+    }
 
 
 def run_background_supervision(settings: Settings, client: AControlAgentClient) -> None:
@@ -119,80 +132,31 @@ def evaluate_task(
 ) -> dict[str, object]:
     """拉取 A 侧任务 → stuck 分析 → 满足阈值则注入 soft steer。"""
     rid = request.headers.get("x-request-id")
+
+    action = WatchdogAction(
+        action_code=ActionCode.EVALUATE_SUPERVISION,
+        project_id=project_id,
+        operator="watchdog_legacy",
+        idempotency_key=rid or f"legacy-evaluate:{datetime.now(timezone.utc).isoformat()}",
+        arguments={},
+    )
     try:
-        body = client.get_envelope(project_id)
-    except httpx.RequestError:
-        return err(
-            rid,
-            {
-                "code": "CONTROL_LINK_ERROR",
-                "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
-            },
+        result = execute_supervision_evaluation(
+            action,
+            settings=settings,
+            client=client,
         )
-    except (RuntimeError, OSError):
-        return err(
-            rid,
-            {
-                "code": "CONTROL_LINK_ERROR",
-                "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
-            },
-        )
-
-    if not body.get("success"):
-        return err(rid, body.get("error") or {"code": "A_AGENT_ERROR", "message": "unknown"})
-
-    task = body.get("data")
-    if not isinstance(task, dict):
-        return err(
-            rid,
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"},
-        )
-
-    ev = evaluate_stuck(task, repo_recent_change_count=_repo_recent_change_count(task))
-    steer_sent = False
-    if ev.get("should_steer"):
-        try:
-            nsl = ev.get("next_stuck_level")
-            sl = int(nsl) if isinstance(nsl, int) else None
-            steer_body = post_steer(
-                settings.a_agent_base_url,
-                settings.a_agent_token,
-                project_id,
-                message=SOFT_STEER_MESSAGE,
-                reason=str(ev.get("reason", "stuck_soft")),
-                stuck_level=sl,
-            )
-            if not steer_body.get("success"):
-                return err(
-                    rid,
-                    steer_body.get("error")
-                    or {"code": "STEER_FAILED", "message": "A 侧拒绝 steer"},
-                )
-            steer_sent = True
-        except httpx.HTTPError:
-            return err(
-                rid,
-                {
-                    "code": "CONTROL_LINK_ERROR",
-                    "message": "steer 调用失败：无法连接 A-Control-Agent",
-                },
-            )
-        append_watchdog_audit(
-            Path(settings.data_dir),
-            {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "project_id": project_id,
-                "action": "steer_injected",
-                "reason": str(ev.get("reason")),
-                "payload": {"detail": ev.get("detail")},
-            },
-        )
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    evaluation = result.supervision_evaluation
+    if evaluation is None:
+        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "stable supervision result missing"})
 
     return ok(
         rid,
         {
             "project_id": project_id,
-            "evaluation": ev,
-            "steer_sent": steer_sent,
+            "evaluation": _legacy_evaluation_payload(evaluation),
+            "steer_sent": evaluation.steer_sent,
         },
     )
