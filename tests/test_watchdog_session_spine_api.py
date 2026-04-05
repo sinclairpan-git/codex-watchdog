@@ -21,6 +21,7 @@ class FakeAClient:
         self._approvals = [dict(approval) for approval in approvals or []]
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
+        self.workspace_activity_calls: list[tuple[str, int]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         for task in self._tasks:
@@ -95,6 +96,27 @@ class FakeAClient:
         assert project_id == self._task["project_id"]
         _ = poll_interval
         return ('event: task_updated\ndata: {"project_id":"repo-a"}\n\n', "text/event-stream")
+
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        self.workspace_activity_calls.append((project_id, recent_minutes))
+        return {
+            "success": True,
+            "data": {
+                "project_id": project_id,
+                "activity": {
+                    "cwd_exists": True,
+                    "files_scanned": 12,
+                    "latest_mtime_iso": "2026-04-05T05:30:00Z",
+                    "recent_change_count": 3,
+                    "recent_window_minutes": recent_minutes,
+                },
+            },
+        }
 
 
 def _client() -> FakeAClient:
@@ -261,6 +283,29 @@ def test_session_by_native_thread_route_returns_stable_session_projection(tmp_pa
         "approval_pending",
         "awaiting_human_direction",
     ]
+
+
+def test_workspace_activity_route_returns_stable_workspace_activity_view(tmp_path) -> None:
+    a_client = _client()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/workspace-activity?recent_minutes=30",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["reply_code"] == "workspace_activity_view"
+    assert data["intent_code"] == "get_workspace_activity"
+    assert data["session"]["project_id"] == "repo-a"
+    assert data["workspace_activity"]["recent_window_minutes"] == 30
+    assert data["workspace_activity"]["recent_change_count"] == 3
+    assert a_client.workspace_activity_calls == [("repo-a", 30)]
 
 
 def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(tmp_path) -> None:

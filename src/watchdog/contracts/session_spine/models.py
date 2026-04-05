@@ -93,6 +93,17 @@ class TaskProgressView(SessionSpineModel):
     last_progress_at: str | None = None
 
 
+class WorkspaceActivityView(SessionSpineModel):
+    project_id: str
+    thread_id: str
+    native_thread_id: str | None = None
+    recent_window_minutes: int
+    cwd_exists: bool
+    files_scanned: int
+    latest_mtime_iso: str | None = None
+    recent_change_count: int
+
+
 class SessionProjection(SessionSpineModel):
     project_id: str
     thread_id: str
@@ -120,6 +131,7 @@ class ReplyModel(SessionSpineModel):
     session: SessionProjection | None = None
     sessions: list[SessionProjection] = Field(default_factory=list)
     progress: TaskProgressView | None = None
+    workspace_activity: WorkspaceActivityView | None = None
     action_result: WatchdogActionResult | None = None
     approvals: list[ApprovalProjection] = Field(default_factory=list)
     facts: list[FactRecord] = Field(default_factory=list)

@@ -26,6 +26,7 @@ class FakeAClient:
         self.decision_calls: list[tuple[str, str, str, str]] = []
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
+        self.workspace_activity_calls: list[tuple[str, int]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         for task in self._tasks:
@@ -90,6 +91,27 @@ class FakeAClient:
             "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
 
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        self.workspace_activity_calls.append((project_id, recent_minutes))
+        return {
+            "success": True,
+            "data": {
+                "project_id": project_id,
+                "activity": {
+                    "cwd_exists": True,
+                    "files_scanned": 8,
+                    "latest_mtime_iso": "2026-04-05T05:31:00Z",
+                    "recent_change_count": 1,
+                    "recent_window_minutes": recent_minutes,
+                },
+            },
+        }
+
 
 class BrokenAClient:
     def get_envelope(self, project_id: str) -> dict[str, object]:
@@ -97,6 +119,15 @@ class BrokenAClient:
 
     def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
         raise httpx.ConnectError("refused", request=httpx.Request("GET", f"http://a.test/{thread_id}"))
+
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        _ = recent_minutes
+        raise httpx.ConnectError("refused", request=httpx.Request("GET", f"http://a.test/{project_id}"))
 
     def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
         _ = status
@@ -466,6 +497,45 @@ def test_integration_api_and_adapter_share_native_thread_resolution_semantics(tm
     assert [fact["fact_code"] for fact in api_reply["facts"]] == [
         fact.fact_code for fact in adapter_reply.facts
     ]
+
+
+def test_integration_api_and_adapter_share_workspace_activity_semantics(tmp_path: Path) -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    adapter = _adapter(tmp_path, FakeAClient(task=task))
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(task=task),
+    )
+    client = TestClient(app)
+
+    adapter_reply = adapter.handle_intent(
+        "get_workspace_activity",
+        project_id="repo-a",
+        arguments={"recent_minutes": 30},
+    )
+    api_response = client.get(
+        "/api/v1/watchdog/sessions/repo-a/workspace-activity?recent_minutes=30",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert api_response.status_code == 200
+    api_reply = api_response.json()["data"]
+    assert api_reply["reply_code"] == adapter_reply.reply_code
+    assert api_reply["message"] == adapter_reply.message
+    assert api_reply["workspace_activity"]["recent_change_count"] == 1
+    assert api_reply["workspace_activity"]["recent_window_minutes"] == 30
 
 
 def test_integration_execute_recovery_triggers_stable_recovery_action(tmp_path: Path) -> None:

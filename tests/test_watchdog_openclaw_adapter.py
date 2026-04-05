@@ -28,6 +28,7 @@ class FakeAClient:
         self._approvals = [dict(approval) for approval in approvals or []]
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
+        self.workspace_activity_calls: list[tuple[str, int]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         for task in self._tasks:
@@ -122,6 +123,27 @@ class FakeAClient:
             'data: {"event_id":"evt_002","project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread","status":"running","phase":"editing_source"},"created_at":"2026-04-05T10:01:00Z"}\n\n'
         )
 
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        self.workspace_activity_calls.append((project_id, recent_minutes))
+        return {
+            "success": True,
+            "data": {
+                "project_id": project_id,
+                "activity": {
+                    "cwd_exists": True,
+                    "files_scanned": 10,
+                    "latest_mtime_iso": "2026-04-05T05:30:00Z",
+                    "recent_change_count": 2,
+                    "recent_window_minutes": recent_minutes,
+                },
+            },
+        }
+
 
 def _adapter(
     tmp_path: Path,
@@ -197,6 +219,40 @@ def test_adapter_get_session_by_native_thread_returns_stable_session_projection(
     assert reply.session.project_id == "repo-a"
     assert reply.session.thread_id == "session:repo-a"
     assert reply.session.native_thread_id == "thr_native_1"
+
+
+def test_adapter_get_workspace_activity_returns_stable_workspace_activity_view(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "get_workspace_activity",
+        project_id="repo-a",
+        arguments={"recent_minutes": 30},
+    )
+
+    assert reply.reply_code == "workspace_activity_view"
+    assert reply.intent_code == "get_workspace_activity"
+    assert reply.session is not None
+    assert reply.session.project_id == "repo-a"
+    assert reply.workspace_activity is not None
+    assert reply.workspace_activity.recent_window_minutes == 30
+    assert reply.workspace_activity.recent_change_count == 2
+    assert adapter._client.workspace_activity_calls == [("repo-a", 30)]
 
 
 def test_adapter_why_stuck_is_built_from_fact_records(tmp_path: Path) -> None:

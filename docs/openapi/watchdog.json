@@ -709,6 +709,79 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions/{project_id}/workspace-activity": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Get stable workspace activity view",
+        "description": "Stable read surface for workspace activity inspection. Returns a versioned ReplyModel carrying WorkspaceActivityView instead of the raw A-Control-Agent workspace activity envelope.",
+        "operationId": "get_workspace_activity_api_v1_watchdog_sessions__project_id__workspace_activity_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "recent_minutes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1440,
+              "minimum": 1,
+              "default": 15,
+              "title": "Recent Minutes"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Workspace Activity Api V1 Watchdog Sessions  Project Id  Workspace Activity Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/sessions/{project_id}/pending-approvals": {
       "get": {
         "tags": [

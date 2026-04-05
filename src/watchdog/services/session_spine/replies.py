@@ -6,6 +6,7 @@ from watchdog.services.session_spine.service import (
     ApprovalInboxReadBundle,
     SessionDirectoryReadBundle,
     SessionReadBundle,
+    WorkspaceActivityReadBundle,
 )
 
 
@@ -41,6 +42,28 @@ def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
         intent_code="get_progress",
         message=bundle.progress.summary or bundle.session.headline,
         progress=bundle.progress,
+        facts=bundle.facts,
+    )
+
+
+def build_workspace_activity_reply(bundle: WorkspaceActivityReadBundle) -> ReplyModel:
+    activity = bundle.workspace_activity
+    if not activity.cwd_exists:
+        message = "workspace directory unavailable"
+    elif activity.recent_change_count > 0:
+        message = (
+            f"{activity.recent_change_count} recent workspace change(s) "
+            f"in last {activity.recent_window_minutes} min"
+        )
+    else:
+        message = f"no workspace changes detected in last {activity.recent_window_minutes} min"
+    return ReplyModel(
+        reply_kind=ReplyKind.SESSION,
+        reply_code=ReplyCode.WORKSPACE_ACTIVITY_VIEW,
+        intent_code="get_workspace_activity",
+        message=message,
+        session=bundle.session,
+        workspace_activity=activity,
         facts=bundle.facts,
     )
 

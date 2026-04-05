@@ -50,12 +50,13 @@ python scripts/export_openapi.py
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
 
-010-018 收口后的 OpenClaw 最小稳定接口面：
+010-019 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions` 返回稳定跨项目 `SessionProjection[]` 目录
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 通过 native thread 解析稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` 返回稳定 `TaskProgressView`
+- `GET /api/v1/watchdog/sessions/{project_id}/workspace-activity` 返回稳定 `WorkspaceActivityView`
 - `GET /api/v1/watchdog/approval-inbox` 返回稳定跨项目 pending approvals inbox
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` 返回稳定审批队列
 - `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` 返回稳定 `ReplyModel(reply_code=stuck_explanation)`
@@ -101,6 +102,12 @@ OpenClaw adapter 同步新增 `list_sessions` intent，继续复用同一份 L2 
 不会新增 DTO / reply code，也不会推进 session spine schema version。OpenClaw adapter
 同步新增 `get_session_by_native_thread` intent，继续复用同一份 L2 session builder；
 A 侧 raw `GET /api/v1/tasks/by-thread/{thread_id}` 继续保留，但不承担 stable contract 角色。
+019 在此基础上新增了 `GET /api/v1/watchdog/sessions/{project_id}/workspace-activity`，
+把 workspace 文件活动摘要收敛为稳定 `ReplyModel(reply_code=workspace_activity_view)`；
+它返回 `WorkspaceActivityView`，继续复用既有 `SessionProjection + FactRecord` 语义，
+供 OpenClaw adapter 的 `get_workspace_activity` intent 与 HTTP read surface 共用同一份
+L2 builder。A 侧 raw `GET /api/v1/tasks/{project_id}/workspace-activity` 继续保留，
+但不承担 stable contract 角色。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成

@@ -25,6 +25,7 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_session_reply,
     build_stuck_explanation_reply,
     build_unsupported_intent_reply,
+    build_workspace_activity_reply,
 )
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.services.session_spine.events import (
@@ -38,6 +39,7 @@ from watchdog.services.session_spine.service import (
     build_session_directory_bundle,
     build_session_read_bundle,
     build_session_read_bundle_by_native_thread,
+    build_workspace_activity_bundle,
 )
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -106,6 +108,20 @@ class OpenClawAdapter:
                     return build_session_reply(bundle, intent_code=intent_code)
                 if not project_id:
                     return build_action_not_available_reply(intent_code, "project_id is required")
+                if intent_code == "get_workspace_activity":
+                    try:
+                        recent_minutes = int((arguments or {}).get("recent_minutes") or 15)
+                    except (TypeError, ValueError):
+                        return build_action_not_available_reply(
+                            intent_code,
+                            "recent_minutes must be an integer",
+                        )
+                    bundle = build_workspace_activity_bundle(
+                        self._client,
+                        project_id,
+                        recent_minutes=recent_minutes,
+                    )
+                    return build_workspace_activity_reply(bundle)
                 bundle = build_session_read_bundle(self._client, project_id)
                 if intent_code == "get_session":
                     return build_session_reply(bundle)

@@ -21,6 +21,7 @@ from watchdog.contracts.session_spine.models import (
     TaskProgressView,
     WatchdogAction,
     WatchdogActionResult,
+    WorkspaceActivityView,
 )
 from watchdog.contracts.session_spine.versioning import (
     SESSION_EVENTS_CONTRACT_VERSION,
@@ -54,4 +55,5 @@ __all__ = [
     "TaskProgressView",
     "WatchdogAction",
     "WatchdogActionResult",
+    "WorkspaceActivityView",
 ]

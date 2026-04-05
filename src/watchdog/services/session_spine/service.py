@@ -10,6 +10,7 @@ from watchdog.contracts.session_spine.models import (
     FactRecord,
     SessionProjection,
     TaskProgressView,
+    WorkspaceActivityView,
 )
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_spine.facts import build_fact_records
@@ -18,6 +19,7 @@ from watchdog.services.session_spine.projection import (
     build_approval_projections,
     build_session_projection,
     build_task_progress_view,
+    build_workspace_activity_view,
 )
 
 
@@ -56,6 +58,16 @@ class SessionDirectoryReadBundle:
     tasks: list[dict[str, Any]]
     approvals: list[dict[str, Any]]
     sessions: list[SessionProjection]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceActivityReadBundle:
+    project_id: str
+    task: dict[str, Any] | None
+    approvals: list[dict[str, Any]]
+    facts: list[FactRecord]
+    session: SessionProjection
+    workspace_activity: WorkspaceActivityView
 
 
 def _load_task_or_raise(
@@ -125,6 +137,37 @@ def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
 
 
+def _load_workspace_activity_or_raise(
+    client: AControlAgentClient,
+    project_id: str,
+    *,
+    recent_minutes: int,
+) -> dict[str, Any]:
+    try:
+        body = client.get_workspace_activity_envelope(
+            project_id,
+            recent_minutes=recent_minutes,
+        )
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+    if not body.get("success"):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise SessionSpineUpstreamError(dict(error))
+        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR))
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+        )
+    activity = data.get("activity")
+    if not isinstance(activity, dict):
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+        )
+    return dict(activity)
+
+
 def _build_session_read_bundle(
     *,
     project_id: str,
@@ -185,6 +228,38 @@ def build_session_read_bundle_by_native_thread(
         project_id=project_id,
         task=task,
         approvals=approvals,
+    )
+
+
+def build_workspace_activity_bundle(
+    client: AControlAgentClient,
+    project_id: str,
+    *,
+    recent_minutes: int = 15,
+) -> WorkspaceActivityReadBundle:
+    task = _load_task_or_raise(client, project_id)
+    approvals = _load_approvals_or_raise(client, project_id)
+    facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
+    return WorkspaceActivityReadBundle(
+        project_id=project_id,
+        task=task,
+        approvals=approvals,
+        facts=facts,
+        session=build_session_projection(
+            project_id=project_id,
+            task=task,
+            approvals=approvals,
+            facts=facts,
+        ),
+        workspace_activity=build_workspace_activity_view(
+            project_id=project_id,
+            task=task,
+            activity=_load_workspace_activity_or_raise(
+                client,
+                project_id,
+                recent_minutes=recent_minutes,
+            ),
+        ),
     )
 
 

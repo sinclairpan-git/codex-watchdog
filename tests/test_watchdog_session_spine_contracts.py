@@ -28,7 +28,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.017"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.019"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -272,3 +272,8 @@ def test_native_thread_resolution_reuses_session_projection_reply_contract() -> 
     assert payload["reply_code"] == "session_projection"
     assert payload["intent_code"] == "get_session_by_native_thread"
     assert payload["session"]["native_thread_id"] == "thr_native_1"
+
+
+def test_workspace_activity_contract_extension_is_stable() -> None:
+    assert "WORKSPACE_ACTIVITY_VIEW" in ReplyCode.__members__
+    assert "workspace_activity" in ReplyModel.model_fields

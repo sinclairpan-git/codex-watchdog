@@ -28,6 +28,7 @@ class ReplyCode(str, Enum):
     SESSION_PROJECTION = "session_projection"
     SESSION_DIRECTORY = "session_directory"
     TASK_PROGRESS_VIEW = "task_progress_view"
+    WORKSPACE_ACTIVITY_VIEW = "workspace_activity_view"
     APPROVAL_QUEUE = "approval_queue"
     APPROVAL_INBOX = "approval_inbox"
     APPROVAL_RESULT = "approval_result"

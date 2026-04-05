@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import ValidationError
 
 from watchdog.api.deps import require_token
@@ -16,6 +16,7 @@ from watchdog.services.session_spine.replies import (
     build_session_directory_reply,
     build_session_reply,
     build_stuck_explanation_reply,
+    build_workspace_activity_reply,
 )
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
@@ -23,6 +24,7 @@ from watchdog.services.session_spine.service import (
     build_session_directory_bundle,
     build_session_read_bundle,
     build_session_read_bundle_by_native_thread,
+    build_workspace_activity_bundle,
 )
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -159,6 +161,34 @@ def get_progress(
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_progress_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/{project_id}/workspace-activity",
+    summary="Get stable workspace activity view",
+    description=(
+        "Stable read surface for workspace activity inspection. Returns a "
+        "versioned ReplyModel carrying WorkspaceActivityView instead of the "
+        "raw A-Control-Agent workspace activity envelope."
+    ),
+)
+def get_workspace_activity(
+    project_id: str,
+    request: Request,
+    recent_minutes: int = Query(default=15, ge=1, le=24 * 60),
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_workspace_activity_bundle(
+            client,
+            project_id,
+            recent_minutes=recent_minutes,
+        )
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_workspace_activity_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(

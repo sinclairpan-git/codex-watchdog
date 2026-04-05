@@ -8,6 +8,7 @@ from watchdog.contracts.session_spine.models import (
     FactRecord,
     SessionProjection,
     TaskProgressView,
+    WorkspaceActivityView,
 )
 
 
@@ -100,6 +101,25 @@ def build_task_progress_view(
         primary_fact_codes=[fact.fact_code for fact in facts],
         blocker_fact_codes=[fact.fact_code for fact in facts if fact.fact_kind == "blocker"],
         last_progress_at=str(_task_value(task, "last_progress_at", "")) or None,
+    )
+
+
+def build_workspace_activity_view(
+    *,
+    project_id: str,
+    task: dict[str, Any] | None,
+    activity: dict[str, Any],
+) -> WorkspaceActivityView:
+    stable_thread_id = stable_thread_id_for_project(project_id)
+    return WorkspaceActivityView(
+        project_id=project_id,
+        thread_id=stable_thread_id,
+        native_thread_id=str(_task_value(task, "thread_id", "")) or None,
+        recent_window_minutes=int(activity.get("recent_window_minutes") or 15),
+        cwd_exists=bool(activity.get("cwd_exists")),
+        files_scanned=int(activity.get("files_scanned") or 0),
+        latest_mtime_iso=str(activity.get("latest_mtime_iso") or "") or None,
+        recent_change_count=int(activity.get("recent_change_count") or 0),
     )
 
 

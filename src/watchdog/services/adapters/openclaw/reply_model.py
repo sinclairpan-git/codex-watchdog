@@ -19,10 +19,14 @@ from watchdog.services.session_spine.replies import build_session_reply as build
 from watchdog.services.session_spine.replies import (
     build_stuck_explanation_reply as build_stuck_explanation_read_reply,
 )
+from watchdog.services.session_spine.replies import (
+    build_workspace_activity_reply as build_workspace_activity_read_reply,
+)
 from watchdog.services.session_spine.service import (
     ApprovalInboxReadBundle,
     SessionDirectoryReadBundle,
     SessionReadBundle,
+    WorkspaceActivityReadBundle,
 )
 
 
@@ -40,6 +44,10 @@ def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyMo
 
 def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
     return build_progress_read_reply(bundle)
+
+
+def build_workspace_activity_reply(bundle: WorkspaceActivityReadBundle) -> ReplyModel:
+    return build_workspace_activity_read_reply(bundle)
 
 
 def build_approval_queue_reply(bundle: SessionReadBundle) -> ReplyModel:
