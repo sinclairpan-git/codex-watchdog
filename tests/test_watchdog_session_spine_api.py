@@ -364,6 +364,56 @@ def test_session_spine_execute_recovery_canonical_and_alias_share_the_same_resul
     assert canonical.json()["data"]["reply_code"] == "recovery_execution_result"
 
 
+def test_session_spine_evaluate_supervision_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    old = "2026-04-05T05:20:00Z"
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": old,
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.supervision.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        canonical = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "evaluate_supervision",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-supervision-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.post(
+            "/api/v1/watchdog/sessions/repo-a/actions/evaluate-supervision",
+            json={"operator": "openclaw", "idempotency_key": "idem-supervision-1"},
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert steer_mock.call_count == 1
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["reply_code"] == "supervision_evaluation"
+    assert canonical.json()["data"]["supervision_evaluation"]["reason_code"] == "stuck_soft"
+    assert canonical.json()["data"]["supervision_evaluation"]["steer_sent"] is True
+
+
 def test_legacy_routes_remain_registered_and_basic_behaviour_is_compatible(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

@@ -30,6 +30,7 @@ class ReplyCode(str, Enum):
     APPROVAL_QUEUE = "approval_queue"
     APPROVAL_RESULT = "approval_result"
     ACTION_RESULT = "action_result"
+    SUPERVISION_EVALUATION = "supervision_evaluation"
     ACTION_RECEIPT = "action_receipt"
     ACTION_RECEIPT_NOT_FOUND = "action_receipt_not_found"
     STUCK_EXPLANATION = "stuck_explanation"
@@ -65,6 +66,7 @@ class ActionCode(str, Enum):
     REJECT_APPROVAL = "reject_approval"
     REQUEST_RECOVERY = "request_recovery"
     EXECUTE_RECOVERY = "execute_recovery"
+    EVALUATE_SUPERVISION = "evaluate_supervision"
 
 
 class ActionStatus(str, Enum):
@@ -83,3 +85,10 @@ class Effect(str, Enum):
     APPROVAL_DECIDED = "approval_decided"
     HANDOFF_TRIGGERED = "handoff_triggered"
     HANDOFF_AND_RESUME = "handoff_and_resume"
+
+
+class SupervisionReasonCode(str, Enum):
+    FILESYSTEM_ACTIVITY_RECENT = "filesystem_activity_recent"
+    NO_LAST_PROGRESS_AT = "no_last_progress_at"
+    WITHIN_THRESHOLD = "within_threshold"
+    STUCK_SOFT = "stuck_soft"

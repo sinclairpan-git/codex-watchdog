@@ -282,6 +282,41 @@ def test_adapter_execute_recovery_maps_stable_action_result_to_reply_model(tmp_p
     assert reply.message == "recovery handoff triggered"
 
 
+def test_adapter_evaluate_supervision_maps_stable_action_result_to_reply_model(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    with patch("watchdog.services.session_spine.supervision.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        reply = adapter.handle_intent(
+            "evaluate_supervision",
+            project_id="repo-a",
+            operator="openclaw",
+            idempotency_key="idem-supervision-1",
+        )
+
+    assert steer_mock.call_count == 1
+    assert reply.reply_code == "supervision_evaluation"
+    assert reply.action_result is not None
+    assert reply.action_result.supervision_evaluation is not None
+    assert reply.action_result.supervision_evaluation.reason_code == "stuck_soft"
+    assert reply.action_result.supervision_evaluation.steer_sent is True
+
+
 def test_adapter_get_action_receipt_uses_stable_receipt_store_without_upstream_reads(
     tmp_path: Path,
 ) -> None:

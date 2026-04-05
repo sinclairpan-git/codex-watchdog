@@ -344,3 +344,55 @@ def test_approval_action_uses_approval_id_in_idempotency_key(tmp_path: Path) -> 
     assert first.approval_id == "appr_001"
     assert first.effect == "approval_decided"
     assert first.reply_code == "approval_result"
+
+
+def test_evaluate_supervision_is_idempotent_and_posts_steer_once(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.EVALUATE_SUPERVISION,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-supervision-1",
+        arguments={},
+    )
+
+    with patch("watchdog.services.session_spine.supervision.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        first = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+        )
+        second = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+        )
+
+    assert steer_mock.call_count == 1
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert first.reply_code == "supervision_evaluation"
+    assert first.supervision_evaluation is not None
+    assert first.supervision_evaluation.steer_sent is True

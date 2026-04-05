@@ -16,6 +16,7 @@ WRITE_INTENT_TO_ACTION = {
     "continue_session": ActionCode.CONTINUE_SESSION,
     "request_recovery": ActionCode.REQUEST_RECOVERY,
     "execute_recovery": ActionCode.EXECUTE_RECOVERY,
+    "evaluate_supervision": ActionCode.EVALUATE_SUPERVISION,
     "approve_approval": ActionCode.APPROVE_APPROVAL,
     "reject_approval": ActionCode.REJECT_APPROVAL,
 }

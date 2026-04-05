@@ -18,6 +18,7 @@ from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
     build_session_read_bundle,
 )
+from watchdog.services.session_spine.supervision import execute_supervision_evaluation
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
@@ -211,6 +212,8 @@ def execute_watchdog_action(
         result = _execute_request_recovery(action, client=client)
     elif action.action_code == ActionCode.EXECUTE_RECOVERY:
         result = _execute_recovery(action, settings=settings, client=client)
+    elif action.action_code == ActionCode.EVALUATE_SUPERVISION:
+        result = execute_supervision_evaluation(action, settings=settings, client=client)
     elif action.action_code == ActionCode.APPROVE_APPROVAL:
         result = _execute_approval_action(action, client=client, decision="approve")
     elif action.action_code == ActionCode.REJECT_APPROVAL:

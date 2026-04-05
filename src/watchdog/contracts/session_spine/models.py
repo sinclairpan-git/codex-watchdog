@@ -14,6 +14,7 @@ from watchdog.contracts.session_spine.enums import (
     ReplyCode,
     ReplyKind,
     SessionState,
+    SupervisionReasonCode,
 )
 from watchdog.contracts.session_spine.versioning import (
     SESSION_EVENTS_CONTRACT_VERSION,
@@ -132,6 +133,21 @@ class WatchdogAction(SessionSpineModel):
     note: str = ""
 
 
+class SupervisionEvaluation(SessionSpineModel):
+    project_id: str
+    thread_id: str
+    native_thread_id: str | None = None
+    evaluated_at: str
+    reason_code: SupervisionReasonCode
+    detail: str
+    current_stuck_level: int
+    next_stuck_level: int
+    repo_recent_change_count: int
+    threshold_minutes: float
+    should_steer: bool
+    steer_sent: bool
+
+
 class WatchdogActionResult(SessionSpineModel):
     action_code: ActionCode
     project_id: str
@@ -142,3 +158,4 @@ class WatchdogActionResult(SessionSpineModel):
     reply_code: ReplyCode | None = None
     message: str
     facts: list[FactRecord] = Field(default_factory=list)
+    supervision_evaluation: SupervisionEvaluation | None = None

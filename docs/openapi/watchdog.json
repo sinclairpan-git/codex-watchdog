@@ -1062,6 +1062,79 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions/{project_id}/actions/evaluate-supervision": {
+      "post": {
+        "tags": [
+          "session-spine-actions"
+        ],
+        "summary": "Alias: evaluate supervision",
+        "description": "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route maps to action_code=evaluate_supervision and reuses the canonical handler.",
+        "operationId": "evaluate_supervision_alias_api_v1_watchdog_sessions__project_id__actions_evaluate_supervision_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Evaluate Supervision Alias Api V1 Watchdog Sessions  Project Id  Actions Evaluate Supervision Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/approvals/{approval_id}/approve": {
       "post": {
         "tags": [

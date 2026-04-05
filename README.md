@@ -50,7 +50,7 @@ python scripts/export_openapi.py
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
 
-010-013 收口后的 OpenClaw 最小稳定接口面：
+010-014 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` 返回稳定 `TaskProgressView`
@@ -59,6 +59,7 @@ python scripts/export_openapi.py
 - `GET /api/v1/watchdog/action-receipts?action_code=...&project_id=...&idempotency_key=...` 返回稳定、版本化的 action receipt reply
 - `POST /api/v1/watchdog/actions` 是 canonical write surface，提交 `WatchdogAction`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/continue`
+- `POST /api/v1/watchdog/sessions/{project_id}/actions/evaluate-supervision`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/execute-recovery`
 - `GET /api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}`
@@ -71,6 +72,10 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 `execute_recovery`，它才是 stable surface 上显式触发 handoff / optional resume 的动作。
 013 在此基础上新增了 stable receipt read surface；它只读本地持久化 `ActionReceiptStore`，
 返回 `ReplyModel(reply_code=action_receipt|action_receipt_not_found)`，不会重放动作也不会回退到 raw/legacy 路由。
+014 在此基础上新增了 `evaluate_supervision` 稳定动作；它返回版本化
+`WatchdogActionResult(reply_code=supervision_evaluation)` 与 `SupervisionEvaluation`，
+必要时执行一次 advisory steer。原有
+`POST /api/v1/watchdog/tasks/{project_id}/evaluate` 继续保留，但现在只是复用 014 稳定内核的兼容壳。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成
@@ -86,7 +91,8 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 
 原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续保留，
 但不再承担 OpenClaw 稳定契约角色。`POST /api/v1/watchdog/tasks/{project_id}/recover`
-现在只是兼容壳，内部复用 012 的稳定 recovery execution 内核。
+现在只是兼容壳，内部复用 012 的稳定 recovery execution 内核；
+`POST /api/v1/watchdog/tasks/{project_id}/evaluate` 也是兼容壳，内部复用 014 的稳定 supervision evaluation 内核。
 
 若 A-Control-Agent 与 Codex Desktop 跑在同一台机器，默认启动路径现在会直接读取
 `~/.codex`（可由 `A_AGENT_CODEX_HOME` 覆盖），自动发现当前 active workspace 的 thread，

@@ -8,12 +8,14 @@ from watchdog.contracts.session_spine.enums import (
     ReplyCode,
     ReplyKind,
     SessionState,
+    SupervisionReasonCode,
 )
 from watchdog.contracts.session_spine.models import (
     ActionReceiptQuery,
     FactRecord,
     ReplyModel,
     SessionProjection,
+    SupervisionEvaluation,
     TaskProgressView,
     WatchdogAction,
     WatchdogActionResult,
@@ -26,7 +28,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.013"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.014"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -172,3 +174,40 @@ def test_recovery_execution_enum_extensions_are_stable() -> None:
     assert Effect.ADVISORY_ONLY == "advisory_only"
     assert ReplyCode.ACTION_RECEIPT == "action_receipt"
     assert ReplyCode.ACTION_RECEIPT_NOT_FOUND == "action_receipt_not_found"
+
+
+def test_supervision_evaluation_contract_extensions_are_stable() -> None:
+    evaluation = SupervisionEvaluation(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        evaluated_at="2026-04-05T05:24:00Z",
+        reason_code=SupervisionReasonCode.STUCK_SOFT,
+        detail="idle 10.0 min",
+        current_stuck_level=0,
+        next_stuck_level=2,
+        repo_recent_change_count=0,
+        threshold_minutes=8.0,
+        should_steer=True,
+        steer_sent=True,
+    )
+    result = WatchdogActionResult(
+        action_code=ActionCode.EVALUATE_SUPERVISION,
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="idem-supervision-1",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.STEER_POSTED,
+        reply_code=ReplyCode.SUPERVISION_EVALUATION,
+        message="supervision evaluation completed",
+        supervision_evaluation=evaluation,
+    )
+
+    payload = result.model_dump(mode="json")
+
+    assert ActionCode.EVALUATE_SUPERVISION == "evaluate_supervision"
+    assert ReplyCode.SUPERVISION_EVALUATION == "supervision_evaluation"
+    assert SupervisionReasonCode.STUCK_SOFT == "stuck_soft"
+    assert payload["supervision_evaluation"]["thread_id"] == "session:repo-a"
+    assert payload["supervision_evaluation"]["native_thread_id"] == "thr_native_1"
+    assert payload["supervision_evaluation"]["reason_code"] == "stuck_soft"

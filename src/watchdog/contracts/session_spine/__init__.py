@@ -8,6 +8,7 @@ from watchdog.contracts.session_spine.enums import (
     ReplyCode,
     ReplyKind,
     SessionState,
+    SupervisionReasonCode,
 )
 from watchdog.contracts.session_spine.models import (
     ActionReceiptQuery,
@@ -16,6 +17,7 @@ from watchdog.contracts.session_spine.models import (
     ReplyModel,
     SessionEvent,
     SessionProjection,
+    SupervisionEvaluation,
     TaskProgressView,
     WatchdogAction,
     WatchdogActionResult,
@@ -47,6 +49,8 @@ __all__ = [
     "SessionEvent",
     "SessionProjection",
     "SessionState",
+    "SupervisionEvaluation",
+    "SupervisionReasonCode",
     "TaskProgressView",
     "WatchdogAction",
     "WatchdogActionResult",
