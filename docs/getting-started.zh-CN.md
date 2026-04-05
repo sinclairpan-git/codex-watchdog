@@ -144,13 +144,18 @@ OpenClaw 侧应优先配置为：对 **Watchdog 基址** 调用 010 冻结后的
 - `GET /api/v1/watchdog/sessions/{project_id}` — 读取稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` — 读取稳定 `TaskProgressView`
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` — 读取稳定审批队列
+- `GET /api/v1/watchdog/sessions/{project_id}/events` — 读取稳定、版本化 `SessionEvent` SSE
 - `POST /api/v1/watchdog/actions` — canonical write surface，提交 `WatchdogAction`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` — continue 的 alias wrapper
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery` — request_recovery 的 alias wrapper，仅 advisory-only
 - `POST /api/v1/watchdog/approvals/{approval_id}/approve` — approve 的 alias wrapper
 - `POST /api/v1/watchdog/approvals/{approval_id}/reject` — reject 的 alias wrapper
 
-如果 OpenClaw 只需要读事件流，legacy 代理路径仍可用：
+如果 OpenClaw 需要稳定事件流，应优先使用：
+
+- `GET /api/v1/watchdog/sessions/{project_id}/events` — stable SSE，事件会从 raw `task_created / native_thread_registered / steer / handoff / resume / approval_decided` 投影为 `session_created / native_thread_bound / guidance_posted / handoff_requested / session_resumed / approval_resolved`，未知 raw 类型降级为 `session_updated`
+
+如果只需要 raw 透传，legacy 代理路径仍可用：
 
 - `GET /api/v1/watchdog/tasks/{project_id}/events` — 由 Watchdog 代理的任务事件流（支持 `follow=true|false`）
 
@@ -168,7 +173,7 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 
 - canonical 动作面始终是 `POST /api/v1/watchdog/actions`，路径级动作只是便于人工调用的包装。
 - `request_recovery` 在 010 只返回恢复可用性说明，不会触发真实恢复执行。
-- 原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续存在，但不再承担 stable contract 角色。
+- 原有 `progress / evaluate / approvals / recover / events` raw / legacy 接口继续存在，但不再承担 stable contract 角色；`/watchdog/tasks/{project_id}/events` 仍是 raw/legacy，`/watchdog/sessions/{project_id}/events` 才是 011 引入的 stable 事件面。
 
 若 B 侧需要更实时地感知 A 的任务变化，A-Control-Agent 现已提供：
 
@@ -246,10 +251,14 @@ uv run python examples/openclaw_watchdog_client.py <project_id>
 `A_AGENT_CODEX_BRIDGE_ENABLED=true` 以启动本地 app-server bridge。
 
 **Q：任务事件流现在支持到什么程度？**
-当前已提供 A 侧 `GET /api/v1/tasks/{project_id}/events` 与 Watchdog 侧
-`GET /api/v1/watchdog/tasks/{project_id}/events` 的基础 SSE 输出，事件源覆盖
-`task_created`、`native_thread_registered`、`steer`、`handoff`、`resume`、`approval_decided`。
-未提供 WebSocket，也还不是完整 transcript 流。
+当前已提供三层读面：
+- A 侧 `GET /api/v1/tasks/{project_id}/events` — 原始 SSE
+- Watchdog 侧 `GET /api/v1/watchdog/tasks/{project_id}/events` — raw 透传 SSE
+- Watchdog 侧 `GET /api/v1/watchdog/sessions/{project_id}/events` — 011 新增 stable SSE
+
+stable 事件当前覆盖 `session_created`、`native_thread_bound`、`guidance_posted`、
+`handoff_requested`、`session_resumed`、`approval_resolved`，未知 raw 类型降级为
+`session_updated`。未提供 WebSocket，也还不是完整 transcript 流。
 
 **Q：Token 泄露怎么办？**  
 轮换 `A_AGENT_API_TOKEN` / `WATCHDOG_API_TOKEN`，并限制源 IP / 使用 TLS。

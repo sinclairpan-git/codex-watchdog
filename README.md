@@ -55,6 +55,7 @@ python scripts/export_openapi.py
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` 返回稳定 `TaskProgressView`
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` 返回稳定审批队列
+- `GET /api/v1/watchdog/sessions/{project_id}/events` 返回稳定、版本化的 `SessionEvent` SSE
 - `POST /api/v1/watchdog/actions` 是 canonical write surface，提交 `WatchdogAction`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/continue`
 - `POST /api/v1/watchdog/sessions/{project_id}/actions/request-recovery`
@@ -65,11 +66,15 @@ python scripts/export_openapi.py
 `WatchdogAction -> WatchdogActionResult`。`request_recovery` 在 010 仍是
 advisory-only，只返回恢复可用性说明，不触发真实 handoff / resume。
 
-基础事件流接口已提供：`GET /api/v1/tasks/{project_id}/events`
-会以 `text/event-stream` 返回当前任务事件；默认持续跟随新事件，也可用
-`?follow=false` 只回放当前快照。
-当前最小事件集包括 `task_created`、`native_thread_registered`、`steer`、
-`handoff`、`resume`、`approval_decided`。
+011 在 010 stable surface 旁边新增了只读稳定事件面：
+`GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成
+版本化 `SessionEvent`，当前最小稳定事件集包括 `session_created`、
+`native_thread_bound`、`guidance_posted`、`handoff_requested`、
+`session_resumed`、`approval_resolved`，未知 raw 类型会降级为
+`session_updated`。默认持续跟随新事件，也可用 `?follow=false` 只回放当前快照。
+
+原始事件流仍保留：
+`GET /api/v1/tasks/{project_id}/events` 直接返回 A 侧原始 SSE；
 若 OpenClaw 不直接连 A，也可经 Watchdog 代理读取
 `GET /api/v1/watchdog/tasks/{project_id}/events`。
 

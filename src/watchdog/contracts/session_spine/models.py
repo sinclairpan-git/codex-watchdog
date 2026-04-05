@@ -9,11 +9,15 @@ from watchdog.contracts.session_spine.enums import (
     ActionStatus,
     AttentionState,
     Effect,
+    EventCode,
+    EventKind,
     ReplyCode,
     ReplyKind,
     SessionState,
 )
 from watchdog.contracts.session_spine.versioning import (
+    SESSION_EVENTS_CONTRACT_VERSION,
+    SESSION_EVENTS_SCHEMA_VERSION,
     SESSION_SPINE_CONTRACT_VERSION,
     SESSION_SPINE_SCHEMA_VERSION,
 )
@@ -24,6 +28,27 @@ class SessionSpineModel(BaseModel):
 
     contract_version: str = Field(default=SESSION_SPINE_CONTRACT_VERSION)
     schema_version: str = Field(default=SESSION_SPINE_SCHEMA_VERSION)
+
+
+class SessionEventModel(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    contract_version: str = Field(default=SESSION_EVENTS_CONTRACT_VERSION)
+    schema_version: str = Field(default=SESSION_EVENTS_SCHEMA_VERSION)
+
+
+class SessionEvent(SessionEventModel):
+    event_id: str
+    event_code: EventCode
+    event_kind: EventKind
+    project_id: str
+    thread_id: str
+    native_thread_id: str | None = None
+    source: str
+    observed_at: str
+    summary: str
+    related_ids: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class FactRecord(SessionSpineModel):

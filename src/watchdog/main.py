@@ -11,6 +11,7 @@ from watchdog.api import events_proxy as events_proxy_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
 from watchdog.api import progress as progress_routes
 from watchdog.api import session_spine_actions as session_spine_actions_routes
+from watchdog.api import session_spine_events as session_spine_events_routes
 from watchdog.api import session_spine_queries as session_spine_query_routes
 from watchdog.api import supervision as supervision_routes
 from watchdog.observability.metrics_export import PROM_CONTENT_TYPE, build_watchdog_metrics_text
@@ -46,6 +47,7 @@ def create_app(
     app.include_router(recover_watchdog_routes.router, prefix="/api/v1")
     app.include_router(session_spine_query_routes.router, prefix="/api/v1")
     app.include_router(session_spine_actions_routes.router, prefix="/api/v1")
+    app.include_router(session_spine_events_routes.router, prefix="/api/v1")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

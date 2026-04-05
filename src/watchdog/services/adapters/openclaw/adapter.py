@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
-from watchdog.contracts.session_spine.models import ReplyModel, WatchdogAction
+from watchdog.contracts.session_spine.models import ReplyModel, SessionEvent, WatchdogAction
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.adapters.openclaw.intents import READ_INTENTS, WRITE_INTENT_TO_ACTION
 from watchdog.services.adapters.openclaw.reply_model import (
@@ -17,6 +18,10 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_unsupported_intent_reply,
 )
 from watchdog.services.session_spine.actions import execute_watchdog_action
+from watchdog.services.session_spine.events import (
+    iter_session_events as iter_projected_session_events,
+    list_session_events as list_projected_session_events,
+)
 from watchdog.services.session_spine.service import SessionSpineUpstreamError, build_session_read_bundle
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -86,3 +91,9 @@ class OpenClawAdapter:
                 intent_code,
                 str(exc.error.get("message") or "control link error"),
             )
+
+    def list_session_events(self, project_id: str) -> list[SessionEvent]:
+        return list_projected_session_events(self._client, project_id)
+
+    def iter_session_events(self, project_id: str) -> Iterator[SessionEvent]:
+        yield from iter_projected_session_events(self._client, project_id)

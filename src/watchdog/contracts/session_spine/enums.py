@@ -38,6 +38,24 @@ class ReplyCode(str, Enum):
     UNSUPPORTED_INTENT = "unsupported_intent"
 
 
+class EventKind(str, Enum):
+    LIFECYCLE = "lifecycle"
+    GUIDANCE = "guidance"
+    RECOVERY = "recovery"
+    APPROVAL = "approval"
+    OBSERVATION = "observation"
+
+
+class EventCode(str, Enum):
+    SESSION_CREATED = "session_created"
+    NATIVE_THREAD_BOUND = "native_thread_bound"
+    GUIDANCE_POSTED = "guidance_posted"
+    HANDOFF_REQUESTED = "handoff_requested"
+    SESSION_RESUMED = "session_resumed"
+    APPROVAL_RESOLVED = "approval_resolved"
+    SESSION_UPDATED = "session_updated"
+
+
 class ActionCode(str, Enum):
     CONTINUE_SESSION = "continue_session"
     APPROVE_APPROVAL = "approve_approval"

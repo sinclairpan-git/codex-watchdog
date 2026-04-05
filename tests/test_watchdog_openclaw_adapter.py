@@ -46,6 +46,35 @@ class FakeAClient:
             },
         }
 
+    def get_events_snapshot(
+        self,
+        project_id: str,
+        *,
+        poll_interval: float = 0.5,
+    ) -> tuple[str, str]:
+        assert project_id == self._task["project_id"]
+        _ = poll_interval
+        return (
+            'id: evt_001\n'
+            "event: task_created\n"
+            'data: {"event_id":"evt_001","project_id":"repo-a","thread_id":"thr_native_1","event_type":"task_created","event_source":"a_control_agent","payload_json":{"status":"running","phase":"planning"},"created_at":"2026-04-05T10:00:00Z"}\n\n',
+            "text/event-stream",
+        )
+
+    def iter_events(
+        self,
+        project_id: str,
+        *,
+        poll_interval: float = 0.5,
+    ):
+        assert project_id == self._task["project_id"]
+        _ = poll_interval
+        yield (
+            'id: evt_002\n'
+            "event: resume\n"
+            'data: {"event_id":"evt_002","project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread","status":"running","phase":"editing_source"},"created_at":"2026-04-05T10:01:00Z"}\n\n'
+        )
+
 
 def _adapter(tmp_path: Path, *, task: dict[str, object], approvals: list[dict[str, object]] | None = None) -> OpenClawAdapter:
     return OpenClawAdapter(
@@ -211,3 +240,54 @@ def test_adapter_returns_unsupported_intent_for_unknown_request(tmp_path: Path) 
     reply = adapter.handle_intent("summon_supervisor", project_id="repo-a")
 
     assert reply.reply_code == "unsupported_intent"
+
+
+def test_adapter_lists_stable_session_events(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    events = adapter.list_session_events("repo-a")
+
+    assert len(events) == 1
+    assert events[0].event_code == "session_created"
+    assert events[0].thread_id == "session:repo-a"
+    assert "payload_json" not in events[0].model_dump(mode="json")
+
+
+def test_adapter_iterates_stable_session_events(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    events = list(adapter.iter_session_events("repo-a"))
+
+    assert len(events) == 1
+    assert events[0].event_code == "session_resumed"
+    assert events[0].attributes["mode"] == "resume_or_new_thread"
