@@ -76,6 +76,19 @@ A-Control-Agent 会以子进程方式拉起本地 Codex app-server，并通过 s
 `python examples/register_native_thread.py --payload examples/native_thread_payload.json`
 把当前原生 Codex thread 注册进 A-Control-Agent，再经 Watchdog / OpenClaw 查询。
 
+## GitHub PR / Codex Review 演示
+
+推荐工作流：
+
+1. 从 `main` 拉出功能分支。
+2. 在分支上完成改动并推送到 GitHub。
+3. 发起 Pull Request，请求合并回 `main`。
+4. 在 PR 评论里使用 `@codex review` 触发首轮机器评审。
+5. 根据 review 评论补修改动、补测试，再次推送到同一个分支。
+6. 通过人工复核后再合并。
+
+对这个仓库，建议让 Codex 先检查明显 bug、回归风险和测试缺口，再由人工 reviewer 判断需求、设计和长期维护取舍。
+
 ## 测试
 
 ```bash
