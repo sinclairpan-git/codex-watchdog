@@ -195,6 +195,43 @@ def request_recovery_alias(
 
 
 @router.post(
+    "/sessions/{project_id}/actions/execute-recovery",
+    summary="Alias: execute recovery",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=execute_recovery and triggers the stable recovery "
+        "execution path."
+    ),
+)
+def execute_recovery_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.EXECUTE_RECOVERY,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "idempotency_key required"},
+        )
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
     "/approvals/{approval_id}/approve",
     summary="Alias: approve approval",
     description=(

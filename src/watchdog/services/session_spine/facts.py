@@ -159,7 +159,10 @@ def build_fact_records(
                 fact_kind="advisory",
                 severity="info",
                 summary="recovery may be requested",
-                detail="watchdog can explain whether recovery is available, but will not execute it on the stable surface",
+                detail=(
+                    "watchdog can explain recovery availability; request_recovery remains "
+                    "advisory-only, while execute_recovery performs the explicit recovery action"
+                ),
                 source="watchdog_projection",
                 observed_at=observed_at,
             )

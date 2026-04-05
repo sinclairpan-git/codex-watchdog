@@ -33,6 +33,7 @@ class ReplyCode(str, Enum):
     STUCK_EXPLANATION = "stuck_explanation"
     BLOCKER_EXPLANATION = "blocker_explanation"
     RECOVERY_AVAILABILITY = "recovery_availability"
+    RECOVERY_EXECUTION_RESULT = "recovery_execution_result"
     ACTION_NOT_AVAILABLE = "action_not_available"
     CONTROL_LINK_ERROR = "control_link_error"
     UNSUPPORTED_INTENT = "unsupported_intent"
@@ -61,6 +62,7 @@ class ActionCode(str, Enum):
     APPROVE_APPROVAL = "approve_approval"
     REJECT_APPROVAL = "reject_approval"
     REQUEST_RECOVERY = "request_recovery"
+    EXECUTE_RECOVERY = "execute_recovery"
 
 
 class ActionStatus(str, Enum):
@@ -77,3 +79,5 @@ class Effect(str, Enum):
     ADVISORY_ONLY = "advisory_only"
     STEER_POSTED = "steer_posted"
     APPROVAL_DECIDED = "approval_decided"
+    HANDOFF_TRIGGERED = "handoff_triggered"
+    HANDOFF_AND_RESUME = "handoff_and_resume"

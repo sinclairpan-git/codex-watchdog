@@ -13,6 +13,7 @@ from watchdog.contracts.session_spine.enums import (
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
 from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_spine.recovery import perform_recovery_execution
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
     build_session_read_bundle,
@@ -105,6 +106,49 @@ def _execute_request_recovery(
     )
 
 
+def _execute_recovery(
+    action: WatchdogAction,
+    *,
+    settings: Settings,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    outcome = perform_recovery_execution(
+        action.project_id,
+        settings=settings,
+        client=client,
+    )
+    facts = list(outcome.facts)
+    if outcome.action == "noop":
+        return _result(
+            action,
+            action_status=ActionStatus.NOOP,
+            effect=Effect.NOOP,
+            reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+            message="recovery not executed because context is not critical",
+            facts=facts,
+        )
+    if outcome.action == "handoff_and_resume":
+        return _result(
+            action,
+            action_status=ActionStatus.COMPLETED,
+            effect=Effect.HANDOFF_AND_RESUME,
+            reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+            message="recovery handoff triggered and resume requested",
+            facts=facts,
+        )
+    message = "recovery handoff triggered"
+    if outcome.resume_error:
+        message = "recovery handoff triggered; resume failed"
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.HANDOFF_TRIGGERED,
+        reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+        message=message,
+        facts=facts,
+    )
+
+
 def _execute_approval_action(
     action: WatchdogAction,
     *,
@@ -165,6 +209,8 @@ def execute_watchdog_action(
         result = _execute_continue(action, settings=settings, client=client)
     elif action.action_code == ActionCode.REQUEST_RECOVERY:
         result = _execute_request_recovery(action, client=client)
+    elif action.action_code == ActionCode.EXECUTE_RECOVERY:
+        result = _execute_recovery(action, settings=settings, client=client)
     elif action.action_code == ActionCode.APPROVE_APPROVAL:
         result = _execute_approval_action(action, client=client, decision="approve")
     elif action.action_code == ActionCode.REJECT_APPROVAL:

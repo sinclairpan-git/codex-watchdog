@@ -25,7 +25,7 @@ from watchdog.contracts.session_spine.versioning import (
 
 def test_session_spine_version_constants_are_frozen() -> None:
     assert SESSION_SPINE_CONTRACT_VERSION == "watchdog-session-spine/v1alpha1"
-    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.010"
+    assert SESSION_SPINE_SCHEMA_VERSION == "2026-04-05.012"
 
 
 def test_session_projection_distinguishes_stable_and_native_thread_ids() -> None:
@@ -84,12 +84,12 @@ def test_reply_and_action_models_expose_stable_semantic_keys() -> None:
         facts=[fact],
     )
     action = WatchdogAction(
-        action_code=ActionCode.REQUEST_RECOVERY,
+        action_code=ActionCode.EXECUTE_RECOVERY,
         project_id="repo-a",
         operator="openclaw",
         idempotency_key="idem-1",
         arguments={},
-        note="check recovery availability",
+        note="execute recovery",
     )
     result = WatchdogActionResult(
         action_code=action.action_code,
@@ -97,9 +97,9 @@ def test_reply_and_action_models_expose_stable_semantic_keys() -> None:
         approval_id=None,
         idempotency_key=action.idempotency_key,
         action_status=ActionStatus.COMPLETED,
-        effect=Effect.ADVISORY_ONLY,
-        reply_code=ReplyCode.RECOVERY_AVAILABILITY,
-        message="recovery is available",
+        effect=Effect.HANDOFF_TRIGGERED,
+        reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+        message="recovery handoff triggered",
         facts=[fact],
     )
 
@@ -110,5 +110,15 @@ def test_reply_and_action_models_expose_stable_semantic_keys() -> None:
     assert reply_payload["reply_code"] == "stuck_explanation"
     assert reply_payload["facts"][0]["fact_code"] == "approval_pending"
     assert result_payload["action_status"] == "completed"
-    assert result_payload["effect"] == "advisory_only"
-    assert result_payload["reply_code"] == "recovery_availability"
+    assert result_payload["effect"] == "handoff_triggered"
+    assert result_payload["reply_code"] == "recovery_execution_result"
+
+
+def test_recovery_execution_enum_extensions_are_stable() -> None:
+    assert ActionCode.EXECUTE_RECOVERY == "execute_recovery"
+    assert ReplyCode.RECOVERY_EXECUTION_RESULT == "recovery_execution_result"
+    assert Effect.HANDOFF_TRIGGERED == "handoff_triggered"
+    assert Effect.HANDOFF_AND_RESUME == "handoff_and_resume"
+    assert ActionCode.REQUEST_RECOVERY == "request_recovery"
+    assert ReplyCode.RECOVERY_AVAILABILITY == "recovery_availability"
+    assert Effect.ADVISORY_ONLY == "advisory_only"

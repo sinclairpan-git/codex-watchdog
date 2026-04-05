@@ -17,6 +17,8 @@ class FakeAClient:
     ) -> None:
         self._task = dict(task)
         self._approvals = [dict(approval) for approval in approvals or []]
+        self.handoff_calls: list[tuple[str, str]] = []
+        self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         assert project_id == self._task["project_id"]
@@ -47,6 +49,31 @@ class FakeAClient:
                 "operator": operator,
                 "note": note,
             },
+        }
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        self.handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        self.resume_calls.append((project_id, mode, handoff_summary))
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
 
     def get_events_snapshot(
@@ -203,6 +230,53 @@ def test_session_spine_action_routes_reject_empty_idempotency_key(tmp_path) -> N
     assert alias.status_code == 200
     assert alias.json()["success"] is False
     assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_session_spine_execute_recovery_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=client,
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "execute_recovery",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-execute-recovery-1",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/execute-recovery",
+        json={"operator": "openclaw", "idempotency_key": "idem-execute-recovery-1"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "handoff_triggered"
+    assert canonical.json()["data"]["reply_code"] == "recovery_execution_result"
 
 
 def test_legacy_routes_remain_registered_and_basic_behaviour_is_compatible(tmp_path) -> None:

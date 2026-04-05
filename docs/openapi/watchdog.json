@@ -351,7 +351,7 @@
           "recover"
         ],
         "summary": "Recover",
-        "description": "拉取 A 任务；若 context_pressure 为 critical 则触发 handoff。",
+        "description": "兼容旧 recover route，内部复用 stable recovery execution 内核。",
         "operationId": "recover_api_v1_watchdog_tasks__project_id__recover_post",
         "parameters": [
           {
@@ -782,6 +782,79 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Request Recovery Alias Api V1 Watchdog Sessions  Project Id  Actions Request Recovery Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/watchdog/sessions/{project_id}/actions/execute-recovery": {
+      "post": {
+        "tags": [
+          "session-spine-actions"
+        ],
+        "summary": "Alias: execute recovery",
+        "description": "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route maps to action_code=execute_recovery and triggers the stable recovery execution path.",
+        "operationId": "execute_recovery_alias_api_v1_watchdog_sessions__project_id__actions_execute_recovery_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Execute Recovery Alias Api V1 Watchdog Sessions  Project Id  Actions Execute Recovery Post"
                 }
               }
             }

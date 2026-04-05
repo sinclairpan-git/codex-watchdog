@@ -109,6 +109,61 @@ class AControlAgentClient:
                 return body
             raise RuntimeError("invalid_envelope_shape")
 
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/handoff"
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.post(
+                    url,
+                    headers=self._auth_headers(),
+                    json={"reason": reason},
+                )
+                resp.raise_for_status()
+            except httpx.RequestError as exc:
+                raise exc
+            except httpx.HTTPError as exc:
+                raise RuntimeError("handoff_http_error") from exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if isinstance(body, dict):
+                return body
+            raise RuntimeError("invalid_envelope_shape")
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/resume"
+        payload = {
+            "mode": mode,
+            "handoff_summary": handoff_summary,
+        }
+        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+            try:
+                resp = client.post(url, headers=self._auth_headers(), json=payload)
+                resp.raise_for_status()
+            except httpx.RequestError as exc:
+                raise exc
+            except httpx.HTTPError as exc:
+                raise RuntimeError("resume_http_error") from exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if isinstance(body, dict):
+                return body
+            raise RuntimeError("invalid_envelope_shape")
+
     def get_events_snapshot(
         self,
         project_id: str,

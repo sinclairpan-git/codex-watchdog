@@ -20,6 +20,8 @@ class FakeAClient:
         self._task = dict(task)
         self._approvals = [dict(approval) for approval in approvals or []]
         self.decision_calls: list[tuple[str, str, str, str]] = []
+        self.handoff_calls: list[tuple[str, str]] = []
+        self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         assert project_id == self._task["project_id"]
@@ -46,6 +48,31 @@ class FakeAClient:
                 "approval_id": approval_id,
                 "status": "approved" if decision == "approve" else "rejected",
             },
+        }
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        self.handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        self.resume_calls.append((project_id, mode, handoff_summary))
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
 
 
@@ -205,6 +232,36 @@ def test_integration_request_recovery_is_advisory_only(tmp_path: Path) -> None:
     assert steer_mock.call_count == 0
     assert reply.reply_code == "recovery_availability"
     assert reply.message == "recovery is available"
+
+
+def test_integration_execute_recovery_triggers_stable_recovery_action(tmp_path: Path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    adapter = _adapter(tmp_path, client)
+
+    reply = adapter.handle_intent(
+        "execute_recovery",
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-execute-recovery-1",
+    )
+
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert reply.reply_code == "recovery_execution_result"
+    assert reply.message == "recovery handoff triggered"
 
 
 def test_integration_approval_actions_cover_approve_and_reject(tmp_path: Path) -> None:

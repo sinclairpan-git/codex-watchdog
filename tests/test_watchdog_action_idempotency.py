@@ -20,6 +20,8 @@ class FakeAClient:
         self._task = dict(task)
         self._approvals = [dict(approval) for approval in approvals or []]
         self.decision_calls: list[tuple[str, str, str, str]] = []
+        self.handoff_calls: list[tuple[str, str]] = []
+        self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         assert project_id == self._task["project_id"]
@@ -45,6 +47,38 @@ class FakeAClient:
             "data": {
                 "approval_id": approval_id,
                 "status": "approved" if decision == "approve" else "rejected",
+            },
+        }
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        self.handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {
+                "handoff_file": f"/tmp/{project_id}.handoff.md",
+                "summary": f"handoff for {project_id}",
+            },
+        }
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        self.resume_calls.append((project_id, mode, handoff_summary))
+        return {
+            "success": True,
+            "data": {
+                "project_id": project_id,
+                "status": "running",
+                "mode": mode,
             },
         }
 
@@ -151,6 +185,103 @@ def test_request_recovery_returns_advisory_only_result(tmp_path: Path) -> None:
         "context_critical",
         "recovery_available",
     ]
+
+
+def test_execute_recovery_returns_noop_when_not_critical(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "steady progress",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "medium",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.EXECUTE_RECOVERY,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-execute-recovery-1",
+        arguments={},
+    )
+
+    result = execute_watchdog_action(
+        action,
+        settings=settings,
+        client=client,
+        receipt_store=_receipt_store(tmp_path),
+    )
+
+    assert client.handoff_calls == []
+    assert client.resume_calls == []
+    assert result.action_status == "noop"
+    assert result.effect == "noop"
+    assert result.reply_code == "recovery_execution_result"
+    assert result.message == "recovery not executed because context is not critical"
+
+
+def test_execute_recovery_is_idempotent_and_can_resume_once(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=True,
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.EXECUTE_RECOVERY,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-execute-recovery-2",
+        arguments={},
+    )
+
+    first = execute_watchdog_action(
+        action,
+        settings=settings,
+        client=client,
+        receipt_store=_receipt_store(tmp_path),
+    )
+    second = execute_watchdog_action(
+        action,
+        settings=settings,
+        client=client,
+        receipt_store=_receipt_store(tmp_path),
+    )
+
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert first.action_status == "completed"
+    assert first.effect == "handoff_and_resume"
+    assert first.reply_code == "recovery_execution_result"
 
 
 def test_approval_action_uses_approval_id_in_idempotency_key(tmp_path: Path) -> None:

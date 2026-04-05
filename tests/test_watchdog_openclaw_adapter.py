@@ -17,6 +17,8 @@ class FakeAClient:
     ) -> None:
         self._task = dict(task)
         self._approvals = [dict(approval) for approval in approvals or []]
+        self.handoff_calls: list[tuple[str, str]] = []
+        self.resume_calls: list[tuple[str, str, str]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         assert project_id == self._task["project_id"]
@@ -44,6 +46,31 @@ class FakeAClient:
                 "operator": operator,
                 "note": note,
             },
+        }
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        self.handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        self.resume_calls.append((project_id, mode, handoff_summary))
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
 
     def get_events_snapshot(
@@ -217,6 +244,35 @@ def test_adapter_request_recovery_maps_advisory_action_result_to_reply_model(tmp
     assert steer_mock.call_count == 0
     assert reply.reply_code == "recovery_availability"
     assert reply.message == "recovery is available"
+
+
+def test_adapter_execute_recovery_maps_stable_action_result_to_reply_model(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "execute_recovery",
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-execute-recovery-1",
+    )
+
+    assert reply.reply_code == "recovery_execution_result"
+    assert reply.message == "recovery handoff triggered"
 
 
 def test_adapter_returns_unsupported_intent_for_unknown_request(tmp_path: Path) -> None:

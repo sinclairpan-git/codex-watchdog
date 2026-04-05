@@ -97,6 +97,8 @@ def _build_available_intents(
         )
     if fact_codes.intersection({"stuck_no_progress", "repeat_failure", "context_critical"}):
         intents.extend(["why_stuck", "explain_blocker", "request_recovery"])
+        if "context_critical" in fact_codes:
+            intents.append("execute_recovery")
     elif fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
         intents.extend(["why_stuck", "explain_blocker"])
     return intents
