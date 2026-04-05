@@ -589,6 +589,128 @@
         }
       }
     },
+    "/api/v1/watchdog/sessions/{project_id}/stuck-explanation": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Explain why a session appears stuck",
+        "description": "Stable read surface for why_stuck. Returns the frozen ReplyModel shape with session, progress, and FactRecord context.",
+        "operationId": "get_stuck_explanation_api_v1_watchdog_sessions__project_id__stuck_explanation_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Stuck Explanation Api V1 Watchdog Sessions  Project Id  Stuck Explanation Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/watchdog/sessions/{project_id}/blocker-explanation": {
+      "get": {
+        "tags": [
+          "session-spine"
+        ],
+        "summary": "Explain the current primary blocker",
+        "description": "Stable read surface for explain_blocker. Returns the frozen ReplyModel shape with session, progress, and FactRecord context.",
+        "operationId": "get_blocker_explanation_api_v1_watchdog_sessions__project_id__blocker_explanation_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Blocker Explanation Api V1 Watchdog Sessions  Project Id  Blocker Explanation Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/watchdog/action-receipts": {
       "get": {
         "tags": [

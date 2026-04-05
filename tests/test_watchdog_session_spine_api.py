@@ -153,6 +153,70 @@ def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
     assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
 
 
+def test_session_spine_stuck_explanation_route_returns_stable_reply_model(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "repeated failures",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "stuck_explanation"
+    assert data["progress"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "stuck_no_progress",
+        "repeat_failure",
+        "context_critical",
+        "recovery_available",
+    ]
+
+
+def test_session_spine_blocker_explanation_route_returns_stable_reply_model(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/blocker-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "blocker_explanation"
+    assert data["progress"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+
+
 def test_session_spine_canonical_and_alias_actions_share_the_same_result(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

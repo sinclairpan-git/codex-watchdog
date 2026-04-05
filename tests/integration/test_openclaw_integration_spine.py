@@ -4,7 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+from fastapi.testclient import TestClient
 
+from watchdog.main import create_app
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -232,6 +234,42 @@ def test_integration_request_recovery_is_advisory_only(tmp_path: Path) -> None:
     assert steer_mock.call_count == 0
     assert reply.reply_code == "recovery_availability"
     assert reply.message == "recovery is available"
+
+
+def test_integration_api_and_adapter_share_stuck_explanation_semantics(tmp_path: Path) -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "repeated failures",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    adapter = _adapter(tmp_path, FakeAClient(task=task))
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(task=task),
+    )
+    client = TestClient(app)
+
+    adapter_reply = adapter.handle_intent("why_stuck", project_id="repo-a")
+    api_response = client.get(
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert api_response.status_code == 200
+    api_reply = api_response.json()["data"]
+    assert api_reply["reply_code"] == adapter_reply.reply_code
+    assert [fact["fact_code"] for fact in api_reply["facts"]] == [
+        fact.fact_code for fact in adapter_reply.facts
+    ]
+    assert api_reply["message"] == adapter_reply.message
 
 
 def test_integration_execute_recovery_triggers_stable_recovery_action(tmp_path: Path) -> None:

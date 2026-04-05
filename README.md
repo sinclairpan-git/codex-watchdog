@@ -50,11 +50,13 @@ python scripts/export_openapi.py
 
 示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
 
-010-014 收口后的 OpenClaw 最小稳定接口面：
+010-015 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
 - `GET /api/v1/watchdog/sessions/{project_id}/progress` 返回稳定 `TaskProgressView`
 - `GET /api/v1/watchdog/sessions/{project_id}/pending-approvals` 返回稳定审批队列
+- `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` 返回稳定 `ReplyModel(reply_code=stuck_explanation)`
+- `GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation` 返回稳定 `ReplyModel(reply_code=blocker_explanation)`
 - `GET /api/v1/watchdog/sessions/{project_id}/events` 返回稳定、版本化的 `SessionEvent` SSE
 - `GET /api/v1/watchdog/action-receipts?action_code=...&project_id=...&idempotency_key=...` 返回稳定、版本化的 action receipt reply
 - `POST /api/v1/watchdog/actions` 是 canonical write surface，提交 `WatchdogAction`
@@ -76,6 +78,11 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 `WatchdogActionResult(reply_code=supervision_evaluation)` 与 `SupervisionEvaluation`，
 必要时执行一次 advisory steer。原有
 `POST /api/v1/watchdog/tasks/{project_id}/evaluate` 继续保留，但现在只是复用 014 稳定内核的兼容壳。
+015 在不推进 contract/schema version 的前提下，补齐了
+`GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` 与
+`GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation` 两个 stable read route；
+它们与 OpenClaw adapter 复用同一套 explanation builder，继续只基于稳定 `SessionReadBundle + FactRecord`
+产出 `ReplyModel(reply_code=stuck_explanation|blocker_explanation)`。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成

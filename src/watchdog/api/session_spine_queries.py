@@ -4,11 +4,17 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 
 from watchdog.api.deps import require_token
-from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
-from watchdog.contracts.session_spine.models import ActionReceiptQuery, ReplyModel
+from watchdog.contracts.session_spine.models import ActionReceiptQuery
 from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_spine.receipts import lookup_action_receipt
+from watchdog.services.session_spine.replies import (
+    build_approval_queue_reply,
+    build_blocker_explanation_reply,
+    build_progress_reply,
+    build_session_reply,
+    build_stuck_explanation_reply,
+)
 from watchdog.services.session_spine.service import SessionSpineUpstreamError, build_session_read_bundle
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -21,40 +27,6 @@ def get_client(request: Request) -> AControlAgentClient:
 
 def get_receipt_store(request: Request) -> ActionReceiptStore:
     return request.app.state.action_receipt_store
-
-
-def _session_reply(bundle) -> ReplyModel:
-    return ReplyModel(
-        reply_kind=ReplyKind.SESSION,
-        reply_code=ReplyCode.SESSION_PROJECTION,
-        intent_code="get_session",
-        message=bundle.session.headline,
-        session=bundle.session,
-        facts=bundle.facts,
-    )
-
-
-def _progress_reply(bundle) -> ReplyModel:
-    return ReplyModel(
-        reply_kind=ReplyKind.SESSION,
-        reply_code=ReplyCode.TASK_PROGRESS_VIEW,
-        intent_code="get_progress",
-        message=bundle.progress.summary or bundle.session.headline,
-        progress=bundle.progress,
-        facts=bundle.facts,
-    )
-
-
-def _approvals_reply(bundle) -> ReplyModel:
-    count = len(bundle.approval_queue)
-    return ReplyModel(
-        reply_kind=ReplyKind.APPROVALS,
-        reply_code=ReplyCode.APPROVAL_QUEUE,
-        intent_code="list_pending_approvals",
-        message=f"{count} pending approval(s)",
-        approvals=bundle.approval_queue,
-        facts=bundle.facts,
-    )
 
 
 def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuery | None:
@@ -83,7 +55,7 @@ def get_session(
         bundle = build_session_read_bundle(client, project_id)
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
-    return ok(rid, _session_reply(bundle).model_dump(mode="json"))
+    return ok(rid, build_session_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(
@@ -105,7 +77,7 @@ def get_progress(
         bundle = build_session_read_bundle(client, project_id)
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
-    return ok(rid, _progress_reply(bundle).model_dump(mode="json"))
+    return ok(rid, build_progress_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(
@@ -127,7 +99,51 @@ def get_pending_approvals(
         bundle = build_session_read_bundle(client, project_id)
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
-    return ok(rid, _approvals_reply(bundle).model_dump(mode="json"))
+    return ok(rid, build_approval_queue_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/{project_id}/stuck-explanation",
+    summary="Explain why a session appears stuck",
+    description=(
+        "Stable read surface for why_stuck. Returns the frozen ReplyModel "
+        "shape with session, progress, and FactRecord context."
+    ),
+)
+def get_stuck_explanation(
+    project_id: str,
+    request: Request,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_session_read_bundle(client, project_id)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_stuck_explanation_reply(bundle).model_dump(mode="json"))
+
+
+@router.get(
+    "/sessions/{project_id}/blocker-explanation",
+    summary="Explain the current primary blocker",
+    description=(
+        "Stable read surface for explain_blocker. Returns the frozen ReplyModel "
+        "shape with session, progress, and FactRecord context."
+    ),
+)
+def get_blocker_explanation(
+    project_id: str,
+    request: Request,
+    client: AControlAgentClient = Depends(get_client),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rid = request.headers.get("x-request-id")
+    try:
+        bundle = build_session_read_bundle(client, project_id)
+    except SessionSpineUpstreamError as exc:
+        return err(rid, exc.error)
+    return ok(rid, build_blocker_explanation_reply(bundle).model_dump(mode="json"))
 
 
 @router.get(
