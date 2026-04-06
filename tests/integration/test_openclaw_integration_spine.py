@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import importlib.util
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +12,16 @@ from watchdog.main import create_app
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
+
+
+def _load_template_client_module():
+    module_path = Path(__file__).resolve().parents[2] / "examples" / "openclaw_watchdog_client.py"
+    spec = importlib.util.spec_from_file_location("openclaw_watchdog_client_template", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class FakeAClient:
@@ -190,6 +202,95 @@ def test_integration_continue_session_success(tmp_path: Path) -> None:
     assert steer_mock.call_count == 1
     assert reply.reply_code == "action_result"
     assert reply.message == "continue request accepted"
+
+
+def test_integration_openclaw_template_routes_progress_stuck_and_continue(
+    monkeypatch,
+) -> None:
+    template_client = _load_template_client_module()
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"success": True, "path": request.url.path})
+
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DEFAULT_PROJECT_ID", "repo-a")
+
+    assert hasattr(template_client, "WatchdogTemplateClient")
+
+    client = template_client.WatchdogTemplateClient(
+        base_url="http://watchdog.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    progress = client.query_progress()
+    stuck = client.query_stuck()
+    continuation = client.continue_session(
+        project_id="repo-b",
+        operator="openclaw",
+        idempotency_key="idem-continue-1",
+    )
+
+    assert progress["path"] == "/api/v1/watchdog/sessions/repo-a/progress"
+    assert stuck["path"] == "/api/v1/watchdog/sessions/repo-a/stuck-explanation"
+    assert continuation["path"] == "/api/v1/watchdog/sessions/repo-b/actions/continue"
+    assert [request.url.path for request in captured] == [
+        "/api/v1/watchdog/sessions/repo-a/progress",
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        "/api/v1/watchdog/sessions/repo-b/actions/continue",
+    ]
+    assert all(request.headers["Authorization"] == "Bearer wt" for request in captured)
+    assert json.loads(captured[2].content.decode()) == {
+        "operator": "openclaw",
+        "idempotency_key": "idem-continue-1",
+    }
+
+
+def test_integration_openclaw_template_routes_approval_inbox_and_decision(
+    monkeypatch,
+) -> None:
+    template_client = _load_template_client_module()
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"success": True, "path": request.url.path})
+
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DEFAULT_PROJECT_ID", "repo-a")
+
+    assert hasattr(template_client, "WatchdogTemplateClient")
+
+    client = template_client.WatchdogTemplateClient(
+        base_url="http://watchdog.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    inbox = client.list_approval_inbox()
+    approved = client.approve_approval(
+        "appr_001",
+        operator="openclaw",
+        note="looks safe",
+    )
+    rejected = client.reject_approval(
+        "appr_002",
+        operator="openclaw",
+        note="need narrower command",
+    )
+
+    assert inbox["path"] == "/api/v1/watchdog/approval-inbox"
+    assert approved["path"] == "/api/v1/watchdog/approvals/appr_001/approve"
+    assert rejected["path"] == "/api/v1/watchdog/approvals/appr_002/reject"
+    assert str(captured[0].url) == "http://watchdog.test/api/v1/watchdog/approval-inbox?project_id=repo-a"
+    assert json.loads(captured[1].content.decode()) == {
+        "operator": "openclaw",
+        "note": "looks safe",
+    }
+    assert json.loads(captured[2].content.decode()) == {
+        "operator": "openclaw",
+        "note": "need narrower command",
+    }
 
 
 def test_integration_continue_session_blocked_by_pending_approval(tmp_path: Path) -> None:

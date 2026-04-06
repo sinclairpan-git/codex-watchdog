@@ -110,21 +110,25 @@ class CodexAppServerBridge:
             alternative=str(params.get("alternative") or ""),
             bridge_request_id=str(request_id),
         )
-        self._pending_approvals[str(request_id)] = {
-            "method": method,
-            "params": dict(params),
-            "approval_id": approval["approval_id"],
-            "thread_id": thread_id,
-        }
-        self._task_store.merge_update(
-            str(task.get("project_id") or ""),
-            {
-                "pending_approval": True,
-                "approval_risk": approval["risk_level"],
-                "status": "waiting_human",
-                "phase": "approval",
-            },
-        )
+        if approval.get("status") == "pending":
+            self._pending_approvals[str(request_id)] = {
+                "method": method,
+                "params": dict(params),
+                "approval_id": approval["approval_id"],
+                "thread_id": thread_id,
+            }
+            self._task_store.merge_update(
+                str(task.get("project_id") or ""),
+                {
+                    "pending_approval": True,
+                    "approval_risk": approval["risk_level"],
+                    "status": "waiting_human",
+                    "phase": "approval",
+                },
+            )
+            return approval
+        callback = self._approval_callback_result(method, params, decision="approve", note="")
+        await self._transport.respond(str(request_id), callback)
         return approval
 
     async def resolve_pending_approval(
@@ -135,22 +139,52 @@ class CodexAppServerBridge:
         note: str = "",
     ) -> dict[str, Any]:
         approval_request = self._pending_approvals.get(request_id)
-        if approval_request is None and self._approvals_store is not None:
-            for row in self._approvals_store.list_by_status("pending"):
-                if row.get("bridge_request_id") == request_id:
-                    approval_request = {
-                        "method": "item/commandExecution/requestApproval",
-                        "params": {},
-                        "approval_id": row.get("approval_id"),
-                        "thread_id": row.get("thread_id"),
-                    }
-                    break
+        if approval_request is None:
+            approval_request = self._restore_pending_approval(request_id)
         method = str((approval_request or {}).get("method") or "item/commandExecution/requestApproval")
         params = dict((approval_request or {}).get("params") or {})
         callback = self._approval_callback_result(method, params, decision=decision, note=note)
         await self._transport.respond(request_id, callback)
         self._pending_approvals.pop(request_id, None)
         return {"request_id": request_id, **callback}
+
+    def _restore_pending_approval(self, request_id: str) -> dict[str, Any] | None:
+        if self._approvals_store is None:
+            return None
+        for row in self._approvals_store.list_by_status("pending"):
+            if row.get("bridge_request_id") != request_id:
+                continue
+            method = self._restore_approval_method(row)
+            params = self._restore_approval_params(row, method)
+            return {
+                "method": method,
+                "params": params,
+                "approval_id": row.get("approval_id"),
+                "thread_id": row.get("thread_id"),
+            }
+        return None
+
+    def _restore_approval_method(self, row: dict[str, Any]) -> str:
+        reason = str(row.get("reason") or "")
+        command = str(row.get("command") or "")
+        if command.startswith("permissions:") or reason == "item/permissions/requestApproval":
+            return "item/permissions/requestApproval"
+        if reason == "item/fileChange/requestApproval":
+            return "item/fileChange/requestApproval"
+        return "item/commandExecution/requestApproval"
+
+    def _restore_approval_params(self, row: dict[str, Any], method: str) -> dict[str, Any]:
+        if method == "item/permissions/requestApproval":
+            command = str(row.get("command") or "")
+            _, _, raw_permissions = command.partition(":")
+            permissions = [item for item in raw_permissions.split(",") if item]
+            return {"permissions": permissions}
+        if method == "item/fileChange/requestApproval":
+            return {
+                "summary": str(row.get("command") or ""),
+                "reason": str(row.get("reason") or ""),
+            }
+        return {"command": str(row.get("command") or "")}
 
     def _remember_thread(self, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         snapshot = dict(payload)

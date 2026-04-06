@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,14 @@ class FakeBridge:
 
     async def stop(self) -> None:
         self.stopped = True
+
+
+class FailingSteerBridge(FakeBridge):
+    def active_turn_id(self, thread_id: str) -> str | None:
+        return None
+
+    async def start_turn(self, thread_id: str, *, prompt: str) -> dict[str, str]:
+        raise RuntimeError("bridge down")
 
 
 @pytest.fixture()
@@ -310,3 +319,42 @@ def test_workspace_activity_route_returns_legacy_raw_activity_summary(tmp_path: 
     assert body["data"]["activity"]["cwd_exists"] is True
     assert body["data"]["activity"]["files_scanned"] >= 1
     assert body["data"]["activity"]["recent_window_minutes"] == 30
+
+
+def test_steer_bridge_failure_returns_control_link_error_and_audit(tmp_path: Path) -> None:
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    app = create_app(s, codex_bridge=FailingSteerBridge(), start_background_workers=False)
+    client = TestClient(app, raise_server_exceptions=False)
+    h = {"Authorization": "Bearer test-token", "X-Request-Id": "rid-steer-fail"}
+
+    created = client.post(
+        "/api/v1/tasks",
+        json={"project_id": "ai-demo", "cwd": "/tmp/w", "task_title": "t"},
+        headers=h,
+    )
+    assert created.status_code == 200
+
+    response = client.post(
+        "/api/v1/tasks/ai-demo/steer",
+        json={"message": "continue", "reason": "policy", "source": "watchdog"},
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "CONTROL_LINK_ERROR"
+    assert body["data"]["project_id"] == "ai-demo"
+    assert body["data"]["status"] == "running"
+
+    task = client.get("/api/v1/tasks/ai-demo", headers=h).json()["data"]
+    assert "continue" not in str(task.get("last_summary") or "")
+
+    audit_path = tmp_path / "agent-data" / "audit.jsonl"
+    audit_rows = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(row.get("action") == "steer_failed" for row in audit_rows)
+    assert not any(row.get("action") == "steer_injected" for row in audit_rows)

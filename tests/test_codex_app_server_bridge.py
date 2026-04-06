@@ -156,3 +156,56 @@ async def test_bridge_registers_and_resolves_command_approval(tmp_path: Path) ->
     callback = await bridge.resolve_pending_approval("req_123", decision="approve", note="ok")
     assert callback["decision"] == "accept"
     assert transport.responses == [("req_123", {"decision": "accept"})]
+
+
+@pytest.mark.asyncio
+async def test_bridge_auto_approves_low_risk_permissions_request(tmp_path: Path) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    bridge = CodexAppServerBridge(
+        transport=transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await bridge.start()
+    approval = await bridge.ingest_server_request(
+        {
+            "id": "req_perm_123",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
+    task = task_store.get("ai-demo")
+
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert approval["decided_by"] == "policy-auto"
+    assert approval_store.list_by_status("pending") == []
+    assert task is not None
+    assert task["pending_approval"] is False
+    assert task["status"] == "running"
+    assert task["phase"] == "coding"
+    assert transport.responses == [
+        (
+            "req_perm_123",
+            {
+                "permissions": ["fs.read", "fs.write"],
+                "scope": "session",
+            },
+        )
+    ]

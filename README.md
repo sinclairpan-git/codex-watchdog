@@ -48,7 +48,23 @@ python -m uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 python scripts/export_openapi.py
 ```
 
-示例脚本：`examples/openclaw_watchdog_client.py`（需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`）。
+示例脚本：`examples/openclaw_watchdog_client.py`。它提供 `WatchdogTemplateClient`，面向 OpenClaw / 外部机器人封装最小 HTTP 路由模板；本仓库不包含飞书或 OpenClaw runtime，只提供可复用 stable route 调用层。需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`，可选 `WATCHDOG_DEFAULT_PROJECT_ID` 与 `WATCHDOG_OPERATOR`。
+
+OpenClaw 最小模板与 stable route 的对应关系：
+
+| 消息类型 | 模板方法 | 稳定路由 |
+|------|------|------|
+| 查询进展 | `query_progress(project_id)` | `GET /api/v1/watchdog/sessions/{project_id}/progress` |
+| 查询卡点 | `query_stuck(project_id)` | `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` |
+| 继续推进 | `continue_session(project_id, operator, idempotency_key)` | `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` |
+| 查询审批 inbox | `list_approval_inbox(project_id?)` | `GET /api/v1/watchdog/approval-inbox` |
+| 审批决策 | `approve_approval(approval_id)` / `reject_approval(approval_id)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
+
+`project_id` 路由策略：
+
+- 显式传入 `project_id` 时优先使用显式值。
+- 未显式传入时，模板会回退到 `WATCHDOG_DEFAULT_PROJECT_ID`。
+- 两者都没有时，应先调用 `GET /api/v1/watchdog/sessions` 或 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 完成稳定会话解析。
 
 010-022 收口后的 OpenClaw 最小稳定接口面：
 

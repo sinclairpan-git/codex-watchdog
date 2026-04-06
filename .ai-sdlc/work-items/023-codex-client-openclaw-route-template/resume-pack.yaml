@@ -14,15 +14,13 @@ working_set_snapshot:
   - '`docs/getting-started.zh-CN.md`'
   - '`config/examples/watchdog.env.example`'
   - '`tests/integration/test_openclaw_integration_spine.py`'
-  - '`specs/023-codex-client-openclaw-route-template/tasks.md`'
   - '`specs/023-codex-client-openclaw-route-template/task-execution-log.md`'
+  - '`specs/023-codex-client-openclaw-route-template/tasks.md`'
   - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/runtime.yaml`'
   - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/working-set.yaml`'
   - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/resume-pack.yaml`'
   - '`.ai-sdlc/state/checkpoint.yml`'
-  - '`.ai-sdlc/project/config/project-state.yaml`'
   context_summary: '# Development Summary
 
 
@@ -52,9 +50,7 @@ working_set_snapshot:
     - 已通过 `uv run pytest -q tests/integration/test_openclaw_integration_spine.py`。
 
     - 当前环境的 `ai-sdlc workitem init` 失败根因已复现：`WorkitemScaffolder` 把模板目录错误解析到 `.venv/lib/python3.11/templates`，随后报错
-    `template not found: /Users/sinclairpan/project/openclaw-codex-watchdog/.venv/lib/python3.11/templates/spec-template.md`。
-
-    - 因此 023 继续采用与 canonical direct-formal 一致的目录边界维护 formal docs 与状态文件，并把失败原因保留在本摘要与 `specs/023-codex-client-openclaw-route-template/task-execution-log.md`。'
+    `template not found: /Users/sinclairpan/project/openclaw-codex-watchdog/.venv/lib/python3.11/templates/spec-template.md`。'
 current_branch: codex/023-codex-client-openclaw-route-template
 docs_baseline_ref: ''
 docs_baseline_at: ''

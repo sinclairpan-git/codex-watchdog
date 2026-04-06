@@ -1,0 +1,38 @@
+prd_path: openclaw-codex-watchdog-prd.md
+constitution_path: .ai-sdlc/memory/constitution.md
+tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+spec_path: specs/023-codex-client-openclaw-route-template/spec.md
+plan_path: specs/023-codex-client-openclaw-route-template/plan.md
+tasks_path: specs/023-codex-client-openclaw-route-template/tasks.md
+active_files:
+- '`examples/openclaw_watchdog_client.py`'
+- '`README.md`'
+- '`docs/getting-started.zh-CN.md`'
+- '`config/examples/watchdog.env.example`'
+- '`tests/integration/test_openclaw_integration_spine.py`'
+- '`specs/023-codex-client-openclaw-route-template/tasks.md`'
+- '`specs/023-codex-client-openclaw-route-template/task-execution-log.md`'
+- '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/execution-plan.yaml`'
+- '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/runtime.yaml`'
+- '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/working-set.yaml`'
+- '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/resume-pack.yaml`'
+- '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md`'
+- '`.ai-sdlc/state/checkpoint.yml`'
+context_summary: |-
+  # Development Summary
+
+  Status: active
+  Total Tasks: 4
+  Completed Tasks: 4
+  Halted Tasks: 0
+  Total Batches: 4
+  Completed Batches: 4
+  Last Committed Task: T234
+
+  ## Notes
+  - 已完成 `T234`，为 OpenClaw 集成方补齐 `WatchdogTemplateClient`，覆盖查询进展、查询卡点、继续推进、审批 inbox 与审批决策的最小 stable route 模板。
+  - 模板显式支持 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`、`WATCHDOG_DEFAULT_PROJECT_ID` 与 `WATCHDOG_OPERATOR`；`project_id` 采用“显式参数优先、否则回退默认环境变量”的策略。
+  - `README.md`、`docs/getting-started.zh-CN.md` 与 `config/examples/watchdog.env.example` 已明确声明仓库不包含飞书/OpenClaw runtime，只交付可复用 HTTP route 模板。
+  - `uv run pytest -q tests/integration/test_openclaw_integration_spine.py` 已通过，当前 023 四个任务全部完成。
+  - 当前环境的 `ai-sdlc workitem init` 会把模板目录错误解析到 `.venv/lib/python3.11/templates`，随后触发 `template not found: .../spec-template.md`。
+  - 因此 023 仍按 canonical direct-formal 结构维护 work item 状态，并把脚手架失败原因保留在结果摘要与执行日志中。

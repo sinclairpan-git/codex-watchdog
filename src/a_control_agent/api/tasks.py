@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
+from a_control_agent.audit import append_jsonl
 from a_control_agent.api.deps import require_token
 from a_control_agent.envelope import err, ok
 from a_control_agent.repo_activity import summarize_workspace_activity
@@ -217,6 +219,7 @@ async def steer_task(
     project_id: str,
     request: Request,
     body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
     store: TaskStore = Depends(get_store),
     bridge: Any = Depends(get_bridge),
     _: None = Depends(require_token),
@@ -252,10 +255,35 @@ async def steer_task(
         )
     thread_id = str(current.get("thread_id") or "")
     if bridge is not None and thread_id:
-        if bridge.active_turn_id(thread_id):
-            await bridge.steer_turn(thread_id, message=message)
-        else:
-            await bridge.start_turn(thread_id, prompt=message)
+        try:
+            if bridge.active_turn_id(thread_id):
+                await bridge.steer_turn(thread_id, message=message)
+            else:
+                await bridge.start_turn(thread_id, prompt=message)
+        except Exception as exc:
+            append_jsonl(
+                Path(settings.data_dir) / "audit.jsonl",
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "project_id": project_id,
+                    "action": "steer_failed",
+                    "reason": str(reason),
+                    "source": "a_control_agent",
+                    "payload": {
+                        "message": str(message)[:500],
+                        "steer_source": str(source),
+                        "error": str(exc),
+                    },
+                },
+            )
+            return err(
+                request.headers.get("x-request-id"),
+                {"code": "CONTROL_LINK_ERROR", "message": str(exc)},
+                {
+                    "project_id": project_id,
+                    "status": str(current.get("status") or "running"),
+                },
+            )
 
     rec = store.apply_steer(
         project_id,

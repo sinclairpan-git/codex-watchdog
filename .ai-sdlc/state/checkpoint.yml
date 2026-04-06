@@ -1,12 +1,12 @@
-pipeline_started_at: '2026-04-04T22:48:29+00:00'
-pipeline_last_updated: '2026-04-04T23:23:42Z'
-current_stage: close
+pipeline_started_at: '2026-04-05T20:04:50Z'
+pipeline_last_updated: '2026-04-05T21:01:26Z'
+current_stage: verify
 feature:
-  id: 009-task-events-stream
-  spec_dir: specs/009-task-events-stream
-  design_branch: design/009-task-events-stream
-  feature_branch: feature/009-task-events-stream
-  current_branch: main
+  id: 023-codex-client-openclaw-route-template
+  spec_dir: specs/023-codex-client-openclaw-route-template
+  design_branch: design/023-codex-client-openclaw-route-template
+  feature_branch: feature/023-codex-client-openclaw-route-template
+  current_branch: codex/023-codex-client-openclaw-route-template
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
@@ -16,50 +16,22 @@ multi_agent:
 prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
 - stage: init
-  completed_at: '2026-04-04T21:37:09+00:00'
+  completed_at: '2026-04-05T20:04:50Z'
   artifacts: []
 - stage: refine
-  completed_at: '2026-04-04T21:37:09+00:00'
+  completed_at: '2026-04-05T20:04:50Z'
   artifacts:
   - spec.md
 - stage: design
-  completed_at: '2026-04-04T21:37:09+00:00'
+  completed_at: '2026-04-05T20:04:50Z'
   artifacts:
-  - data-model.md
   - plan.md
-  - research.md
 - stage: decompose
-  completed_at: '2026-04-04T22:48:29+00:00'
+  completed_at: '2026-04-05T20:04:50Z'
   artifacts:
   - tasks.md
-- stage: execute
-  completed_at: '2026-04-04T23:23:42Z'
-  artifacts:
-  - src/a_control_agent/storage/tasks_store.py
-  - src/a_control_agent/api/recovery.py
-  - src/a_control_agent/api/approvals.py
-  - tests/test_a_control_agent_control_flow.py
-  - src/watchdog/services/a_client/client.py
-  - src/watchdog/api/events_proxy.py
-  - src/watchdog/main.py
-  - tests/test_watchdog.py
-- stage: verify
-  completed_at: '2026-04-04T23:23:42Z'
-  artifacts:
-  - README.md
-  - docs/getting-started.zh-CN.md
-  - docs/openapi/watchdog.json
-  - specs/009-task-events-stream/task-execution-log.md
-execute_progress:
-  batches_total: 1
-  batches_completed: 1
-  current_batch: 1
-  tasks_total: 4
-  tasks_completed: 4
-  current_task: ''
-  last_completed_task: T94
 ai_decisions_count: 0
 execution_mode: auto
-linked_wi_id: 009-task-events-stream
+linked_wi_id: 023-codex-client-openclaw-route-template
 linked_plan_uri: null
-last_synced_at: '2026-04-04T23:23:42Z'
+last_synced_at: '2026-04-05T21:01:26Z'
