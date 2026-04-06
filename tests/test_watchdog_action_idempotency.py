@@ -27,10 +27,23 @@ class FakeAClient:
         assert project_id == self._task["project_id"]
         return {"success": True, "data": dict(self._task)}
 
-    def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
         items = [dict(approval) for approval in self._approvals]
         if status:
-            return [item for item in items if item.get("status") == status]
+            items = [item for item in items if item.get("status") == status]
+        if project_id:
+            items = [item for item in items if item.get("project_id") == project_id]
+        if decided_by:
+            items = [item for item in items if item.get("decided_by") == decided_by]
+        if callback_status:
+            items = [item for item in items if item.get("callback_status") == callback_status]
         return items
 
     def decide_approval(
