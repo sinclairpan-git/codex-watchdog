@@ -64,6 +64,7 @@ class RecordingTransport:
         self.started = False
         self.stopped = False
         self.requests: list[tuple[str, dict[str, Any]]] = []
+        self.notifications: list[tuple[str, dict[str, Any]]] = []
         self.responses: list[tuple[str | int, dict[str, Any]]] = []
 
     async def start(self) -> None:
@@ -78,6 +79,9 @@ class RecordingTransport:
         if method == "initialize":
             return {"server": "fake-codex"}
         raise AssertionError(f"unexpected request: {method}")
+
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self.notifications.append((method, dict(params or {})))
 
     async def respond(self, request_id: str | int, result: dict[str, Any]) -> None:
         self.responses.append((request_id, dict(result)))

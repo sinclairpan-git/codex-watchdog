@@ -29,6 +29,7 @@ class StdioJsonRpcTransport:
         self._next_id = 0
         self._pending: dict[str | int, asyncio.Future[dict[str, Any]]] = {}
         self._reader_task: asyncio.Task[None] | None = None
+        self._read_buffer = bytearray()
 
     async def start(self) -> None:
         if self._started:
@@ -70,28 +71,55 @@ class StdioJsonRpcTransport:
         self._ensure_started()
         await self._send({"id": request_id, "result": dict(result)})
 
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self._ensure_started()
+        message: dict[str, Any] = {"method": method}
+        if params is not None:
+            message["params"] = dict(params)
+        await self._send(message)
+
     def _ensure_started(self) -> None:
         if not self._started:
             raise RuntimeError("transport not started")
 
     async def _send(self, message: dict[str, Any]) -> None:
-        payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
-        frame = f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload
-        self._writer.write(frame)
+        payload = json.dumps(message, ensure_ascii=False).encode("utf-8") + b"\n"
+        self._writer.write(payload)
         await self._writer.drain()
 
     async def _read_loop(self) -> None:
         try:
             while True:
-                header_block = await self._reader.readuntil(b"\r\n\r\n")
-                content_length = self._parse_content_length(header_block)
-                body = await self._reader.readexactly(content_length)
-                message = json.loads(body.decode("utf-8"))
+                line = await self._read_message()
+                if line is None:
+                    return
+                raw = line.decode("utf-8").strip()
+                if not raw:
+                    continue
+                message = json.loads(raw)
                 await self._handle_message(message)
         except asyncio.CancelledError:
             raise
         except asyncio.IncompleteReadError:
             return
+        except Exception as exc:
+            self._fail_pending(exc)
+
+    async def _read_message(self) -> bytes | None:
+        while True:
+            newline_index = self._read_buffer.find(b"\n")
+            if newline_index >= 0:
+                line = bytes(self._read_buffer[:newline_index])
+                del self._read_buffer[: newline_index + 1]
+                return line
+            chunk = await self._reader.read(64 * 1024)
+            if not chunk:
+                if not self._read_buffer:
+                    return None
+                line = bytes(self._read_buffer)
+                self._read_buffer.clear()
+                return line
+            self._read_buffer.extend(chunk)
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
         if "method" in message and "id" in message:
@@ -110,13 +138,6 @@ class StdioJsonRpcTransport:
             future.set_result(result)
         else:
             future.set_result({})
-
-    def _parse_content_length(self, header_block: bytes) -> int:
-        for raw_line in header_block.decode("ascii").split("\r\n"):
-            if raw_line.lower().startswith("content-length:"):
-                _, _, value = raw_line.partition(":")
-                return int(value.strip())
-        raise RuntimeError("missing Content-Length header")
 
     def _fail_pending(self, exc: Exception) -> None:
         for future in self._pending.values():
@@ -170,6 +191,11 @@ class SubprocessCodexTransport:
         if self._transport is None:
             raise RuntimeError("transport not started")
         return await self._transport.request(method, params)
+
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        if self._transport is None:
+            raise RuntimeError("transport not started")
+        await self._transport.notify(method, params)
 
     async def respond(self, request_id: str | int, result: dict[str, Any]) -> None:
         if self._transport is None:

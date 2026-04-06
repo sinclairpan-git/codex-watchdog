@@ -1,6 +1,6 @@
 # OpenClaw × Codex 双机监管：部署与使用指引
 
-本文说明本仓库**实际交付了什么**、**A 机 / B 机各自跑什么**、**两机如何对接**，以及若要继续完善集成，你需要向开发侧提供哪些信息。
+本文说明本仓库**实际交付了什么**、**A 机 / B 机各自跑什么**、**两机如何对接**，以及在当前推荐形态下，**两台 macOS 机器**应该如何一步步部署、升级与验收。
 
 ---
 
@@ -20,6 +20,57 @@
 
 当前实现中，**OpenClaw 只需对接 Watchdog**；Watchdog 再对接 A-Control-Agent。
 
+### 1.1 当前推荐部署约定
+
+- **仓库地址**：`https://github.com/sinclairpan-git/openclaw-codex-watchdog.git`
+- **A / B 都是 macOS**，都建议使用 `launchd` 守护进程方式启动。
+- **A 与 B 都保留一份同版本代码工程**；不要让两台机器漂在不同分支或不同提交上。
+- 首次安装与后续升级都按**执行时 `origin/main` 的最新提交**进行；先打印该提交时间与摘要，再由 A、B 同步切到同一个提交。
+- 飞书和 OpenClaw 之间的消息通道**不需要改协议**；需要改的是 OpenClaw 收到消息后的路由逻辑，让它改为调用 Watchdog。
+
+当前文档基线安装约定如下：
+
+```bash
+export REPO_URL=https://github.com/sinclairpan-git/openclaw-codex-watchdog.git
+export APP_DIR="$HOME/openclaw-codex-watchdog"
+```
+
+首次安装：
+
+```bash
+git clone "$REPO_URL" "$APP_DIR"
+cd "$APP_DIR"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
+git checkout "$RELEASE_REF"
+uv sync
+```
+
+若本机已存在代码工程，则跳过 `git clone`，只执行：
+
+```bash
+cd "$APP_DIR"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
+git checkout "$RELEASE_REF"
+uv sync
+```
+
+后续升级时，不再手填占位版本，而是先读取远端最新提交时间，再按该提交升级：
+
+```bash
+cd "$HOME/openclaw-codex-watchdog"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'LATEST_REF=%H%nLATEST_TIME=%cd%nLATEST_SUBJECT=%s'
+LATEST_REF="$(git rev-parse origin/main)"
+git checkout "$LATEST_REF"
+uv sync
+```
+
+升级顺序固定为：**先升 A，再升 B，最后验证 OpenClaw 调用 B**。
+
 ---
 
 ## 2. A 机（跑 Codex 的开发机）怎么用
@@ -30,12 +81,22 @@
 - 本仓库克隆到 A 机（或仅部署打包后的服务与配置）。
 - 与 B 机 **网络互通**（同局域网 / VPN / Tailscale 等），且 A 上服务监听地址能被 B 访问（勿把服务只绑在 `127.0.0.1` 若 B 在另一台机器）。
 
-### 2.2 安装与启动（开发态示例）
+### 2.2 安装、启动与开机自启（macOS 推荐）
+
+先准备并安装到指定版本：
 
 ```bash
-cd openclaw-codex-watchdog
+export REPO_URL=https://github.com/sinclairpan-git/openclaw-codex-watchdog.git
+export APP_DIR="$HOME/openclaw-codex-watchdog"
+
+git clone "$REPO_URL" "$APP_DIR" 2>/dev/null || true
+cd "$APP_DIR"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
+git checkout "$RELEASE_REF"
 uv sync
-# 或: pip install -e ".[dev]"
+mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 ```
 
 从 **`config/examples/a-agent.env.example`** 复制一份，例如 `.env.a`，设置：
@@ -48,18 +109,107 @@ uv sync
 | `A_AGENT_DATA_DIR` | 任务与审计落盘目录（默认 `.data/a_control_agent`） |
 | `A_AGENT_CODEX_HOME` | Codex Desktop 本地状态目录；默认 `~/.codex` |
 | `A_AGENT_CODEX_SYNC_INTERVAL_SECONDS` | 采集当前本地 Codex thread 的轮询周期（默认 `30` 秒） |
-| `A_AGENT_CODEX_BRIDGE_ENABLED` | 是否启用本地 Codex app-server bridge（默认 `false`） |
+| `A_AGENT_CODEX_BRIDGE_ENABLED` | 是否启用本地 Codex app-server bridge；要实现完整 continue / 审批回写时建议 `true` |
 | `A_AGENT_CODEX_BRIDGE_COMMAND` | 启动命令；默认 `codex app-server --listen stdio://` |
 | `A_AGENT_CODEX_BRIDGE_REQUEST_TIMEOUT_SECONDS` | bridge 请求超时（默认 `10` 秒） |
 
-加载环境变量后启动（`--app-dir src` 指向包路径）：
+推荐环境文件内容：
 
 ```bash
-set -a && source .env.a && set +a
-uv run uvicorn a_control_agent.main:app --host "$A_AGENT_HOST" --port "$A_AGENT_PORT" --app-dir src
+A_AGENT_API_TOKEN=<强随机tokenA>
+A_AGENT_HOST=0.0.0.0
+A_AGENT_PORT=8710
+A_AGENT_DATA_DIR=.data/a_control_agent
+A_AGENT_CODEX_HOME=~/.codex
+A_AGENT_CODEX_SYNC_INTERVAL_SECONDS=30
+A_AGENT_CODEX_BRIDGE_ENABLED=true
+A_AGENT_CODEX_BRIDGE_COMMAND=codex app-server --listen stdio://
+A_AGENT_CODEX_BRIDGE_REQUEST_TIMEOUT_SECONDS=10
 ```
 
-健康检查：`GET http://<A的IP>:<端口>/healthz`
+写启动脚本 `"$APP_DIR/bin/start-a-agent.sh"`：
+
+```bash
+#!/bin/zsh
+set -euo pipefail
+APP_DIR="$HOME/openclaw-codex-watchdog"
+cd "$APP_DIR"
+set -a
+source "$APP_DIR/.env.a"
+set +a
+exec uv run uvicorn a_control_agent.main:app \
+  --host "$A_AGENT_HOST" \
+  --port "$A_AGENT_PORT" \
+  --app-dir src
+```
+
+为脚本赋权：
+
+```bash
+chmod +x "$APP_DIR/bin/start-a-agent.sh"
+```
+
+写 `launchd` 文件 `~/Library/LaunchAgents/com.openclaw.a-control-agent.plist`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.openclaw.a-control-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/zsh</string>
+      <string>/Users/YOUR_USER/openclaw-codex-watchdog/bin/start-a-agent.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USER/openclaw-codex-watchdog</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/openclaw-a-agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/openclaw-a-agent.err.log</string>
+  </dict>
+</plist>
+```
+
+将 `YOUR_USER` 替换为真实用户名后，加载并启动：
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.openclaw.a-control-agent.plist" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.openclaw.a-control-agent.plist"
+launchctl kickstart -k "gui/$(id -u)/com.openclaw.a-control-agent"
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8710/healthz
+curl http://<A的IP>:8710/healthz
+```
+
+看日志：
+
+```bash
+tail -f "$HOME/Library/Logs/openclaw-a-agent.out.log"
+tail -f "$HOME/Library/Logs/openclaw-a-agent.err.log"
+```
+
+后续升级：
+
+```bash
+cd "$HOME/openclaw-codex-watchdog"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'LATEST_REF=%H%nLATEST_TIME=%cd%nLATEST_SUBJECT=%s'
+LATEST_REF="$(git rev-parse origin/main)"
+git checkout "$LATEST_REF"
+uv sync
+launchctl kickstart -k "gui/$(id -u)/com.openclaw.a-control-agent"
+```
 
 ### 2.3 与「Codex」的关系（重要）
 
@@ -107,12 +257,22 @@ uv run python examples/register_native_thread.py \
 
 ## 3. B 机（跑 OpenClaw 的机器）怎么用
 
-### 3.1 Watchdog 安装与启动
+### 3.1 Watchdog 安装、启动与开机自启（macOS 推荐）
 
-同样在本仓库目录：
+同样在 B 机准备并安装到指定版本：
 
 ```bash
+export REPO_URL=https://github.com/sinclairpan-git/openclaw-codex-watchdog.git
+export APP_DIR="$HOME/openclaw-codex-watchdog"
+
+git clone "$REPO_URL" "$APP_DIR" 2>/dev/null || true
+cd "$APP_DIR"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
+git checkout "$RELEASE_REF"
 uv sync
+mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 ```
 
 从 **`config/examples/watchdog.env.example`** 复制，例如 `.env.w`：
@@ -127,19 +287,117 @@ uv sync
 | `WATCHDOG_DATA_DIR` | Watchdog 侧审计等（默认 `.data/watchdog`） |
 | `WATCHDOG_RECOVER_AUTO_RESUME` | `context_pressure` 为 critical 时，handoff 成功后是否再自动调 A 的 `resume`（`true`/`false`） |
 
-启动：
+推荐环境文件内容：
 
 ```bash
-set -a && source .env.w && set +a
-uv run uvicorn watchdog.main:app --host "$WATCHDOG_HOST" --port "$WATCHDOG_PORT" --app-dir src
+WATCHDOG_API_TOKEN=<强随机tokenB>
+WATCHDOG_HOST=0.0.0.0
+WATCHDOG_PORT=8720
+WATCHDOG_A_AGENT_BASE_URL=http://<A的IP>:8710
+WATCHDOG_A_AGENT_TOKEN=<必须等于A_AGENT_API_TOKEN>
+WATCHDOG_HTTP_TIMEOUT_S=10
+WATCHDOG_RECOVER_AUTO_RESUME=true
+WATCHDOG_BASE_URL=http://127.0.0.1:8720
+WATCHDOG_DEFAULT_PROJECT_ID=
+WATCHDOG_OPERATOR=openclaw
 ```
 
-健康检查：`GET http://<B的IP>:<端口>/healthz`
+写启动脚本 `"$APP_DIR/bin/start-watchdog.sh"`：
+
+```bash
+#!/bin/zsh
+set -euo pipefail
+APP_DIR="$HOME/openclaw-codex-watchdog"
+cd "$APP_DIR"
+set -a
+source "$APP_DIR/.env.w"
+set +a
+exec uv run uvicorn watchdog.main:app \
+  --host "$WATCHDOG_HOST" \
+  --port "$WATCHDOG_PORT" \
+  --app-dir src
+```
+
+为脚本赋权：
+
+```bash
+chmod +x "$APP_DIR/bin/start-watchdog.sh"
+```
+
+写 `launchd` 文件 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.openclaw.watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/zsh</string>
+      <string>/Users/YOUR_USER/openclaw-codex-watchdog/bin/start-watchdog.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USER/openclaw-codex-watchdog</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/openclaw-watchdog.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USER/Library/Logs/openclaw-watchdog.err.log</string>
+  </dict>
+</plist>
+```
+
+将 `YOUR_USER` 替换为真实用户名后，加载并启动：
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.openclaw.watchdog.plist" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.openclaw.watchdog.plist"
+launchctl kickstart -k "gui/$(id -u)/com.openclaw.watchdog"
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8720/healthz
+curl http://<A的IP>:8710/healthz
+curl -H "Authorization: Bearer <WATCHDOG_API_TOKEN>" \
+  http://127.0.0.1:8720/api/v1/watchdog/sessions
+```
+
+看日志：
+
+```bash
+tail -f "$HOME/Library/Logs/openclaw-watchdog.out.log"
+tail -f "$HOME/Library/Logs/openclaw-watchdog.err.log"
+```
+
+后续升级：
+
+```bash
+cd "$HOME/openclaw-codex-watchdog"
+git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'LATEST_REF=%H%nLATEST_TIME=%cd%nLATEST_SUBJECT=%s'
+LATEST_REF="$(git rev-parse origin/main)"
+git checkout "$LATEST_REF"
+uv sync
+launchctl kickstart -k "gui/$(id -u)/com.openclaw.watchdog"
+```
 
 ### 3.2 OpenClaw 怎么调 Watchdog（不经过本仓库代码）
 
 本仓库**不包含**飞书机器人或 OpenClaw runtime；023 交付的是 `examples/openclaw_watchdog_client.py`
 里的 `WatchdogTemplateClient`，它把 OpenClaw 常见消息模板收敛到 stable Watchdog HTTP routes。
+
+这里的边界要明确：
+
+- **飞书和 OpenClaw 之间的通道协议不需要改变**。
+- 需要改变的是 **OpenClaw 收到飞书消息后的处理逻辑**，让它改为调用 Watchdog，而不是直接对接 A 或依赖手工查询。
+- OpenClaw 应只访问 B 上的 Watchdog；不要让 OpenClaw 直接访问 A。
 
 OpenClaw 最小模板建议优先复用以下 4 类消息：
 
@@ -277,6 +535,7 @@ uv run python examples/openclaw_watchdog_client.py
 3. **防火墙 / 安全组**：A 的 `A_AGENT_PORT` 仅对 B（或 VPN 网段）开放。  
 4. **生产建议**：前面加 **反向代理 + TLS**（如 nginx/Caddy），对外只暴露 HTTPS；Token 用密钥管理。  
 5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/sessions/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
+6. **版本一致**：A 与 B 均已 `git checkout` 到同一个提交；推荐在两机分别执行 `git rev-parse HEAD`，并确认两边结果一致且等于部署当时的 `origin/main` 最新提交。
 
 ---
 
@@ -328,6 +587,10 @@ uv run python examples/openclaw_watchdog_client.py
 **Q：B 能直接调 A 吗？**  
 可以（同一套 Bearer），但架构上推荐 **只让 OpenClaw → Watchdog**，由 Watchdog 统一策略与审计。
 
+**Q：A 和 B 需不需要各自保留一份代码工程？**
+需要。A 要跑 `A-Control-Agent`，B 要跑 `Watchdog`；最稳的部署方式是两台机器都各自 clone
+同一个仓库，并固定在同一个 `RELEASE_REF`。
+
 **Q：没有 Codex app-server 能用吗？**  
 能。若 A-Control-Agent 与 Codex Desktop 同机，可直接走本地 `~/.codex` 自动采集；否则也能用
 `POST /api/v1/tasks/native-threads` 手动/外部注册。若要下行控制 Codex 会话，则开启
@@ -345,6 +608,9 @@ stable 事件当前覆盖 `session_created`、`native_thread_bound`、`guidance_
 
 **Q：Token 泄露怎么办？**  
 轮换 `A_AGENT_API_TOKEN` / `WATCHDOG_API_TOKEN`，并限制源 IP / 使用 TLS。
+
+**Q：飞书和 OpenClaw 之间要不要改单独的通道？**
+不用。飞书仍然把消息交给 OpenClaw；新增的是 OpenClaw 到 Watchdog 的 HTTP 调用逻辑。
 
 ---
 

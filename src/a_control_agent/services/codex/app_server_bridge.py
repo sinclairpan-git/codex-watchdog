@@ -38,7 +38,17 @@ class CodexAppServerBridge:
         if self._started:
             return
         await self._transport.start()
-        await self._transport.request("initialize", {})
+        await self._transport.request(
+            "initialize",
+            {
+                "clientInfo": {
+                    "name": "openclaw-codex-watchdog",
+                    "version": "0.1.0",
+                },
+                "capabilities": None,
+            },
+        )
+        await self._transport.notify("initialized")
         self._started = True
         self._append_audit("bridge_connected", payload={})
 
