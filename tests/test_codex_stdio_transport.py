@@ -27,19 +27,17 @@ class FakeWriter:
         return None
 
 
-def _parse_frame(raw: bytes) -> dict[str, Any]:
-    headers, body = raw.split(b"\r\n\r\n", 1)
-    assert headers.startswith(b"Content-Length: ")
-    return json.loads(body.decode("utf-8"))
+def _parse_message(raw: bytes) -> dict[str, Any]:
+    assert raw.endswith(b"\n")
+    return json.loads(raw.decode("utf-8").strip())
 
 
-def _encode_frame(message: dict[str, Any]) -> bytes:
-    payload = json.dumps(message).encode("utf-8")
-    return f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload
+def _encode_message(message: dict[str, Any]) -> bytes:
+    return json.dumps(message).encode("utf-8") + b"\n"
 
 
 @pytest.mark.asyncio
-async def test_stdio_transport_sends_framed_request_and_resolves_response() -> None:
+async def test_stdio_transport_sends_jsonl_request_and_resolves_response() -> None:
     reader = asyncio.StreamReader()
     writer = FakeWriter()
     transport = StdioJsonRpcTransport(reader=reader, writer=writer)
@@ -48,12 +46,12 @@ async def test_stdio_transport_sends_framed_request_and_resolves_response() -> N
     pending = asyncio.create_task(transport.request("thread/read", {"threadId": "thr_live"}))
     await asyncio.sleep(0)
 
-    message = _parse_frame(bytes(writer.buffer))
+    message = _parse_message(bytes(writer.buffer))
     assert message["method"] == "thread/read"
     assert message["params"] == {"threadId": "thr_live"}
     assert isinstance(message["id"], int)
 
-    reader.feed_data(_encode_frame({"id": message["id"], "result": {"thread": {"id": "thr_live"}}}))
+    reader.feed_data(_encode_message({"id": message["id"], "result": {"thread": {"id": "thr_live"}}}))
     result = await pending
     await transport.stop()
 
@@ -74,7 +72,7 @@ async def test_stdio_transport_dispatches_server_requests_to_handler() -> None:
     await transport.start()
 
     reader.feed_data(
-        _encode_frame(
+        _encode_message(
             {
                 "id": "req_123",
                 "method": "item/commandExecution/requestApproval",
@@ -88,3 +86,17 @@ async def test_stdio_transport_dispatches_server_requests_to_handler() -> None:
     assert len(seen) == 1
     assert seen[0]["method"] == "item/commandExecution/requestApproval"
     assert writer.buffer == b""
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_sends_jsonl_notification_without_request_id() -> None:
+    reader = asyncio.StreamReader()
+    writer = FakeWriter()
+    transport = StdioJsonRpcTransport(reader=reader, writer=writer)
+
+    await transport.start()
+    await transport.notify("initialized")
+    await transport.stop()
+
+    message = _parse_message(bytes(writer.buffer))
+    assert message == {"method": "initialized"}

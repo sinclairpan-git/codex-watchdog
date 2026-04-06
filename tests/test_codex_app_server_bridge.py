@@ -18,6 +18,7 @@ class FakeTransport:
         self.started = False
         self.stopped = False
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.notifications: list[tuple[str, dict[str, Any]]] = []
         self.responses: list[tuple[str | int, dict[str, Any]]] = []
 
     async def start(self) -> None:
@@ -33,6 +34,9 @@ class FakeTransport:
         if not queue:
             raise AssertionError(f"unexpected request: {method}")
         return dict(queue.popleft())
+
+    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self.notifications.append((method, dict(params or {})))
 
     async def respond(self, request_id: str | int, result: dict[str, Any]) -> None:
         self.responses.append((request_id, dict(result)))
@@ -65,6 +69,14 @@ async def test_bridge_initializes_and_resumes_known_thread() -> None:
     snapshot = await bridge.resume_thread("thr_live")
 
     assert transport.started is True
+    assert transport.calls[0] == (
+        "initialize",
+        {
+            "clientInfo": {"name": "openclaw-codex-watchdog", "version": "0.1.0"},
+            "capabilities": None,
+        },
+    )
+    assert transport.notifications == [("initialized", {})]
     assert snapshot["thread_id"] == "thr_live"
     assert bridge.thread_snapshot("thr_live") == snapshot
     assert bridge.active_turn_id("thr_live") is None
