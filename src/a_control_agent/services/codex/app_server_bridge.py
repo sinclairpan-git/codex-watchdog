@@ -275,13 +275,17 @@ class CodexAppServerBridge:
             return "item/permissions/requestApproval"
         if reason == "item/fileChange/requestApproval":
             return "item/fileChange/requestApproval"
+        if self._parse_legacy_permissions_command(str(row.get("command") or "")) is not None:
+            return "item/permissions/requestApproval"
         return "item/commandExecution/requestApproval"
 
     def _restore_approval_params(self, row: dict[str, Any], method: str) -> dict[str, Any]:
         if method == "item/permissions/requestApproval":
             command = str(row.get("command") or "")
-            _, _, raw_permissions = command.partition(":")
-            permissions = [item for item in raw_permissions.split(",") if item]
+            permissions = self._parse_legacy_permissions_command(command)
+            if permissions is None:
+                _, _, raw_permissions = command.partition(":")
+                permissions = [item for item in raw_permissions.split(",") if item]
             return {"permissions": permissions}
         if method == "item/fileChange/requestApproval":
             return {
@@ -289,6 +293,20 @@ class CodexAppServerBridge:
                 "reason": str(row.get("reason") or ""),
             }
         return {"command": str(row.get("command") or "")}
+
+    def _parse_legacy_permissions_command(self, command: str) -> list[str] | None:
+        prefix = "permissions:"
+        if not command.startswith(prefix):
+            return None
+        raw_permissions = command[len(prefix) :]
+        if not raw_permissions:
+            return None
+        permissions = raw_permissions.split(",")
+        if any(not item for item in permissions):
+            return None
+        if any(any(ch.isspace() for ch in item) for item in permissions):
+            return None
+        return permissions
 
     def _request_lookup_key(self, request_id: str | int) -> str:
         return str(request_id)

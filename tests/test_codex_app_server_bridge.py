@@ -630,6 +630,78 @@ async def test_bridge_restore_defaults_legacy_command_approval_to_command_execut
 
 
 @pytest.mark.asyncio
+async def test_bridge_restore_detects_legacy_permissions_approval_with_human_reason(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approvals_path = tmp_path / "approvals.json"
+    approval_store = ApprovalsStore(approvals_path)
+    first_transport = FlakyRespondTransport({"initialize": [{"server": "fake-codex"}]})
+    first_bridge = CodexAppServerBridge(
+        transport=first_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await first_bridge.start()
+    approval = await first_bridge.ingest_server_request(
+        {
+            "id": "req_perm_legacy_restore",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
+
+    assert approval is not None
+    assert approval["callback_status"] == "deferred"
+    store_data = json.loads(approvals_path.read_text(encoding="utf-8"))
+    store_data[approval["approval_id"]].pop("bridge_request_method", None)
+    approvals_path.write_text(json.dumps(store_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    second_bridge = CodexAppServerBridge(
+        transport=second_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await second_bridge.start()
+    callback = await second_bridge.resolve_pending_approval(
+        "req_perm_legacy_restore",
+        decision="approve",
+        note="retry callback",
+    )
+
+    assert callback == {
+        "request_id": "req_perm_legacy_restore",
+        "permissions": ["fs.read", "fs.write"],
+        "scope": "session",
+    }
+    assert second_transport.responses == [
+        (
+            "req_perm_legacy_restore",
+            {
+                "permissions": ["fs.read", "fs.write"],
+                "scope": "session",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bridge_does_not_restore_delivered_policy_auto_callback_after_restart(
     tmp_path: Path,
 ) -> None:
