@@ -102,23 +102,26 @@ class CodexAppServerBridge:
         task = self._task_store.get_by_thread(thread_id)
         if task is None:
             return None
+        request_key = self._request_lookup_key(request_id)
         approval = self._approvals_store.create_request(
             project_id=str(task.get("project_id") or ""),
             thread_id=thread_id,
             command=self._approval_command(method, params),
             reason=str(params.get("reason") or method),
             alternative=str(params.get("alternative") or ""),
-            bridge_request_id=str(request_id),
+            bridge_request_id=request_key,
+            bridge_request_id_type=self._request_id_type(request_id),
         )
         project_id = str(task.get("project_id") or "")
         approval_request = {
+            "request_id": request_id,
             "method": method,
             "params": dict(params),
             "approval_id": approval["approval_id"],
             "thread_id": thread_id,
         }
         if approval.get("status") == "pending":
-            self._pending_approvals[str(request_id)] = approval_request
+            self._pending_approvals[request_key] = approval_request
             self._task_store.merge_update(
                 str(task.get("project_id") or ""),
                 {
@@ -129,10 +132,10 @@ class CodexAppServerBridge:
                 },
             )
             return approval
-        self._pending_approvals[str(request_id)] = approval_request
+        self._pending_approvals[request_key] = approval_request
         callback = self._approval_callback_result(method, params, decision="approve", note="")
         try:
-            await self._transport.respond(str(request_id), callback)
+            await self._transport.respond(request_id, callback)
         except Exception as exc:
             deferred = self._approvals_store.mark_callback_deferred(
                 str(approval["approval_id"]),
@@ -152,21 +155,21 @@ class CodexAppServerBridge:
                 event_source="codex_bridge",
                 payload_json={
                     "approval_id": approval["approval_id"],
-                    "request_id": str(request_id),
+                    "request_id": request_id,
                     "error": repr(exc),
                 },
             )
             self._append_audit(
                 "approval_callback_deferred",
                 payload={
-                    "request_id": str(request_id),
+                    "request_id": request_id,
                     "approval_id": approval["approval_id"],
                     "error": repr(exc),
                 },
             )
             return deferred or approval
         delivered = self._approvals_store.mark_callback_delivered(str(approval["approval_id"]))
-        self._pending_approvals.pop(str(request_id), None)
+        self._pending_approvals.pop(request_key, None)
         return delivered or approval
 
     async def resolve_pending_approval(
@@ -176,7 +179,8 @@ class CodexAppServerBridge:
         decision: str,
         note: str = "",
     ) -> dict[str, Any]:
-        approval_request = self._pending_approvals.get(request_id)
+        request_key = self._request_lookup_key(request_id)
+        approval_request = self._pending_approvals.get(request_key)
         if approval_request is None:
             approval_request = self._restore_approval_request(request_id)
         if approval_request is None:
@@ -184,8 +188,9 @@ class CodexAppServerBridge:
         method = str((approval_request or {}).get("method") or "item/commandExecution/requestApproval")
         params = dict((approval_request or {}).get("params") or {})
         callback = self._approval_callback_result(method, params, decision=decision, note=note)
-        await self._transport.respond(request_id, callback)
-        self._pending_approvals.pop(request_id, None)
+        response_request_id = self._approval_request_id(approval_request, fallback=request_id)
+        await self._transport.respond(response_request_id, callback)
+        self._pending_approvals.pop(request_key, None)
         approval_id = str((approval_request or {}).get("approval_id") or "")
         if approval_id and self._approvals_store is not None:
             row = self._approvals_store.get(approval_id)
@@ -204,7 +209,7 @@ class CodexAppServerBridge:
                             "approval_risk": None,
                         },
                     )
-        return {"request_id": request_id, **callback}
+        return {"request_id": response_request_id, **callback}
 
     def _restore_approval_request(self, request_id: str) -> dict[str, Any] | None:
         if self._approvals_store is None:
@@ -217,6 +222,7 @@ class CodexAppServerBridge:
             method = self._restore_approval_method(row)
             params = self._restore_approval_params(row, method)
             return {
+                "request_id": self._restore_request_id(row),
                 "method": method,
                 "params": params,
                 "approval_id": row.get("approval_id"),
@@ -278,6 +284,33 @@ class CodexAppServerBridge:
                 "reason": str(row.get("reason") or ""),
             }
         return {"command": str(row.get("command") or "")}
+
+    def _request_lookup_key(self, request_id: str | int) -> str:
+        return str(request_id)
+
+    def _request_id_type(self, request_id: str | int) -> str:
+        return "int" if isinstance(request_id, int) else "str"
+
+    def _restore_request_id(self, row: dict[str, Any]) -> str | int:
+        request_id = str(row.get("bridge_request_id") or "")
+        request_id_type = str(row.get("bridge_request_id_type") or "")
+        if request_id_type == "int":
+            try:
+                return int(request_id)
+            except ValueError:
+                return request_id
+        return request_id
+
+    def _approval_request_id(
+        self,
+        approval_request: dict[str, Any],
+        *,
+        fallback: str,
+    ) -> str | int:
+        request_id = approval_request.get("request_id")
+        if isinstance(request_id, (str, int)):
+            return request_id
+        return fallback
 
     def _remember_thread(self, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         snapshot = dict(payload)

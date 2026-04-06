@@ -224,6 +224,53 @@ async def test_bridge_auto_approves_low_risk_permissions_request(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_bridge_auto_approval_preserves_numeric_request_id_type(tmp_path: Path) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    bridge = CodexAppServerBridge(
+        transport=transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await bridge.start()
+    approval = await bridge.ingest_server_request(
+        {
+            "id": 123,
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
+
+    assert approval is not None
+    assert approval["bridge_request_id"] == "123"
+    assert approval["bridge_request_id_type"] == "int"
+    assert transport.responses == [
+        (
+            123,
+            {
+                "permissions": ["fs.read", "fs.write"],
+                "scope": "session",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bridge_preserves_auto_approved_callback_retry_after_respond_failure(
     tmp_path: Path,
 ) -> None:
@@ -284,6 +331,80 @@ async def test_bridge_preserves_auto_approved_callback_retry_after_respond_failu
     assert transport.responses == [
         (
             "req_perm_retry",
+            {
+                "permissions": ["fs.read", "fs.write"],
+                "scope": "session",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bridge_restores_numeric_request_id_for_auto_approved_callback_retry_after_restart(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    first_transport = FlakyRespondTransport({"initialize": [{"server": "fake-codex"}]})
+    first_bridge = CodexAppServerBridge(
+        transport=first_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await first_bridge.start()
+    approval = await first_bridge.ingest_server_request(
+        {
+            "id": 456,
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
+    stored = approval_store.get(str((approval or {}).get("approval_id") or ""))
+
+    second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    second_bridge = CodexAppServerBridge(
+        transport=second_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await second_bridge.start()
+    callback = await second_bridge.resolve_pending_approval(
+        "456",
+        decision="approve",
+        note="retry callback",
+    )
+    stored_after = approval_store.get(str((approval or {}).get("approval_id") or ""))
+
+    assert approval is not None
+    assert approval["bridge_request_id"] == "456"
+    assert approval["bridge_request_id_type"] == "int"
+    assert stored is not None
+    assert stored["bridge_request_id_type"] == "int"
+    assert callback == {
+        "request_id": 456,
+        "permissions": ["fs.read", "fs.write"],
+        "scope": "session",
+    }
+    assert stored_after is not None
+    assert stored_after["callback_status"] == "delivered"
+    assert second_transport.responses == [
+        (
+            456,
             {
                 "permissions": ["fs.read", "fs.write"],
                 "scope": "session",
