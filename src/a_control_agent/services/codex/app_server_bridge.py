@@ -132,8 +132,16 @@ class CodexAppServerBridge:
         callback = self._approval_callback_result(method, params, decision="approve", note="")
         try:
             await self._transport.respond(str(request_id), callback)
-        except Exception:
-            raise
+        except Exception as exc:
+            self._append_audit(
+                "approval_callback_deferred",
+                payload={
+                    "request_id": str(request_id),
+                    "approval_id": approval["approval_id"],
+                    "error": repr(exc),
+                },
+            )
+            return approval
         self._pending_approvals.pop(str(request_id), None)
         return approval
 

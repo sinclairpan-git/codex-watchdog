@@ -246,21 +246,23 @@ async def test_bridge_preserves_auto_approved_callback_retry_after_respond_failu
     )
 
     await bridge.start()
-    with pytest.raises(RuntimeError, match="callback failed"):
-        await bridge.ingest_server_request(
-            {
-                "id": "req_perm_retry",
-                "method": "item/permissions/requestApproval",
-                "params": {
-                    "threadId": "thr_live",
-                    "permissions": ["fs.read", "fs.write"],
-                    "reason": "Need elevated file access",
-                },
-            }
-        )
+    approval = await bridge.ingest_server_request(
+        {
+            "id": "req_perm_retry",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
 
     callback = await bridge.resolve_pending_approval("req_perm_retry", decision="approve", note="")
 
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert approval["decided_by"] == "policy-auto"
     assert callback == {
         "request_id": "req_perm_retry",
         "permissions": ["fs.read", "fs.write"],
@@ -300,18 +302,17 @@ async def test_bridge_restores_auto_approved_callback_retry_after_restart(
     )
 
     await first_bridge.start()
-    with pytest.raises(RuntimeError, match="callback failed"):
-        await first_bridge.ingest_server_request(
-            {
-                "id": "req_perm_restart",
-                "method": "item/permissions/requestApproval",
-                "params": {
-                    "threadId": "thr_live",
-                    "permissions": ["fs.read", "fs.write"],
-                    "reason": "Need elevated file access",
-                },
-            }
-        )
+    approval = await first_bridge.ingest_server_request(
+        {
+            "id": "req_perm_restart",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
 
     second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
     second_bridge = CodexAppServerBridge(
@@ -327,6 +328,9 @@ async def test_bridge_restores_auto_approved_callback_retry_after_restart(
         note="retry callback",
     )
 
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert approval["decided_by"] == "policy-auto"
     assert callback == {
         "request_id": "req_perm_restart",
         "permissions": ["fs.read", "fs.write"],
