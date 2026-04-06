@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -550,6 +551,77 @@ async def test_bridge_restore_keeps_command_execution_callback_shape_after_resta
     assert second_transport.responses == [
         (
             "req_cmd_restore",
+            {
+                "decision": "accept",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bridge_restore_defaults_legacy_command_approval_to_command_execution_callback_shape(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approvals_path = tmp_path / "approvals.json"
+    approval_store = ApprovalsStore(approvals_path)
+    first_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    first_bridge = CodexAppServerBridge(
+        transport=first_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await first_bridge.start()
+    approval = await first_bridge.ingest_server_request(
+        {
+            "id": "req_cmd_legacy_restore",
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "turnId": "turn_1",
+                "itemId": "item_1",
+                "command": "permissions:curl https://example.com",
+                "reason": "Need network access",
+            },
+        }
+    )
+
+    assert approval is not None
+    store_data = json.loads(approvals_path.read_text(encoding="utf-8"))
+    store_data[approval["approval_id"]].pop("bridge_request_method", None)
+    approvals_path.write_text(json.dumps(store_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    second_bridge = CodexAppServerBridge(
+        transport=second_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await second_bridge.start()
+    callback = await second_bridge.resolve_pending_approval(
+        "req_cmd_legacy_restore",
+        decision="approve",
+        note="retry callback",
+    )
+
+    assert callback == {
+        "request_id": "req_cmd_legacy_restore",
+        "decision": "accept",
+    }
+    assert second_transport.responses == [
+        (
+            "req_cmd_legacy_restore",
             {
                 "decision": "accept",
             },

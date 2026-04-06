@@ -271,8 +271,7 @@ class CodexAppServerBridge:
         if stored_method in _APPROVAL_REQUEST_METHODS:
             return stored_method
         reason = str(row.get("reason") or "")
-        command = str(row.get("command") or "")
-        if command.startswith("permissions:") or reason == "item/permissions/requestApproval":
+        if reason == "item/permissions/requestApproval":
             return "item/permissions/requestApproval"
         if reason == "item/fileChange/requestApproval":
             return "item/fileChange/requestApproval"
