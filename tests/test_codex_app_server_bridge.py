@@ -275,3 +275,69 @@ async def test_bridge_preserves_auto_approved_callback_retry_after_respond_failu
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_bridge_restores_auto_approved_callback_retry_after_restart(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    first_transport = FlakyRespondTransport({"initialize": [{"server": "fake-codex"}]})
+    first_bridge = CodexAppServerBridge(
+        transport=first_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await first_bridge.start()
+    with pytest.raises(RuntimeError, match="callback failed"):
+        await first_bridge.ingest_server_request(
+            {
+                "id": "req_perm_restart",
+                "method": "item/permissions/requestApproval",
+                "params": {
+                    "threadId": "thr_live",
+                    "permissions": ["fs.read", "fs.write"],
+                    "reason": "Need elevated file access",
+                },
+            }
+        )
+
+    second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    second_bridge = CodexAppServerBridge(
+        transport=second_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await second_bridge.start()
+    callback = await second_bridge.resolve_pending_approval(
+        "req_perm_restart",
+        decision="approve",
+        note="retry callback",
+    )
+
+    assert callback == {
+        "request_id": "req_perm_restart",
+        "permissions": ["fs.read", "fs.write"],
+        "scope": "session",
+    }
+    assert second_transport.responses == [
+        (
+            "req_perm_restart",
+            {
+                "permissions": ["fs.read", "fs.write"],
+                "scope": "session",
+            },
+        )
+    ]

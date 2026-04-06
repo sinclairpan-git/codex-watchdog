@@ -146,7 +146,7 @@ class CodexAppServerBridge:
     ) -> dict[str, Any]:
         approval_request = self._pending_approvals.get(request_id)
         if approval_request is None:
-            approval_request = self._restore_pending_approval(request_id)
+            approval_request = self._restore_approval_request(request_id)
         if approval_request is None:
             raise KeyError(f"approval request not found: {request_id}")
         method = str((approval_request or {}).get("method") or "item/commandExecution/requestApproval")
@@ -156,11 +156,13 @@ class CodexAppServerBridge:
         self._pending_approvals.pop(request_id, None)
         return {"request_id": request_id, **callback}
 
-    def _restore_pending_approval(self, request_id: str) -> dict[str, Any] | None:
+    def _restore_approval_request(self, request_id: str) -> dict[str, Any] | None:
         if self._approvals_store is None:
             return None
-        for row in self._approvals_store.list_by_status("pending"):
+        for row in self._approvals_store.list_by_status(None):
             if row.get("bridge_request_id") != request_id:
+                continue
+            if not self._can_restore_approval_request(row):
                 continue
             method = self._restore_approval_method(row)
             params = self._restore_approval_params(row, method)
@@ -171,6 +173,12 @@ class CodexAppServerBridge:
                 "thread_id": row.get("thread_id"),
             }
         return None
+
+    def _can_restore_approval_request(self, row: dict[str, Any]) -> bool:
+        status = str(row.get("status") or "")
+        if status == "pending":
+            return True
+        return status == "approved" and str(row.get("decided_by") or "") == "policy-auto"
 
     def _restore_approval_method(self, row: dict[str, Any]) -> str:
         reason = str(row.get("reason") or "")

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
 from a_control_agent.main import create_app
+from a_control_agent.services.codex.app_server_bridge import CodexAppServerBridge
 from a_control_agent.settings import Settings
 
 
@@ -55,6 +57,30 @@ class FakeBridge:
             raise RuntimeError("callback failed")
         self.approval_calls.append((request_id, decision, note))
         return {"request_id": request_id, "decision": decision}
+
+
+class RecordingTransport:
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self.requests: list[tuple[str, dict[str, Any]]] = []
+        self.responses: list[tuple[str | int, dict[str, Any]]] = []
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = dict(params or {})
+        self.requests.append((method, payload))
+        if method == "initialize":
+            return {"server": "fake-codex"}
+        raise AssertionError(f"unexpected request: {method}")
+
+    async def respond(self, request_id: str | int, result: dict[str, Any]) -> None:
+        self.responses.append((request_id, dict(result)))
 
 
 def _make_client(tmp_path: Path, bridge: FakeBridge) -> TestClient:
@@ -322,3 +348,42 @@ def test_auto_approved_callback_can_be_retried_via_approval_decision_route(tmp_p
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert bridge.approval_calls == [("req_auto_123", "approve", "retry callback")]
+
+
+def test_auto_approved_callback_can_be_retried_after_bridge_restart(tmp_path: Path) -> None:
+    headers = {"Authorization": "Bearer test-token"}
+    settings = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    app = create_app(settings, start_background_workers=False)
+    transport = RecordingTransport()
+    app.state.codex_bridge = CodexAppServerBridge(
+        transport=transport,
+        approvals_store=app.state.approvals_store,
+        task_store=app.state.task_store,
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "ai-demo", "cwd": "/tmp/w1", "task_title": "t1"},
+            headers=headers,
+        )
+        thread_id = created.json()["data"]["thread_id"]
+        approval = client.app.state.approvals_store.create_request(
+            project_id="ai-demo",
+            thread_id=thread_id,
+            command="pytest -q",
+            reason="Safe callback replay",
+            bridge_request_id="req_auto_restart",
+        )
+
+        response = client.post(
+            f"/api/v1/approvals/{approval['approval_id']}/decision",
+            json={"decision": "approve", "operator": "human", "note": "retry callback"},
+            headers=headers,
+        )
+
+    assert approval["status"] == "approved"
+    assert approval["decided_by"] == "policy-auto"
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert transport.responses == [("req_auto_restart", {"decision": "accept"})]
