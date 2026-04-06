@@ -9,7 +9,7 @@
 ### Task 17.1 Contract delta 与版本推进
 
 - **任务编号**：T171
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py`, `tests/test_watchdog_session_spine_contracts.py`
 - **可并行**：否
@@ -23,7 +23,7 @@
 ### Task 17.2 共享 session directory builder
 
 - **任务编号**：T172
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T171
 - **文件**：`src/watchdog/services/session_spine/service.py`, `src/watchdog/services/session_spine/projection.py`, `src/watchdog/services/session_spine/replies.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -39,7 +39,7 @@
 ### Task 17.3 Stable directory route 与 adapter intent
 
 - **任务编号**：T173
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T172
 - **文件**：`src/watchdog/api/session_spine_queries.py`, `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`
 - **可并行**：否
@@ -53,7 +53,7 @@
 ### Task 17.4 Legacy 非回归、文档与项目状态收口
 
 - **任务编号**：T174
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T173
 - **文件**：`tests/test_a_control_agent.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml`
 - **可并行**：是

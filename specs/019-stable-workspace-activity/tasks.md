@@ -4,6 +4,8 @@
 
 ## Task 19.1 Contract 与版本语义
 
+- **任务编号**：T191
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：冻结 `WorkspaceActivityView`、reply code 与 019 schema version。
 - **涉及文件**：
   - `src/watchdog/contracts/session_spine/enums.py`
@@ -19,6 +21,8 @@
 
 ## Task 19.2 A-client 与共享 L2 builder
 
+- **任务编号**：T192
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：收拢 raw `/workspace-activity` 读取，并在 L2 形成共享稳定 builder。
 - **涉及文件**：
   - `src/watchdog/services/a_client/client.py`
@@ -35,6 +39,8 @@
 
 ## Task 19.3 Stable API Surface
 
+- **任务编号**：T193
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：暴露 canonical stable workspace activity route。
 - **涉及文件**：
   - `src/watchdog/api/session_spine_queries.py`
@@ -48,6 +54,8 @@
 
 ## Task 19.4 OpenClaw Adapter Intent
 
+- **任务编号**：T194
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：让 OpenClaw 通过 stable contract 消费 workspace activity。
 - **涉及文件**：
   - `src/watchdog/services/adapters/openclaw/intents.py`
@@ -64,6 +72,8 @@
 
 ## Task 19.5 Raw 非回归、文档与项目状态收口
 
+- **任务编号**：T195
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：锁住 raw `/workspace-activity` 不回归，并同步对外口径。
 - **涉及文件**：
   - `tests/test_a_control_agent.py`

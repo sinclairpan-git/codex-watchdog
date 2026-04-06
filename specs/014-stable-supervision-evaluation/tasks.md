@@ -9,7 +9,7 @@
 ### Task 14.1 稳定 supervision 契约与版本推进
 
 - **任务编号**：T141
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py`, `tests/test_watchdog_session_spine_contracts.py`
 - **可并行**：否
@@ -23,7 +23,7 @@
 ### Task 14.2 L2 supervision evaluation 内核
 
 - **任务编号**：T142
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T141
 - **文件**：`src/watchdog/services/session_spine/supervision.py`, `src/watchdog/services/session_spine/actions.py`, `src/watchdog/services/status_analyzer/stuck.py`, `tests/test_watchdog_supervision_evaluation.py`, `tests/test_watchdog_action_idempotency.py`
 - **可并行**：否
@@ -37,7 +37,7 @@
 ### Task 14.3 Stable API Surface + legacy evaluate compatibility shell
 
 - **任务编号**：T143
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T142
 - **文件**：`src/watchdog/api/session_spine_actions.py`, `src/watchdog/api/supervision.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_m2_watchdog_supervision.py`
 - **可并行**：否
@@ -53,7 +53,7 @@
 ### Task 14.4 OpenClaw adapter 接入 evaluate_supervision
 
 - **任务编号**：T144
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T143
 - **文件**：`src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -67,7 +67,7 @@
 ### Task 14.5 文档与 OpenAPI 收口
 
 - **任务编号**：T145
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T143
 - **文件**：`README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `specs/014-stable-supervision-evaluation/spec.md`
 - **可并行**：是
@@ -81,7 +81,7 @@
 ### Task 14.6 集成、receipt 非回归与 legacy 非回归收口
 
 - **任务编号**：T146
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T144, T145
 - **文件**：`tests/integration/test_openclaw_integration_spine.py`, `tests/test_watchdog_action_receipts.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`
 - **可并行**：否

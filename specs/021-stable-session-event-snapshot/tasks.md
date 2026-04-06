@@ -4,6 +4,8 @@
 
 ## Task 21.1 Contract 与版本语义
 
+- **任务编号**：T211
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：冻结 stable JSON event snapshot reply contract 与 021 schema version。
 - **涉及文件**：
   - `src/watchdog/contracts/session_spine/enums.py`
@@ -20,6 +22,8 @@
 
 ## Task 21.2 L2 Reply Builder
 
+- **任务编号**：T212
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：把稳定 `SessionEvent[]` 收敛为统一 JSON snapshot reply。
 - **涉及文件**：
   - `src/watchdog/services/session_spine/replies.py`
@@ -32,6 +36,8 @@
 
 ## Task 21.3 Stable API Surface
 
+- **任务编号**：T213
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：暴露 canonical stable JSON event snapshot route。
 - **涉及文件**：
   - `src/watchdog/api/session_spine_queries.py`
@@ -46,6 +52,8 @@
 
 ## Task 21.4 OpenClaw Adapter Intent
 
+- **任务编号**：T214
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：让 OpenClaw 通过主 `intent -> ReplyModel` 闭环消费事件快照。
 - **涉及文件**：
   - `src/watchdog/services/adapters/openclaw/intents.py`
@@ -62,6 +70,8 @@
 
 ## Task 21.5 文档、OpenAPI 与项目状态收口
 
+- **任务编号**：T215
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：同步 021 对外口径，并推进 work item state。
 - **涉及文件**：
   - `README.md`

@@ -3,27 +3,54 @@ current_batch: 1
 last_committed_task: T94
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
-  constitution_path: /Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/memory/constitution.md
-  tech_stack_path: /Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/profiles/tech-stack.yml
-  spec_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/009-task-events-stream/spec.md
-  plan_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/009-task-events-stream/plan.md
-  tasks_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/009-task-events-stream/tasks.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/009-task-events-stream/spec.md
+  plan_path: specs/009-task-events-stream/plan.md
+  tasks_path: specs/009-task-events-stream/tasks.md
   active_files:
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/storage/tasks_store.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/api/recovery.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/api/approvals.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/a_client/client.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/api/events_proxy.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/main.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/tests/test_a_control_agent_control_flow.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/tests/test_watchdog.py
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/README.md
-  - /Users/sinclairpan/project/openclaw-codex-watchdog/docs/getting-started.zh-CN.md
-  context_summary: "009 已闭合 A/B 两侧事件流：A-Control-Agent 可回放 task_created、native_thread_registered、steer、handoff、resume、approval_decided，Watchdog 新增 GET /api/v1/watchdog/tasks/{project_id}/events 代理 A 侧 SSE；README、接入文档、OpenAPI、pytest 与 ruff 已同步通过。"
+  - '`src/a_control_agent/storage/tasks_store.py`'
+  - '`src/a_control_agent/api/recovery.py`'
+  - '`src/a_control_agent/api/approvals.py`'
+  - '`src/watchdog/services/a_client/client.py`'
+  - '`src/watchdog/api/events_proxy.py`'
+  - '`src/watchdog/main.py`'
+  - '`tests/test_a_control_agent_control_flow.py`'
+  - '`tests/test_watchdog.py`'
+  - '`README.md`'
+  - '`docs/getting-started.zh-CN.md`'
+  context_summary: '# Development Summary
+
+
+    Status: completed
+
+    Total Tasks: 4
+
+    Completed Tasks: 4
+
+    Halted Tasks: 0
+
+    Total Batches: 1
+
+    Completed Batches: 1
+
+    Last Committed Task: T94
+
+
+    ## Notes
+
+    - 已提供 `GET /api/v1/tasks/{project_id}/events` SSE 只读事件流。
+
+    - 已为 `task_created`、`native_thread_registered`、`steer`、`handoff`、`resume`、`approval_decided`
+    落盘任务事件。
+
+    - 已提供 `GET /api/v1/watchdog/tasks/{project_id}/events` 代理 A 侧 SSE，覆盖快照、持续流与错误透传。
+
+    - 已同步 README、接入文档、OpenAPI，并通过 Watchdog 代理测试、pytest 与 ruff。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-04T23:23:42Z'
+timestamp: '2026-04-05T19:17:10+00:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: '2026-04-04T23:23:42Z'
-checkpoint_fingerprint: 05067eeaaee1e56e451d78c38496cc46d404010eef466cb67f58f12995409c8e
+checkpoint_fingerprint: ba1dfc1eb0814fad49ae23ebf8708db2ea58dec698676966b9a17eabcd6771b6

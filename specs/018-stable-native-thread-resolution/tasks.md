@@ -4,6 +4,8 @@
 
 ## Task 18.1 A-client 与共享 native-thread resolution builder
 
+- **任务编号**：T181
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：补齐 `/by-thread` A-client 读取，并在 L2 建立共享 session-read bundle builder。
 - **涉及文件**：
   - `src/watchdog/services/a_client/client.py`
@@ -19,6 +21,8 @@
 
 ## Task 18.2 Stable API Surface
 
+- **任务编号**：T182
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：暴露 canonical native-thread resolution route，并保持稳定错误语义。
 - **涉及文件**：
   - `src/watchdog/api/session_spine_queries.py`
@@ -32,6 +36,8 @@
 
 ## Task 18.3 OpenClaw Adapter Intent
 
+- **任务编号**：T183
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：让 adapter 在无 `project_id` 时也能基于 `native_thread_id` 解回稳定 session reply。
 - **涉及文件**：
   - `src/watchdog/services/adapters/openclaw/intents.py`
@@ -47,6 +53,8 @@
 
 ## Task 18.4 Raw 非回归、文档与项目状态收口
 
+- **任务编号**：T184
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：锁住 `/by-thread` raw 行为不回归，并同步对外口径。
 - **涉及文件**：
   - `tests/test_a_control_agent.py`

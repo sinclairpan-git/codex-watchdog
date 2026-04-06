@@ -9,7 +9,7 @@
 ### Task 15.1 Shared explanation builder 与非版本推进锁定
 
 - **任务编号**：T151
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/services/session_spine/replies.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -22,7 +22,7 @@
 ### Task 15.2 Stable explanation read routes
 
 - **任务编号**：T152
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T151
 - **文件**：`src/watchdog/api/session_spine_queries.py`, `src/watchdog/main.py`, `tests/test_watchdog_session_spine_api.py`
 - **可并行**：否
@@ -38,7 +38,7 @@
 ### Task 15.3 API / adapter 一致性与非回归收口
 
 - **任务编号**：T153
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T152
 - **文件**：`tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`
 - **可并行**：否
@@ -51,7 +51,7 @@
 ### Task 15.4 文档、OpenAPI 与项目状态收口
 
 - **任务编号**：T154
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T152
 - **文件**：`README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml`
 - **可并行**：是

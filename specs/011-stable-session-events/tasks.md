@@ -9,7 +9,7 @@
 ### Task 11.1 稳定事件契约与版本语义
 
 - **任务编号**：T111
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py`, `src/watchdog/contracts/session_spine/__init__.py`, `tests/test_watchdog_session_events_contracts.py`
 - **可并行**：否
@@ -24,7 +24,7 @@
 ### Task 11.2 L2 事件投影与 SSE codec
 
 - **任务编号**：T112
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T111
 - **文件**：`src/watchdog/services/session_spine/events.py`, `tests/test_watchdog_session_events_projection.py`
 - **可并行**：否
@@ -39,7 +39,7 @@
 ### Task 11.3 Stable Event API Surface
 
 - **任务编号**：T113
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T112
 - **文件**：`src/watchdog/api/session_spine_events.py`, `src/watchdog/main.py`, `tests/test_watchdog_session_events_api.py`
 - **可并行**：否
@@ -56,7 +56,7 @@
 ### Task 11.4 OpenClaw 只读事件 adapter
 
 - **任务编号**：T114
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T113
 - **文件**：`src/watchdog/services/adapters/openclaw/adapter.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -70,7 +70,7 @@
 ### Task 11.5 文档与 OpenAPI 收口
 
 - **任务编号**：T115
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T113
 - **文件**：`README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `specs/011-stable-session-events/spec.md`
 - **可并行**：是
@@ -84,7 +84,7 @@
 ### Task 11.6 最小集成与非回归
 
 - **任务编号**：T116
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T114, T115
 - **文件**：`tests/integration/test_stable_session_events.py`
 - **可并行**：否

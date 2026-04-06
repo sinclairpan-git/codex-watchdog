@@ -9,7 +9,7 @@
 ### Task 13.1 稳定 receipt 契约与版本推进
 
 - **任务编号**：T131
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py`, `tests/test_watchdog_session_spine_contracts.py`
 - **可并行**：否
@@ -23,7 +23,7 @@
 ### Task 13.2 L2 receipt lookup 内核
 
 - **任务编号**：T132
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T131
 - **文件**：`src/watchdog/storage/action_receipts.py`, `src/watchdog/services/session_spine/receipts.py`, `tests/test_watchdog_action_receipts.py`
 - **可并行**：否
@@ -37,7 +37,7 @@
 ### Task 13.3 Stable Receipt API Surface
 
 - **任务编号**：T133
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T132
 - **文件**：`src/watchdog/api/session_spine_queries.py`, `tests/test_watchdog_session_spine_api.py`
 - **可并行**：否
@@ -53,7 +53,7 @@
 ### Task 13.4 OpenClaw adapter 接入 receipt 查询
 
 - **任务编号**：T134
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T133
 - **文件**：`src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -67,7 +67,7 @@
 ### Task 13.5 文档与 OpenAPI 收口
 
 - **任务编号**：T135
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T133
 - **文件**：`README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `specs/013-stable-action-receipts/spec.md`
 - **可并行**：是
@@ -81,7 +81,7 @@
 ### Task 13.6 最小集成与非回归收口
 
 - **任务编号**：T136
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T134, T135
 - **文件**：`tests/integration/test_openclaw_integration_spine.py`, `tests/test_watchdog_action_idempotency.py`
 - **可并行**：否

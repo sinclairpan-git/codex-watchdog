@@ -9,7 +9,7 @@
 ### Task 12.1 稳定恢复动作契约与版本推进
 
 - **任务编号**：T121
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/versioning.py`, `tests/test_watchdog_session_spine_contracts.py`
 - **可并行**：否
@@ -24,7 +24,7 @@
 ### Task 12.2 L2 recovery execution 内核
 
 - **任务编号**：T122
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T121
 - **文件**：`src/watchdog/services/session_spine/recovery.py`, `src/watchdog/services/a_client/client.py`, `src/watchdog/services/session_spine/actions.py`, `tests/test_watchdog_recovery_execution.py`, `tests/test_watchdog_action_idempotency.py`
 - **可并行**：否
@@ -39,7 +39,7 @@
 ### Task 12.3 Stable Action API 与 legacy recover 非回归
 
 - **任务编号**：T123
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T122
 - **文件**：`src/watchdog/api/session_spine_actions.py`, `src/watchdog/api/recover_watchdog.py`, `src/watchdog/main.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_m4_watchdog_recover.py`
 - **可并行**：否
@@ -56,7 +56,7 @@
 ### Task 12.4 OpenClaw adapter 接入真实恢复动作
 
 - **任务编号**：T124
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T123
 - **文件**：`src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -70,7 +70,7 @@
 ### Task 12.5 文档与 OpenAPI 收口
 
 - **任务编号**：T125
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T123
 - **文件**：`README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `specs/012-stable-recovery-execution/spec.md`
 - **可并行**：是
@@ -84,7 +84,7 @@
 ### Task 12.6 最小集成与 legacy 非回归收口
 
 - **任务编号**：T126
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T124, T125
 - **文件**：`tests/integration/test_stable_recovery_execution.py`, `tests/integration/test_openclaw_integration_spine.py`
 - **可并行**：否

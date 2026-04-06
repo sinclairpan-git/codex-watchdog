@@ -9,7 +9,7 @@
 ### Task 10.1 中立 contract 包与版本语义
 
 - **任务编号**：T101
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
 - **文件**：`src/watchdog/contracts/session_spine/__init__.py`, `src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py`, `tests/test_watchdog_session_spine_contracts.py`
 - **可并行**：否
@@ -24,7 +24,7 @@
 ### Task 10.2 L2 稳定投影层与事实构建
 
 - **任务编号**：T102
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T101
 - **文件**：`src/watchdog/services/session_spine/facts.py`, `src/watchdog/services/session_spine/projection.py`, `src/watchdog/services/status_analyzer/stuck.py`, `src/watchdog/services/a_client/client.py`, `tests/test_watchdog_session_spine_projection.py`
 - **可并行**：否
@@ -38,7 +38,7 @@
 ### Task 10.3 Canonical 动作模型与幂等收据
 
 - **任务编号**：T103
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T101, T102
 - **文件**：`src/watchdog/services/session_spine/actions.py`, `src/watchdog/storage/__init__.py`, `src/watchdog/storage/action_receipts.py`, `tests/test_watchdog_action_idempotency.py`
 - **可并行**：否
@@ -55,7 +55,7 @@
 ### Task 10.4 Stable API Surface
 
 - **任务编号**：T104
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T102, T103
 - **文件**：`src/watchdog/api/session_spine_queries.py`, `src/watchdog/api/session_spine_actions.py`, `src/watchdog/main.py`, `tests/test_watchdog_session_spine_api.py`
 - **可并行**：否
@@ -72,7 +72,7 @@
 ### Task 10.5 L3 OpenClaw adapter spine
 
 - **任务编号**：T105
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T104
 - **文件**：`src/watchdog/services/adapters/openclaw/__init__.py`, `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `tests/test_watchdog_openclaw_adapter.py`
 - **可并行**：否
@@ -88,7 +88,7 @@
 ### Task 10.6 最小闭环集成与文档收口
 
 - **任务编号**：T106
-- **状态**：未开始
+- **状态**：已完成（2026-04-06 回填）
 - **依赖**：T105
 - **文件**：`tests/integration/test_openclaw_integration_spine.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `specs/010-openclaw-integration-spine/spec.md`
 - **可并行**：否

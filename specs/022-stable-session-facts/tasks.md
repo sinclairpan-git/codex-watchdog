@@ -4,6 +4,8 @@
 
 ## Task 22.1 Contract 与版本语义
 
+- **任务编号**：T221
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：冻结 stable session facts reply contract 与 022 schema version。
 - **涉及文件**：
   - `src/watchdog/contracts/session_spine/enums.py`
@@ -18,6 +20,8 @@
 
 ## Task 22.2 L2 Reply Builder
 
+- **任务编号**：T222
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：把稳定 `FactRecord[]` 收敛为统一 facts reply。
 - **涉及文件**：
   - `src/watchdog/services/session_spine/replies.py`
@@ -30,6 +34,8 @@
 
 ## Task 22.3 Stable API Surface
 
+- **任务编号**：T223
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：暴露 canonical stable facts route。
 - **涉及文件**：
   - `src/watchdog/api/session_spine_queries.py`
@@ -43,6 +49,8 @@
 
 ## Task 22.4 OpenClaw Adapter Intent
 
+- **任务编号**：T224
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：让 OpenClaw 通过主 `intent -> ReplyModel` 闭环消费 stable facts。
 - **涉及文件**：
   - `src/watchdog/services/adapters/openclaw/intents.py`
@@ -59,6 +67,8 @@
 
 ## Task 22.5 文档、OpenAPI 与项目状态收口
 
+- **任务编号**：T225
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：同步 022 对外口径，并推进 work item state。
 - **涉及文件**：
   - `README.md`

@@ -4,6 +4,8 @@
 
 ## Task 20.1 Contract 与版本语义
 
+- **任务编号**：T201
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：冻结 stable operator-guidance action code 与 020 schema version。
 - **涉及文件**：
   - `src/watchdog/contracts/session_spine/enums.py`
@@ -17,6 +19,8 @@
 
 ## Task 20.2 L2 动作执行与幂等
 
+- **任务编号**：T202
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：在统一 action executor 中落地 operator guidance。
 - **涉及文件**：
   - `src/watchdog/services/session_spine/actions.py`
@@ -30,6 +34,8 @@
 
 ## Task 20.3 Stable API Surface
 
+- **任务编号**：T203
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：暴露 operator-guidance alias route，并保持 canonical route 为主。
 - **涉及文件**：
   - `src/watchdog/api/session_spine_actions.py`
@@ -43,6 +49,8 @@
 
 ## Task 20.4 OpenClaw Adapter Intent
 
+- **任务编号**：T204
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：让 OpenClaw 通过 stable contract 提交 operator guidance。
 - **涉及文件**：
   - `src/watchdog/services/adapters/openclaw/intents.py`
@@ -58,6 +66,8 @@
 
 ## Task 20.5 Legacy 非回归、文档与项目状态收口
 
+- **任务编号**：T205
+- **状态**：已完成（2026-04-06 回填）
 - **目标**：锁住 raw `/steer` 不回归，并同步对外口径。
 - **涉及文件**：
   - `tests/test_m2_steer.py`
