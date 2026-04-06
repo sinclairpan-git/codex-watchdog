@@ -19,6 +19,7 @@ class FakeAClient:
         self._task = dict(task)
         self._tasks = [dict(row) for row in tasks or [task]]
         self._approvals = [dict(approval) for approval in approvals or []]
+        self.list_approvals_calls: list[dict[str, object | None]] = []
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
         self.workspace_activity_calls: list[tuple[str, int]] = []
@@ -38,10 +39,31 @@ class FakeAClient:
     def list_tasks(self) -> list[dict[str, object]]:
         return [dict(task) for task in self._tasks]
 
-    def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        self.list_approvals_calls.append(
+            {
+                "status": status,
+                "project_id": project_id,
+                "decided_by": decided_by,
+                "callback_status": callback_status,
+            }
+        )
         rows = [dict(approval) for approval in self._approvals]
         if status:
             rows = [row for row in rows if row.get("status") == status]
+        if project_id:
+            rows = [row for row in rows if row.get("project_id") == project_id]
+        if decided_by:
+            rows = [row for row in rows if row.get("decided_by") == decided_by]
+        if callback_status:
+            rows = [row for row in rows if row.get("callback_status") == callback_status]
         return rows
 
     def decide_approval(
@@ -531,6 +553,7 @@ def test_deferred_policy_auto_approval_is_visible_across_stable_session_surfaces
 
     assert session_data["session"]["pending_approval_count"] == 1
     assert "approve_approval" in session_data["session"]["available_intents"]
+    assert "reject_approval" not in session_data["session"]["available_intents"]
     assert [fact["fact_code"] for fact in session_data["facts"]] == [
         "approval_pending",
         "awaiting_human_direction",
@@ -541,6 +564,86 @@ def test_deferred_policy_auto_approval_is_visible_across_stable_session_surfaces
     ]
     assert [item["approval_id"] for item in approvals_data["approvals"]] == ["appr_deferred"]
     assert [item["approval_id"] for item in inbox_data["approvals"]] == ["appr_deferred"]
+
+
+def test_session_spine_reads_only_targeted_actionable_approval_slices(tmp_path) -> None:
+    a_client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "waiting for callback replay",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_pending",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "approval_id": "appr_deferred",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L1",
+                "command": "pytest -q",
+                "reason": "callback replay",
+                "alternative": "",
+                "status": "approved",
+                "decided_by": "policy-auto",
+                "callback_status": "deferred",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+            {
+                "approval_id": "appr_delivered",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L1",
+                "command": "pytest -q",
+                "reason": "already delivered",
+                "alternative": "",
+                "status": "approved",
+                "decided_by": "policy-auto",
+                "callback_status": "delivered",
+                "requested_at": "2026-04-05T05:23:00Z",
+            },
+        ],
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    assert a_client.list_approvals_calls == [
+        {
+            "status": "pending",
+            "project_id": "repo-a",
+            "decided_by": None,
+            "callback_status": None,
+        },
+        {
+            "status": "approved",
+            "project_id": "repo-a",
+            "decided_by": "policy-auto",
+            "callback_status": "deferred",
+        },
+    ]
 
 
 def test_session_spine_stuck_explanation_route_returns_stable_reply_model(tmp_path) -> None:

@@ -10,7 +10,10 @@ from watchdog.contracts.session_spine.models import (
     TaskProgressView,
     WorkspaceActivityView,
 )
-from watchdog.services.session_spine.approval_visibility import actionable_approval_count
+from watchdog.services.session_spine.approval_visibility import (
+    actionable_approval_count,
+    has_rejectable_approval,
+)
 
 
 def stable_thread_id_for_project(project_id: str) -> str:
@@ -128,19 +131,16 @@ def _build_available_intents(
     *,
     has_task: bool,
     pending_approval_count: int,
+    can_reject_approval: bool,
     fact_codes: set[str],
 ) -> list[str]:
     intents = ["get_session"]
     if has_task:
         intents.append("continue_session")
     if pending_approval_count > 0:
-        intents.extend(
-            [
-                "list_pending_approvals",
-                "approve_approval",
-                "reject_approval",
-            ]
-        )
+        intents.extend(["list_pending_approvals", "approve_approval"])
+        if can_reject_approval:
+            intents.append("reject_approval")
     if fact_codes.intersection({"stuck_no_progress", "repeat_failure", "context_critical"}):
         intents.extend(["why_stuck", "explain_blocker", "request_recovery"])
         if "context_critical" in fact_codes:
@@ -160,6 +160,7 @@ def build_session_projection(
     stable_thread_id = stable_thread_id_for_project(project_id)
     fact_codes = {fact.fact_code for fact in facts}
     pending_approval_count = actionable_approval_count(approvals)
+    can_reject_approval = has_rejectable_approval(approvals)
 
     session_state = SessionState.ACTIVE
     attention_state = AttentionState.NORMAL
@@ -190,6 +191,7 @@ def build_session_projection(
         available_intents=_build_available_intents(
             has_task=isinstance(task, dict),
             pending_approval_count=pending_approval_count,
+            can_reject_approval=can_reject_approval,
             fact_codes=fact_codes,
         ),
     )

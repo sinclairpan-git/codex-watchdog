@@ -71,11 +71,24 @@ class AControlAgentClient:
                 raise RuntimeError("invalid_envelope_shape")
             return [dict(task) for task in tasks if isinstance(task, dict)]
 
-    def list_approvals(self, *, status: str | None = None) -> list[dict[str, Any]]:
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, Any]]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/approvals"
         params: dict[str, str] = {}
         if status:
             params["status"] = status
+        if project_id:
+            params["project_id"] = project_id
+        if decided_by:
+            params["decided_by"] = decided_by
+        if callback_status:
+            params["callback_status"] = callback_status
         with httpx.Client(timeout=self._settings.http_timeout_s) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers(), params=params)

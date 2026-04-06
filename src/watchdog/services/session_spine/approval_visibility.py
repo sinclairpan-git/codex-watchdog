@@ -18,3 +18,11 @@ def is_actionable_approval(approval: dict[str, Any]) -> bool:
 
 def actionable_approval_count(approvals: list[dict[str, Any]]) -> int:
     return sum(1 for approval in approvals if is_actionable_approval(approval))
+
+
+def approval_supports_reject(approval: dict[str, Any]) -> bool:
+    return str(approval.get("status") or "").lower() == "pending"
+
+
+def has_rejectable_approval(approvals: list[dict[str, Any]]) -> bool:
+    return any(approval_supports_reject(approval) for approval in approvals)

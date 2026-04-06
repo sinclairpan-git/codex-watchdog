@@ -118,13 +118,24 @@ def _load_approvals_or_raise(
     project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     try:
-        items = client.list_approvals(status=None)
+        pending_items = client.list_approvals(status="pending", project_id=project_id)
+        deferred_items = client.list_approvals(
+            status="approved",
+            project_id=project_id,
+            decided_by="policy-auto",
+            callback_status="deferred",
+        )
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
-    rows = [dict(item) for item in items if is_actionable_approval(dict(item))]
-    if project_id is None:
-        return rows
-    return [row for row in rows if str(row.get("project_id") or "") == project_id]
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for item in [*pending_items, *deferred_items]:
+        row = dict(item)
+        if not is_actionable_approval(row):
+            continue
+        approval_id = str(row.get("approval_id") or "")
+        if approval_id:
+            rows_by_id[approval_id] = row
+    return list(rows_by_id.values())
 
 
 def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:

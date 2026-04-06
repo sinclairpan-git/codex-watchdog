@@ -34,11 +34,27 @@ class ApprovalsStore:
         tmp.replace(self._path)
 
     def list_by_status(self, status: str | None) -> list[dict[str, Any]]:
+        return self.list_filtered(status=status)
+
+    def list_filtered(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, Any]]:
         with self._lock:
             data = self._read()
         rows = list(data.values())
         if status:
             rows = [r for r in rows if r.get("status") == status]
+        if project_id:
+            rows = [r for r in rows if r.get("project_id") == project_id]
+        if decided_by:
+            rows = [r for r in rows if r.get("decided_by") == decided_by]
+        if callback_status:
+            rows = [r for r in rows if r.get("callback_status") == callback_status]
         rows.sort(key=lambda r: r.get("requested_at", ""), reverse=True)
         return rows
 

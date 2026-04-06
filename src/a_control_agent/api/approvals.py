@@ -28,10 +28,18 @@ def get_bridge(request: Request) -> Any:
 def list_approvals(
     request: Request,
     status: str | None = Query(default=None),
+    project_id: str | None = Query(default=None),
+    decided_by: str | None = Query(default=None),
+    callback_status: str | None = Query(default=None),
     store: ApprovalsStore = Depends(get_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
-    rows = store.list_by_status(status)
+    rows = store.list_filtered(
+        status=status,
+        project_id=project_id,
+        decided_by=decided_by,
+        callback_status=callback_status,
+    )
     return ok(request.headers.get("x-request-id"), {"items": rows, "count": len(rows)})
 
 
