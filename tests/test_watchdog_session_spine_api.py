@@ -646,6 +646,148 @@ def test_session_spine_reads_only_targeted_actionable_approval_slices(tmp_path) 
     ]
 
 
+def test_session_spine_falls_back_to_pending_slice_when_deferred_retry_fetch_fails(tmp_path) -> None:
+    class PartialFailureAClient(FakeAClient):
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            if (
+                status == "approved"
+                and decided_by == "policy-auto"
+                and callback_status == "deferred"
+            ):
+                raise RuntimeError("transient deferred slice failure")
+            return super().list_approvals(
+                status=status,
+                project_id=project_id,
+                decided_by=decided_by,
+                callback_status=callback_status,
+            )
+
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=PartialFailureAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "last_summary": "waiting for approval",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            approvals=[
+                {
+                    "approval_id": "appr_pending",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:21:00Z",
+                }
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert approvals_response.status_code == 200
+    session_data = session_response.json()["data"]
+    approvals_data = approvals_response.json()["data"]
+    assert session_data["session"]["pending_approval_count"] == 1
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == ["appr_pending"]
+
+
+def test_actionable_approvals_are_globally_sorted_by_requested_at(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "callback replay pending",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            approvals=[
+                {
+                    "approval_id": "appr_pending_oldest",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:21:00Z",
+                },
+                {
+                    "approval_id": "appr_pending_newest",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "uv run ruff check",
+                    "reason": "lint gate",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:23:00Z",
+                },
+                {
+                    "approval_id": "appr_deferred_middle",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L1",
+                    "command": "pytest -q",
+                    "reason": "callback replay",
+                    "alternative": "",
+                    "status": "approved",
+                    "decided_by": "policy-auto",
+                    "callback_status": "deferred",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                },
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    response = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert [item["approval_id"] for item in data["approvals"]] == [
+        "appr_pending_oldest",
+        "appr_deferred_middle",
+        "appr_pending_newest",
+    ]
+
+
 def test_session_spine_stuck_explanation_route_returns_stable_reply_model(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

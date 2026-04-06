@@ -119,6 +119,9 @@ def _load_approvals_or_raise(
 ) -> list[dict[str, Any]]:
     try:
         pending_items = client.list_approvals(status="pending", project_id=project_id)
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+    try:
         deferred_items = client.list_approvals(
             status="approved",
             project_id=project_id,
@@ -126,7 +129,8 @@ def _load_approvals_or_raise(
             callback_status="deferred",
         )
     except (httpx.RequestError, RuntimeError, OSError) as exc:
-        raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+        _ = exc
+        deferred_items = []
     rows_by_id: dict[str, dict[str, Any]] = {}
     for item in [*pending_items, *deferred_items]:
         row = dict(item)
@@ -135,7 +139,14 @@ def _load_approvals_or_raise(
         approval_id = str(row.get("approval_id") or "")
         if approval_id:
             rows_by_id[approval_id] = row
-    return list(rows_by_id.values())
+    return sorted(
+        rows_by_id.values(),
+        key=lambda row: (
+            str(row.get("requested_at") or "") == "",
+            str(row.get("requested_at") or ""),
+            str(row.get("approval_id") or ""),
+        ),
+    )
 
 
 def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:

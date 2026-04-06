@@ -45,10 +45,23 @@ class FakeAClient:
     def list_tasks(self) -> list[dict[str, object]]:
         return [dict(task) for task in self._tasks]
 
-    def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
         rows = [dict(approval) for approval in self._approvals]
         if status:
             rows = [row for row in rows if row.get("status") == status]
+        if project_id:
+            rows = [row for row in rows if row.get("project_id") == project_id]
+        if decided_by:
+            rows = [row for row in rows if row.get("decided_by") == decided_by]
+        if callback_status:
+            rows = [row for row in rows if row.get("callback_status") == callback_status]
         return rows
 
     def decide_approval(
@@ -700,8 +713,15 @@ def test_adapter_get_action_receipt_uses_stable_receipt_store_without_upstream_r
         def get_envelope(self, project_id: str) -> dict[str, object]:
             raise AssertionError(f"unexpected upstream read for {project_id}")
 
-        def list_approvals(self, *, status: str | None = None) -> list[dict[str, object]]:
-            _ = status
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
             raise AssertionError("unexpected approval read")
 
     adapter = OpenClawAdapter(
