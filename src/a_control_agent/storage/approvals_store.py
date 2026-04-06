@@ -73,6 +73,8 @@ class ApprovalsStore:
             "status": "pending",
             "decided_at": None,
             "decided_by": None,
+            "callback_status": None,
+            "callback_error": None,
         }
         if auto_approve_allowed(risk):
             rec["status"] = "approved"
@@ -90,6 +92,54 @@ class ApprovalsStore:
                 "action": "approval_created",
                 "risk_level": risk,
                 "auto": rec["decided_by"] == "policy-auto",
+            },
+        )
+        return rec
+
+    def mark_callback_deferred(
+        self,
+        approval_id: str,
+        *,
+        error: str = "",
+    ) -> dict[str, Any] | None:
+        return self._update_callback_status(
+            approval_id,
+            status="deferred",
+            error=error,
+        )
+
+    def mark_callback_delivered(self, approval_id: str) -> dict[str, Any] | None:
+        return self._update_callback_status(
+            approval_id,
+            status="delivered",
+            error="",
+        )
+
+    def _update_callback_status(
+        self,
+        approval_id: str,
+        *,
+        status: str,
+        error: str,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            data = self._read()
+            rec = data.get(approval_id)
+            if rec is None:
+                return None
+            rec["callback_status"] = status
+            rec["callback_error"] = error or None
+            rec["callback_updated_at"] = _now_iso()
+            data[approval_id] = rec
+            self._write(data)
+        append_jsonl(
+            self._audit_path,
+            {
+                "ts": _now_iso(),
+                "approval_id": approval_id,
+                "action": "approval_callback_status_updated",
+                "callback_status": status,
+                "callback_error": error or None,
             },
         )
         return rec

@@ -319,10 +319,17 @@ def test_approval_callback_failure_keeps_request_pending(tmp_path: Path) -> None
 
 
 def test_auto_approved_callback_can_be_retried_via_approval_decision_route(tmp_path: Path) -> None:
-    bridge = FakeBridge()
     headers = {"Authorization": "Bearer test-token"}
+    settings = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    app = create_app(settings, start_background_workers=False)
+    transport = RecordingTransport()
+    app.state.codex_bridge = CodexAppServerBridge(
+        transport=transport,
+        approvals_store=app.state.approvals_store,
+        task_store=app.state.task_store,
+    )
 
-    with _make_client(tmp_path, bridge) as client:
+    with TestClient(app) as client:
         created = client.post(
             "/api/v1/tasks",
             json={"project_id": "ai-demo", "cwd": "/tmp/w1", "task_title": "t1"},
@@ -336,18 +343,31 @@ def test_auto_approved_callback_can_be_retried_via_approval_decision_route(tmp_p
             reason="Safe callback replay",
             bridge_request_id="req_auto_123",
         )
+        client.app.state.approvals_store.mark_callback_deferred(
+            approval["approval_id"],
+            error="callback failed",
+        )
+        client.app.state.task_store.merge_update(
+            "ai-demo",
+            {"pending_approval": True, "approval_risk": approval["risk_level"], "phase": "approval"},
+        )
 
         response = client.post(
             f"/api/v1/approvals/{approval['approval_id']}/decision",
             json={"decision": "approve", "operator": "human", "note": "retry callback"},
             headers=headers,
         )
+        stored = client.app.state.approvals_store.get(approval["approval_id"])
+        task = client.get("/api/v1/tasks/ai-demo", headers=headers).json()["data"]
 
     assert approval["status"] == "approved"
     assert approval["decided_by"] == "policy-auto"
     assert response.status_code == 200
     assert response.json()["success"] is True
-    assert bridge.approval_calls == [("req_auto_123", "approve", "retry callback")]
+    assert transport.responses == [("req_auto_123", {"decision": "accept"})]
+    assert stored is not None
+    assert stored["callback_status"] == "delivered"
+    assert task["pending_approval"] is False
 
 
 def test_auto_approved_callback_can_be_retried_after_bridge_restart(tmp_path: Path) -> None:
@@ -375,6 +395,60 @@ def test_auto_approved_callback_can_be_retried_after_bridge_restart(tmp_path: Pa
             reason="Safe callback replay",
             bridge_request_id="req_auto_restart",
         )
+        client.app.state.approvals_store.mark_callback_deferred(
+            approval["approval_id"],
+            error="callback failed",
+        )
+        client.app.state.task_store.merge_update(
+            "ai-demo",
+            {"pending_approval": True, "approval_risk": approval["risk_level"], "phase": "approval"},
+        )
+
+        response = client.post(
+            f"/api/v1/approvals/{approval['approval_id']}/decision",
+            json={"decision": "approve", "operator": "human", "note": "retry callback"},
+            headers=headers,
+        )
+        stored = client.app.state.approvals_store.get(approval["approval_id"])
+        task = client.get("/api/v1/tasks/ai-demo", headers=headers).json()["data"]
+
+    assert approval["status"] == "approved"
+    assert approval["decided_by"] == "policy-auto"
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert transport.responses == [("req_auto_restart", {"decision": "accept"})]
+    assert stored is not None
+    assert stored["callback_status"] == "delivered"
+    assert task["pending_approval"] is False
+
+
+def test_delivered_policy_auto_callback_cannot_be_replayed_via_approval_decision_route(
+    tmp_path: Path,
+) -> None:
+    headers = {"Authorization": "Bearer test-token"}
+    settings = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    app = create_app(settings, start_background_workers=False)
+    transport = RecordingTransport()
+    app.state.codex_bridge = CodexAppServerBridge(
+        transport=transport,
+        approvals_store=app.state.approvals_store,
+        task_store=app.state.task_store,
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "ai-demo", "cwd": "/tmp/w1", "task_title": "t1"},
+            headers=headers,
+        )
+        thread_id = created.json()["data"]["thread_id"]
+        approval = client.app.state.approvals_store.create_request(
+            project_id="ai-demo",
+            thread_id=thread_id,
+            command="pytest -q",
+            reason="Safe callback replay",
+            bridge_request_id="req_auto_delivered",
+        )
 
         response = client.post(
             f"/api/v1/approvals/{approval['approval_id']}/decision",
@@ -385,5 +459,7 @@ def test_auto_approved_callback_can_be_retried_after_bridge_restart(tmp_path: Pa
     assert approval["status"] == "approved"
     assert approval["decided_by"] == "policy-auto"
     assert response.status_code == 200
-    assert response.json()["success"] is True
-    assert transport.responses == [("req_auto_restart", {"decision": "accept"})]
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "APPROVAL_CALLBACK_FAILED"
+    assert "approval request not found: req_auto_delivered" in response.json()["error"]["message"]
+    assert transport.responses == []

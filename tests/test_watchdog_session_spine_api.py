@@ -459,6 +459,90 @@ def test_approval_inbox_route_returns_stable_reply_and_optional_project_filter(t
     assert repo_a_data["approvals"][0]["native_thread_id"] == "thr_native_1"
 
 
+def test_deferred_policy_auto_approval_is_visible_across_stable_session_surfaces(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "callback delivery must be replayed",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            approvals=[
+                {
+                    "approval_id": "appr_deferred",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L1",
+                    "command": "pytest -q",
+                    "reason": "callback replay",
+                    "alternative": "",
+                    "status": "approved",
+                    "decided_by": "policy-auto",
+                    "callback_status": "deferred",
+                    "requested_at": "2026-04-05T05:21:00Z",
+                },
+                {
+                    "approval_id": "appr_delivered",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L1",
+                    "command": "pytest -q",
+                    "reason": "already delivered",
+                    "alternative": "",
+                    "status": "approved",
+                    "decided_by": "policy-auto",
+                    "callback_status": "delivered",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                },
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    progress_resp = c.get("/api/v1/watchdog/sessions/repo-a/progress", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+    inbox_resp = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert progress_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    assert inbox_resp.status_code == 200
+
+    session_data = session_resp.json()["data"]
+    progress_data = progress_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+    inbox_data = inbox_resp.json()["data"]
+
+    assert session_data["session"]["pending_approval_count"] == 1
+    assert "approve_approval" in session_data["session"]["available_intents"]
+    assert [fact["fact_code"] for fact in session_data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert progress_data["progress"]["blocker_fact_codes"] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == ["appr_deferred"]
+    assert [item["approval_id"] for item in inbox_data["approvals"]] == ["appr_deferred"]
+
+
 def test_session_spine_stuck_explanation_route_returns_stable_reply_model(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

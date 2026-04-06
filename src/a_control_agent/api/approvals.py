@@ -104,7 +104,8 @@ async def decide(
                     {"code": "APPROVAL_CALLBACK_FAILED", "message": str(exc)},
                     data=current,
                 )
-            return ok(request.headers.get("x-request-id"), current)
+            refreshed = store.get(approval_id)
+            return ok(request.headers.get("x-request-id"), refreshed or current)
     if current.get("status") != "pending":
         return err(
             request.headers.get("x-request-id"),

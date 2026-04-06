@@ -110,6 +110,7 @@ class CodexAppServerBridge:
             alternative=str(params.get("alternative") or ""),
             bridge_request_id=str(request_id),
         )
+        project_id = str(task.get("project_id") or "")
         approval_request = {
             "method": method,
             "params": dict(params),
@@ -133,6 +134,28 @@ class CodexAppServerBridge:
         try:
             await self._transport.respond(str(request_id), callback)
         except Exception as exc:
+            deferred = self._approvals_store.mark_callback_deferred(
+                str(approval["approval_id"]),
+                error=repr(exc),
+            )
+            self._task_store.merge_update(
+                project_id,
+                {
+                    "pending_approval": True,
+                    "approval_risk": approval["risk_level"],
+                },
+            )
+            self._task_store.append_event(
+                project_id,
+                thread_id=thread_id,
+                event_type="approval_callback_deferred",
+                event_source="codex_bridge",
+                payload_json={
+                    "approval_id": approval["approval_id"],
+                    "request_id": str(request_id),
+                    "error": repr(exc),
+                },
+            )
             self._append_audit(
                 "approval_callback_deferred",
                 payload={
@@ -141,9 +164,10 @@ class CodexAppServerBridge:
                     "error": repr(exc),
                 },
             )
-            return approval
+            return deferred or approval
+        delivered = self._approvals_store.mark_callback_delivered(str(approval["approval_id"]))
         self._pending_approvals.pop(str(request_id), None)
-        return approval
+        return delivered or approval
 
     async def resolve_pending_approval(
         self,
@@ -162,6 +186,24 @@ class CodexAppServerBridge:
         callback = self._approval_callback_result(method, params, decision=decision, note=note)
         await self._transport.respond(request_id, callback)
         self._pending_approvals.pop(request_id, None)
+        approval_id = str((approval_request or {}).get("approval_id") or "")
+        if approval_id and self._approvals_store is not None:
+            row = self._approvals_store.get(approval_id)
+            if self._is_deferred_policy_auto_approval(row):
+                self._approvals_store.mark_callback_delivered(approval_id)
+                project_id = str((row or {}).get("project_id") or "")
+                if (
+                    project_id
+                    and self._task_store is not None
+                    and not self._project_has_actionable_approval(project_id, exclude_approval_id=approval_id)
+                ):
+                    self._task_store.merge_update(
+                        project_id,
+                        {
+                            "pending_approval": False,
+                            "approval_risk": None,
+                        },
+                    )
         return {"request_id": request_id, **callback}
 
     def _restore_approval_request(self, request_id: str) -> dict[str, Any] | None:
@@ -186,7 +228,34 @@ class CodexAppServerBridge:
         status = str(row.get("status") or "")
         if status == "pending":
             return True
-        return status == "approved" and str(row.get("decided_by") or "") == "policy-auto"
+        return self._is_deferred_policy_auto_approval(row)
+
+    def _is_deferred_policy_auto_approval(self, row: dict[str, Any] | None) -> bool:
+        if not isinstance(row, dict):
+            return False
+        return (
+            str(row.get("status") or "") == "approved"
+            and str(row.get("decided_by") or "") == "policy-auto"
+            and str(row.get("callback_status") or "") == "deferred"
+        )
+
+    def _project_has_actionable_approval(
+        self,
+        project_id: str,
+        *,
+        exclude_approval_id: str = "",
+    ) -> bool:
+        if self._approvals_store is None:
+            return False
+        for row in self._approvals_store.list_by_status(None):
+            if str(row.get("project_id") or "") != project_id:
+                continue
+            if exclude_approval_id and str(row.get("approval_id") or "") == exclude_approval_id:
+                continue
+            status = str(row.get("status") or "")
+            if status == "pending" or self._is_deferred_policy_auto_approval(row):
+                return True
+        return False
 
     def _restore_approval_method(self, row: dict[str, Any]) -> str:
         reason = str(row.get("reason") or "")

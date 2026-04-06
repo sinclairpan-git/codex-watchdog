@@ -257,17 +257,30 @@ async def test_bridge_preserves_auto_approved_callback_retry_after_respond_failu
             },
         }
     )
+    task = task_store.get("ai-demo")
+    stored = approval_store.get(str((approval or {}).get("approval_id") or ""))
 
     callback = await bridge.resolve_pending_approval("req_perm_retry", decision="approve", note="")
+    task_after = task_store.get("ai-demo")
+    stored_after = approval_store.get(str((approval or {}).get("approval_id") or ""))
 
     assert approval is not None
     assert approval["status"] == "approved"
     assert approval["decided_by"] == "policy-auto"
+    assert approval["callback_status"] == "deferred"
+    assert stored is not None
+    assert stored["callback_status"] == "deferred"
+    assert task is not None
+    assert task["pending_approval"] is True
     assert callback == {
         "request_id": "req_perm_retry",
         "permissions": ["fs.read", "fs.write"],
         "scope": "session",
     }
+    assert stored_after is not None
+    assert stored_after["callback_status"] == "delivered"
+    assert task_after is not None
+    assert task_after["pending_approval"] is False
     assert transport.responses == [
         (
             "req_perm_retry",
@@ -313,6 +326,7 @@ async def test_bridge_restores_auto_approved_callback_retry_after_restart(
             },
         }
     )
+    stored = approval_store.get(str((approval or {}).get("approval_id") or ""))
 
     second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
     second_bridge = CodexAppServerBridge(
@@ -327,15 +341,24 @@ async def test_bridge_restores_auto_approved_callback_retry_after_restart(
         decision="approve",
         note="retry callback",
     )
+    stored_after = approval_store.get(str((approval or {}).get("approval_id") or ""))
+    task_after = task_store.get("ai-demo")
 
     assert approval is not None
     assert approval["status"] == "approved"
     assert approval["decided_by"] == "policy-auto"
+    assert approval["callback_status"] == "deferred"
+    assert stored is not None
+    assert stored["callback_status"] == "deferred"
     assert callback == {
         "request_id": "req_perm_restart",
         "permissions": ["fs.read", "fs.write"],
         "scope": "session",
     }
+    assert stored_after is not None
+    assert stored_after["callback_status"] == "delivered"
+    assert task_after is not None
+    assert task_after["pending_approval"] is False
     assert second_transport.responses == [
         (
             "req_perm_restart",
@@ -345,3 +368,57 @@ async def test_bridge_restores_auto_approved_callback_retry_after_restart(
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_bridge_does_not_restore_delivered_policy_auto_callback_after_restart(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    first_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    first_bridge = CodexAppServerBridge(
+        transport=first_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await first_bridge.start()
+    approval = await first_bridge.ingest_server_request(
+        {
+            "id": "req_perm_delivered",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["fs.read", "fs.write"],
+                "reason": "Need elevated file access",
+            },
+        }
+    )
+
+    second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    second_bridge = CodexAppServerBridge(
+        transport=second_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await second_bridge.start()
+
+    assert approval is not None
+    assert approval["callback_status"] == "delivered"
+    with pytest.raises(KeyError, match="approval request not found: req_perm_delivered"):
+        await second_bridge.resolve_pending_approval(
+            "req_perm_delivered",
+            decision="approve",
+            note="unexpected replay",
+        )

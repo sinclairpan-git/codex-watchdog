@@ -10,6 +10,7 @@ from watchdog.contracts.session_spine.models import (
     TaskProgressView,
     WorkspaceActivityView,
 )
+from watchdog.services.session_spine.approval_visibility import actionable_approval_count
 
 
 def stable_thread_id_for_project(project_id: str) -> str:
@@ -158,9 +159,7 @@ def build_session_projection(
 ) -> SessionProjection:
     stable_thread_id = stable_thread_id_for_project(project_id)
     fact_codes = {fact.fact_code for fact in facts}
-    pending_approval_count = sum(
-        1 for approval in approvals if str(approval.get("status") or "").lower() == "pending"
-    )
+    pending_approval_count = actionable_approval_count(approvals)
 
     session_state = SessionState.ACTIVE
     attention_state = AttentionState.NORMAL

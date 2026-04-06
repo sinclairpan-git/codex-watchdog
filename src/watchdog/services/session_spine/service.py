@@ -21,6 +21,7 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     build_workspace_activity_view,
 )
+from watchdog.services.session_spine.approval_visibility import is_actionable_approval
 
 
 CONTROL_LINK_ERROR = {
@@ -117,14 +118,10 @@ def _load_approvals_or_raise(
     project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     try:
-        items = client.list_approvals(status="pending")
+        items = client.list_approvals(status=None)
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
-    rows = [
-        dict(item)
-        for item in items
-        if str(item.get("status") or "").lower() == "pending"
-    ]
+    rows = [dict(item) for item in items if is_actionable_approval(dict(item))]
     if project_id is None:
         return rows
     return [row for row in rows if str(row.get("project_id") or "") == project_id]

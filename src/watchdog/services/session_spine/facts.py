@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from watchdog.contracts.session_spine.models import FactRecord
+from watchdog.services.session_spine.approval_visibility import is_actionable_approval
 
 
 def _now_iso() -> str:
@@ -73,11 +74,7 @@ def build_fact_records(
             )
         ]
 
-    pending_approvals = [
-        approval
-        for approval in approvals
-        if str(approval.get("status") or "").lower() == "pending"
-    ]
+    pending_approvals = [approval for approval in approvals if is_actionable_approval(approval)]
     if bool(_task_value(task, "pending_approval", False)) or pending_approvals:
         related_ids: dict[str, Any] = {}
         if pending_approvals:
