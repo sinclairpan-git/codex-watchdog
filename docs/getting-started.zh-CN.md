@@ -25,23 +25,24 @@
 - **仓库地址**：`https://github.com/sinclairpan-git/openclaw-codex-watchdog.git`
 - **A / B 都是 macOS**，都建议使用 `launchd` 守护进程方式启动。
 - **A 与 B 都保留一份同版本代码工程**；不要让两台机器漂在不同分支或不同提交上。
-- 当前文档对应的基线提交是 `a9bc25815a23a7768ef94b0943eeff7dd20a0b4b`，提交时间 `2026-04-06 18:26:36 +08:00`。
-- 后续升级时，A 与 B 都应切到**同一个最新提交**；推荐先读取 `origin/main` 的最新提交时间，再由 A、B 按同一提交升级。
+- 首次安装与后续升级都按**执行时 `origin/main` 的最新提交**进行；先打印该提交时间与摘要，再由 A、B 同步切到同一个提交。
 - 飞书和 OpenClaw 之间的消息通道**不需要改协议**；需要改的是 OpenClaw 收到消息后的路由逻辑，让它改为调用 Watchdog。
 
 当前文档基线安装约定如下：
 
 ```bash
 export REPO_URL=https://github.com/sinclairpan-git/openclaw-codex-watchdog.git
-export RELEASE_REF=a9bc25815a23a7768ef94b0943eeff7dd20a0b4b
+export APP_DIR="$HOME/openclaw-codex-watchdog"
 ```
 
 首次安装：
 
 ```bash
-git clone "$REPO_URL" "$HOME/openclaw-codex-watchdog"
-cd "$HOME/openclaw-codex-watchdog"
+git clone "$REPO_URL" "$APP_DIR"
+cd "$APP_DIR"
 git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
 git checkout "$RELEASE_REF"
 uv sync
 ```
@@ -49,8 +50,10 @@ uv sync
 若本机已存在代码工程，则跳过 `git clone`，只执行：
 
 ```bash
-cd "$HOME/openclaw-codex-watchdog"
+cd "$APP_DIR"
 git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
 git checkout "$RELEASE_REF"
 uv sync
 ```
@@ -84,12 +87,13 @@ uv sync
 
 ```bash
 export REPO_URL=https://github.com/sinclairpan-git/openclaw-codex-watchdog.git
-export RELEASE_REF=a9bc25815a23a7768ef94b0943eeff7dd20a0b4b
 export APP_DIR="$HOME/openclaw-codex-watchdog"
 
 git clone "$REPO_URL" "$APP_DIR" 2>/dev/null || true
 cd "$APP_DIR"
 git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
 git checkout "$RELEASE_REF"
 uv sync
 mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
@@ -259,12 +263,13 @@ uv run python examples/register_native_thread.py \
 
 ```bash
 export REPO_URL=https://github.com/sinclairpan-git/openclaw-codex-watchdog.git
-export RELEASE_REF=a9bc25815a23a7768ef94b0943eeff7dd20a0b4b
 export APP_DIR="$HOME/openclaw-codex-watchdog"
 
 git clone "$REPO_URL" "$APP_DIR" 2>/dev/null || true
 cd "$APP_DIR"
 git fetch --tags origin
+git log origin/main -1 --date=iso --pretty=format:'RELEASE_REF=%H%nRELEASE_TIME=%cd%nRELEASE_SUBJECT=%s'
+RELEASE_REF="$(git rev-parse origin/main)"
 git checkout "$RELEASE_REF"
 uv sync
 mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
@@ -530,7 +535,7 @@ uv run python examples/openclaw_watchdog_client.py
 3. **防火墙 / 安全组**：A 的 `A_AGENT_PORT` 仅对 B（或 VPN 网段）开放。  
 4. **生产建议**：前面加 **反向代理 + TLS**（如 nginx/Caddy），对外只暴露 HTTPS；Token 用密钥管理。  
 5. **验证**：在 B 上带 Watchdog token 调 `GET .../watchdog/sessions/{project_id}/progress`，若 A 无此任务应返回业务错误而非连接失败。
-6. **版本一致**：A 与 B 均已 `git checkout` 到同一个提交；当前文档基线是 `a9bc25815a23a7768ef94b0943eeff7dd20a0b4b`。
+6. **版本一致**：A 与 B 均已 `git checkout` 到同一个提交；推荐在两机分别执行 `git rev-parse HEAD`，并确认两边结果一致且等于部署当时的 `origin/main` 最新提交。
 
 ---
 
