@@ -130,6 +130,8 @@ def _load_approvals_or_raise(
         row = dict(item)
         if not is_actionable_approval(row):
             continue
+        if project_id is not None and str(row.get("project_id") or "") != project_id:
+            continue
         approval_id = str(row.get("approval_id") or "")
         if approval_id:
             rows_by_id[approval_id] = row

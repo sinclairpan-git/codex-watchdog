@@ -830,6 +830,132 @@ def test_session_spine_falls_back_to_project_approved_slice_when_targeted_deferr
     ]
 
 
+def test_session_spine_reapplies_project_filter_when_upstream_ignores_it(tmp_path) -> None:
+    class LegacyFilterAClient(FakeAClient):
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            self.list_approvals_calls.append(
+                {
+                    "status": status,
+                    "project_id": project_id,
+                    "decided_by": decided_by,
+                    "callback_status": callback_status,
+                }
+            )
+            rows = [dict(approval) for approval in self._approvals]
+            if status:
+                rows = [row for row in rows if row.get("status") == status]
+            if decided_by:
+                rows = [row for row in rows if row.get("decided_by") == decided_by]
+            if callback_status:
+                rows = [row for row in rows if row.get("callback_status") == callback_status]
+            return rows
+
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=LegacyFilterAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "waiting for callback replay",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            approvals=[
+                {
+                    "approval_id": "appr_pending_repo_a",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "uv run pytest",
+                    "reason": "verify tests",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:21:00Z",
+                },
+                {
+                    "approval_id": "appr_pending_repo_b",
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "risk_level": "L3",
+                    "command": "uv run ruff check",
+                    "reason": "other project",
+                    "alternative": "",
+                    "status": "pending",
+                    "requested_at": "2026-04-05T05:22:00Z",
+                },
+                {
+                    "approval_id": "appr_deferred_repo_a",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L1",
+                    "command": "pytest -q",
+                    "reason": "callback replay",
+                    "alternative": "",
+                    "status": "approved",
+                    "decided_by": "policy-auto",
+                    "callback_status": "deferred",
+                    "requested_at": "2026-04-05T05:23:00Z",
+                },
+                {
+                    "approval_id": "appr_deferred_repo_b",
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "risk_level": "L1",
+                    "command": "pytest -q",
+                    "reason": "other project replay",
+                    "alternative": "",
+                    "status": "approved",
+                    "decided_by": "policy-auto",
+                    "callback_status": "deferred",
+                    "requested_at": "2026-04-05T05:24:00Z",
+                },
+            ],
+        ),
+    )
+    c = TestClient(app)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+    inbox_response = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert approvals_response.status_code == 200
+    assert inbox_response.status_code == 200
+
+    session_data = session_response.json()["data"]
+    approvals_data = approvals_response.json()["data"]
+    inbox_data = inbox_response.json()["data"]
+
+    assert session_data["session"]["pending_approval_count"] == 2
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == [
+        "appr_pending_repo_a",
+        "appr_deferred_repo_a",
+    ]
+    assert [item["approval_id"] for item in inbox_data["approvals"]] == [
+        "appr_pending_repo_a",
+        "appr_deferred_repo_a",
+    ]
+
+
 def test_actionable_approvals_are_globally_sorted_by_requested_at(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
