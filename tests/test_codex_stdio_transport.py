@@ -89,6 +89,41 @@ async def test_stdio_transport_dispatches_server_requests_to_handler() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stdio_transport_reads_large_jsonl_response_frame() -> None:
+    reader = asyncio.StreamReader()
+    writer = FakeWriter()
+    transport = StdioJsonRpcTransport(
+        reader=reader,
+        writer=writer,
+        request_timeout_seconds=0.1,
+    )
+
+    await transport.start()
+    pending = asyncio.create_task(transport.request("thread/read", {"threadId": "thr_live"}))
+    await asyncio.sleep(0)
+
+    message = _parse_message(bytes(writer.buffer))
+    large_payload = "x" * 80_000
+    reader.feed_data(
+        _encode_message(
+            {
+                "id": message["id"],
+                "result": {
+                    "thread": {
+                        "id": "thr_live",
+                        "turns": [{"id": "turn_1", "text": large_payload}],
+                    }
+                },
+            }
+        )
+    )
+    result = await pending
+    await transport.stop()
+
+    assert result["thread"]["turns"][0]["text"] == large_payload
+
+
+@pytest.mark.asyncio
 async def test_stdio_transport_sends_jsonl_notification_without_request_id() -> None:
     reader = asyncio.StreamReader()
     writer = FakeWriter()
