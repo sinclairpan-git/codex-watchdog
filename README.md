@@ -58,13 +58,14 @@ OpenClaw 最小模板与 stable route 的对应关系：
 | 查询卡点 | `query_stuck(project_id)` | `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` |
 | 继续推进 | `continue_session(project_id, operator, idempotency_key)` | `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` |
 | 查询审批 inbox | `list_approval_inbox(project_id?)` | `GET /api/v1/watchdog/approval-inbox` |
-| 审批决策 | `approve_approval(approval_id)` / `reject_approval(approval_id)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
+| 审批决策 | `approve_approval(approval_id, operator, idempotency_key, note)` / `reject_approval(approval_id, operator, idempotency_key, note)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
 
 `project_id` 路由策略：
 
 - 显式传入 `project_id` 时优先使用显式值。
 - 未显式传入时，模板会回退到 `WATCHDOG_DEFAULT_PROJECT_ID`。
 - 两者都没有时，应先调用 `GET /api/v1/watchdog/sessions` 或 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 完成稳定会话解析。
+- 所有 write action 都要求显式提供非空 `idempotency_key`，以匹配 stable action / receipt 语义。
 
 010-022 收口后的 OpenClaw 最小稳定接口面：
 

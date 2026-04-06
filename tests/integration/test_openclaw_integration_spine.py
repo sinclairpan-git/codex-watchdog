@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
@@ -247,6 +248,28 @@ def test_integration_openclaw_template_routes_progress_stuck_and_continue(
     }
 
 
+def test_integration_openclaw_template_continue_requires_idempotency_key(monkeypatch) -> None:
+    template_client = _load_template_client_module()
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"success": True})
+
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DEFAULT_PROJECT_ID", "repo-a")
+
+    client = template_client.WatchdogTemplateClient(
+        base_url="http://watchdog.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(TypeError):
+        client.continue_session(project_id="repo-b", operator="openclaw")
+
+    assert captured == []
+
+
 def test_integration_openclaw_template_routes_approval_inbox_and_decision(
     monkeypatch,
 ) -> None:
@@ -271,11 +294,13 @@ def test_integration_openclaw_template_routes_approval_inbox_and_decision(
     approved = client.approve_approval(
         "appr_001",
         operator="openclaw",
+        idempotency_key="idem-approve-1",
         note="looks safe",
     )
     rejected = client.reject_approval(
         "appr_002",
         operator="openclaw",
+        idempotency_key="idem-reject-1",
         note="need narrower command",
     )
 
@@ -285,12 +310,39 @@ def test_integration_openclaw_template_routes_approval_inbox_and_decision(
     assert str(captured[0].url) == "http://watchdog.test/api/v1/watchdog/approval-inbox?project_id=repo-a"
     assert json.loads(captured[1].content.decode()) == {
         "operator": "openclaw",
+        "idempotency_key": "idem-approve-1",
         "note": "looks safe",
     }
     assert json.loads(captured[2].content.decode()) == {
         "operator": "openclaw",
+        "idempotency_key": "idem-reject-1",
         "note": "need narrower command",
     }
+
+
+def test_integration_openclaw_template_approval_decisions_require_idempotency_key(
+    monkeypatch,
+) -> None:
+    template_client = _load_template_client_module()
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"success": True})
+
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+
+    client = template_client.WatchdogTemplateClient(
+        base_url="http://watchdog.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(TypeError):
+        client.approve_approval("appr_001", operator="openclaw")
+    with pytest.raises(TypeError):
+        client.reject_approval("appr_002", operator="openclaw")
+
+    assert captured == []
 
 
 def test_integration_continue_session_blocked_by_pending_approval(tmp_path: Path) -> None:

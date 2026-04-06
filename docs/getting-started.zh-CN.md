@@ -149,7 +149,7 @@ OpenClaw 最小模板建议优先复用以下 4 类消息：
 | 查询卡点 | `query_stuck(project_id)` | `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation` |
 | 继续推进 | `continue_session(project_id, operator, idempotency_key)` | `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` |
 | 查询审批 inbox | `list_approval_inbox(project_id?)` | `GET /api/v1/watchdog/approval-inbox` |
-| 审批决策 | `approve_approval(approval_id)` / `reject_approval(approval_id)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
+| 审批决策 | `approve_approval(approval_id, operator, idempotency_key, note)` / `reject_approval(approval_id, operator, idempotency_key, note)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
 
 OpenClaw 模板的环境变量建议最少包括：
 
@@ -165,6 +165,7 @@ OpenClaw 模板的环境变量建议最少包括：
 1. 模板调用显式传入 `project_id` 时，始终优先使用显式值。
 2. 未显式传入时，回退到 `WATCHDOG_DEFAULT_PROJECT_ID`。
 3. 若仍未知 `project_id`，应先调用 `GET /api/v1/watchdog/sessions`，或在只知道 native thread 时调用 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 做稳定解析。
+4. 所有 write action 都要求显式提供非空 `idempotency_key`，这样重试和 receipt 查询才有稳定语义。
 
 最小 Python 用法：
 

@@ -66,6 +66,12 @@ class WatchdogTemplateClient:
             response.raise_for_status()
             return response.json()
 
+    def _require_idempotency_key(self, idempotency_key: str) -> str:
+        resolved = idempotency_key.strip()
+        if resolved:
+            return resolved
+        raise ValueError("idempotency_key is required for write actions")
+
     def query_progress(self, project_id: str | None = None) -> dict:
         pid = self._resolve_project_id(project_id)
         return self._request_json("GET", f"/api/v1/watchdog/sessions/{pid}/progress")
@@ -79,12 +85,13 @@ class WatchdogTemplateClient:
         project_id: str | None = None,
         *,
         operator: str | None = None,
-        idempotency_key: str | None = None,
+        idempotency_key: str,
     ) -> dict:
         pid = self._resolve_project_id(project_id)
-        payload = {"operator": operator or self._operator}
-        if idempotency_key:
-            payload["idempotency_key"] = idempotency_key
+        payload = {
+            "operator": operator or self._operator,
+            "idempotency_key": self._require_idempotency_key(idempotency_key),
+        }
         return self._request_json(
             "POST",
             f"/api/v1/watchdog/sessions/{pid}/actions/continue",
@@ -101,12 +108,17 @@ class WatchdogTemplateClient:
         approval_id: str,
         *,
         operator: str | None = None,
+        idempotency_key: str,
         note: str = "",
     ) -> dict:
         return self._request_json(
             "POST",
             f"/api/v1/watchdog/approvals/{approval_id}/approve",
-            body={"operator": operator or self._operator, "note": note},
+            body={
+                "operator": operator or self._operator,
+                "idempotency_key": self._require_idempotency_key(idempotency_key),
+                "note": note,
+            },
         )
 
     def reject_approval(
@@ -114,12 +126,17 @@ class WatchdogTemplateClient:
         approval_id: str,
         *,
         operator: str | None = None,
+        idempotency_key: str,
         note: str = "",
     ) -> dict:
         return self._request_json(
             "POST",
             f"/api/v1/watchdog/approvals/{approval_id}/reject",
-            body={"operator": operator or self._operator, "note": note},
+            body={
+                "operator": operator or self._operator,
+                "idempotency_key": self._require_idempotency_key(idempotency_key),
+                "note": note,
+            },
         )
 
 
