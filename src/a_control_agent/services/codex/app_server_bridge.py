@@ -110,13 +110,14 @@ class CodexAppServerBridge:
             alternative=str(params.get("alternative") or ""),
             bridge_request_id=str(request_id),
         )
+        approval_request = {
+            "method": method,
+            "params": dict(params),
+            "approval_id": approval["approval_id"],
+            "thread_id": thread_id,
+        }
         if approval.get("status") == "pending":
-            self._pending_approvals[str(request_id)] = {
-                "method": method,
-                "params": dict(params),
-                "approval_id": approval["approval_id"],
-                "thread_id": thread_id,
-            }
+            self._pending_approvals[str(request_id)] = approval_request
             self._task_store.merge_update(
                 str(task.get("project_id") or ""),
                 {
@@ -127,8 +128,13 @@ class CodexAppServerBridge:
                 },
             )
             return approval
+        self._pending_approvals[str(request_id)] = approval_request
         callback = self._approval_callback_result(method, params, decision="approve", note="")
-        await self._transport.respond(str(request_id), callback)
+        try:
+            await self._transport.respond(str(request_id), callback)
+        except Exception:
+            raise
+        self._pending_approvals.pop(str(request_id), None)
         return approval
 
     async def resolve_pending_approval(
@@ -141,6 +147,8 @@ class CodexAppServerBridge:
         approval_request = self._pending_approvals.get(request_id)
         if approval_request is None:
             approval_request = self._restore_pending_approval(request_id)
+        if approval_request is None:
+            raise KeyError(f"approval request not found: {request_id}")
         method = str((approval_request or {}).get("method") or "item/commandExecution/requestApproval")
         params = dict((approval_request or {}).get("params") or {})
         callback = self._approval_callback_result(method, params, decision=decision, note=note)

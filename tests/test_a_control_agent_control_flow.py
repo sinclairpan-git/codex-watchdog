@@ -290,3 +290,35 @@ def test_approval_callback_failure_keeps_request_pending(tmp_path: Path) -> None
     assert stored is not None
     assert stored["status"] == "pending"
     assert task["pending_approval"] is True
+
+
+def test_auto_approved_callback_can_be_retried_via_approval_decision_route(tmp_path: Path) -> None:
+    bridge = FakeBridge()
+    headers = {"Authorization": "Bearer test-token"}
+
+    with _make_client(tmp_path, bridge) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "ai-demo", "cwd": "/tmp/w1", "task_title": "t1"},
+            headers=headers,
+        )
+        thread_id = created.json()["data"]["thread_id"]
+        approval = client.app.state.approvals_store.create_request(
+            project_id="ai-demo",
+            thread_id=thread_id,
+            command="pytest -q",
+            reason="Safe callback replay",
+            bridge_request_id="req_auto_123",
+        )
+
+        response = client.post(
+            f"/api/v1/approvals/{approval['approval_id']}/decision",
+            json={"decision": "approve", "operator": "human", "note": "retry callback"},
+            headers=headers,
+        )
+
+    assert approval["status"] == "approved"
+    assert approval["decided_by"] == "policy-auto"
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert bridge.approval_calls == [("req_auto_123", "approve", "retry callback")]

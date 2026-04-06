@@ -79,12 +79,37 @@ async def decide(
             {"code": "INVALID_ARGUMENT", "message": "decision must be approve or reject"},
         )
     current = store.get(approval_id)
-    if current is None or current.get("status") != "pending":
+    if current is None:
         return err(
             request.headers.get("x-request-id"),
             {"code": "NOT_FOUND_OR_NOT_PENDING", "message": approval_id},
         )
     request_id = current.get("bridge_request_id")
+    if current.get("status") == "approved" and current.get("decided_by") == "policy-auto":
+        if decision != "approve":
+            return err(
+                request.headers.get("x-request-id"),
+                {
+                    "code": "INVALID_ARGUMENT",
+                    "message": "policy-auto approvals only support approve callback replay",
+                },
+                data=current,
+            )
+        if isinstance(request_id, str) and request_id and bridge is not None:
+            try:
+                await bridge.resolve_pending_approval(request_id, decision="approve", note=note)
+            except Exception as exc:
+                return err(
+                    request.headers.get("x-request-id"),
+                    {"code": "APPROVAL_CALLBACK_FAILED", "message": str(exc)},
+                    data=current,
+                )
+            return ok(request.headers.get("x-request-id"), current)
+    if current.get("status") != "pending":
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "NOT_FOUND_OR_NOT_PENDING", "message": approval_id},
+        )
     if isinstance(request_id, str) and request_id and bridge is not None:
         try:
             await bridge.resolve_pending_approval(request_id, decision=str(decision), note=note)
