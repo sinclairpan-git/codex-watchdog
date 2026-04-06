@@ -492,6 +492,72 @@ async def test_bridge_restores_auto_approved_callback_retry_after_restart(
 
 
 @pytest.mark.asyncio
+async def test_bridge_restore_keeps_command_execution_callback_shape_after_restart(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    first_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    first_bridge = CodexAppServerBridge(
+        transport=first_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await first_bridge.start()
+    approval = await first_bridge.ingest_server_request(
+        {
+            "id": "req_cmd_restore",
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "turnId": "turn_1",
+                "itemId": "item_1",
+                "command": "permissions:curl https://example.com",
+                "reason": "Need network access",
+            },
+        }
+    )
+
+    second_transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    second_bridge = CodexAppServerBridge(
+        transport=second_transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await second_bridge.start()
+    callback = await second_bridge.resolve_pending_approval(
+        "req_cmd_restore",
+        decision="approve",
+        note="retry callback",
+    )
+
+    assert approval is not None
+    assert callback == {
+        "request_id": "req_cmd_restore",
+        "decision": "accept",
+    }
+    assert second_transport.responses == [
+        (
+            "req_cmd_restore",
+            {
+                "decision": "accept",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bridge_does_not_restore_delivered_policy_auto_callback_after_restart(
     tmp_path: Path,
 ) -> None:

@@ -9,6 +9,12 @@ from a_control_agent.services.codex.protocol import CodexTransport
 from a_control_agent.storage.approvals_store import ApprovalsStore
 from a_control_agent.storage.tasks_store import TaskStore
 
+_APPROVAL_REQUEST_METHODS = {
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+}
+
 
 class CodexAppServerBridge:
     def __init__(
@@ -90,11 +96,7 @@ class CodexAppServerBridge:
         params = request.get("params")
         if not isinstance(request_id, (str, int)) or not isinstance(method, str) or not isinstance(params, dict):
             return None
-        if method not in {
-            "item/commandExecution/requestApproval",
-            "item/fileChange/requestApproval",
-            "item/permissions/requestApproval",
-        }:
+        if method not in _APPROVAL_REQUEST_METHODS:
             return None
         thread_id = str(params.get("threadId") or "")
         if not thread_id:
@@ -111,6 +113,7 @@ class CodexAppServerBridge:
             alternative=str(params.get("alternative") or ""),
             bridge_request_id=request_key,
             bridge_request_id_type=self._request_id_type(request_id),
+            bridge_request_method=method,
         )
         project_id = str(task.get("project_id") or "")
         approval_request = {
@@ -264,6 +267,9 @@ class CodexAppServerBridge:
         return False
 
     def _restore_approval_method(self, row: dict[str, Any]) -> str:
+        stored_method = str(row.get("bridge_request_method") or "")
+        if stored_method in _APPROVAL_REQUEST_METHODS:
+            return stored_method
         reason = str(row.get("reason") or "")
         command = str(row.get("command") or "")
         if command.startswith("permissions:") or reason == "item/permissions/requestApproval":
