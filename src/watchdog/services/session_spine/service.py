@@ -21,7 +21,10 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     build_workspace_activity_view,
 )
-from watchdog.services.session_spine.approval_visibility import is_actionable_approval
+from watchdog.services.session_spine.approval_visibility import (
+    is_actionable_approval,
+    is_deferred_policy_auto_approval,
+)
 
 
 CONTROL_LINK_ERROR = {
@@ -121,16 +124,7 @@ def _load_approvals_or_raise(
         pending_items = client.list_approvals(status="pending", project_id=project_id)
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
-    try:
-        deferred_items = client.list_approvals(
-            status="approved",
-            project_id=project_id,
-            decided_by="policy-auto",
-            callback_status="deferred",
-        )
-    except (httpx.RequestError, RuntimeError, OSError) as exc:
-        _ = exc
-        deferred_items = []
+    deferred_items = _load_deferred_approvals_or_raise(client, project_id)
     rows_by_id: dict[str, dict[str, Any]] = {}
     for item in [*pending_items, *deferred_items]:
         row = dict(item)
@@ -147,6 +141,32 @@ def _load_approvals_or_raise(
             str(row.get("approval_id") or ""),
         ),
     )
+
+
+def _load_deferred_approvals_or_raise(
+    client: AControlAgentClient,
+    project_id: str | None,
+) -> list[dict[str, Any]]:
+    try:
+        return client.list_approvals(
+            status="approved",
+            project_id=project_id,
+            decided_by="policy-auto",
+            callback_status="deferred",
+        )
+    except (httpx.RequestError, RuntimeError, OSError):
+        try:
+            approved_items = client.list_approvals(
+                status="approved",
+                project_id=project_id,
+            )
+        except (httpx.RequestError, RuntimeError, OSError) as exc:
+            raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
+        return [
+            dict(item)
+            for item in approved_items
+            if is_deferred_policy_auto_approval(dict(item))
+        ]
 
 
 def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:

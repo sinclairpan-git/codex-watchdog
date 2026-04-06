@@ -716,6 +716,120 @@ def test_session_spine_falls_back_to_pending_slice_when_deferred_retry_fetch_fai
     assert [item["approval_id"] for item in approvals_data["approvals"]] == ["appr_pending"]
 
 
+def test_session_spine_falls_back_to_project_approved_slice_when_targeted_deferred_retry_fails(
+    tmp_path,
+) -> None:
+    class PartialDeferredSliceFailureAClient(FakeAClient):
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            if (
+                status == "approved"
+                and decided_by == "policy-auto"
+                and callback_status == "deferred"
+            ):
+                raise RuntimeError("transient targeted deferred slice failure")
+            return super().list_approvals(
+                status=status,
+                project_id=project_id,
+                decided_by=decided_by,
+                callback_status=callback_status,
+            )
+
+    a_client = PartialDeferredSliceFailureAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "callback replay pending",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_deferred",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L1",
+                "command": "pytest -q",
+                "reason": "callback replay",
+                "alternative": "",
+                "status": "approved",
+                "decided_by": "policy-auto",
+                "callback_status": "deferred",
+                "requested_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "approval_id": "appr_delivered",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L1",
+                "command": "pytest -q",
+                "reason": "already delivered",
+                "alternative": "",
+                "status": "approved",
+                "decided_by": "policy-auto",
+                "callback_status": "delivered",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+        ],
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert approvals_response.status_code == 200
+    session_data = session_response.json()["data"]
+    approvals_data = approvals_response.json()["data"]
+    assert session_data["session"]["pending_approval_count"] == 1
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == ["appr_deferred"]
+    assert a_client.list_approvals_calls == [
+        {
+            "status": "pending",
+            "project_id": "repo-a",
+            "decided_by": None,
+            "callback_status": None,
+        },
+        {
+            "status": "approved",
+            "project_id": "repo-a",
+            "decided_by": None,
+            "callback_status": None,
+        },
+        {
+            "status": "pending",
+            "project_id": "repo-a",
+            "decided_by": None,
+            "callback_status": None,
+        },
+        {
+            "status": "approved",
+            "project_id": "repo-a",
+            "decided_by": None,
+            "callback_status": None,
+        },
+    ]
+
+
 def test_actionable_approvals_are_globally_sorted_by_requested_at(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
