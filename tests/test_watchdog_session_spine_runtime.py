@@ -405,7 +405,16 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
         "stuck_no_progress",
         "recovery_available",
     ]
-    assert app.state.delivery_outbox_store.list_records() == []
+    deliveries = app.state.delivery_outbox_store.list_records()
+    assert [record.envelope_type for record in deliveries] == ["decision", "notification"]
+    assert [record.envelope_payload.get("decision_result") for record in deliveries] == [
+        "auto_execute_and_notify",
+        "auto_execute_and_notify",
+    ]
+    assert [record.envelope_payload.get("action_name") for record in deliveries] == [
+        "continue_session",
+        "continue_session",
+    ]
 
 
 def test_background_runtime_pushes_progress_summary_when_project_progress_changes(
