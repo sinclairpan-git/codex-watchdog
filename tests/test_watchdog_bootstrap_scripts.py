@@ -11,7 +11,9 @@ def test_watchdog_launchd_scripts_and_template_are_checked_in() -> None:
 
     assert start_script.exists()
     start_contents = start_script.read_text(encoding="utf-8")
-    assert "uv run uvicorn watchdog.main:create_runtime_app" in start_contents
+    assert 'exec "$UV_BIN" run uvicorn watchdog.main:create_runtime_app' in start_contents
+    assert "$HOME/.local/bin" in start_contents
+    assert 'command -v uv' in start_contents
     assert "--factory" in start_contents
 
     install_contents = install_script.read_text(encoding="utf-8")
