@@ -45,6 +45,10 @@ def _run_background_step(step_name: str, fn, /, *args, **kwargs):
         return None
 
 
+async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
+    return await asyncio.to_thread(_run_background_step, step_name, fn, *args, **kwargs)
+
+
 def _drain_delivery_outbox(app: FastAPI, *, now: datetime | None = None) -> None:
     current = now or datetime.now(UTC)
     while True:
@@ -64,7 +68,7 @@ async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
     )
     while True:
         await asyncio.sleep(interval_seconds)
-        _run_background_step(
+        await _run_background_step_async(
             "session_spine_runtime.refresh_all",
             app.state.session_spine_runtime.refresh_all,
         )
@@ -76,7 +80,11 @@ async def _run_delivery_loop(app: FastAPI) -> None:
         0.01,
     )
     while True:
-        _drain_delivery_outbox(app)
+        await _run_background_step_async(
+            "delivery_drain_outbox",
+            _drain_delivery_outbox,
+            app,
+        )
         await asyncio.sleep(interval_seconds)
 
 
@@ -88,12 +96,17 @@ async def _run_resident_orchestrator_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         now = datetime.now(UTC)
-        _run_background_step(
+        await _run_background_step_async(
             "resident_orchestrator.orchestrate_all",
             app.state.resident_orchestrator.orchestrate_all,
             now=now,
         )
-        _drain_delivery_outbox(app, now=now)
+        await _run_background_step_async(
+            "delivery_drain_outbox",
+            _drain_delivery_outbox,
+            app,
+            now=now,
+        )
 
 
 def create_app(

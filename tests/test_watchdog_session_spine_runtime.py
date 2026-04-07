@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
+from contextlib import suppress
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from watchdog.main import create_app
+from watchdog.main import _run_delivery_loop, create_app
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
 from watchdog.settings import Settings
 
@@ -413,3 +416,52 @@ def test_background_workers_survive_transient_startup_and_loop_failures(
     assert app.state.resident_orchestrator.calls >= 2
     assert app.state.delivery_worker.calls >= 2
     assert progress_notifications
+
+
+@pytest.mark.asyncio
+async def test_delivery_loop_runs_drain_outside_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    def blocking_drain(_app, *, now=None) -> None:
+        _ = now
+        time.sleep(0.05)
+
+    monkeypatch.setattr("watchdog.main._drain_delivery_outbox", blocking_drain)
+
+    started = time.perf_counter()
+    ticker = asyncio.create_task(asyncio.sleep(0.01))
+    delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
+
+    try:
+        await ticker
+    finally:
+        delivery_loop_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await delivery_loop_task
+
+    assert time.perf_counter() - started < 0.03
