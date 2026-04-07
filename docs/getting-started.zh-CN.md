@@ -9,13 +9,13 @@
 | 交付物 | 说明 |
 |--------|------|
 | **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。已内置两层 Codex 集成：`1)` 默认读取同机 `~/.codex` 自动发现当前 active workspace 的 thread；`2)` 可选启动本地 `codex app-server --listen stdio://` bridge，执行下行控制与审批回写。 |
-| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。从 025 开始，策略层只消费 resident session spine 的 persisted snapshot，并产出 canonical decision record / decision evidence，而不再向 A 侧直接发 raw fact query。 |
+| **Watchdog** | 逻辑上位于 **OpenClaw 前** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。它既可以独立运行在 **B 机**，也可以与 `A-Control-Agent` 同机部署在 **A 机** 后再通过稳定入口暴露给 B。 从 025 开始，策略层只消费 resident session spine 的 persisted snapshot，并产出 canonical decision record / decision evidence，而不再向 A 侧直接发 raw fact query。 |
 | **OpenClaw 侧** | 本仓库**不包含**飞书机器人或生产级 OpenClaw 插件；当前提供 **HTTP API**、`examples/openclaw_watchdog_client.py` 调用模板，以及 `examples/openclaw_webhook_runtime.py` 最小 reference runtime，供你在 OpenClaw 宿主里对接 Watchdog。 |
 
 **数据流（目标架构）**：
 
 ```text
-飞书 → OpenClaw(B) → Watchdog(B) ──HTTPS+Bearer──→ A-Control-Agent(A) ──stdio/本地子进程──→ Codex app-server（可选）
+飞书 → OpenClaw(B) → Watchdog(可在 A 或 B) ──HTTPS+Bearer──→ A-Control-Agent(A) ──stdio/本地子进程──→ Codex app-server（可选）
 ```
 
 当前实现中，**OpenClaw 只需对接 Watchdog**；Watchdog 再对接 A-Control-Agent。
@@ -266,6 +266,8 @@ uv run python examples/register_native_thread.py \
 
 ### 3.1 Watchdog 安装、启动与开机自启（macOS 推荐）
 
+若你采用“**Watchdog 与 A-Control-Agent 同机部署在 A**”的形态，这一节可跳过；B 机只需要拿到 `WATCHDOG_BASE_URL` 与 `WATCHDOG_API_TOKEN` 去调用 A 上暴露出来的 Watchdog 稳定入口。
+
 同样在 B 机准备并安装到指定版本：
 
 ```bash
@@ -303,6 +305,13 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_PROGRESS_SUMMARY_INTERVAL_SECONDS` | 同项目 progress summary 主动推送的最短间隔（默认 `300` 秒） |
 | `WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS` | `block_and_alert` 未消解多久后触发 `blocked_too_long`（默认 `900` 秒） |
 | `WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS` | pending approval 超过多久后触发 `approval_pending_too_long`（默认 `900` 秒） |
+| `WATCHDOG_BOOTSTRAP_WEBHOOK_BASE_URL` | A 机 public Watchdog 地址变化后，要主动通知的 B 机 bootstrap webhook 根 URL；实际路径固定为 `/openclaw/v1/watchdog/bootstrap` |
+| `WATCHDOG_BOOTSTRAP_WEBHOOK_TOKEN` | 调 bootstrap webhook 时使用的 Bearer token |
+| `WATCHDOG_PUBLIC_TUNNEL_LOG_PATH` | A 机 `cloudflared quick tunnel` 日志路径；notifier 从这里提取最新 `trycloudflare` URL |
+| `WATCHDOG_PUBLIC_URL_STATE_FILE` | notifier 记录“上次已通知 URL”的持久文件 |
+| `WATCHDOG_PUBLIC_URL_NOTIFY_INTERVAL_SECONDS` | notifier 轮询 tunnel 日志并检查 URL 变化的周期 |
+| `WATCHDOG_PUBLIC_URL_SOURCE` | 回调到 B 机 bootstrap webhook 时携带的 source 字段 |
+| `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE` | A 机持久化 B 机最新公网 envelope webhook 根地址的文件；delivery 每次发送前优先读这里，store miss 时才回退到 `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL` |
 
 推荐环境文件内容：
 
@@ -324,6 +333,13 @@ WATCHDOG_RESIDENT_ORCHESTRATOR_INTERVAL_SECONDS=5
 WATCHDOG_PROGRESS_SUMMARY_INTERVAL_SECONDS=300
 WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS=900
 WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS=900
+WATCHDOG_BOOTSTRAP_WEBHOOK_BASE_URL=http://127.0.0.1:8740
+WATCHDOG_BOOTSTRAP_WEBHOOK_TOKEN=<B端bootstrap webhook token>
+WATCHDOG_PUBLIC_TUNNEL_LOG_PATH=$HOME/Library/Logs/openclaw-watchdog.public-tunnel.err.log
+WATCHDOG_PUBLIC_URL_STATE_FILE=.data/watchdog/public_endpoint_state.json
+WATCHDOG_PUBLIC_URL_NOTIFY_INTERVAL_SECONDS=10
+WATCHDOG_PUBLIC_URL_SOURCE=a-host-watchdog
+WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE=.data/watchdog/openclaw_webhook_endpoint.json
 WATCHDOG_BASE_URL=http://127.0.0.1:8720
 WATCHDOG_DEFAULT_PROJECT_ID=
 WATCHDOG_OPERATOR=openclaw
@@ -337,12 +353,16 @@ WATCHDOG_OPERATOR=openclaw
 - delivered 判定必须同时满足 `HTTP 2xx`、`accepted=true`、响应 `envelope_id` 与请求一致、以及存在 `receipt_id`；协议不完整的 `2xx` 仍会重试。
 - worker 会在 `operator_notes` 中记录 `delivery_retry_scheduled`、`delivery_succeeded`、`delivery_dead_letter`，便于最小运维排障。
 - 当前仓库还新增了 resident orchestrator：后台会持续执行 `session spine refresh -> policy evaluate -> auto recovery / approval materialize -> enqueue delivery -> call OpenClaw`，并对普通进展变化按 `progress_summary` 做节流主动推送；OpenClaw 不需要记住流程状态。
+- 如果 B 机自己的公网 envelope webhook 地址会变化，A 机还提供 `POST /api/v1/watchdog/bootstrap/openclaw-webhook`。B 机只要带 `Authorization: Bearer <WATCHDOG_API_TOKEN>` 回传 `event_type=openclaw_webhook_base_url_changed`、`openclaw_webhook_base_url`、`changed_at`、`source`，A 机就会把最新地址持久化到 `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE`，后续 delivery 自动切换到新地址。
 
 仓库已经直接提供可复用脚本与模板：
 
 - `scripts/start_watchdog.sh`
 - `scripts/install_watchdog_launchd.sh`
+- `scripts/start_watchdog_endpoint_notifier.sh`
+- `scripts/install_watchdog_endpoint_notifier_launchd.sh`
 - `config/examples/com.openclaw.watchdog.plist`
+- `config/examples/com.openclaw.watchdog.endpoint-notifier.plist`
 
 如果你仍想自己写，等价启动脚本如下：
 
@@ -399,7 +419,12 @@ chmod +x "$APP_DIR/bin/start-watchdog.sh"
 ```bash
 cd "$APP_DIR"
 WATCHDOG_ENV_FILE="$APP_DIR/.env.w" ./scripts/install_watchdog_launchd.sh
+WATCHDOG_ENV_FILE="$APP_DIR/.env.w" ./scripts/install_watchdog_endpoint_notifier_launchd.sh
 ```
+
+如果 A 机还额外跑了 `cloudflared quick tunnel` 给 Watchdog 暴露公网地址，建议同时安装 endpoint notifier。它会持续读取 `WATCHDOG_PUBLIC_TUNNEL_LOG_PATH`，提取最新 `https://*.trycloudflare.com`，仅在 URL 变化时回调 B 机的 bootstrap webhook，并把已通知状态落盘到 `WATCHDOG_PUBLIC_URL_STATE_FILE`，避免重复通知。
+
+如果 B 机也用 `cloudflared quick tunnel` 给 `POST /openclaw/v1/watchdog/envelopes` 暴露公网地址，则推荐让 B 机额外跑一个对称 notifier：它读取 B 本地当前公网 webhook 根地址，变化时回调 `POST <A机当前Watchdog公网地址>/api/v1/watchdog/bootstrap/openclaw-webhook`。这样 A/B 两端的 quick tunnel 地址都能在重启后自动重新对齐，不需要手改 `.env.w` 或依赖 OpenClaw 记忆。
 
 这会自动把模板渲染到 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`，并完成 `launchctl bootstrap` 与 `launchctl kickstart -k`。若你需要手工重启服务，可直接执行：
 
@@ -471,7 +496,7 @@ OpenClaw 模板的环境变量建议最少包括：
 
 | 变量 | 作用 |
 |------|------|
-| `WATCHDOG_BASE_URL` | Watchdog 对外根 URL，例如 `http://<B的IP>:8720` |
+| `WATCHDOG_BASE_URL` | Watchdog 对外根 URL，例如 `http://<Watchdog的IP或域名>:8720` |
 | `WATCHDOG_API_TOKEN` | OpenClaw 调 Watchdog 时使用的 Bearer Token |
 | `WATCHDOG_DEFAULT_PROJECT_ID` | 缺省 `project_id`；显式参数优先，适合单项目会话或固定路由 |
 | `WATCHDOG_OPERATOR` | 缺省操作人，示例模板默认值为 `openclaw` |
@@ -713,8 +738,7 @@ uv run python examples/openclaw_watchdog_client.py
 可以（同一套 Bearer），但架构上推荐 **只让 OpenClaw → Watchdog**，由 Watchdog 统一策略与审计。
 
 **Q：A 和 B 需不需要各自保留一份代码工程？**
-需要。A 要跑 `A-Control-Agent`，B 要跑 `Watchdog`；最稳的部署方式是两台机器都各自 clone
-同一个仓库，并固定在同一个 `RELEASE_REF`。
+需要，但不要求两边承担相同组件。A 至少要跑 `A-Control-Agent`；`Watchdog` 既可跑在 B，也可与 A 同机。最稳的方式仍是两边都固定到同一个 `RELEASE_REF`，避免契约漂移。
 
 **Q：没有 Codex app-server 能用吗？**  
 能。若 A-Control-Agent 与 Codex Desktop 同机，可直接走本地 `~/.codex` 自动采集；否则也能用

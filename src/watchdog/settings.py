@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     progress_summary_interval_seconds: float = 300.0
     openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
     openclaw_webhook_token: str = "dev-token-change-me"
+    openclaw_webhook_endpoint_state_file: str | None = None
     delivery_worker_interval_seconds: float = 5.0
     delivery_initial_backoff_seconds: float = 5.0
     delivery_max_attempts: int = 3

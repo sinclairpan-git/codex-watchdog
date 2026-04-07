@@ -9,7 +9,7 @@
 | 目录 | 说明 |
 |------|------|
 | `src/a_control_agent/` | A 机侧：任务 / steer / handoff / resume / 审批、持久化、`/metrics` |
-| `src/watchdog/` | B 机侧：stable session spine、progress / evaluate / recover / 审批代理、`/metrics` |
+| `src/watchdog/` | 宿主前置层：stable session spine、progress / evaluate / recover / 审批代理、`/metrics`；可独立跑在 OpenClaw 所在机，也可与 A 同机常驻后再对外暴露稳定入口 |
 | `docs/openapi/` | OpenAPI JSON（`python scripts/export_openapi.py` 生成） |
 | `examples/` | OpenClaw 侧调用 Watchdog 的 HTTP 示例（无飞书） |
 
@@ -42,12 +42,16 @@ uv run uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 
 - `scripts/start_watchdog.sh`
 - `scripts/install_watchdog_launchd.sh`
+- `scripts/start_watchdog_endpoint_notifier.sh`
+- `scripts/install_watchdog_endpoint_notifier_launchd.sh`
+- `config/examples/com.openclaw.watchdog.endpoint-notifier.plist`
 - `config/examples/com.openclaw.watchdog.plist`
 
 在 macOS 上准备好 `.env.w` 后可直接执行：
 
 ```bash
 WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_launchd.sh
+WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_endpoint_notifier_launchd.sh
 ```
 
 该脚本会安装 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`，并执行 `launchctl bootstrap` 与 `launchctl kickstart -k`；重启后会自动恢复。
@@ -85,6 +89,8 @@ WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_launchd.sh
 
 ## 部署纪律
 
+- 逻辑拓扑保持 `OpenClaw -> Watchdog -> A-Control-Agent -> Codex`；`Watchdog` 不再强制要求物理部署在 B 机。
+- 若 A 机就是唯一稳定的 Codex 宿主机，可直接把 `Watchdog` 与 `A-Control-Agent` 同机部署在 A，再通过 HTTPS / tunnel / 反代把 `Watchdog` 暴露给 B 上的 OpenClaw。
 - A 与 B 必须运行同一提交；升级顺序固定为先 A、再 B、最后验证 OpenClaw -> Watchdog。
 - 回滚时同样按提交回退，避免 A/B 漂在不同契约版本。
 - Bearer token 需要独立保管并支持轮换；公网暴露只建议经 TLS 反向代理对外开放 Watchdog，不建议让 OpenClaw 直连 A。
@@ -272,10 +278,31 @@ A-Control-Agent 会以子进程方式拉起本地 Codex app-server，并通过 s
 - `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS`
 - `WATCHDOG_DELIVERY_MAX_ATTEMPTS`
 
+如果 A 机使用 `cloudflared quick tunnel` 给 Watchdog 暴露临时公网地址，且你希望该地址变化后自动同步给 B 机上的 OpenClaw bootstrap 服务，还需要：
+
+- `WATCHDOG_BOOTSTRAP_WEBHOOK_BASE_URL`
+- `WATCHDOG_BOOTSTRAP_WEBHOOK_TOKEN`
+- `WATCHDOG_PUBLIC_TUNNEL_LOG_PATH`
+- `WATCHDOG_PUBLIC_URL_STATE_FILE`
+- `WATCHDOG_PUBLIC_URL_NOTIFY_INTERVAL_SECONDS`
+- `WATCHDOG_PUBLIC_URL_SOURCE`
+
+如果 B 机上的 OpenClaw envelope webhook 也使用临时公网地址，A 机 Watchdog 还支持反向 bootstrap：
+
+- `POST /api/v1/watchdog/bootstrap/openclaw-webhook`
+- 鉴权：`Authorization: Bearer <WATCHDOG_API_TOKEN>`
+- 请求体：`event_type=openclaw_webhook_base_url_changed`、`openclaw_webhook_base_url`、`changed_at`、`source`
+- `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE`：持久化最新 B 机公网 webhook 根地址；默认位于 `WATCHDOG_DATA_DIR/openclaw_webhook_endpoint.json`
+- delivery client 每次发送 `POST /openclaw/v1/watchdog/envelopes` 前，都会先读取该持久化文件；只有 store miss 时才回退到 `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL`
+
 对应本地持久文件默认位于 `WATCHDOG_DATA_DIR` 下：
 
 - `policy_decisions.json`
+- `canonical_approvals.json`
+- `approval_responses.json`
 - `delivery_outbox.json`
+- `action_receipts.json`
+- `openclaw_webhook_endpoint.json`
 
 ## GitHub PR / Codex Review 演示
 

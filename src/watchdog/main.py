@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import events_proxy as events_proxy_routes
 from watchdog.api import metrics as metrics_routes
+from watchdog.api import openclaw_bootstrap as openclaw_bootstrap_routes
 from watchdog.api import openclaw_responses as openclaw_response_routes
 from watchdog.api import ops as ops_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
@@ -23,6 +24,10 @@ from watchdog.api import supervision as supervision_routes
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.approvals.service import ApprovalResponseStore, CanonicalApprovalStore
 from watchdog.services.delivery.http_client import OpenClawDeliveryClient
+from watchdog.services.delivery.openclaw_webhook_store import (
+    OpenClawWebhookEndpointStore,
+    openclaw_webhook_endpoint_state_path,
+)
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import PolicyDecisionStore
@@ -182,7 +187,13 @@ def create_app(
     app.state.delivery_outbox_store = DeliveryOutboxStore(
         Path(settings.data_dir) / "delivery_outbox.json"
     )
-    app.state.delivery_client = OpenClawDeliveryClient(settings=settings)
+    app.state.openclaw_webhook_endpoint_store = OpenClawWebhookEndpointStore(
+        openclaw_webhook_endpoint_state_path(settings)
+    )
+    app.state.delivery_client = OpenClawDeliveryClient(
+        settings=settings,
+        endpoint_store=app.state.openclaw_webhook_endpoint_store,
+    )
     app.state.delivery_worker = DeliveryWorker(
         store=app.state.delivery_outbox_store,
         delivery_client=app.state.delivery_client,
@@ -212,6 +223,7 @@ def create_app(
     app.include_router(events_proxy_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
     app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
+    app.include_router(openclaw_bootstrap_routes.router, prefix="/api/v1")
     app.include_router(openclaw_response_routes.router, prefix="/api/v1")
     app.include_router(recover_watchdog_routes.router, prefix="/api/v1")
     app.include_router(session_spine_query_routes.router, prefix="/api/v1")

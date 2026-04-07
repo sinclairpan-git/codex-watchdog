@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -162,6 +163,43 @@ def test_http_delivery_treats_retryable_transport_failures_as_retryable(tmp_path
 
     assert result.delivery_status == "retryable_failure"
     assert result.failure_code == "transport_timeout"
+
+
+def test_http_delivery_prefers_persisted_openclaw_webhook_endpoint_over_env(tmp_path: Path) -> None:
+    envelope = build_envelopes_for_decision(_decision())[0]
+    (tmp_path / "openclaw_webhook_endpoint.json").write_text(
+        json.dumps(
+            {
+                "openclaw_webhook_base_url": "https://dynamic-openclaw.example",
+                "updated_at": "2026-04-07T11:00:00Z",
+                "changed_at": "2026-04-07T10:59:59Z",
+                "source": "b-host-openclaw",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://dynamic-openclaw.example/openclaw/v1/watchdog/envelopes"
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "envelope_id": envelope.envelope_id,
+                "receipt_id": "rcpt_dynamic_001",
+                "received_at": "2026-04-07T00:00:10Z",
+            },
+        )
+
+    client = OpenClawDeliveryClient(
+        settings=_settings(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.deliver_envelope(envelope)
+
+    assert result.delivery_status == "delivered"
+    assert result.receipt_id == "rcpt_dynamic_001"
 
 
 class _AlwaysRetryClient:
