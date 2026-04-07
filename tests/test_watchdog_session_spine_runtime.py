@@ -120,6 +120,42 @@ class RecordingDeliveryClient:
         )
 
 
+class FlakyRuntime:
+    def __init__(self, delegate) -> None:
+        self._delegate = delegate
+        self.calls = 0
+
+    def refresh_all(self) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient runtime failure")
+        self._delegate.refresh_all()
+
+
+class FlakyOrchestrator:
+    def __init__(self, delegate) -> None:
+        self._delegate = delegate
+        self.calls = 0
+
+    def orchestrate_all(self, *, now):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient orchestrator failure")
+        return self._delegate.orchestrate_all(now=now)
+
+
+class FlakyDeliveryWorker:
+    def __init__(self, delegate) -> None:
+        self._delegate = delegate
+        self.calls = 0
+
+    def process_next_ready(self, *, now, session_id=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient delivery failure")
+        return self._delegate.process_next_ready(now=now, session_id=session_id)
+
+
 def _store_path(root: Path) -> Path:
     return root / SESSION_SPINE_STORE_FILENAME
 
@@ -325,3 +361,55 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
 
     assert len(progress_notifications) >= 1
     assert progress_notifications[-1]["summary"] == "tests are running"
+
+
+def test_background_workers_survive_transient_startup_and_loop_failures(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        delivery_worker_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app.state.session_spine_runtime = FlakyRuntime(app.state.session_spine_runtime)
+    app.state.resident_orchestrator = FlakyOrchestrator(app.state.resident_orchestrator)
+    app.state.delivery_worker._delivery_client = RecordingDeliveryClient()
+    app.state.delivery_worker = FlakyDeliveryWorker(app.state.delivery_worker)
+
+    with TestClient(app):
+        time.sleep(0.08)
+
+    snapshot = _read_store(tmp_path)
+    progress_notifications = [
+        record
+        for record in app.state.delivery_worker._delegate._delivery_client.records
+        if record.get("notification_kind") == "progress_summary"
+    ]
+
+    assert snapshot["sessions"]["repo-a"]["session_seq"] >= 1
+    assert app.state.session_spine_runtime.calls >= 2
+    assert app.state.resident_orchestrator.calls >= 2
+    assert app.state.delivery_worker.calls >= 2
+    assert progress_notifications

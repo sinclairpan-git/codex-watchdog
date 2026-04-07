@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,11 +34,25 @@ from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 from watchdog.api.ops import build_ops_summary
 
+logger = logging.getLogger(__name__)
+
+
+def _run_background_step(step_name: str, fn, /, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        logger.exception("watchdog background step failed: %s", step_name)
+        return None
+
 
 def _drain_delivery_outbox(app: FastAPI, *, now: datetime | None = None) -> None:
     current = now or datetime.now(UTC)
     while True:
-        delivered = app.state.delivery_worker.process_next_ready(now=current)
+        delivered = _run_background_step(
+            "delivery_worker.process_next_ready",
+            app.state.delivery_worker.process_next_ready,
+            now=current,
+        )
         if delivered is None:
             break
 
@@ -49,7 +64,10 @@ async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
     )
     while True:
         await asyncio.sleep(interval_seconds)
-        app.state.session_spine_runtime.refresh_all()
+        _run_background_step(
+            "session_spine_runtime.refresh_all",
+            app.state.session_spine_runtime.refresh_all,
+        )
 
 
 async def _run_delivery_loop(app: FastAPI) -> None:
@@ -70,7 +88,11 @@ async def _run_resident_orchestrator_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         now = datetime.now(UTC)
-        app.state.resident_orchestrator.orchestrate_all(now=now)
+        _run_background_step(
+            "resident_orchestrator.orchestrate_all",
+            app.state.resident_orchestrator.orchestrate_all,
+            now=now,
+        )
         _drain_delivery_outbox(app, now=now)
 
 
@@ -88,14 +110,26 @@ def create_app(
         resident_orchestrator_task: asyncio.Task[None] | None = None
         delivery_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
-            app.state.session_spine_runtime.refresh_all()
+            _run_background_step(
+                "session_spine_runtime.refresh_all",
+                app.state.session_spine_runtime.refresh_all,
+            )
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
             now = datetime.now(UTC)
-            app.state.resident_orchestrator.orchestrate_all(now=now)
+            _run_background_step(
+                "resident_orchestrator.orchestrate_all",
+                app.state.resident_orchestrator.orchestrate_all,
+                now=now,
+            )
             _drain_delivery_outbox(app, now=now)
             resident_orchestrator_task = asyncio.create_task(_run_resident_orchestrator_loop(app))
             delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
-            supervision_routes.run_background_supervision(app.state.settings, app.state.a_client)
+            _run_background_step(
+                "supervision.run_background_supervision",
+                supervision_routes.run_background_supervision,
+                app.state.settings,
+                app.state.a_client,
+            )
         try:
             yield
         finally:
