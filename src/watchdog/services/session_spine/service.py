@@ -21,6 +21,7 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     build_workspace_activity_view,
 )
+from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 from watchdog.services.session_spine.approval_visibility import (
     is_actionable_approval,
     is_deferred_policy_auto_approval,
@@ -241,10 +242,30 @@ def _build_session_read_bundle(
     )
 
 
+def _build_session_read_bundle_from_persisted_record(
+    record: PersistedSessionRecord,
+) -> SessionReadBundle:
+    return SessionReadBundle(
+        project_id=record.project_id,
+        task=None,
+        approvals=[],
+        facts=list(record.facts),
+        session=record.session,
+        progress=record.progress,
+        approval_queue=list(record.approval_queue),
+    )
+
+
 def build_session_read_bundle(
     client: AControlAgentClient,
     project_id: str,
+    *,
+    store: SessionSpineStore | None = None,
 ) -> SessionReadBundle:
+    if store is not None:
+        record = store.get(project_id)
+        if record is not None:
+            return _build_session_read_bundle_from_persisted_record(record)
     task = _load_task_or_raise(client, project_id)
     approvals = _load_approvals_or_raise(client, project_id)
     return _build_session_read_bundle(
@@ -257,7 +278,13 @@ def build_session_read_bundle(
 def build_session_read_bundle_by_native_thread(
     client: AControlAgentClient,
     native_thread_id: str,
+    *,
+    store: SessionSpineStore | None = None,
 ) -> SessionReadBundle:
+    if store is not None:
+        record = store.get_by_native_thread(native_thread_id)
+        if record is not None:
+            return _build_session_read_bundle_from_persisted_record(record)
     task = _load_task_by_native_thread_or_raise(client, native_thread_id)
     project_id = str(task.get("project_id") or "")
     if not project_id:
@@ -307,7 +334,22 @@ def build_workspace_activity_bundle(
 def build_approval_inbox_bundle(
     client: AControlAgentClient,
     project_id: str | None = None,
+    *,
+    store: SessionSpineStore | None = None,
 ) -> ApprovalInboxReadBundle:
+    if store is not None:
+        persisted = [
+            approval
+            for record in store.list_records()
+            for approval in record.approval_queue
+            if project_id is None or approval.project_id == project_id
+        ]
+        if persisted:
+            return ApprovalInboxReadBundle(
+                project_id=project_id,
+                approvals=[approval.model_dump(mode="json") for approval in persisted],
+                approval_inbox=persisted,
+            )
     approvals = _load_approvals_or_raise(client, project_id)
     return ApprovalInboxReadBundle(
         project_id=project_id,
@@ -318,7 +360,17 @@ def build_approval_inbox_bundle(
 
 def build_session_directory_bundle(
     client: AControlAgentClient,
+    *,
+    store: SessionSpineStore | None = None,
 ) -> SessionDirectoryReadBundle:
+    if store is not None:
+        persisted = store.list_records()
+        if persisted:
+            return SessionDirectoryReadBundle(
+                tasks=[],
+                approvals=[],
+                sessions=[record.session for record in persisted],
+            )
     tasks = _load_tasks_or_raise(client)
     approvals = _load_approvals_or_raise(client)
     tasks_by_project: dict[str, dict[str, Any]] = {}

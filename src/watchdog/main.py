@@ -16,6 +16,8 @@ from watchdog.api import session_spine_queries as session_spine_query_routes
 from watchdog.api import supervision as supervision_routes
 from watchdog.observability.metrics_export import PROM_CONTENT_TYPE, build_watchdog_metrics_text
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_spine.runtime import SessionSpineRuntime
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -31,6 +33,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if start_background_workers:
+            app.state.session_spine_runtime.refresh_all()
             supervision_routes.run_background_supervision(app.state.settings, app.state.a_client)
         yield
 
@@ -39,6 +42,13 @@ def create_app(
     app.state.a_client = a_client or AControlAgentClient(settings)
     app.state.action_receipt_store = ActionReceiptStore(
         Path(settings.data_dir) / "action_receipts.json"
+    )
+    app.state.session_spine_store = SessionSpineStore(
+        Path(settings.data_dir) / "session_spine.json"
+    )
+    app.state.session_spine_runtime = SessionSpineRuntime(
+        client=app.state.a_client,
+        store=app.state.session_spine_store,
     )
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(events_proxy_routes.router, prefix="/api/v1")

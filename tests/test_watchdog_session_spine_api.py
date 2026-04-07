@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.settings import Settings
+from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.session_spine.projection import (
+    build_approval_projections,
+    build_session_projection,
+    build_task_progress_view,
+    stable_thread_id_for_project,
+)
 
 
 class FakeAClient:
@@ -141,6 +150,115 @@ class FakeAClient:
         }
 
 
+class BrokenAClient:
+    def __init__(self) -> None:
+        self.get_envelope_calls: list[str] = []
+        self.get_envelope_by_thread_calls: list[str] = []
+        self.list_approvals_calls: list[dict[str, object | None]] = []
+
+    def get_envelope(self, project_id: str) -> dict[str, object]:
+        self.get_envelope_calls.append(project_id)
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+        self.get_envelope_by_thread_calls.append(thread_id)
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        self.list_approvals_calls.append(
+            {
+                "status": status,
+                "project_id": project_id,
+                "decided_by": decided_by,
+                "callback_status": callback_status,
+            }
+        )
+        raise RuntimeError("a-side temporarily unavailable")
+
+
+def _seed_persisted_session_spine(
+    root: Path,
+    *,
+    project_id: str = "repo-a",
+    session_seq: int = 3,
+    fact_snapshot_version: str = "fact-v1",
+    last_refreshed_at: str = "2026-04-05T05:25:00Z",
+) -> Path:
+    task = {
+        "project_id": project_id,
+        "thread_id": "thr_native_1",
+        "status": "waiting_human",
+        "phase": "approval",
+        "pending_approval": True,
+        "approval_risk": "L2",
+        "last_summary": "waiting for approval",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    approvals = [
+        {
+            "approval_id": "appr_001",
+            "project_id": project_id,
+            "thread_id": "thr_native_1",
+            "risk_level": "L2",
+            "command": "uv run pytest",
+            "reason": "verify tests",
+            "alternative": "",
+            "status": "pending",
+            "requested_at": "2026-04-05T05:21:00Z",
+        }
+    ]
+    facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
+    session = build_session_projection(
+        project_id=project_id,
+        task=task,
+        approvals=approvals,
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id=project_id,
+        task=task,
+        facts=facts,
+    )
+    approval_queue = build_approval_projections(
+        project_id=project_id,
+        native_thread_id=str(task["thread_id"]),
+        approvals=approvals,
+    )
+
+    payload = {
+        "sessions": {
+            project_id: {
+                "project_id": project_id,
+                "thread_id": stable_thread_id_for_project(project_id),
+                "native_thread_id": task["thread_id"],
+                "session_seq": session_seq,
+                "fact_snapshot_version": fact_snapshot_version,
+                "last_refreshed_at": last_refreshed_at,
+                "session": session.model_dump(mode="json"),
+                "progress": progress.model_dump(mode="json"),
+                "facts": [fact.model_dump(mode="json") for fact in facts],
+                "approval_queue": [
+                    approval.model_dump(mode="json") for approval in approval_queue
+                ],
+            }
+        }
+    }
+    path = root / "session_spine.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 def _client() -> FakeAClient:
     return FakeAClient(
         task={
@@ -207,6 +325,31 @@ def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
     assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
 
 
+def test_session_route_reads_seeded_persisted_spine_on_cold_start(tmp_path) -> None:
+    _seed_persisted_session_spine(tmp_path)
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["reply_code"] == "session_projection"
+    assert data["session"]["thread_id"] == "session:repo-a"
+    assert data["session"]["native_thread_id"] == "thr_native_1"
+    assert [fact["fact_code"] for fact in data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
 def test_session_spine_facts_route_returns_stable_truth_source_without_touching_explanations(
     tmp_path,
 ) -> None:
@@ -254,6 +397,47 @@ def test_session_spine_facts_route_returns_stable_truth_source_without_touching_
     assert facts_data["facts"] == session_data["facts"]
     assert stuck_data["reply_code"] == "stuck_explanation"
     assert blocker_data["reply_code"] == "blocker_explanation"
+
+
+def test_facts_and_blocker_reads_fall_back_to_persisted_spine_when_a_side_disconnects(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path)
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+    blocker_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/blocker-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert facts_response.status_code == 200
+    assert blocker_response.status_code == 200
+    assert facts_response.json()["success"] is True
+    assert blocker_response.json()["success"] is True
+
+    facts_data = facts_response.json()["data"]
+    blocker_data = blocker_response.json()["data"]
+
+    assert facts_data["reply_code"] == "session_facts"
+    assert facts_data["message"] == "2 fact(s)"
+    assert [fact["fact_code"] for fact in facts_data["facts"]] == [
+        "approval_pending",
+        "awaiting_human_direction",
+    ]
+    assert blocker_data["reply_code"] == "blocker_explanation"
+    assert blocker_data["session"]["thread_id"] == "session:repo-a"
+    assert blocker_data["progress"]["thread_id"] == "session:repo-a"
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
 
 
 def test_session_directory_route_returns_stable_session_projections(tmp_path) -> None:
