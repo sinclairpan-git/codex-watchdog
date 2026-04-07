@@ -59,7 +59,7 @@ def _canonical_timestamp(value: str | None) -> str | None:
     except ValueError:
         return value
     if parsed.tzinfo is None:
-        return parsed.replace(microsecond=0).isoformat()
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
@@ -95,6 +95,7 @@ def build_progress_summary_envelope(
     progress_fingerprint: str | None = None,
 ) -> NotificationEnvelope:
     fingerprint = progress_fingerprint or progress_summary_fingerprint(record)
+    occurred_at = _canonical_timestamp(record.progress.last_progress_at)
     summary = record.progress.summary or record.session.headline
     files = list(record.progress.files_touched)[:3]
     reason_parts = [
@@ -122,7 +123,7 @@ def build_progress_summary_envelope(
         event_id=f"event:{_short_hash(record.project_id + '|progress_summary|' + fingerprint)}",
         severity=_progress_summary_severity(record),
         notification_kind="progress_summary",
-        occurred_at=record.progress.last_progress_at,
+        occurred_at=occurred_at,
         title=f"progress update for {record.project_id}",
         summary=summary,
         reason="; ".join(reason_parts),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from watchdog.contracts.session_spine.models import FactRecord, SessionProjection, TaskProgressView
 from watchdog.services.approvals.service import (
     CanonicalApprovalRecord,
     CanonicalApprovalResponseRecord,
@@ -9,12 +10,14 @@ from watchdog.services.approvals.service import (
 from watchdog.services.delivery.envelopes import (
     DecisionEnvelope,
     NotificationEnvelope,
+    build_progress_summary_envelope,
     build_envelopes_for_approval_response,
     build_envelopes_for_decision,
 )
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.session_spine.store import PersistedSessionRecord
 from watchdog.settings import Settings
 
 
@@ -136,6 +139,54 @@ def _approval_response(
         execution_result=None,
     )
     return approval, response
+
+
+def _progress_record(*, last_progress_at: str = "2026-04-07T00:00:00Z") -> PersistedSessionRecord:
+    return PersistedSessionRecord(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        session_seq=7,
+        fact_snapshot_version="fact-v7",
+        last_refreshed_at="2026-04-07T00:20:00Z",
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state="active",
+            activity_phase="editing_source",
+            attention_state="normal",
+            headline="editing files",
+            pending_approval_count=0,
+            available_intents=["continue"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="editing_source",
+            summary="editing files",
+            files_touched=["src/example.py"],
+            context_pressure="low",
+            stuck_level=0,
+            primary_fact_codes=["recovery_available"],
+            blocker_fact_codes=[],
+            last_progress_at=last_progress_at,
+        ),
+        facts=[
+            FactRecord(
+                fact_id="fact-recovery-available",
+                fact_code="recovery_available",
+                fact_kind="signal",
+                severity="info",
+                summary="recovery available",
+                detail="recovery available",
+                source="watchdog",
+                observed_at="2026-04-07T00:00:00Z",
+            )
+        ],
+        approval_queue=[],
+    )
 
 
 def test_envelope_builder_freezes_delivery_matrix_for_decision_results() -> None:
@@ -500,6 +551,61 @@ def test_delivery_worker_drops_stale_progress_summary_without_calling_downstream
     assert dropped.operator_notes[-1] == (
         "delivery_skipped failure_code=stale_progress_summary "
         "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
+    )
+    assert client.calls == []
+
+
+def test_build_progress_summary_envelope_normalizes_naive_occurred_at_to_utc() -> None:
+    envelope = build_progress_summary_envelope(
+        _progress_record(last_progress_at="2026-04-07T00:00:00"),
+        created_at="2026-04-07T00:20:00Z",
+    )
+
+    assert envelope.occurred_at == "2026-04-07T00:00:00Z"
+
+
+def test_delivery_worker_treats_naive_progress_summary_timestamp_as_utc(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    stale_progress = NotificationEnvelope(
+        envelope_id="notification-envelope:naive-stale-progress",
+        correlation_id="progress-summary:repo-a:naive-stale",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|naive-stale",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:00:00",
+        event_id="event:naive-stale-progress",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="old progress",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    record = store.enqueue_envelopes([stale_progress])[0]
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    dropped = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert dropped is not None
+    assert dropped.envelope_id == record.envelope_id
+    assert dropped.delivery_status == "delivery_failed"
+    assert dropped.failure_code == "stale_progress_summary"
+    assert dropped.operator_notes[-1] == (
+        "delivery_skipped failure_code=stale_progress_summary "
+        "occurred_at=2026-04-07T00:00:00 age_seconds=1201"
     )
     assert client.calls == []
 
