@@ -139,39 +139,6 @@ class WatchdogTemplateClient:
             },
         )
 
-    def post_openclaw_response(
-        self,
-        *,
-        envelope_id: str,
-        envelope_type: str,
-        approval_id: str,
-        decision_id: str,
-        response_action: str,
-        response_token: str,
-        user_ref: str,
-        channel_ref: str,
-        client_request_id: str,
-        operator: str | None = None,
-        note: str = "",
-    ) -> dict:
-        return self._request_json(
-            "POST",
-            "/api/v1/watchdog/openclaw/responses",
-            body={
-                "envelope_id": envelope_id,
-                "envelope_type": envelope_type,
-                "approval_id": approval_id,
-                "decision_id": decision_id,
-                "response_action": response_action,
-                "response_token": response_token,
-                "user_ref": user_ref,
-                "channel_ref": channel_ref,
-                "client_request_id": client_request_id,
-                "operator": operator or self._operator,
-                "note": note,
-            },
-        )
-
 
 def fetch_progress(project_id: str | None = None) -> dict:
     return WatchdogTemplateClient().query_progress(project_id)

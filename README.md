@@ -33,62 +33,14 @@ python -m uvicorn a_control_agent.main:app --host 127.0.0.1 --port 8710 --app-di
 ```bash
 export WATCHDOG_API_TOKEN=dev-token-change-me
 export WATCHDOG_A_AGENT_TOKEN=dev-token-change-me
-uv run uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
+python -m uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 ```
 
 配置样例：`config/examples/*.env.example`。
 
-若需要常驻与开机自启，仓库已提供：
+## 可观测性（M5）
 
-- `scripts/start_watchdog.sh`
-- `scripts/install_watchdog_launchd.sh`
-- `config/examples/com.openclaw.watchdog.plist`
-
-在 macOS 上准备好 `.env.w` 后可直接执行：
-
-```bash
-WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_launchd.sh
-```
-
-该脚本会安装 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`，并执行 `launchctl bootstrap` 与 `launchctl kickstart -k`；重启后会自动恢复。
-
-## 可观测性（M5 / 029）
-
-两侧服务均提供 **`GET /metrics`**（Prometheus 文本）。其中 Watchdog 从 029 起额外冻结了最小运维面：
-
-- `GET /healthz`：返回 `status=ok|degraded` 与 `active_alerts`。
-- `GET /api/v1/watchdog/ops/alerts`：返回当前活动告警清单，需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`。
-- `GET /metrics`：除既有审计计数外，固定导出 `watchdog_ops_alert_active{alert="..."}` 五类 gauge：
-  - `approval_pending_too_long`
-  - `blocked_too_long`
-  - `delivery_failed`
-  - `mapping_incomplete`
-  - `recovery_failed`
-
-相关阈值与刷新周期由以下环境变量控制：
-
-- `WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS`
-- `WATCHDOG_RESIDENT_ORCHESTRATOR_INTERVAL_SECONDS`
-- `WATCHDOG_PROGRESS_SUMMARY_INTERVAL_SECONDS`
-- `WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS`
-- `WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS`
-
-## 审计与回放（029）
-
-029 新增的审计与回放语义只消费前序 work item 已持久化的 canonical records，不反向改写业务契约：
-
-- 审计查询：`src/watchdog/services/audit/service.py`
-- forensic replay：`src/watchdog/services/audit/replay.py`
-- truth sources：`policy_decisions.json`、`canonical_approvals.json`、`delivery_outbox.json`、`action_receipts.json`
-
-回放只回答“发生了什么、按什么顺序发生”，不重放动作，不补执行 delivery，也不回退到 raw/legacy route 推断状态。
-
-## 部署纪律
-
-- A 与 B 必须运行同一提交；升级顺序固定为先 A、再 B、最后验证 OpenClaw -> Watchdog。
-- 回滚时同样按提交回退，避免 A/B 漂在不同契约版本。
-- Bearer token 需要独立保管并支持轮换；公网暴露只建议经 TLS 反向代理对外开放 Watchdog，不建议让 OpenClaw 直连 A。
-- 完整 operator runbook、安装/升级/回滚、密钥轮换与公网暴露建议见 `docs/getting-started.zh-CN.md`。
+两侧服务均提供 **`GET /metrics`**（Prometheus 文本），便于抓取任务数、审计事件计数与 Watchdog 自动 steer 等（见 PRD §14.3）。
 
 ## OpenAPI 与集成示例
 
@@ -96,7 +48,7 @@ WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_launchd.sh
 python scripts/export_openapi.py
 ```
 
-示例脚本：`examples/openclaw_watchdog_client.py` 与 `examples/openclaw_webhook_runtime.py`。前者提供 `WatchdogTemplateClient`，封装 OpenClaw / 外部机器人访问 Watchdog 的最小 stable route 调用层；后者提供最小 reference runtime，演示宿主如何接收 Watchdog webhook、返回 receipt，并把结构化用户响应回传给 Watchdog。仓库仍不包含飞书插件或生产级 OpenClaw runtime。需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`，可选 `WATCHDOG_DEFAULT_PROJECT_ID` 与 `WATCHDOG_OPERATOR`。
+示例脚本：`examples/openclaw_watchdog_client.py`。它提供 `WatchdogTemplateClient`，面向 OpenClaw / 外部机器人封装最小 HTTP 路由模板；本仓库不包含飞书或 OpenClaw runtime，只提供可复用 stable route 调用层。需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`，可选 `WATCHDOG_DEFAULT_PROJECT_ID` 与 `WATCHDOG_OPERATOR`。
 
 OpenClaw 最小模板与 stable route 的对应关系：
 
@@ -107,7 +59,6 @@ OpenClaw 最小模板与 stable route 的对应关系：
 | 继续推进 | `continue_session(project_id, operator, idempotency_key)` | `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` |
 | 查询审批 inbox | `list_approval_inbox(project_id?)` | `GET /api/v1/watchdog/approval-inbox` |
 | 审批决策 | `approve_approval(approval_id, operator, idempotency_key, note)` / `reject_approval(approval_id, operator, idempotency_key, note)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
-| 审批响应回流 | 宿主回传 `envelope_id + envelope_type + approval_id + decision_id + response_action + response_token + user_ref + channel_ref + client_request_id` | `POST /api/v1/watchdog/openclaw/responses` |
 
 `project_id` 路由策略：
 
@@ -116,15 +67,7 @@ OpenClaw 最小模板与 stable route 的对应关系：
 - 两者都没有时，应先调用 `GET /api/v1/watchdog/sessions` 或 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 完成稳定会话解析。
 - 所有 write action 都要求显式提供非空 `idempotency_key`，以匹配 stable action / receipt 语义。
 
-028 冻结后的 OpenClaw webhook / response contract 要点：
-
-- Watchdog 主动投递入口固定为 `POST /openclaw/v1/watchdog/envelopes`。
-- webhook 请求头至少包含 `Authorization`、`X-Watchdog-Delivery-Id`、`X-Watchdog-Timestamp`、`X-Watchdog-Signature`。
-- 宿主成功 receipt 至少返回 `accepted=true`、`envelope_id`、`receipt_id`、`received_at`；缺任一字段的 `2xx` 仍视为 retryable failure。
-- 宿主回传审批响应时，必须走 `POST /api/v1/watchdog/openclaw/responses`，并带齐冻结的结构化 response contract。
-- reference runtime 只做 envelope 消费、展示映射、结构化回传；不做策略、不做风险分类、不维护第二套内核状态。
-
-010-026 收口后的 OpenClaw 最小稳定接口面：
+010-022 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions` 返回稳定跨项目 `SessionProjection[]` 目录
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
@@ -148,7 +91,6 @@ OpenClaw 最小模板与 stable route 的对应关系：
 - `GET /api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}`
 - `POST /api/v1/watchdog/approvals/{approval_id}/approve`
 - `POST /api/v1/watchdog/approvals/{approval_id}/reject`
-- `POST /api/v1/watchdog/openclaw/responses` 以 `(envelope_id, response_action, client_request_id)` 作为 canonical response idempotency key
 
 其中路径级动作接口只是 alias wrapper；真正稳定的动作契约是
 `WatchdogAction -> WatchdogActionResult`。`request_recovery` 在 010 仍是
@@ -170,21 +112,6 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 `pending-approvals` 的区别是：前者面向全局 inbox，后者面向单项目会话视角；legacy
 `GET /api/v1/watchdog/approvals` 与 `POST /api/v1/watchdog/approvals/{approval_id}/decision`
 继续保留，但不承担 stable contract 角色。
-026 在此基础上新增 canonical approval / response 闭环：`require_user_decision`
-会物化为本地 persisted approval envelope，宿主只允许回传 `approve`、`reject`、
-`execute_action` 三种 canonical response action；同一
-`(envelope_id, response_action, client_request_id)` 重放时，不会重复执行 approval
-decision 或底层 canonical action。
-027 在此基础上新增 reliable delivery outbox baseline。canonical decision / approval response
-现在会写入持久 `decision_outbox` 与 `delivery_outbox`，由后台 `DeliveryWorker` 按
-同一 `session_id` 下 `fact_snapshot_version -> outbox_seq` 的顺序回调
-`POST /openclaw/v1/watchdog/envelopes`；不同 session 允许并行。当前冻结的投递矩阵是：
-`auto_execute_and_notify -> DecisionEnvelope + NotificationEnvelope(decision_result)`、
-`require_user_decision -> ApprovalEnvelope`、审批响应后再补
-`NotificationEnvelope(notification_kind=approval_result)`、`block_and_alert -> critical notification`。
-只有同时满足 `HTTP 2xx + accepted=true + envelope_id match + receipt_id present` 才算 delivered；
-协议不完整的 `2xx`、`408`、`429`、`5xx` 与网络超时都会进入指数退避重试，超过
-`WATCHDOG_DELIVERY_MAX_ATTEMPTS` 后记录 `delivery_failed` 与 dead-letter operator note。
 017 在此基础上新增了 `GET /api/v1/watchdog/sessions`，把“未知 project_id 时的跨项目会话发现”
 收敛为稳定 `ReplyModel(reply_code=session_directory, sessions=SessionProjection[])`；
 OpenClaw adapter 同步新增 `list_sessions` intent，继续复用同一份 L2 directory builder，
@@ -221,13 +148,6 @@ cursor / backfill 语义，也不改变原有 SSE 的实时行为；OpenClaw ada
 或新的动作语义；`why_stuck` / `explain_blocker` 两条 explanation route 继续保留解释层角色，
 与 facts truth source 并存而不是互相替代。OpenClaw adapter 同步新增 `list_session_facts`
 intent，继续复用同一份 facts reply builder，不直读 raw/legacy route。
-025 在此基础上新增了 canonical policy engine 与 decision evidence layer。当前策略接缝固定为
-只消费 resident session spine 的 persisted snapshot：`evaluate_session_policy_from_persisted_spine(...)`
-不会直接向 A-Control-Agent 发 raw query 取事实。canonical decision record 由
-`watchdog.services.policy.decisions.PolicyDecisionStore` 去重，稳定键是 `decision_key`，
-最小证据包包含 `facts`、`matched_policy_rules`、`risk_class`、`decision`、
-`decision_reason`、`why_*_escalated`、`policy_version`、`fact_snapshot_version`、
-`idempotency_key` 与 `operator_notes`；它供后续 026/027 直接复用，不在 025 执行真实动作或投递。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成
@@ -263,19 +183,6 @@ A-Control-Agent 会以子进程方式拉起本地 Codex app-server，并通过 s
 若暂时不启用 bridge，仍可继续用 `POST /api/v1/tasks/native-threads` 或
 `python examples/register_native_thread.py --payload examples/native_thread_payload.json`
 把当前原生 Codex thread 注册进 A-Control-Agent，再经 Watchdog / OpenClaw 查询。
-
-027 新增的 Watchdog 下行配置最少包括：
-
-- `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL`
-- `WATCHDOG_OPENCLAW_WEBHOOK_TOKEN`
-- `WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS`
-- `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS`
-- `WATCHDOG_DELIVERY_MAX_ATTEMPTS`
-
-对应本地持久文件默认位于 `WATCHDOG_DATA_DIR` 下：
-
-- `policy_decisions.json`
-- `delivery_outbox.json`
 
 ## GitHub PR / Codex Review 演示
 

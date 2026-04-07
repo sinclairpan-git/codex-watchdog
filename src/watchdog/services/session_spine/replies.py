@@ -21,7 +21,6 @@ def build_session_reply(
         intent_code=intent_code,
         message=bundle.session.headline,
         session=bundle.session,
-        snapshot=bundle.snapshot,
         facts=bundle.facts,
     )
 
@@ -53,7 +52,6 @@ def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
         intent_code="get_progress",
         message=bundle.progress.summary or bundle.session.headline,
         progress=bundle.progress,
-        snapshot=bundle.snapshot,
         facts=bundle.facts,
     )
 
@@ -64,7 +62,6 @@ def build_session_facts_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_code=ReplyCode.SESSION_FACTS,
         intent_code="list_session_facts",
         message=f"{len(bundle.facts)} fact(s)",
-        snapshot=bundle.snapshot,
         facts=bundle.facts,
     )
 
@@ -97,7 +94,6 @@ def build_approval_queue_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_code=ReplyCode.APPROVAL_QUEUE,
         intent_code="list_pending_approvals",
         message=f"{len(bundle.approval_queue)} pending approval(s)",
-        snapshot=bundle.snapshot,
         approvals=bundle.approval_queue,
         facts=bundle.facts,
     )
@@ -127,7 +123,6 @@ def build_stuck_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
         message=message,
         session=bundle.session,
         progress=bundle.progress,
-        snapshot=bundle.snapshot,
         facts=bundle.facts,
     )
 
@@ -146,6 +141,5 @@ def build_blocker_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
         message=message,
         session=bundle.session,
         progress=bundle.progress,
-        snapshot=bundle.snapshot,
         facts=bundle.facts,
     )
