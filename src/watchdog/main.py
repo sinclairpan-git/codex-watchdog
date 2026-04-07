@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, Response
 
 from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import events_proxy as events_proxy_routes
+from watchdog.api import openclaw_responses as openclaw_response_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
 from watchdog.api import progress as progress_routes
 from watchdog.api import session_spine_actions as session_spine_actions_routes
@@ -17,6 +18,7 @@ from watchdog.api import session_spine_queries as session_spine_query_routes
 from watchdog.api import supervision as supervision_routes
 from watchdog.observability.metrics_export import PROM_CONTENT_TYPE, build_watchdog_metrics_text
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.approvals.service import ApprovalResponseStore, CanonicalApprovalStore
 from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
@@ -62,6 +64,12 @@ def create_app(
     app.state.action_receipt_store = ActionReceiptStore(
         Path(settings.data_dir) / "action_receipts.json"
     )
+    app.state.canonical_approval_store = CanonicalApprovalStore(
+        Path(settings.data_dir) / "canonical_approvals.json"
+    )
+    app.state.approval_response_store = ApprovalResponseStore(
+        Path(settings.data_dir) / "approval_responses.json"
+    )
     app.state.session_spine_store = SessionSpineStore(
         Path(settings.data_dir) / "session_spine.json"
     )
@@ -73,6 +81,7 @@ def create_app(
     app.include_router(events_proxy_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
     app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
+    app.include_router(openclaw_response_routes.router, prefix="/api/v1")
     app.include_router(recover_watchdog_routes.router, prefix="/api/v1")
     app.include_router(session_spine_query_routes.router, prefix="/api/v1")
     app.include_router(session_spine_actions_routes.router, prefix="/api/v1")

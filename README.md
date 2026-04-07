@@ -59,6 +59,7 @@ OpenClaw 最小模板与 stable route 的对应关系：
 | 继续推进 | `continue_session(project_id, operator, idempotency_key)` | `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` |
 | 查询审批 inbox | `list_approval_inbox(project_id?)` | `GET /api/v1/watchdog/approval-inbox` |
 | 审批决策 | `approve_approval(approval_id, operator, idempotency_key, note)` / `reject_approval(approval_id, operator, idempotency_key, note)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
+| 审批响应回流 | 宿主回传 `(envelope_id, response_action, client_request_id)` | `POST /api/v1/watchdog/openclaw/responses` |
 
 `project_id` 路由策略：
 
@@ -67,7 +68,7 @@ OpenClaw 最小模板与 stable route 的对应关系：
 - 两者都没有时，应先调用 `GET /api/v1/watchdog/sessions` 或 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 完成稳定会话解析。
 - 所有 write action 都要求显式提供非空 `idempotency_key`，以匹配 stable action / receipt 语义。
 
-010-022 收口后的 OpenClaw 最小稳定接口面：
+010-026 收口后的 OpenClaw 最小稳定接口面：
 
 - `GET /api/v1/watchdog/sessions` 返回稳定跨项目 `SessionProjection[]` 目录
 - `GET /api/v1/watchdog/sessions/{project_id}` 返回稳定 `SessionProjection`
@@ -91,6 +92,7 @@ OpenClaw 最小模板与 stable route 的对应关系：
 - `GET /api/v1/watchdog/sessions/{project_id}/action-receipts/{action_code}/{idempotency_key}`
 - `POST /api/v1/watchdog/approvals/{approval_id}/approve`
 - `POST /api/v1/watchdog/approvals/{approval_id}/reject`
+- `POST /api/v1/watchdog/openclaw/responses` 以 `(envelope_id, response_action, client_request_id)` 作为 canonical response idempotency key
 
 其中路径级动作接口只是 alias wrapper；真正稳定的动作契约是
 `WatchdogAction -> WatchdogActionResult`。`request_recovery` 在 010 仍是
@@ -112,6 +114,11 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 `pending-approvals` 的区别是：前者面向全局 inbox，后者面向单项目会话视角；legacy
 `GET /api/v1/watchdog/approvals` 与 `POST /api/v1/watchdog/approvals/{approval_id}/decision`
 继续保留，但不承担 stable contract 角色。
+026 在此基础上新增 canonical approval / response 闭环：`require_user_decision`
+会物化为本地 persisted approval envelope，宿主只允许回传 `approve`、`reject`、
+`execute_action` 三种 canonical response action；同一
+`(envelope_id, response_action, client_request_id)` 重放时，不会重复执行 approval
+decision 或底层 canonical action。
 017 在此基础上新增了 `GET /api/v1/watchdog/sessions`，把“未知 project_id 时的跨项目会话发现”
 收敛为稳定 `ReplyModel(reply_code=session_directory, sessions=SessionProjection[])`；
 OpenClaw adapter 同步新增 `list_sessions` intent，继续复用同一份 L2 directory builder，
