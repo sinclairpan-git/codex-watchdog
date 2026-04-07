@@ -18,9 +18,15 @@ class AControlAgentClient:
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._settings.a_agent_token}"}
 
+    def _client_kwargs(self, *, timeout: float | httpx.Timeout | None = None) -> dict[str, Any]:
+        return {
+            "timeout": self._settings.http_timeout_s if timeout is None else timeout,
+            "trust_env": False,
+        }
+
     def get_envelope(self, project_id: str) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}"
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers())
             except httpx.RequestError as exc:
@@ -35,7 +41,7 @@ class AControlAgentClient:
 
     def get_envelope_by_thread(self, thread_id: str) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/by-thread/{thread_id}"
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers())
             except httpx.RequestError as exc:
@@ -50,7 +56,7 @@ class AControlAgentClient:
 
     def list_tasks(self) -> list[dict[str, Any]]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks"
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers())
             except httpx.RequestError as exc:
@@ -89,7 +95,7 @@ class AControlAgentClient:
             params["decided_by"] = decided_by
         if callback_status:
             params["callback_status"] = callback_status
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers(), params=params)
             except httpx.RequestError as exc:
@@ -125,7 +131,7 @@ class AControlAgentClient:
         }
         if note:
             payload["note"] = note
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(url, headers=self._auth_headers(), json=payload)
             except httpx.RequestError as exc:
@@ -145,7 +151,7 @@ class AControlAgentClient:
         reason: str,
     ) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/handoff"
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(
                     url,
@@ -177,7 +183,7 @@ class AControlAgentClient:
             "mode": mode,
             "handoff_summary": handoff_summary,
         }
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(url, headers=self._auth_headers(), json=payload)
                 resp.raise_for_status()
@@ -201,7 +207,7 @@ class AControlAgentClient:
     ) -> tuple[str, str] | dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
         params = {"follow": "false", "poll_interval": str(poll_interval)}
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers(), params=params)
             except httpx.RequestError as exc:
@@ -225,7 +231,7 @@ class AControlAgentClient:
     ) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/workspace-activity"
         params = {"recent_minutes": str(recent_minutes)}
-        with httpx.Client(timeout=self._settings.http_timeout_s) as client:
+        with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers(), params=params)
             except httpx.RequestError as exc:
@@ -249,7 +255,7 @@ class AControlAgentClient:
         timeout = httpx.Timeout(self._settings.http_timeout_s, read=None)
         stack = ExitStack()
         try:
-            client = stack.enter_context(httpx.Client(timeout=timeout))
+            client = stack.enter_context(httpx.Client(**self._client_kwargs(timeout=timeout)))
             resp = stack.enter_context(
                 client.stream("GET", url, headers=self._auth_headers(), params=params)
             )
