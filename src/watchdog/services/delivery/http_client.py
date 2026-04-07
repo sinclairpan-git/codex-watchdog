@@ -6,6 +6,10 @@ import httpx
 from pydantic import BaseModel
 
 from watchdog.services.delivery.envelopes import ApprovalEnvelope, DecisionEnvelope, NotificationEnvelope
+from watchdog.services.delivery.openclaw_webhook_store import (
+    OpenClawWebhookEndpointStore,
+    openclaw_webhook_endpoint_state_path,
+)
 from watchdog.services.delivery.store import DeliveryOutboxRecord
 from watchdog.settings import Settings
 
@@ -25,8 +29,17 @@ class DeliveryAttemptResult(BaseModel):
 
 
 class OpenClawDeliveryClient:
-    def __init__(self, *, settings: Settings, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        endpoint_store: OpenClawWebhookEndpointStore | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self._settings = settings
+        self._endpoint_store = endpoint_store or OpenClawWebhookEndpointStore(
+            openclaw_webhook_endpoint_state_path(settings)
+        )
         self._transport = transport
 
     def _headers(self, envelope_id: str) -> dict[str, str]:
@@ -98,11 +111,17 @@ class OpenClawDeliveryClient:
             status_code=status_code,
         )
 
+    def _resolve_base_url(self) -> str:
+        state = self._endpoint_store.get()
+        if state is not None and state.openclaw_webhook_base_url.strip():
+            return state.openclaw_webhook_base_url
+        return self._settings.openclaw_webhook_base_url
+
     def deliver_envelope(
         self,
         envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
     ) -> DeliveryAttemptResult:
-        url = f"{self._settings.openclaw_webhook_base_url.rstrip('/')}/openclaw/v1/watchdog/envelopes"
+        url = f"{self._resolve_base_url().rstrip('/')}/openclaw/v1/watchdog/envelopes"
         try:
             with httpx.Client(
                 timeout=self._settings.http_timeout_s,

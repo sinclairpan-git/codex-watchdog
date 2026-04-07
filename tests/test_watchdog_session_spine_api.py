@@ -1932,3 +1932,29 @@ def test_legacy_routes_remain_registered_and_basic_behaviour_is_compatible(tmp_p
     assert recover.json()["data"]["action"] == "noop"
     assert events.status_code == 200
     assert events.headers["content-type"].startswith("text/event-stream")
+
+
+def test_bootstrap_openclaw_webhook_persists_latest_public_endpoint(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app)
+
+    response = c.post(
+        "/api/v1/watchdog/bootstrap/openclaw-webhook",
+        headers={"Authorization": "Bearer wt"},
+        json={
+            "event_type": "openclaw_webhook_base_url_changed",
+            "openclaw_webhook_base_url": "https://updated-openclaw.trycloudflare.com",
+            "changed_at": "2026-04-07T19:00:00+08:00",
+            "source": "b-host-openclaw",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["accepted"] is True
+    persisted = json.loads((tmp_path / "openclaw_webhook_endpoint.json").read_text(encoding="utf-8"))
+    assert persisted["openclaw_webhook_base_url"] == "https://updated-openclaw.trycloudflare.com"
+    assert persisted["changed_at"] == "2026-04-07T19:00:00+08:00"
+    assert persisted["source"] == "b-host-openclaw"

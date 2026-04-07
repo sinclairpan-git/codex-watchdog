@@ -28,3 +28,16 @@ class OpenClawResponseRequest(BaseModel):
     client_request_id: str
     operator: str = "openclaw"
     note: str = ""
+
+
+class OpenClawWebhookBootstrapRequest(BaseModel):
+    event_type: str
+    openclaw_webhook_base_url: str
+    changed_at: str
+    source: str
+
+
+class OpenClawWebhookBootstrapReceipt(BaseModel):
+    accepted: bool = True
+    openclaw_webhook_base_url: str
+    updated_at: str
