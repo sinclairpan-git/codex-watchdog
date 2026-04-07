@@ -103,7 +103,7 @@ def build_ops_summary(
         if record.delivery_status == "delivery_failed"
         and str(record.failure_code or "") not in _NON_ALERTING_DELIVERY_FAILURE_CODES
         and _is_recent_enough(
-            record.created_at,
+            record.updated_at or record.created_at,
             now=now,
             threshold_seconds=settings.ops_delivery_failed_alert_window_seconds,
         )

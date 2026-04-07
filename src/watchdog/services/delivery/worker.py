@@ -81,6 +81,7 @@ class DeliveryWorker:
                     "failure_code": result.failure_code,
                     "next_retry_at": None,
                     "operator_notes": notes,
+                    "updated_at": _iso_z(now),
                 }
             )
             return self._store.update_delivery_record(updated)
@@ -99,6 +100,7 @@ class DeliveryWorker:
                 "failure_code": result.failure_code,
                 "next_retry_at": next_retry_at,
                 "operator_notes": notes,
+                "updated_at": _iso_z(now),
             }
         )
         return self._store.update_delivery_record(updated)
@@ -109,6 +111,7 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         occurred_at: str,
         age_seconds: int,
+        now: datetime,
     ) -> DeliveryOutboxRecord:
         notes = list(record.operator_notes)
         notes.append(
@@ -122,6 +125,7 @@ class DeliveryWorker:
                 "failure_code": "stale_progress_summary",
                 "next_retry_at": None,
                 "operator_notes": notes,
+                "updated_at": _iso_z(now),
             }
         )
         return self._store.update_delivery_record(updated)
@@ -132,6 +136,7 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         occurred_at: str,
         age_seconds: int,
+        now: datetime,
     ) -> DeliveryOutboxRecord:
         notes = list(record.operator_notes)
         notes.append(
@@ -145,6 +150,7 @@ class DeliveryWorker:
                 "failure_code": "stale_auto_execute_notification",
                 "next_retry_at": None,
                 "operator_notes": notes,
+                "updated_at": _iso_z(now),
             }
         )
         return self._store.update_delivery_record(updated)
@@ -155,6 +161,7 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         last_local_manual_activity_at: str,
         age_seconds: int,
+        now: datetime,
     ) -> DeliveryOutboxRecord:
         notes = list(record.operator_notes)
         notes.append(
@@ -169,6 +176,7 @@ class DeliveryWorker:
                 "failure_code": "suppressed_local_manual_activity",
                 "next_retry_at": None,
                 "operator_notes": notes,
+                "updated_at": _iso_z(now),
             }
         )
         return self._store.update_delivery_record(updated)
@@ -276,6 +284,7 @@ class DeliveryWorker:
                 record=record,
                 occurred_at=occurred_at,
                 age_seconds=age_seconds,
+                now=now,
             )
         stale_auto_execute = self._stale_auto_execute_notification(record=record, now=now)
         if stale_auto_execute is not None:
@@ -284,6 +293,7 @@ class DeliveryWorker:
                 record=record,
                 occurred_at=occurred_at,
                 age_seconds=age_seconds,
+                now=now,
             )
         suppressed = self._suppressed_for_local_manual_activity(record=record, now=now)
         if suppressed is not None:
@@ -292,6 +302,7 @@ class DeliveryWorker:
                 record=record,
                 last_local_manual_activity_at=last_local_manual_activity_at,
                 age_seconds=age_seconds,
+                now=now,
             )
         result = self._delivery_client.deliver_record(record)
         if result.delivery_status == "delivered":
@@ -309,6 +320,7 @@ class DeliveryWorker:
                     "failure_code": None,
                     "next_retry_at": None,
                     "operator_notes": notes,
+                    "updated_at": _iso_z(now),
                 }
             )
             return self._store.update_delivery_record(updated)
@@ -325,6 +337,7 @@ class DeliveryWorker:
                 "failure_code": result.failure_code,
                 "next_retry_at": None,
                 "operator_notes": notes,
+                "updated_at": _iso_z(now),
             }
         )
         return self._store.update_delivery_record(updated)

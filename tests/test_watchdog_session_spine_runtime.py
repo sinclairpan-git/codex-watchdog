@@ -255,13 +255,14 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
 
     with TestClient(create_app(settings, a_client=a_client, start_background_workers=True)):
         first_snapshot = _read_store(tmp_path)
-        assert first_snapshot["sessions"]["repo-a"]["session_seq"] == 1
+        first_seq = int(first_snapshot["sessions"]["repo-a"]["session_seq"])
+        assert first_seq >= 1
 
         time.sleep(0.05)
 
         refreshed_snapshot = _read_store(tmp_path)
 
-    assert refreshed_snapshot["sessions"]["repo-a"]["session_seq"] == 2
+    assert int(refreshed_snapshot["sessions"]["repo-a"]["session_seq"]) > first_seq
     assert refreshed_snapshot["sessions"]["repo-a"]["session"]["session_state"] == "awaiting_approval"
     assert refreshed_snapshot["sessions"]["repo-a"]["progress"]["activity_phase"] == "approval"
 

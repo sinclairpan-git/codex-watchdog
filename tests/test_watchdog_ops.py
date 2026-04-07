@@ -328,3 +328,42 @@ def test_build_ops_summary_keeps_recent_delivery_failures_active(tmp_path: Path)
     assert summary.status == "degraded"
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["delivery_failed"]
+
+
+def test_build_ops_summary_uses_delivery_failure_update_time(tmp_path: Path) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    settings = Settings(
+        data_dir=str(tmp_path),
+        ops_delivery_failed_alert_window_seconds=900,
+    )
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:late-failure",
+            envelope_type="notification",
+            correlation_id="decision:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|decision_result|late",
+            audit_ref="decision:repo-a",
+            created_at="2000-01-01T00:00:00Z",
+            updated_at="2099-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="upstream_502",
+            operator_notes=["delivery_dead_letter failure_code=upstream_502 attempts=3"],
+            envelope_payload={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 1
+    assert [item.alert_code for item in summary.alerts] == ["delivery_failed"]
