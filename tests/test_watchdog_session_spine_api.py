@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.settings import Settings
+from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
     build_approval_projections,
@@ -15,6 +16,7 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     stable_thread_id_for_project,
 )
+from watchdog.services.session_spine.service import evaluate_session_policy_from_persisted_spine
 
 
 class FakeAClient:
@@ -376,6 +378,66 @@ def test_session_route_exposes_persisted_snapshot_freshness_semantics(tmp_path) 
     assert data["snapshot"]["fact_snapshot_version"] == "fact-v7"
     assert data["snapshot"]["last_refreshed_at"] == "2000-01-01T00:00:00Z"
     assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+def test_policy_evaluation_reads_only_persisted_session_spine_without_a_side_fallback(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path, fact_snapshot_version="fact-v9")
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+
+    decision = evaluate_session_policy_from_persisted_spine(
+        "repo-a",
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        store=app.state.session_spine_store,
+    )
+
+    assert decision.decision_result == "require_user_decision"
+    assert decision.risk_class == "human_gate"
+    assert decision.fact_snapshot_version == "fact-v9"
+    assert decision.matched_policy_rules == ["human_gate"]
+    assert a_client.get_envelope_calls == []
+    assert a_client.get_envelope_by_thread_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+def test_policy_evaluation_reuses_canonical_decision_for_same_persisted_snapshot(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path, fact_snapshot_version="fact-v12")
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+
+    first = evaluate_session_policy_from_persisted_spine(
+        "repo-a",
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        store=app.state.session_spine_store,
+        decision_store=decision_store,
+    )
+    second = evaluate_session_policy_from_persisted_spine(
+        "repo-a",
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        store=app.state.session_spine_store,
+        decision_store=decision_store,
+    )
+
+    assert first.decision_key == second.decision_key
+    assert first.decision_id == second.decision_id
+    assert len(decision_store.list_records()) == 1
+    assert a_client.get_envelope_calls == []
+    assert a_client.get_envelope_by_thread_calls == []
     assert a_client.list_approvals_calls == []
 
 

@@ -139,5 +139,10 @@ def test_canonical_decision_record_carries_policy_and_fact_snapshot_evidence() -
     assert isinstance(record, CanonicalDecisionRecord)
     assert record.policy_version == "policy-v2"
     assert record.fact_snapshot_version == "fact-v9"
+    assert record.operator_notes[0] == "decision=block_and_alert risk=hard_block action=continue_session"
     assert record.evidence["decision"]["decision_result"] == "block_and_alert"
+    assert record.evidence["decision_reason"] == "mapping incomplete"
+    assert record.evidence["why_escalated"] == "controlled uncertainty requires block"
+    assert record.evidence["idempotency_key"] == record.decision_key
+    assert record.evidence["operator_notes"] == record.operator_notes
     assert record.evidence["facts"][0]["fact_code"] == "recovery_available"

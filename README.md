@@ -148,6 +148,13 @@ cursor / backfill 语义，也不改变原有 SSE 的实时行为；OpenClaw ada
 或新的动作语义；`why_stuck` / `explain_blocker` 两条 explanation route 继续保留解释层角色，
 与 facts truth source 并存而不是互相替代。OpenClaw adapter 同步新增 `list_session_facts`
 intent，继续复用同一份 facts reply builder，不直读 raw/legacy route。
+025 在此基础上新增了 canonical policy engine 与 decision evidence layer。当前策略接缝固定为
+只消费 resident session spine 的 persisted snapshot：`evaluate_session_policy_from_persisted_spine(...)`
+不会直接向 A-Control-Agent 发 raw query 取事实。canonical decision record 由
+`watchdog.services.policy.decisions.PolicyDecisionStore` 去重，稳定键是 `decision_key`，
+最小证据包包含 `facts`、`matched_policy_rules`、`risk_class`、`decision`、
+`decision_reason`、`why_*_escalated`、`policy_version`、`fact_snapshot_version`、
+`idempotency_key` 与 `operator_notes`；它供后续 026/027 直接复用，不在 025 执行真实动作或投递。
 
 011 在 010 stable surface 旁边新增了只读稳定事件面：
 `GET /api/v1/watchdog/sessions/{project_id}/events`。它会把 raw 事件投影成

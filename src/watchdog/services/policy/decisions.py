@@ -42,6 +42,34 @@ def build_decision_key(
     )
 
 
+def _build_operator_notes(
+    *,
+    session_id: str,
+    fact_snapshot_version: str,
+    policy_version: str,
+    decision_result: str,
+    risk_class: str,
+    action_ref: str,
+    matched_policy_rules: list[str],
+    uncertainty_reasons: list[str],
+    why_not_escalated: str | None,
+    why_escalated: str | None,
+) -> list[str]:
+    notes = [
+        f"decision={decision_result} risk={risk_class} action={action_ref}",
+        f"snapshot={fact_snapshot_version} policy={policy_version} session={session_id}",
+    ]
+    if matched_policy_rules:
+        notes.append(f"rules={','.join(matched_policy_rules)}")
+    if uncertainty_reasons:
+        notes.append(f"uncertainty={','.join(uncertainty_reasons)}")
+    if why_not_escalated:
+        notes.append(f"why_not_escalated={why_not_escalated}")
+    if why_escalated:
+        notes.append(f"why_escalated={why_escalated}")
+    return notes
+
+
 class CanonicalDecisionRecord(BaseModel):
     decision_id: str
     decision_key: str
@@ -63,6 +91,7 @@ class CanonicalDecisionRecord(BaseModel):
     fact_snapshot_version: str
     idempotency_key: str
     created_at: str
+    operator_notes: list[str] = Field(default_factory=list)
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -92,6 +121,18 @@ def build_canonical_decision_record(
         action_ref=action_ref,
         approval_id=approval_id,
     )
+    operator_notes = _build_operator_notes(
+        session_id=session_id,
+        fact_snapshot_version=persisted_record.fact_snapshot_version,
+        policy_version=policy_version,
+        decision_result=decision_result,
+        risk_class=risk_class,
+        action_ref=action_ref,
+        matched_policy_rules=list(matched_policy_rules),
+        uncertainty_reasons=list(uncertainty_reasons),
+        why_not_escalated=why_not_escalated,
+        why_escalated=why_escalated,
+    )
     return CanonicalDecisionRecord(
         decision_id=_decision_id_for_key(decision_key),
         decision_key=decision_key,
@@ -113,10 +154,14 @@ def build_canonical_decision_record(
         fact_snapshot_version=persisted_record.fact_snapshot_version,
         idempotency_key=decision_key,
         created_at=_utc_now_iso(),
+        operator_notes=operator_notes,
         evidence={
             "facts": [fact.model_dump(mode="json") for fact in persisted_record.facts],
             "matched_policy_rules": list(matched_policy_rules),
             "risk_class": risk_class,
+            "decision_reason": decision_reason,
+            "why_not_escalated": why_not_escalated,
+            "why_escalated": why_escalated,
             "decision": {
                 "decision_result": decision_result,
                 "decision_reason": decision_reason,
@@ -136,6 +181,7 @@ def build_canonical_decision_record(
             "policy_version": policy_version,
             "fact_snapshot_version": persisted_record.fact_snapshot_version,
             "idempotency_key": decision_key,
+            "operator_notes": operator_notes,
         },
     )
 

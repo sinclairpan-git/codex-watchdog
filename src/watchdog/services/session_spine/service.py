@@ -14,6 +14,11 @@ from watchdog.contracts.session_spine.models import (
     TaskProgressView,
     WorkspaceActivityView,
 )
+from watchdog.services.policy.decisions import (
+    CanonicalDecisionRecord,
+    PolicyDecisionStore,
+)
+from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
@@ -33,6 +38,10 @@ from watchdog.services.session_spine.approval_visibility import (
 CONTROL_LINK_ERROR = {
     "code": "CONTROL_LINK_ERROR",
     "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
+}
+PERSISTED_SESSION_SPINE_REQUIRED_ERROR = {
+    "code": "PERSISTED_SESSION_SPINE_REQUIRED",
+    "message": "缺少 canonical persisted session spine；请先刷新 resident session spine。",
 }
 PERSISTED_SPINE_READ_SOURCE = "persisted_spine"
 LIVE_QUERY_FALLBACK_READ_SOURCE = "live_query_fallback"
@@ -321,6 +330,36 @@ def _build_session_read_bundle_from_persisted_record(
             freshness_window_seconds=freshness_window_seconds,
         ),
     )
+
+
+def load_persisted_session_record_or_raise(
+    project_id: str,
+    *,
+    store: SessionSpineStore,
+) -> PersistedSessionRecord:
+    record = store.get(project_id)
+    if record is None:
+        raise SessionSpineUpstreamError(dict(PERSISTED_SESSION_SPINE_REQUIRED_ERROR))
+    return record
+
+
+def evaluate_session_policy_from_persisted_spine(
+    project_id: str,
+    *,
+    action_ref: str,
+    trigger: str,
+    store: SessionSpineStore,
+    decision_store: PolicyDecisionStore | None = None,
+) -> CanonicalDecisionRecord:
+    record = load_persisted_session_record_or_raise(project_id, store=store)
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref=action_ref,
+        trigger=trigger,
+    )
+    if decision_store is not None:
+        return decision_store.put(decision)
+    return decision
 
 
 def build_session_read_bundle(

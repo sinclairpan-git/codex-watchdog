@@ -9,7 +9,7 @@
 | 交付物 | 说明 |
 |--------|------|
 | **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。已内置两层 Codex 集成：`1)` 默认读取同机 `~/.codex` 自动发现当前 active workspace 的 thread；`2)` 可选启动本地 `codex app-server --listen stdio://` bridge，执行下行控制与审批回写。 |
-| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。 |
+| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。从 025 开始，策略层只消费 resident session spine 的 persisted snapshot，并产出 canonical decision record / decision evidence，而不再向 A 侧直接发 raw fact query。 |
 | **OpenClaw 侧** | 本仓库**不包含**飞书机器人、也不包含 OpenClaw 插件；仅提供 **HTTP API** 与 `examples/openclaw_watchdog_client.py` 示例，由你在 OpenClaw 里配置「调用 Watchdog 的 URL + Token」。 |
 
 **数据流（目标架构）**：
@@ -19,6 +19,13 @@
 ```
 
 当前实现中，**OpenClaw 只需对接 Watchdog**；Watchdog 再对接 A-Control-Agent。
+
+025 当前新增的最小策略真值约定如下：
+
+- canonical policy seam 是 `evaluate_session_policy_from_persisted_spine(...)`；它只读 persisted session spine。
+- canonical decision 去重键是 `decision_key = session_id + fact_snapshot_version + policy_version + decision_result + action_ref + approval_id`。
+- 决策证据包至少包含 `facts`、`matched_policy_rules`、`risk_class`、`decision`、`decision_reason`、`why_*_escalated`、`policy_version`、`fact_snapshot_version`、`idempotency_key` 与 `operator_notes`。
+- 025 仍然不执行真实动作，也不做 envelope / delivery；这些留给后续 026/027。
 
 ### 1.1 当前推荐部署约定
 
