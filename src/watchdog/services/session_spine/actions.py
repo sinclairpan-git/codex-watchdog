@@ -282,30 +282,27 @@ def execute_watchdog_action(
 ) -> WatchdogActionResult:
     approval_id = str(action.arguments.get("approval_id") or "") or None
     receipt_key = receipt_key_for_action(action, approval_id)
-    existing = receipt_store.get(receipt_key)
-    if existing is not None:
-        return existing
-
-    if action.action_code == ActionCode.CONTINUE_SESSION:
-        result = _execute_continue(action, settings=settings, client=client)
-    elif action.action_code == ActionCode.POST_OPERATOR_GUIDANCE:
-        result = _execute_operator_guidance(action, settings=settings, client=client)
-    elif action.action_code == ActionCode.REQUEST_RECOVERY:
-        result = _execute_request_recovery(action, client=client)
-    elif action.action_code == ActionCode.EXECUTE_RECOVERY:
-        result = _execute_recovery(action, settings=settings, client=client)
-    elif action.action_code == ActionCode.EVALUATE_SUPERVISION:
-        result = execute_supervision_evaluation(action, settings=settings, client=client)
-    elif action.action_code == ActionCode.APPROVE_APPROVAL:
-        result = _execute_approval_action(action, client=client, decision="approve")
-    elif action.action_code == ActionCode.REJECT_APPROVAL:
-        result = _execute_approval_action(action, client=client, decision="reject")
-    else:
-        result = _result(
+    def _execute() -> WatchdogActionResult:
+        if action.action_code == ActionCode.CONTINUE_SESSION:
+            return _execute_continue(action, settings=settings, client=client)
+        if action.action_code == ActionCode.POST_OPERATOR_GUIDANCE:
+            return _execute_operator_guidance(action, settings=settings, client=client)
+        if action.action_code == ActionCode.REQUEST_RECOVERY:
+            return _execute_request_recovery(action, client=client)
+        if action.action_code == ActionCode.EXECUTE_RECOVERY:
+            return _execute_recovery(action, settings=settings, client=client)
+        if action.action_code == ActionCode.EVALUATE_SUPERVISION:
+            return execute_supervision_evaluation(action, settings=settings, client=client)
+        if action.action_code == ActionCode.APPROVE_APPROVAL:
+            return _execute_approval_action(action, client=client, decision="approve")
+        if action.action_code == ActionCode.REJECT_APPROVAL:
+            return _execute_approval_action(action, client=client, decision="reject")
+        return _result(
             action,
             action_status=ActionStatus.NOT_AVAILABLE,
             effect=Effect.NOOP,
             reply_code=ReplyCode.ACTION_NOT_AVAILABLE,
             message=f"unsupported action: {action.action_code}",
         )
-    return receipt_store.put(receipt_key, result)
+
+    return receipt_store.create_or_get(receipt_key, _execute)

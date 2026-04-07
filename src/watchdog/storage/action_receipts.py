@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from typing import Callable
 
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
 
@@ -58,9 +59,35 @@ class ActionReceiptStore:
             return None
         return WatchdogActionResult.model_validate(row)
 
+    def create_or_get(
+        self,
+        key: str,
+        factory: Callable[[], WatchdogActionResult],
+    ) -> WatchdogActionResult:
+        # Serialize the idempotency check and persisted write so concurrent
+        # callers cannot duplicate external action side effects.
+        with self._lock:
+            data = self._read()
+            row = data.get(key)
+            if isinstance(row, dict):
+                return WatchdogActionResult.model_validate(row)
+            result = factory()
+            data[key] = result.model_dump(mode="json")
+            self._write(data)
+        return result
+
     def put(self, key: str, result: WatchdogActionResult) -> WatchdogActionResult:
         with self._lock:
             data = self._read()
             data[key] = result.model_dump(mode="json")
             self._write(data)
         return result
+
+    def list_items(self) -> list[tuple[str, WatchdogActionResult]]:
+        with self._lock:
+            data = self._read()
+        return [
+            (key, WatchdogActionResult.model_validate(row))
+            for key, row in data.items()
+            if isinstance(row, dict)
+        ]
