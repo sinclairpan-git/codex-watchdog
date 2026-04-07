@@ -132,3 +132,41 @@ def test_task_store_treats_small_negative_skew_as_service_echo(tmp_path, monkeyp
     )
 
     assert echoed.get("last_local_manual_activity_at") is None
+
+
+def test_task_store_treats_larger_negative_skew_as_service_echo(tmp_path, monkeypatch) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:02:00Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:01:15Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") is None

@@ -677,3 +677,60 @@ def test_delivery_worker_drops_stale_auto_execute_decision_envelopes_without_cal
         "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
     )
     assert client.calls == []
+
+
+def test_delivery_worker_drops_stale_auto_execute_notification_without_payload_decision_result(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    notification = NotificationEnvelope(
+        envelope_id="notification-envelope:legacy-stale-auto-execute",
+        correlation_id="decision:repo-a:fact-v7:auto_execute_and_notify",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key=(
+            "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery||"
+            "decision_result"
+        ),
+        audit_ref="decision:repo-a:fact-v7:auto_execute_and_notify",
+        created_at="2026-04-07T00:20:00Z",
+        event_id="event:legacy-stale-auto-execute",
+        severity="info",
+        notification_kind="decision_result",
+        occurred_at="2026-04-07T00:00:00Z",
+        decision_result="auto_execute_and_notify",
+        action_name="execute_recovery",
+        title="decision auto_execute_and_notify",
+        summary="old auto execute",
+        reason="old auto execute",
+        facts=[],
+        recommended_actions=[],
+    )
+    (record,) = store.enqueue_envelopes([notification])
+    legacy_payload = dict(record.envelope_payload)
+    legacy_payload.pop("decision_result", None)
+    store.update_delivery_record(record.model_copy(update={"envelope_payload": legacy_payload}))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    dropped = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert dropped is not None
+    assert dropped.envelope_id == record.envelope_id
+    assert dropped.delivery_status == "delivery_failed"
+    assert dropped.failure_code == "stale_auto_execute_notification"
+    assert dropped.delivery_attempt == 0
+    assert dropped.operator_notes[-1] == (
+        "delivery_skipped failure_code=stale_auto_execute_notification "
+        "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
+    )
+    assert client.calls == []

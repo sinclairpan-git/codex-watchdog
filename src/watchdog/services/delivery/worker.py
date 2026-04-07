@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from watchdog.services.delivery.http_client import DeliveryAttemptResult, OpenClawDeliveryClient
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
+from watchdog.services.policy.rules import DECISION_AUTO_EXECUTE_AND_NOTIFY
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
@@ -20,6 +21,24 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 def _iso_z(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _decision_result(record: DeliveryOutboxRecord) -> str | None:
+    payload = record.envelope_payload
+    raw = payload.get("decision_result")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    correlation_id = str(record.correlation_id or payload.get("correlation_id") or "")
+    if correlation_id.startswith("decision:"):
+        inferred = correlation_id.rsplit(":", 1)[-1].strip()
+        if inferred:
+            return inferred
+    title = str(payload.get("title") or "")
+    if title.startswith("decision "):
+        inferred = title[len("decision ") :].strip()
+        if inferred:
+            return inferred
+    return None
 
 
 class DeliveryWorker:
@@ -209,15 +228,15 @@ class DeliveryWorker:
     ) -> tuple[str, int] | None:
         payload = record.envelope_payload
         envelope_type = payload.get("envelope_type")
-        decision_result = payload.get("decision_result")
+        decision_result = _decision_result(record)
         is_auto_execute_decision = (
             envelope_type == "decision"
-            and decision_result == "auto_execute_and_notify"
+            and decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY
         )
         is_auto_execute_notification = (
             envelope_type == "notification"
             and payload.get("notification_kind") == "decision_result"
-            and decision_result == "auto_execute_and_notify"
+            and decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY
         )
         if not (is_auto_execute_decision or is_auto_execute_notification):
             return None
