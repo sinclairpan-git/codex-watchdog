@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -171,6 +172,41 @@ def test_execute_canonical_decision_is_idempotent_for_same_decision_record(
 
     assert client.handoff_calls == [("repo-a", "context_critical")]
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
+
+
+def test_execute_canonical_decision_is_atomic_under_concurrent_retries(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.actions.executor import execute_canonical_decision
+
+    client = FakeAClient(context_pressure="critical")
+    store = _receipt_store(tmp_path)
+    decision = _decision(action_ref="execute_recovery")
+    barrier = threading.Barrier(3)
+    results: list[object] = []
+
+    def _worker() -> None:
+        barrier.wait()
+        results.append(
+            execute_canonical_decision(
+                decision,
+                settings=_settings(tmp_path),
+                client=client,
+                receipt_store=store,
+            )
+        )
+
+    first = threading.Thread(target=_worker)
+    second = threading.Thread(target=_worker)
+    first.start()
+    second.start()
+    barrier.wait()
+    first.join()
+    second.join()
+
+    assert len(results) == 2
+    assert results[0].model_dump(mode="json") == results[1].model_dump(mode="json")
+    assert client.handoff_calls == [("repo-a", "context_critical")]
 
 
 def test_execute_canonical_decision_rejects_non_executable_decision_result(
