@@ -19,3 +19,5 @@ class Settings(BaseSettings):
     delivery_worker_interval_seconds: float = 5.0
     delivery_initial_backoff_seconds: float = 5.0
     delivery_max_attempts: int = 3
+    ops_blocked_too_long_seconds: float = 900.0
+    ops_approval_pending_too_long_seconds: float = 900.0

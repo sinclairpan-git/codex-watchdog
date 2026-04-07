@@ -111,6 +111,11 @@ class DeliveryOutboxStore:
             self._write(data)
         return record
 
+    def list_records(self) -> list[DeliveryOutboxRecord]:
+        with self._lock:
+            data = self._read()
+        return list(data.delivery_outbox.values())
+
     def list_pending_delivery_records(self, *, session_id: str | None = None) -> list[DeliveryOutboxRecord]:
         with self._lock:
             data = self._read()

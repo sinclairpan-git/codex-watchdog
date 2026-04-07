@@ -6,18 +6,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
 
 from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import events_proxy as events_proxy_routes
+from watchdog.api import metrics as metrics_routes
 from watchdog.api import openclaw_responses as openclaw_response_routes
+from watchdog.api import ops as ops_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
 from watchdog.api import progress as progress_routes
 from watchdog.api import session_spine_actions as session_spine_actions_routes
 from watchdog.api import session_spine_events as session_spine_events_routes
 from watchdog.api import session_spine_queries as session_spine_query_routes
 from watchdog.api import supervision as supervision_routes
-from watchdog.observability.metrics_export import PROM_CONTENT_TYPE, build_watchdog_metrics_text
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.approvals.service import ApprovalResponseStore, CanonicalApprovalStore
 from watchdog.services.delivery.http_client import OpenClawDeliveryClient
@@ -28,6 +29,7 @@ from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
+from watchdog.api.ops import build_ops_summary
 
 
 async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
@@ -124,16 +126,19 @@ def create_app(
     app.include_router(session_spine_query_routes.router, prefix="/api/v1")
     app.include_router(session_spine_actions_routes.router, prefix="/api/v1")
     app.include_router(session_spine_events_routes.router, prefix="/api/v1")
+    app.include_router(ops_routes.router, prefix="/api/v1")
+    app.include_router(metrics_routes.router)
 
     @app.get("/healthz")
-    def healthz() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/metrics")
-    def metrics(request: Request) -> Response:
-        s: Settings = request.app.state.settings
-        body = build_watchdog_metrics_text(Path(s.data_dir) / "audit.jsonl")
-        return Response(content=body, media_type=PROM_CONTENT_TYPE)
+    def healthz() -> dict[str, int | str]:
+        summary = build_ops_summary(
+            data_dir=Path(app.state.settings.data_dir),
+            settings=app.state.settings,
+        )
+        return {
+            "status": summary.status,
+            "active_alerts": summary.active_alerts,
+        }
 
     return app
 

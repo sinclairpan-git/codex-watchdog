@@ -125,6 +125,11 @@ class CanonicalApprovalStore(_JsonModelStore):
             self._write(data)
         return record
 
+    def list_records(self) -> list[CanonicalApprovalRecord]:
+        with self._lock:
+            data = self._read()
+        return [CanonicalApprovalRecord.model_validate(row) for row in data.values()]
+
 
 class ApprovalResponseStore(_JsonModelStore):
     def get(self, idempotency_key: str) -> CanonicalApprovalResponseRecord | None:
@@ -143,6 +148,11 @@ class ApprovalResponseStore(_JsonModelStore):
             data[record.idempotency_key] = record.model_dump(mode="json")
             self._write(data)
         return record
+
+    def list_records(self) -> list[CanonicalApprovalResponseRecord]:
+        with self._lock:
+            data = self._read()
+        return [CanonicalApprovalResponseRecord.model_validate(row) for row in data.values()]
 
 
 def build_response_idempotency_key(
