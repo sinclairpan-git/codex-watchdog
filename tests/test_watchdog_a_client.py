@@ -73,3 +73,22 @@ def test_list_tasks_raises_when_upstream_reports_failure() -> None:
 
         with pytest.raises(RuntimeError):
             api.list_tasks()
+
+
+def test_a_control_agent_client_ignores_proxy_environment() -> None:
+    with patch("watchdog.services.a_client.client.httpx.Client") as client_cls:
+        client = MagicMock()
+        client_cls.return_value.__enter__.return_value = client
+        client.get.return_value.json.return_value = {
+            "success": True,
+            "data": {
+                "tasks": [],
+            },
+        }
+
+        api = AControlAgentClient(_settings())
+
+        api.list_tasks()
+
+        _, kwargs = client_cls.call_args
+        assert kwargs["trust_env"] is False
