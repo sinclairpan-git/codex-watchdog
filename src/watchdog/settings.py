@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     session_spine_freshness_window_seconds: float = 60.0
     resident_orchestrator_interval_seconds: float = 5.0
     progress_summary_interval_seconds: float = 300.0
+    progress_summary_max_age_seconds: float = 600.0
     openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
     openclaw_webhook_token: str = "dev-token-change-me"
     openclaw_webhook_endpoint_state_file: str | None = None

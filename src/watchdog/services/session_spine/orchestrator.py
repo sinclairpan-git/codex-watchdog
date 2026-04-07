@@ -132,6 +132,12 @@ class ResidentOrchestrator:
         *,
         now: datetime,
     ) -> bool:
+        progress_at = _parse_iso(record.progress.last_progress_at)
+        if progress_at is None:
+            return False
+        age_seconds = (now - progress_at.astimezone(UTC)).total_seconds()
+        if age_seconds > max(self._settings.progress_summary_max_age_seconds, 0.0):
+            return False
         fingerprint = progress_summary_fingerprint(record)
         checkpoint = self._state_store.get_progress_checkpoint(record.project_id)
         if checkpoint is not None and checkpoint.progress_fingerprint == fingerprint:

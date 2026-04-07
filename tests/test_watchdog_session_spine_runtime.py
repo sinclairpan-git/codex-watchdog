@@ -366,6 +366,65 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
     assert progress_notifications[-1]["summary"] == "tests are running"
 
 
+def test_background_runtime_skips_stale_progress_summary_even_when_project_progress_changes(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+        progress_summary_max_age_seconds=600.0,
+    )
+    a_client = CyclingResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-06T00:00:00Z",
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "running_tests",
+                "pending_approval": False,
+                "last_summary": "tests are running",
+                "files_touched": ["src/example.py", "tests/test_example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-06T00:01:00Z",
+            },
+        ]
+    )
+    delivery_client = RecordingDeliveryClient()
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app.state.delivery_worker._delivery_client = delivery_client
+
+    with TestClient(app):
+        time.sleep(0.08)
+
+    progress_notifications = [
+        record
+        for record in delivery_client.records
+        if record.get("notification_kind") == "progress_summary"
+    ]
+
+    assert progress_notifications == []
+
+
 def test_background_workers_survive_transient_startup_and_loop_failures(
     tmp_path: Path,
 ) -> None:

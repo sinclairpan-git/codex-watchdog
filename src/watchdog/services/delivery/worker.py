@@ -11,7 +11,10 @@ def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     normalized = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized)
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
 
 
 def _iso_z(value: datetime) -> str:
@@ -97,6 +100,49 @@ class DeliveryWorker:
         )
         return self._store.update_delivery_record(updated)
 
+    def _apply_stale_progress_summary(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        occurred_at: str,
+        age_seconds: int,
+    ) -> DeliveryOutboxRecord:
+        notes = list(record.operator_notes)
+        notes.append(
+            "delivery_skipped "
+            "failure_code=stale_progress_summary "
+            f"occurred_at={occurred_at} age_seconds={age_seconds}"
+        )
+        updated = record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "stale_progress_summary",
+                "next_retry_at": None,
+                "operator_notes": notes,
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
+    def _stale_progress_summary(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        now: datetime,
+    ) -> tuple[str, int] | None:
+        payload = record.envelope_payload
+        if payload.get("envelope_type") != "notification":
+            return None
+        if payload.get("notification_kind") != "progress_summary":
+            return None
+        occurred_at = payload.get("occurred_at") or payload.get("created_at") or record.created_at
+        parsed = _parse_iso(occurred_at)
+        if parsed is None:
+            return None
+        age_seconds = int((now - parsed.astimezone(UTC)).total_seconds())
+        if age_seconds <= max(self._settings.progress_summary_max_age_seconds, 0.0):
+            return None
+        return (occurred_at, age_seconds)
+
     def process_next_ready(
         self,
         *,
@@ -106,6 +152,14 @@ class DeliveryWorker:
         record = self._next_ready_record(now=now, session_id=session_id)
         if record is None:
             return None
+        stale_progress = self._stale_progress_summary(record=record, now=now)
+        if stale_progress is not None:
+            occurred_at, age_seconds = stale_progress
+            return self._apply_stale_progress_summary(
+                record=record,
+                occurred_at=occurred_at,
+                age_seconds=age_seconds,
+            )
         result = self._delivery_client.deliver_record(record)
         if result.delivery_status == "delivered":
             notes = list(record.operator_notes)

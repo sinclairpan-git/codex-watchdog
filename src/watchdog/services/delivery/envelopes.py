@@ -108,6 +108,7 @@ def build_progress_summary_envelope(
         event_id=f"event:{_short_hash(record.project_id + '|progress_summary|' + fingerprint)}",
         severity=_progress_summary_severity(record),
         notification_kind="progress_summary",
+        occurred_at=record.progress.last_progress_at,
         title=f"progress update for {record.project_id}",
         summary=summary,
         reason="; ".join(reason_parts),
@@ -154,6 +155,7 @@ class NotificationEnvelope(EnvelopeBase):
     event_id: str
     severity: str
     notification_kind: str
+    occurred_at: str | None = None
     title: str
     summary: str
     reason: str
@@ -218,6 +220,7 @@ def _build_decision_notification(decision: CanonicalDecisionRecord) -> Notificat
         event_id=f"event:{_short_hash(decision.decision_id + '|decision_result')}",
         severity="critical" if decision.decision_result == DECISION_BLOCK_AND_ALERT else "info",
         notification_kind="decision_result",
+        occurred_at=decision.created_at,
         title=f"decision {decision.decision_result}",
         summary=decision.decision_reason,
         reason=decision.decision_reason,
@@ -285,6 +288,7 @@ def build_envelopes_for_approval_response(
             event_id=f"event:{_short_hash(response.response_id + '|approval_result')}",
             severity="critical" if response.approval_status == "rejected" else "info",
             notification_kind="approval_result",
+            occurred_at=response.created_at,
             title=f"approval {response.approval_status}",
             summary=f"approval {response.approval_status} via {response.response_action}",
             reason=response.note or response.response_action,

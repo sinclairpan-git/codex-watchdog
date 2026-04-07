@@ -7,6 +7,7 @@ from watchdog.services.approvals.service import (
     CanonicalApprovalResponseRecord,
 )
 from watchdog.services.delivery.envelopes import (
+    NotificationEnvelope,
     build_envelopes_for_approval_response,
     build_envelopes_for_decision,
 )
@@ -250,6 +251,7 @@ def _settings(tmp_path: Path) -> Settings:
         data_dir=str(tmp_path),
         delivery_initial_backoff_seconds=5.0,
         delivery_max_attempts=2,
+        progress_summary_max_age_seconds=600.0,
     )
 
 
@@ -440,3 +442,50 @@ def test_delivery_worker_records_retry_note_with_next_retry_at(
         "failure_code=upstream_503 attempts=1 "
         "next_retry_at=2026-04-07T00:00:05Z"
     )
+
+
+def test_delivery_worker_drops_stale_progress_summary_without_calling_downstream(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    stale_progress = NotificationEnvelope(
+        envelope_id="notification-envelope:stale-progress",
+        correlation_id="progress-summary:repo-a:stale",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|stale",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:00:00Z",
+        event_id="event:stale-progress",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="old progress",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    record = store.enqueue_envelopes([stale_progress])[0]
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    dropped = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert dropped is not None
+    assert dropped.envelope_id == record.envelope_id
+    assert dropped.delivery_status == "delivery_failed"
+    assert dropped.failure_code == "stale_progress_summary"
+    assert dropped.delivery_attempt == 0
+    assert dropped.operator_notes[-1] == (
+        "delivery_skipped failure_code=stale_progress_summary "
+        "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
+    )
+    assert client.calls == []
