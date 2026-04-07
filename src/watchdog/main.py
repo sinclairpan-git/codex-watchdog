@@ -187,6 +187,9 @@ def create_app(
     app.state.delivery_outbox_store = DeliveryOutboxStore(
         Path(settings.data_dir) / "delivery_outbox.json"
     )
+    app.state.session_spine_store = SessionSpineStore(
+        Path(settings.data_dir) / "session_spine.json"
+    )
     app.state.openclaw_webhook_endpoint_store = OpenClawWebhookEndpointStore(
         openclaw_webhook_endpoint_state_path(settings)
     )
@@ -198,9 +201,7 @@ def create_app(
         store=app.state.delivery_outbox_store,
         delivery_client=app.state.delivery_client,
         settings=settings,
-    )
-    app.state.session_spine_store = SessionSpineStore(
-        Path(settings.data_dir) / "session_spine.json"
+        session_spine_store=app.state.session_spine_store,
     )
     app.state.session_spine_runtime = SessionSpineRuntime(
         client=app.state.a_client,

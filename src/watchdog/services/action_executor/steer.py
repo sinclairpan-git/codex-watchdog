@@ -28,7 +28,7 @@ def post_steer(
     body: dict[str, Any] = {"message": message, "source": "watchdog", "reason": reason}
     if stuck_level is not None:
         body["stuck_level"] = stuck_level
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=timeout, trust_env=False) as client:
         r = client.post(url, json=body, headers=headers)
         r.raise_for_status()
         try:

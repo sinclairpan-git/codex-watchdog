@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from watchdog.services.actions.executor import execute_canonical_decision
+from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
+from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
+from watchdog.services.actions.executor import (
+    build_watchdog_action_from_decision,
+    execute_canonical_decision,
+)
 from watchdog.services.approvals.service import CanonicalApprovalStore, materialize_canonical_approval
 from watchdog.services.delivery.envelopes import (
     build_envelopes_for_decision,
@@ -18,11 +23,12 @@ from watchdog.services.policy.rules import (
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
 )
+from watchdog.services.session_spine.service import SessionSpineUpstreamError
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.settings import Settings
-from watchdog.storage.action_receipts import ActionReceiptStore
+from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -44,6 +50,13 @@ def _select_action_ref(record: PersistedSessionRecord) -> str | None:
     if fact_codes.intersection({"stuck_no_progress", "repeat_failure"}):
         return "continue_session"
     return None
+
+
+def _decision_facts(decision) -> list[FactRecord]:
+    facts = decision.evidence.get("facts")
+    if not isinstance(facts, list):
+        return []
+    return [FactRecord.model_validate(fact) for fact in facts if isinstance(fact, dict)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +89,33 @@ class ResidentOrchestrator:
         self._delivery_outbox_store = delivery_outbox_store
         self._state_store = state_store
 
+    def _cache_auto_continue_control_link_error(
+        self,
+        decision,
+        exc: SessionSpineUpstreamError,
+    ) -> bool:
+        error = exc.error if isinstance(exc.error, dict) else {}
+        if decision.action_ref != "continue_session":
+            return False
+        if str(error.get("code") or "") != "CONTROL_LINK_ERROR":
+            return False
+        action = build_watchdog_action_from_decision(decision)
+        self._action_receipt_store.put(
+            receipt_key_for_action(action),
+            WatchdogActionResult(
+                action_code=action.action_code,
+                project_id=action.project_id,
+                approval_id=str(action.arguments.get("approval_id") or "") or None,
+                idempotency_key=action.idempotency_key,
+                action_status=ActionStatus.ERROR,
+                effect=Effect.NOOP,
+                reply_code=ReplyCode.CONTROL_LINK_ERROR,
+                message=str(error.get("message") or "resident continue_session failed"),
+                facts=_decision_facts(decision),
+            ),
+        )
+        return True
+
     def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
         return [
@@ -102,13 +142,18 @@ class ResidentOrchestrator:
             )
             decision_result = decision.decision_result
             if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
-                execute_canonical_decision(
-                    decision,
-                    settings=self._settings,
-                    client=self._client,
-                    receipt_store=self._action_receipt_store,
-                )
-                self._delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(decision))
+                try:
+                    execute_canonical_decision(
+                        decision,
+                        settings=self._settings,
+                        client=self._client,
+                        receipt_store=self._action_receipt_store,
+                    )
+                except SessionSpineUpstreamError as exc:
+                    if not self._cache_auto_continue_control_link_error(decision, exc):
+                        raise
+                else:
+                    self._delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(decision))
             elif decision.decision_result == DECISION_REQUIRE_USER_DECISION:
                 materialize_canonical_approval(
                     decision,

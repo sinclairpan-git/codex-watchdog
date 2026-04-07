@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from a_control_agent.services.codex_input import fingerprint_input_text
+
 
 @runtime_checkable
 class CodexClient(Protocol):
@@ -56,6 +58,30 @@ def _extract_output_text(content: Any) -> str:
             if text:
                 parts.append(text)
     return "\n".join(parts).strip()
+
+
+def _extract_input_text(content: Any) -> str:
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "input_text":
+            text = str(item.get("text", "")).strip()
+            if text:
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _is_environment_context_message(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return (
+        normalized.startswith("<environment_context>")
+        and normalized.endswith("</environment_context>")
+    )
 
 
 def _coerce_timestamp(raw: Any) -> str:
@@ -228,6 +254,8 @@ class LocalCodexClient:
         current_status = str(session["status"])
         last_summary = ""
         last_progress_at = str(session["last_progress_at"])
+        last_substantive_user_input_at = ""
+        last_substantive_user_input_fingerprint = ""
 
         try:
             lines = rollout_path.read_text(encoding="utf-8").splitlines()
@@ -247,14 +275,22 @@ class LocalCodexClient:
 
             if event_type == "response_item":
                 item_type = str(payload.get("type") or "")
-                if item_type == "message" and payload.get("role") == "assistant":
-                    text = _extract_output_text(payload.get("content"))
-                    if text:
-                        last_summary = text
-                    phase = str(payload.get("phase") or "")
-                    if phase == "final":
-                        current_phase = "done"
-                        current_status = "waiting_human"
+                if item_type == "message":
+                    if payload.get("role") == "assistant":
+                        text = _extract_output_text(payload.get("content"))
+                        if text:
+                            last_summary = text
+                        phase = str(payload.get("phase") or "")
+                        if phase == "final":
+                            current_phase = "done"
+                            current_status = "waiting_human"
+                    elif payload.get("role") == "user":
+                        text = _extract_input_text(payload.get("content"))
+                        if text and not _is_environment_context_message(text):
+                            last_substantive_user_input_at = _coerce_timestamp(
+                                event.get("timestamp")
+                            ) or last_substantive_user_input_at
+                            last_substantive_user_input_fingerprint = fingerprint_input_text(text)
                 elif item_type == "function_call":
                     name = str(payload.get("name") or "")
                     arguments = _parse_tool_arguments(payload.get("arguments"))
@@ -309,6 +345,12 @@ class LocalCodexClient:
         session["files_touched"] = touched
         session["last_summary"] = last_summary
         session["last_progress_at"] = last_progress_at
+        if last_substantive_user_input_at:
+            session["last_substantive_user_input_at"] = last_substantive_user_input_at
+        if last_substantive_user_input_fingerprint:
+            session["last_substantive_user_input_fingerprint"] = (
+                last_substantive_user_input_fingerprint
+            )
         return session
 
     def list_threads(self) -> list[dict[str, Any]]:

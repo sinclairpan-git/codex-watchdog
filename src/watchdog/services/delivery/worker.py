@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from watchdog.services.delivery.http_client import DeliveryAttemptResult, OpenClawDeliveryClient
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
 
@@ -28,10 +29,12 @@ class DeliveryWorker:
         store: DeliveryOutboxStore,
         delivery_client: OpenClawDeliveryClient,
         settings: Settings,
+        session_spine_store: SessionSpineStore | None = None,
     ) -> None:
         self._store = store
         self._delivery_client = delivery_client
         self._settings = settings
+        self._session_spine_store = session_spine_store
 
     def _next_ready_record(
         self,
@@ -123,6 +126,53 @@ class DeliveryWorker:
         )
         return self._store.update_delivery_record(updated)
 
+    def _apply_stale_auto_execute_notification(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        occurred_at: str,
+        age_seconds: int,
+    ) -> DeliveryOutboxRecord:
+        notes = list(record.operator_notes)
+        notes.append(
+            "delivery_skipped "
+            "failure_code=stale_auto_execute_notification "
+            f"occurred_at={occurred_at} age_seconds={age_seconds}"
+        )
+        updated = record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "stale_auto_execute_notification",
+                "next_retry_at": None,
+                "operator_notes": notes,
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
+    def _apply_local_manual_activity_suppression(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        last_local_manual_activity_at: str,
+        age_seconds: int,
+    ) -> DeliveryOutboxRecord:
+        notes = list(record.operator_notes)
+        notes.append(
+            "delivery_skipped "
+            "failure_code=suppressed_local_manual_activity "
+            f"last_local_manual_activity_at={last_local_manual_activity_at} "
+            f"age_seconds={age_seconds}"
+        )
+        updated = record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "suppressed_local_manual_activity",
+                "next_retry_at": None,
+                "operator_notes": notes,
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
     def _stale_progress_summary(
         self,
         *,
@@ -143,6 +193,73 @@ class DeliveryWorker:
             return None
         return (occurred_at, age_seconds)
 
+    def _stale_auto_execute_notification(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        now: datetime,
+    ) -> tuple[str, int] | None:
+        payload = record.envelope_payload
+        envelope_type = payload.get("envelope_type")
+        decision_result = payload.get("decision_result")
+        is_auto_execute_decision = (
+            envelope_type == "decision"
+            and decision_result == "auto_execute_and_notify"
+        )
+        is_auto_execute_notification = (
+            envelope_type == "notification"
+            and payload.get("notification_kind") == "decision_result"
+            and decision_result == "auto_execute_and_notify"
+        )
+        if not (is_auto_execute_decision or is_auto_execute_notification):
+            return None
+        occurred_at = payload.get("occurred_at") or payload.get("created_at") or record.created_at
+        parsed = _parse_iso(occurred_at)
+        if parsed is None:
+            return None
+        age_seconds = int((now - parsed.astimezone(UTC)).total_seconds())
+        if age_seconds <= max(self._settings.auto_execute_notification_max_age_seconds, 0.0):
+            return None
+        return (occurred_at, age_seconds)
+
+    def _suppressed_for_local_manual_activity(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        now: datetime,
+    ) -> tuple[str, int] | None:
+        if self._session_spine_store is None:
+            return None
+        payload = record.envelope_payload
+        if payload.get("envelope_type") != "notification":
+            return None
+        severity = str(payload.get("severity") or "")
+        if severity == "critical":
+            return None
+        notification_kind = str(payload.get("notification_kind") or "")
+        if notification_kind not in {"progress_summary", "decision_result", "approval_result"}:
+            return None
+        try:
+            session_record = self._session_spine_store.get(record.project_id)
+        except Exception:
+            return None
+        if session_record is None:
+            return None
+        last_local_manual_activity_at = getattr(
+            session_record,
+            "last_local_manual_activity_at",
+            None,
+        )
+        parsed = _parse_iso(last_local_manual_activity_at)
+        if parsed is None:
+            return None
+        age_seconds = int((now - parsed.astimezone(UTC)).total_seconds())
+        if age_seconds < 0:
+            return None
+        if age_seconds > max(self._settings.local_manual_activity_quiet_window_seconds, 0.0):
+            return None
+        return (str(last_local_manual_activity_at), age_seconds)
+
     def process_next_ready(
         self,
         *,
@@ -158,6 +275,22 @@ class DeliveryWorker:
             return self._apply_stale_progress_summary(
                 record=record,
                 occurred_at=occurred_at,
+                age_seconds=age_seconds,
+            )
+        stale_auto_execute = self._stale_auto_execute_notification(record=record, now=now)
+        if stale_auto_execute is not None:
+            occurred_at, age_seconds = stale_auto_execute
+            return self._apply_stale_auto_execute_notification(
+                record=record,
+                occurred_at=occurred_at,
+                age_seconds=age_seconds,
+            )
+        suppressed = self._suppressed_for_local_manual_activity(record=record, now=now)
+        if suppressed is not None:
+            last_local_manual_activity_at, age_seconds = suppressed
+            return self._apply_local_manual_activity_suppression(
+                record=record,
+                last_local_manual_activity_at=last_local_manual_activity_at,
                 age_seconds=age_seconds,
             )
         result = self._delivery_client.deliver_record(record)

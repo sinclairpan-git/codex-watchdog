@@ -254,12 +254,14 @@ async def steer_task(
             {"code": "NOT_FOUND", "message": f"unknown project_id: {project_id}"},
         )
     thread_id = str(current.get("thread_id") or "")
+    service_input_delivered = False
     if bridge is not None and thread_id:
         try:
             if bridge.active_turn_id(thread_id):
                 await bridge.steer_turn(thread_id, message=message)
             else:
                 await bridge.start_turn(thread_id, prompt=message)
+            service_input_delivered = True
         except Exception as exc:
             append_jsonl(
                 Path(settings.data_dir) / "audit.jsonl",
@@ -291,6 +293,7 @@ async def steer_task(
         source=str(source),
         reason=str(reason),
         stuck_level=stuck_level,
+        service_input_delivered=service_input_delivered,
     )
     return ok(
         request.headers.get("x-request-id"),

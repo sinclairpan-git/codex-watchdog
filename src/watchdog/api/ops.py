@@ -17,6 +17,12 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 
 router = APIRouter(prefix="/watchdog/ops", tags=["watchdog"])
 
+_NON_ALERTING_DELIVERY_FAILURE_CODES = {
+    "suppressed_local_manual_activity",
+    "stale_progress_summary",
+    "stale_auto_execute_notification",
+}
+
 
 class OpsAlert(BaseModel):
     alert_code: str
@@ -47,6 +53,15 @@ def _is_older_than(value: str | None, *, now: datetime, threshold_seconds: float
     if parsed is None:
         return False
     return (now - parsed).total_seconds() >= threshold_seconds
+
+
+def _is_recent_enough(value: str | None, *, now: datetime, threshold_seconds: float) -> bool:
+    if threshold_seconds <= 0:
+        return True
+    parsed = _parse_iso8601(value)
+    if parsed is None:
+        return True
+    return (now - parsed).total_seconds() < threshold_seconds
 
 
 def build_ops_summary(
@@ -82,7 +97,17 @@ def build_ops_summary(
             threshold_seconds=settings.ops_approval_pending_too_long_seconds,
         )
     )
-    delivery_failed = sum(1 for record in deliveries if record.delivery_status == "delivery_failed")
+    delivery_failed = sum(
+        1
+        for record in deliveries
+        if record.delivery_status == "delivery_failed"
+        and str(record.failure_code or "") not in _NON_ALERTING_DELIVERY_FAILURE_CODES
+        and _is_recent_enough(
+            record.created_at,
+            now=now,
+            threshold_seconds=settings.ops_delivery_failed_alert_window_seconds,
+        )
+    )
     mapping_incomplete = sum(
         1 for record in decisions if "mapping_incomplete" in record.uncertainty_reasons
     )
@@ -90,7 +115,7 @@ def build_ops_summary(
         1
         for _, result in receipt_items
         if result.action_code == ActionCode.EXECUTE_RECOVERY
-        and result.action_status != ActionStatus.COMPLETED
+        and result.action_status not in {ActionStatus.COMPLETED, ActionStatus.NOOP}
     )
 
     alerts: list[OpsAlert] = []

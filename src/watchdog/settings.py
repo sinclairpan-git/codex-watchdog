@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     resident_orchestrator_interval_seconds: float = 5.0
     progress_summary_interval_seconds: float = 300.0
     progress_summary_max_age_seconds: float = 600.0
+    auto_execute_notification_max_age_seconds: float = 600.0
+    local_manual_activity_quiet_window_seconds: float = 600.0
     openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
     openclaw_webhook_token: str = "dev-token-change-me"
     openclaw_webhook_endpoint_state_file: str | None = None
@@ -25,3 +27,4 @@ class Settings(BaseSettings):
     delivery_max_attempts: int = 3
     ops_blocked_too_long_seconds: float = 900.0
     ops_approval_pending_too_long_seconds: float = 900.0
+    ops_delivery_failed_alert_window_seconds: float = 900.0

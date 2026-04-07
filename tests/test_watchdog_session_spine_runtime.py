@@ -4,7 +4,9 @@ import asyncio
 import json
 import time
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -264,6 +266,44 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
     assert refreshed_snapshot["sessions"]["repo-a"]["progress"]["activity_phase"] == "approval"
 
 
+def test_background_runtime_persists_last_local_manual_activity_from_a_side_task(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    app = create_app(
+        settings,
+        a_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+                "last_local_manual_activity_at": "2026-04-07T00:05:00Z",
+            }
+        ),
+        start_background_workers=False,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    snapshot = _read_store(tmp_path)
+
+    assert snapshot["sessions"]["repo-a"]["last_local_manual_activity_at"] == (
+        "2026-04-07T00:05:00Z"
+    )
+
+
 def test_background_runtime_orchestrates_context_critical_session_into_auto_recovery(
     tmp_path: Path,
 ) -> None:
@@ -301,10 +341,68 @@ def test_background_runtime_orchestrates_context_critical_session_into_auto_reco
 
     assert a_client.handoff_calls == [("repo-a", "context_critical")]
     assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
-    assert any(
+    assert not any(
         record.get("notification_kind") == "decision_result"
         for record in delivery_client.records
     )
+
+
+def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decision(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "handoff",
+            "pending_approval": False,
+            "last_summary": "waiting for bridge recovery",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch(
+        "watchdog.services.session_spine.actions.post_steer",
+        side_effect=RuntimeError("bridge unavailable"),
+    ) as steer_mock:
+        first = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+        second = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in first] == ["continue_session"]
+    assert [outcome.decision_result for outcome in first] == ["auto_execute_and_notify"]
+    assert [outcome.action_ref for outcome in second] == ["continue_session"]
+    assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
+    assert steer_mock.call_count == 1
+
+    receipts = [result for _, result in app.state.action_receipt_store.list_items()]
+    assert len(receipts) == 1
+    assert receipts[0].action_code == "continue_session"
+    assert receipts[0].action_status == "error"
+    assert receipts[0].effect == "noop"
+    assert receipts[0].reply_code == "control_link_error"
+    assert receipts[0].message == "steer 调用失败：无法连接 A-Control-Agent"
+    assert [fact.fact_code for fact in receipts[0].facts] == [
+        "stuck_no_progress",
+        "recovery_available",
+    ]
+    assert app.state.delivery_outbox_store.list_records() == []
 
 
 def test_background_runtime_pushes_progress_summary_when_project_progress_changes(

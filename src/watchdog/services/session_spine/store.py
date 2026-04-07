@@ -32,6 +32,7 @@ class PersistedSessionRecord(BaseModel):
     session_seq: int
     fact_snapshot_version: str
     last_refreshed_at: str
+    last_local_manual_activity_at: str | None = None
     session: SessionProjection
     progress: TaskProgressView
     facts: list[FactRecord] = Field(default_factory=list)
@@ -93,6 +94,7 @@ class SessionSpineStore:
         facts: list[FactRecord],
         approval_queue: list[ApprovalProjection],
         last_refreshed_at: str | None = None,
+        last_local_manual_activity_at: str | None = None,
     ) -> PersistedSessionRecord:
         facts_payload = [fact.model_dump(mode="json") for fact in facts]
         snapshot_payload = {
@@ -131,6 +133,7 @@ class SessionSpineStore:
                 session_seq=session_seq,
                 fact_snapshot_version=fact_snapshot_version,
                 last_refreshed_at=refreshed_at,
+                last_local_manual_activity_at=last_local_manual_activity_at,
                 session=session,
                 progress=progress,
                 facts=facts,
