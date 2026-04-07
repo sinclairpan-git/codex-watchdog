@@ -116,6 +116,17 @@ class SessionProjection(SessionSpineModel):
     available_intents: list[str] = Field(default_factory=list)
 
 
+class SnapshotReadSemantics(SessionSpineModel):
+    read_source: str
+    is_persisted: bool
+    is_fresh: bool
+    is_stale: bool
+    last_refreshed_at: str | None = None
+    snapshot_age_seconds: float | None = None
+    session_seq: int | None = None
+    fact_snapshot_version: str | None = None
+
+
 class ActionReceiptQuery(SessionSpineModel):
     action_code: ActionCode
     project_id: str
@@ -133,6 +144,7 @@ class ReplyModel(SessionSpineModel):
     progress: TaskProgressView | None = None
     workspace_activity: WorkspaceActivityView | None = None
     action_result: WatchdogActionResult | None = None
+    snapshot: SnapshotReadSemantics | None = None
     approvals: list[ApprovalProjection] = Field(default_factory=list)
     events: list[SessionEvent] = Field(default_factory=list)
     facts: list[FactRecord] = Field(default_factory=list)

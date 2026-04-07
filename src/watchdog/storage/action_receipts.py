@@ -64,3 +64,12 @@ class ActionReceiptStore:
             data[key] = result.model_dump(mode="json")
             self._write(data)
         return result
+
+    def list_items(self) -> list[tuple[str, WatchdogActionResult]]:
+        with self._lock:
+            data = self._read()
+        return [
+            (key, WatchdogActionResult.model_validate(row))
+            for key, row in data.items()
+            if isinstance(row, dict)
+        ]
