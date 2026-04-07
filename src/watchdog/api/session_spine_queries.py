@@ -22,6 +22,7 @@ from watchdog.services.session_spine.replies import (
 )
 from watchdog.services.session_spine.events import list_session_events as list_projected_session_events
 from watchdog.services.session_spine.service import (
+    DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
     SessionSpineUpstreamError,
     build_approval_inbox_bundle,
     build_session_directory_bundle,
@@ -45,6 +46,16 @@ def get_receipt_store(request: Request) -> ActionReceiptStore:
 
 def get_session_spine_store(request: Request) -> SessionSpineStore:
     return request.app.state.session_spine_store
+
+
+def _get_session_spine_freshness_window_seconds(request: Request) -> float:
+    return float(
+        getattr(
+            request.app.state.settings,
+            "session_spine_freshness_window_seconds",
+            DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
+        )
+    )
 
 
 def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuery | None:
@@ -117,11 +128,13 @@ def get_session_by_native_thread(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
         bundle = build_session_read_bundle_by_native_thread(
             client,
             native_thread_id,
             store=store,
+            freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
@@ -150,8 +163,14 @@ def get_session(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
-        bundle = build_session_read_bundle(client, project_id, store=store)
+        bundle = build_session_read_bundle(
+            client,
+            project_id,
+            store=store,
+            freshness_window_seconds=freshness_window_seconds,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_session_reply(bundle).model_dump(mode="json"))
@@ -173,8 +192,14 @@ def get_progress(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
-        bundle = build_session_read_bundle(client, project_id, store=store)
+        bundle = build_session_read_bundle(
+            client,
+            project_id,
+            store=store,
+            freshness_window_seconds=freshness_window_seconds,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_progress_reply(bundle).model_dump(mode="json"))
@@ -197,8 +222,14 @@ def get_session_facts(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
-        bundle = build_session_read_bundle(client, project_id, store=store)
+        bundle = build_session_read_bundle(
+            client,
+            project_id,
+            store=store,
+            freshness_window_seconds=freshness_window_seconds,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_session_facts_reply(bundle).model_dump(mode="json"))
@@ -248,8 +279,14 @@ def get_pending_approvals(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
-        bundle = build_session_read_bundle(client, project_id, store=store)
+        bundle = build_session_read_bundle(
+            client,
+            project_id,
+            store=store,
+            freshness_window_seconds=freshness_window_seconds,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_approval_queue_reply(bundle).model_dump(mode="json"))
@@ -293,8 +330,14 @@ def get_stuck_explanation(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
-        bundle = build_session_read_bundle(client, project_id, store=store)
+        bundle = build_session_read_bundle(
+            client,
+            project_id,
+            store=store,
+            freshness_window_seconds=freshness_window_seconds,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_stuck_explanation_reply(bundle).model_dump(mode="json"))
@@ -316,8 +359,14 @@ def get_blocker_explanation(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
     try:
-        bundle = build_session_read_bundle(client, project_id, store=store)
+        bundle = build_session_read_bundle(
+            client,
+            project_id,
+            store=store,
+            freshness_window_seconds=freshness_window_seconds,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_blocker_explanation_reply(bundle).model_dump(mode="json"))

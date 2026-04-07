@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -9,6 +10,7 @@ from watchdog.contracts.session_spine.models import (
     ApprovalProjection,
     FactRecord,
     SessionProjection,
+    SnapshotReadSemantics,
     TaskProgressView,
     WorkspaceActivityView,
 )
@@ -32,6 +34,9 @@ CONTROL_LINK_ERROR = {
     "code": "CONTROL_LINK_ERROR",
     "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
 }
+PERSISTED_SPINE_READ_SOURCE = "persisted_spine"
+LIVE_QUERY_FALLBACK_READ_SOURCE = "live_query_fallback"
+DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS = 60.0
 
 
 class SessionSpineUpstreamError(RuntimeError):
@@ -49,6 +54,7 @@ class SessionReadBundle:
     session: SessionProjection
     progress: TaskProgressView
     approval_queue: list[ApprovalProjection]
+    snapshot: SnapshotReadSemantics | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +79,60 @@ class WorkspaceActivityReadBundle:
     facts: list[FactRecord]
     session: SessionProjection
     workspace_activity: WorkspaceActivityView
+
+
+def _parse_iso8601(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_snapshot_read_semantics_from_persisted_record(
+    record: PersistedSessionRecord,
+    *,
+    freshness_window_seconds: float,
+) -> SnapshotReadSemantics:
+    last_refreshed = _parse_iso8601(record.last_refreshed_at)
+    snapshot_age_seconds: float | None = None
+    if last_refreshed is not None:
+        snapshot_age_seconds = max(
+            0.0,
+            (datetime.now(timezone.utc) - last_refreshed).total_seconds(),
+        )
+    is_fresh = (
+        snapshot_age_seconds is not None
+        and snapshot_age_seconds <= max(freshness_window_seconds, 0.0)
+    )
+    return SnapshotReadSemantics(
+        read_source=PERSISTED_SPINE_READ_SOURCE,
+        is_persisted=True,
+        is_fresh=is_fresh,
+        is_stale=not is_fresh,
+        last_refreshed_at=record.last_refreshed_at,
+        snapshot_age_seconds=snapshot_age_seconds,
+        session_seq=record.session_seq,
+        fact_snapshot_version=record.fact_snapshot_version,
+    )
+
+
+def _build_snapshot_read_semantics_for_live_query() -> SnapshotReadSemantics:
+    return SnapshotReadSemantics(
+        read_source=LIVE_QUERY_FALLBACK_READ_SOURCE,
+        is_persisted=False,
+        is_fresh=True,
+        is_stale=False,
+    )
 
 
 def _load_task_or_raise(
@@ -239,11 +299,14 @@ def _build_session_read_bundle(
             native_thread_id=native_thread_id,
             approvals=approvals,
         ),
+        snapshot=None,
     )
 
 
 def _build_session_read_bundle_from_persisted_record(
     record: PersistedSessionRecord,
+    *,
+    freshness_window_seconds: float,
 ) -> SessionReadBundle:
     return SessionReadBundle(
         project_id=record.project_id,
@@ -253,6 +316,10 @@ def _build_session_read_bundle_from_persisted_record(
         session=record.session,
         progress=record.progress,
         approval_queue=list(record.approval_queue),
+        snapshot=_build_snapshot_read_semantics_from_persisted_record(
+            record,
+            freshness_window_seconds=freshness_window_seconds,
+        ),
     )
 
 
@@ -261,17 +328,31 @@ def build_session_read_bundle(
     project_id: str,
     *,
     store: SessionSpineStore | None = None,
+    freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
     if store is not None:
         record = store.get(project_id)
         if record is not None:
-            return _build_session_read_bundle_from_persisted_record(record)
+            return _build_session_read_bundle_from_persisted_record(
+                record,
+                freshness_window_seconds=freshness_window_seconds,
+            )
     task = _load_task_or_raise(client, project_id)
     approvals = _load_approvals_or_raise(client, project_id)
-    return _build_session_read_bundle(
+    bundle = _build_session_read_bundle(
         project_id=project_id,
         task=task,
         approvals=approvals,
+    )
+    return SessionReadBundle(
+        project_id=bundle.project_id,
+        task=bundle.task,
+        approvals=bundle.approvals,
+        facts=bundle.facts,
+        session=bundle.session,
+        progress=bundle.progress,
+        approval_queue=bundle.approval_queue,
+        snapshot=_build_snapshot_read_semantics_for_live_query(),
     )
 
 
@@ -280,11 +361,15 @@ def build_session_read_bundle_by_native_thread(
     native_thread_id: str,
     *,
     store: SessionSpineStore | None = None,
+    freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
     if store is not None:
         record = store.get_by_native_thread(native_thread_id)
         if record is not None:
-            return _build_session_read_bundle_from_persisted_record(record)
+            return _build_session_read_bundle_from_persisted_record(
+                record,
+                freshness_window_seconds=freshness_window_seconds,
+            )
     task = _load_task_by_native_thread_or_raise(client, native_thread_id)
     project_id = str(task.get("project_id") or "")
     if not project_id:
@@ -292,10 +377,20 @@ def build_session_read_bundle_by_native_thread(
             {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
         )
     approvals = _load_approvals_or_raise(client, project_id)
-    return _build_session_read_bundle(
+    bundle = _build_session_read_bundle(
         project_id=project_id,
         task=task,
         approvals=approvals,
+    )
+    return SessionReadBundle(
+        project_id=bundle.project_id,
+        task=bundle.task,
+        approvals=bundle.approvals,
+        facts=bundle.facts,
+        session=bundle.session,
+        progress=bundle.progress,
+        approval_queue=bundle.approval_queue,
+        snapshot=_build_snapshot_read_semantics_for_live_query(),
     )
 
 

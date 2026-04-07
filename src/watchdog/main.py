@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import uvicorn
@@ -22,6 +23,16 @@ from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
 
+async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
+    interval_seconds = max(
+        float(app.state.settings.session_spine_refresh_interval_seconds),
+        0.01,
+    )
+    while True:
+        await asyncio.sleep(interval_seconds)
+        app.state.session_spine_runtime.refresh_all()
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -32,10 +43,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        session_spine_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
             app.state.session_spine_runtime.refresh_all()
+            session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
             supervision_routes.run_background_supervision(app.state.settings, app.state.a_client)
-        yield
+        try:
+            yield
+        finally:
+            if session_spine_loop_task is not None:
+                session_spine_loop_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await session_spine_loop_task
 
     app = FastAPI(title="Watchdog", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings

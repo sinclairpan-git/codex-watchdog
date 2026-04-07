@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -44,6 +45,18 @@ class FakeResidentAClient:
         if project_id:
             rows = [row for row in rows if row.get("project_id") == project_id]
         return rows
+
+
+class CyclingResidentAClient(FakeResidentAClient):
+    def __init__(self, *, tasks: list[dict[str, object]]) -> None:
+        super().__init__(task=tasks[0])
+        self._tasks = [dict(task) for task in tasks]
+        self._calls = 0
+
+    def list_tasks(self) -> list[dict[str, object]]:
+        idx = min(self._calls, len(self._tasks) - 1)
+        self._calls += 1
+        return [dict(self._tasks[idx])]
 
 
 def _store_path(root: Path) -> Path:
@@ -94,3 +107,58 @@ def test_background_runtime_persists_session_spine_and_keeps_fact_snapshot_versi
 
     second_snapshot = _read_store(tmp_path)
     assert second_snapshot["sessions"]["repo-a"]["fact_snapshot_version"] == first_version
+
+
+def test_background_runtime_refreshes_session_spine_periodically_and_advances_session_seq(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+    )
+    a_client = CyclingResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:01:00Z",
+            },
+        ]
+    )
+
+    with TestClient(create_app(settings, a_client=a_client, start_background_workers=True)):
+        first_snapshot = _read_store(tmp_path)
+        assert first_snapshot["sessions"]["repo-a"]["session_seq"] == 1
+
+        time.sleep(0.05)
+
+        refreshed_snapshot = _read_store(tmp_path)
+
+    assert refreshed_snapshot["sessions"]["repo-a"]["session_seq"] == 2
+    assert refreshed_snapshot["sessions"]["repo-a"]["session"]["session_state"] == "awaiting_approval"
+    assert refreshed_snapshot["sessions"]["repo-a"]["progress"]["activity_phase"] == "approval"

@@ -12,3 +12,5 @@ class Settings(BaseSettings):
     http_timeout_s: float = 3.0
     data_dir: str = ".data/watchdog"
     recover_auto_resume: bool = False
+    session_spine_refresh_interval_seconds: float = 30.0
+    session_spine_freshness_window_seconds: float = 60.0

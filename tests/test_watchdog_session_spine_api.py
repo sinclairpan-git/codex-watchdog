@@ -350,6 +350,35 @@ def test_session_route_reads_seeded_persisted_spine_on_cold_start(tmp_path) -> N
     assert a_client.list_approvals_calls == []
 
 
+def test_session_route_exposes_persisted_snapshot_freshness_semantics(tmp_path) -> None:
+    _seed_persisted_session_spine(
+        tmp_path,
+        session_seq=7,
+        fact_snapshot_version="fact-v7",
+        last_refreshed_at="2000-01-01T00:00:00Z",
+    )
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["snapshot"]["read_source"] == "persisted_spine"
+    assert data["snapshot"]["is_persisted"] is True
+    assert data["snapshot"]["is_fresh"] is False
+    assert data["snapshot"]["is_stale"] is True
+    assert data["snapshot"]["session_seq"] == 7
+    assert data["snapshot"]["fact_snapshot_version"] == "fact-v7"
+    assert data["snapshot"]["last_refreshed_at"] == "2000-01-01T00:00:00Z"
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
 def test_session_spine_facts_route_returns_stable_truth_source_without_touching_explanations(
     tmp_path,
 ) -> None:
