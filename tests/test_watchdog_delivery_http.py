@@ -123,6 +123,30 @@ def test_http_delivery_treats_incomplete_2xx_protocol_as_retryable_failure(tmp_p
     assert result.failure_code == "protocol_incomplete"
 
 
+def test_http_delivery_requires_received_at_for_success(tmp_path: Path) -> None:
+    envelope = build_envelopes_for_decision(_decision())[0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "envelope_id": envelope.envelope_id,
+                "receipt_id": "rcpt_001",
+            },
+        )
+
+    client = OpenClawDeliveryClient(
+        settings=_settings(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.deliver_envelope(envelope)
+
+    assert result.delivery_status == "retryable_failure"
+    assert result.failure_code == "protocol_incomplete"
+
+
 def test_http_delivery_treats_retryable_transport_failures_as_retryable(tmp_path: Path) -> None:
     envelope = build_envelopes_for_decision(_decision())[0]
 

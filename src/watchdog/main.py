@@ -219,13 +219,17 @@ def create_app(
 app = create_app()
 
 
+def create_runtime_app() -> FastAPI:
+    return create_app(start_background_workers=True)
+
+
 def main() -> None:
     s = Settings()
     uvicorn.run(
-        "watchdog.main:app",
+        "watchdog.main:create_runtime_app",
         host=s.host,
         port=s.port,
-        factory=False,
+        factory=True,
     )
 
 

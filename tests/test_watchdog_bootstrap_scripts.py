@@ -10,7 +10,9 @@ def test_watchdog_launchd_scripts_and_template_are_checked_in() -> None:
     plist_template = root / "config" / "examples" / "com.openclaw.watchdog.plist"
 
     assert start_script.exists()
-    assert "uv run uvicorn watchdog.main:app" in start_script.read_text(encoding="utf-8")
+    start_contents = start_script.read_text(encoding="utf-8")
+    assert "uv run uvicorn watchdog.main:create_runtime_app" in start_contents
+    assert "--factory" in start_contents
 
     install_contents = install_script.read_text(encoding="utf-8")
     assert install_script.exists()

@@ -61,13 +61,15 @@ class OpenClawDeliveryClient:
             and body.get("envelope_id") == envelope_id
             and isinstance(body.get("receipt_id"), str)
             and body.get("receipt_id")
+            and isinstance(body.get("received_at"), str)
+            and body.get("received_at")
         ):
             return DeliveryAttemptResult(
                 envelope_id=envelope_id,
                 delivery_status="delivered",
                 accepted=True,
                 receipt_id=str(body["receipt_id"]),
-                received_at=str(body.get("received_at") or ""),
+                received_at=str(body["received_at"]),
                 status_code=response.status_code,
             )
         return DeliveryAttemptResult(
