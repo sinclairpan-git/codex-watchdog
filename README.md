@@ -48,7 +48,7 @@ python -m uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 python scripts/export_openapi.py
 ```
 
-示例脚本：`examples/openclaw_watchdog_client.py`。它提供 `WatchdogTemplateClient`，面向 OpenClaw / 外部机器人封装最小 HTTP 路由模板；本仓库不包含飞书或 OpenClaw runtime，只提供可复用 stable route 调用层。需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`，可选 `WATCHDOG_DEFAULT_PROJECT_ID` 与 `WATCHDOG_OPERATOR`。
+示例脚本：`examples/openclaw_watchdog_client.py` 与 `examples/openclaw_webhook_runtime.py`。前者提供 `WatchdogTemplateClient`，封装 OpenClaw / 外部机器人访问 Watchdog 的最小 stable route 调用层；后者提供最小 reference runtime，演示宿主如何接收 Watchdog webhook、返回 receipt，并把结构化用户响应回传给 Watchdog。仓库仍不包含飞书插件或生产级 OpenClaw runtime。需设置 `WATCHDOG_BASE_URL`、`WATCHDOG_API_TOKEN`，可选 `WATCHDOG_DEFAULT_PROJECT_ID` 与 `WATCHDOG_OPERATOR`。
 
 OpenClaw 最小模板与 stable route 的对应关系：
 
@@ -59,7 +59,7 @@ OpenClaw 最小模板与 stable route 的对应关系：
 | 继续推进 | `continue_session(project_id, operator, idempotency_key)` | `POST /api/v1/watchdog/sessions/{project_id}/actions/continue` |
 | 查询审批 inbox | `list_approval_inbox(project_id?)` | `GET /api/v1/watchdog/approval-inbox` |
 | 审批决策 | `approve_approval(approval_id, operator, idempotency_key, note)` / `reject_approval(approval_id, operator, idempotency_key, note)` | `POST /api/v1/watchdog/approvals/{approval_id}/approve|reject` |
-| 审批响应回流 | 宿主回传 `(envelope_id, response_action, client_request_id)` | `POST /api/v1/watchdog/openclaw/responses` |
+| 审批响应回流 | 宿主回传 `envelope_id + envelope_type + approval_id + decision_id + response_action + response_token + user_ref + channel_ref + client_request_id` | `POST /api/v1/watchdog/openclaw/responses` |
 
 `project_id` 路由策略：
 
@@ -67,6 +67,14 @@ OpenClaw 最小模板与 stable route 的对应关系：
 - 未显式传入时，模板会回退到 `WATCHDOG_DEFAULT_PROJECT_ID`。
 - 两者都没有时，应先调用 `GET /api/v1/watchdog/sessions` 或 `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}` 完成稳定会话解析。
 - 所有 write action 都要求显式提供非空 `idempotency_key`，以匹配 stable action / receipt 语义。
+
+028 冻结后的 OpenClaw webhook / response contract 要点：
+
+- Watchdog 主动投递入口固定为 `POST /openclaw/v1/watchdog/envelopes`。
+- webhook 请求头至少包含 `Authorization`、`X-Watchdog-Delivery-Id`、`X-Watchdog-Timestamp`、`X-Watchdog-Signature`。
+- 宿主成功 receipt 至少返回 `accepted=true`、`envelope_id`、`receipt_id`、`received_at`；缺任一字段的 `2xx` 仍视为 retryable failure。
+- 宿主回传审批响应时，必须走 `POST /api/v1/watchdog/openclaw/responses`，并带齐冻结的结构化 response contract。
+- reference runtime 只做 envelope 消费、展示映射、结构化回传；不做策略、不做风险分类、不维护第二套内核状态。
 
 010-026 收口后的 OpenClaw 最小稳定接口面：
 

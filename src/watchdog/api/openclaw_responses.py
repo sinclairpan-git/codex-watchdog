@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import ValidationError
 
+from watchdog.api.openclaw_callbacks import OpenClawResponseRequest
 from watchdog.api.deps import require_token
 from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
@@ -43,6 +45,17 @@ def get_delivery_outbox_store(request: Request) -> DeliveryOutboxStore:
     return request.app.state.delivery_outbox_store
 
 
+def _validation_message(exc: ValidationError) -> str:
+    fields = [
+        ".".join(str(part) for part in item["loc"])
+        for item in exc.errors()
+        if item.get("loc")
+    ]
+    if not fields:
+        return "invalid openclaw response contract"
+    return f"missing or invalid fields: {', '.join(fields)}"
+
+
 @router.post(
     "/openclaw/responses",
     summary="Record canonical openclaw approval responses",
@@ -63,26 +76,65 @@ def post_openclaw_response(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
-    envelope_id = str(body.get("envelope_id") or "").strip()
-    response_action = str(body.get("response_action") or "").strip()
-    client_request_id = str(body.get("client_request_id") or "").strip()
-    operator = str(body.get("operator") or "openclaw").strip() or "openclaw"
-    note = str(body.get("note") or "")
-    if not envelope_id or not response_action or not client_request_id:
+    try:
+        contract = OpenClawResponseRequest.model_validate(body)
+    except ValidationError as exc:
         return err(
             rid,
             {
                 "code": "INVALID_ARGUMENT",
-                "message": "envelope_id, response_action, and client_request_id are required",
+                "message": _validation_message(exc),
             },
         )
+    if contract.envelope_type != "approval":
+        return err(
+            rid,
+            {
+                "code": "INVALID_ARGUMENT",
+                "message": "envelope_type must be approval",
+            },
+        )
+    approval = approval_store.get(contract.envelope_id)
+    if approval is None:
+        return err(
+            rid,
+            {
+                "code": "NOT_FOUND",
+                "message": f"unknown approval envelope: {contract.envelope_id}",
+            },
+        )
+    if contract.approval_id != approval.approval_id:
+        return err(
+            rid,
+            {
+                "code": "INVALID_ARGUMENT",
+                "message": "approval_id does not match envelope_id",
+            },
+        )
+    if contract.decision_id != approval.decision.decision_id:
+        return err(
+            rid,
+            {
+                "code": "INVALID_ARGUMENT",
+                "message": "decision_id does not match envelope_id",
+            },
+        )
+    if contract.response_token != approval.approval_token:
+        return err(
+            rid,
+            {
+                "code": "INVALID_ARGUMENT",
+                "message": "response_token does not match envelope_id",
+            },
+        )
+    operator = contract.operator.strip() or "openclaw"
     try:
         result = respond_to_canonical_approval(
-            envelope_id=envelope_id,
-            response_action=response_action,
-            client_request_id=client_request_id,
+            envelope_id=contract.envelope_id,
+            response_action=contract.response_action,
+            client_request_id=contract.client_request_id,
             operator=operator,
-            note=note,
+            note=contract.note,
             approval_store=approval_store,
             response_store=response_store,
             settings=settings,

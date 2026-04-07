@@ -278,7 +278,13 @@ def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: 
         headers = {"Authorization": f"Bearer {settings.api_token}"}
         body = {
             "envelope_id": approval.envelope_id,
+            "envelope_type": "approval",
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
             "response_action": "approve",
+            "response_token": approval.approval_token,
+            "user_ref": "user:carol",
+            "channel_ref": "feishu:chat:approval-room",
             "client_request_id": "req-003",
             "operator": "carol",
             "note": "ship it",

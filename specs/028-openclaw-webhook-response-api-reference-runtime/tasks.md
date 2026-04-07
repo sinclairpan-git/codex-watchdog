@@ -5,7 +5,7 @@
 ## Task 28.1 冻结 OpenClaw webhook / response contract
 
 - **任务编号**：T281
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：把 OpenClaw webhook、receipt 与 response API 收敛成 stable contract。
 - **涉及文件**：
   - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
@@ -17,7 +17,7 @@
 ## Task 28.2 新增 webhook / response API surface
 
 - **任务编号**：T282
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：新增 Watchdog 对 OpenClaw 的 webhook 与响应 API 接口。
 - **涉及文件**：
   - `src/watchdog/api/openclaw_callbacks.py`
@@ -28,7 +28,7 @@
 ## Task 28.3 提供最小 reference runtime
 
 - **任务编号**：T283
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：提供最小宿主模板，证明 envelope / response contract 可落地。
 - **涉及文件**：
   - `examples/openclaw_watchdog_client.py`
@@ -39,7 +39,7 @@
 ## Task 28.4 锁住宿主边界与接入文档
 
 - **任务编号**：T284
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：补齐宿主边界、接入指引与最小运维说明。
 - **涉及文件**：
   - `README.md`

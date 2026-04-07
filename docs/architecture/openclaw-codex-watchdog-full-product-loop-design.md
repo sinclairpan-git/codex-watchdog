@@ -385,7 +385,7 @@ OpenClaw 成功接收后，返回体至少包含：
 
 OpenClaw 回传 Watchdog 的固定入口冻结为：
 
-- `POST /api/v1/openclaw/responses`
+- `POST /api/v1/watchdog/openclaw/responses`
 
 请求体至少包含：
 
@@ -405,6 +405,11 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
 - `(envelope_id, response_action, client_request_id)`
 
 同一幂等键重放不得重复执行审批或动作。
+
+宿主边界同时冻结为：
+
+- OpenClaw 只负责接收 envelope、渲染、接收用户输入、回传结构化 response。
+- OpenClaw 不得重算决策、不做风险分类、不维护第二套审批状态机或 session spine。
 
 ## 6. 完整产品闭环的正式 Work Items
 
@@ -475,7 +480,7 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
 - 目标：把 OpenClaw 接入从口头说明收成稳定契约与宿主模板。
 - 范围：
   - `POST /openclaw/v1/watchdog/envelopes`
-  - `POST /api/v1/openclaw/responses`
+  - `POST /api/v1/watchdog/openclaw/responses`
   - webhook 鉴权与签名
   - receipt 协议
   - envelope 到 Feishu 展示映射规范

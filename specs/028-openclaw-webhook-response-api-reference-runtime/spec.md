@@ -16,7 +16,7 @@ related_doc:
 - **FR-2801**：028 必须定义 Watchdog -> OpenClaw 的主动回调入口：
   - `POST /openclaw/v1/watchdog/envelopes`
 - **FR-2802**：028 必须定义 OpenClaw -> Watchdog 的结构化响应入口：
-  - `POST /api/v1/openclaw/responses`
+  - `POST /api/v1/watchdog/openclaw/responses`
 - **FR-2803**：028 必须冻结 webhook 请求头，至少包含：
   - `Authorization: Bearer <token>`
   - `X-Watchdog-Delivery-Id`
@@ -42,6 +42,7 @@ related_doc:
   - `DecisionEnvelope` -> 自动决策真值通知
   - `ApprovalEnvelope` -> 人工裁决请求
 - **FR-2807**：028 必须提供最小 OpenClaw reference runtime / template，证明宿主只消费稳定 envelope / response contract，而不拥有第二套业务内核。
+  - 最小模板至少包含 `examples/openclaw_watchdog_client.py` 与 `examples/openclaw_webhook_runtime.py`
 - **FR-2808**：028 必须把宿主边界写清：
   - OpenClaw 只做接收、渲染、输入、回传
   - OpenClaw 不做决策、不做风险分类、不做第二套状态机
