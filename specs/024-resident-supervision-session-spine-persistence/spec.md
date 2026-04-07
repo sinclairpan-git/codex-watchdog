@@ -68,6 +68,20 @@ related_doc:
   - restart / restore 语义
   - stable query route 继续返回既有 contract
 - **FR-2414**：024 完成后，必须使后续 `WI-2` 可以在不直连 A-Control-Agent raw query 的前提下，直接消费 canonical session spine 与事实快照。
+- **FR-2415**：024 的 canonical session spine 必须持有后续 resident orchestrator 所需的最小判定字段，不得把这些字段继续留在 query-time 临时拼装层。至少包括：
+  - `session_state`
+  - `attention_state`
+  - `pending_approval_count`
+  - `approval_queue`
+  - `available_intents`
+  - `activity_phase`
+  - `summary`
+  - `files_touched`
+  - `context_pressure`
+  - `stuck_level`
+  - `last_progress_at`
+- **FR-2416**：024 必须冻结一条承接纪律：后续 policy / execution / delivery resident loop 只能消费 persisted spine 与其派生快照，不得把 OpenClaw 上下文、人工记忆或 query-time raw 拼装结果当成流程真值。
+- **FR-2417**：024 的 restart / restore 语义必须允许后续 resident orchestration checkpoint 独立持久化并在重启后继续工作；即使 resident orchestration 本身在后续 WI 中实现，也不得因为 024 的存储边界设计导致“重启后重新从空白态认识项目”。
 
 ### 用户故事 1：B 侧可以持续维护会话真值，而不是查询时临时拼装
 
@@ -93,6 +107,8 @@ Watchdog 需要作为完整产品闭环的决策中心，不能每次都在 quer
 
 场景 2：同一 session 的事实快照有清晰顺序、freshness 与恢复语义，适合后续 decision key 与审计使用。
 
+场景 3：后续 resident orchestrator 可以只根据 persisted spine 检测“决策意义变化”与“用户可感知 progress 变化”，而不需要依赖 OpenClaw 记忆项目上下文。
+
 ## 非目标
 
 - 不实现策略引擎，不定义 `human_gate / hard_block` 的运行时代码。
@@ -100,4 +116,5 @@ Watchdog 需要作为完整产品闭环的决策中心，不能每次都在 quer
 - 不实现 `DecisionEnvelope / ApprovalEnvelope / NotificationEnvelope` 的 outbox 或 webhook。
 - 不实现 OpenClaw 宿主 runtime、Feishu 渠道 runtime 或用户响应回流。
 - 不把 resident supervision 扩成 delivery / retry / receipt 系统。
+- 不在 024 内直接实现 `progress_summary` 主动推送；024 只负责把它所依赖的 persisted truth source 冻结好，实际推送由后续 resident orchestrator 承担。
 - 不在本工作项中引入第二套 session spine、第二套状态机或 raw query 旁路。

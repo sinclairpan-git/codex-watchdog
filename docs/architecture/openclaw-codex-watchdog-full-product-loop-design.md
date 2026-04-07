@@ -92,6 +92,11 @@ OpenClaw 不负责：
 - 自动/人工升级规则；
 - 第二套状态机或第二套 session spine。
 
+同时补充一条运行纪律：
+
+- OpenClaw 必须被视为**弱记忆、弱纪律、可随时重启**的宿主 I/O 层；
+- 任何关键状态、顺序语义、待处理事项、补发责任与恢复责任，都必须持久化在 `Watchdog(B)`，不得寄托于 OpenClaw 记忆。
+
 ## 3. 决策与升级策略
 
 ### 3.1 外部稳定决策结果
@@ -282,23 +287,24 @@ OpenClaw 不负责：
 
 ### 5.1 常驻单元
 
-`Watchdog(B)` 固定为四个常驻单元：
+`Watchdog(B)` 固定为三个常驻单元；逻辑上的 policy / execution / approval materialize 可以收敛到同一 resident orchestrator 内实现，但责任边界不得混淆：
 
 1. `Projection Worker`
    - 持续从 `A-Control-Agent` 拉取或接收事实变化；
    - 更新 canonical session spine；
    - 生成新的 `fact_snapshot_version`。
-2. `Policy Worker`
+2. `Resident Orchestrator`
+   - 固定按 `session spine refresh -> policy evaluate -> auto recovery / approval materialize -> enqueue delivery -> call OpenClaw` 的链路常驻推进；
    - 对新的事实快照做策略判定；
-   - 生成外部稳定结果与决策证据包；
-   - 写入 `decision_outbox` / `delivery_outbox`。
-3. `Execution Worker`
-   - 对 `auto_execute_and_notify` 执行 canonical action；
-   - 记录 `execution_state`；
-   - 生成 `DecisionEnvelope` 与后续通知。
-4. `Delivery Worker`
+   - 在低风险时执行 canonical action，在高风险时物化 approval；
+   - 对普通进展变化生成节流后的 `progress_summary` 主动推送。
+3. `Delivery Worker`
    - 把 envelope 主动回调给 OpenClaw；
    - 处理重试、去重、receipt、失败升级。
+
+这一节同时冻结一条总原则：
+
+- `Watchdog(B)` 必须在后台常驻推进流程；OpenClaw 只承担展示、回传与外部 I/O，不承担“记住还有什么待办”的职责。
 
 ### 5.2 顺序语义
 
@@ -351,6 +357,12 @@ outbox 边界同时冻结为：
 
 - `decision_outbox`：持久化记录 canonical records 推导出的待投递 envelope 真值与 `outbox_seq`，不记录 HTTP attempt。
 - `delivery_outbox`：持久化记录按 `envelope_id` 驱动的 delivery 状态、attempt、next retry、receipt 与 dead-letter 结果。
+
+除上述“决策意义变化”外，系统还允许一类**节流后的普通进展推送**：
+
+- 当 `activity_phase`、`summary`、`files_touched`、`context_pressure`、`stuck_level`、`pending_approval_count` 等用户可感知进展面发生变化时，允许生成 `NotificationEnvelope(notification_kind=progress_summary)`；
+- `progress_summary` 不得替代 canonical decision / approval 语义，只用于“让宿主及时看到项目有新进展”；
+- `progress_summary` 必须基于 persisted spine 差异与持久化 checkpoint 做 debounce / 去重，避免按每次轻微刷新都骚扰宿主。
 
 ### 5.5 OpenClaw Webhook
 
@@ -410,6 +422,15 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
 
 - OpenClaw 只负责接收 envelope、渲染、接收用户输入、回传结构化 response。
 - OpenClaw 不得重算决策、不做风险分类、不维护第二套审批状态机或 session spine。
+- OpenClaw 即使丢失上下文、重启或“失忆”，系统真值也不能丢；`Watchdog(B)` 必须能依靠持久化 records 继续推进、补发或恢复待处理事项。
+
+### 5.7 失败处理基线
+
+完整产品闭环对“自动处理到哪一步”为止，也必须冻结：
+
+- `context_critical / context window` 类问题，优先由 `Watchdog(B)` 通过 canonical recovery 链路自动处理；允许在同一项目内走 `resume_or_new_thread` 续跑，而不是把恢复责任交给 OpenClaw。
+- 瞬时网络或下游暂时不可达，优先走 `delivery_outbox` / retry / backoff / alert，不得因一次失败直接丢失待办。
+- 持续外部故障、额度耗尽、模型禁用、权限不足等非系统内可自愈问题，必须显式退化为 `block_and_alert` 或运维告警，而不是伪装成“已经自动处理成功”。
 
 ## 6. 完整产品闭环的正式 Work Items
 
@@ -425,6 +446,7 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
   - 稳定状态投影
   - spine 持久化
   - restart / replay / restore
+  - 为后续 resident orchestrator 暴露足够的 persisted fields，用于判断“决策意义变化”与“progress 变化”
 - 非目标：
   - 不做策略判定
   - 不做自动执行
@@ -500,6 +522,7 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
   - `GET /healthz`、`GET /metrics`、`GET /api/v1/watchdog/ops/alerts`
   - 五类冻结运维告警：`approval_pending_too_long`、`blocked_too_long`、`delivery_failed`、`mapping_incomplete`、`recovery_failed`
   - install / upgrade / rollback / secret rotation / 公网标准方案
+  - 可执行的服务启动、重启与开机自启基线，例如 `launchd` 模板与安装脚本
   - operator runbook / production deployment
 - 非目标：
   - 不反向重写前五个 WI 已冻结的核心契约
@@ -508,7 +531,7 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
 
 - 审计与 replay 只消费 `policy_decisions.json`、`canonical_approvals.json`、`delivery_outbox.json`、`action_receipts.json` 等 canonical records。
 - ops surface 只回答“系统是否退化、哪些告警在亮、值班先查哪里”，不承载新的业务策略。
-- 部署文档只冻结安装、升级、回滚、密钥轮换与公网入口纪律，不引入新的业务行为。
+- 部署文档与脚本同时冻结安装、升级、回滚、密钥轮换、服务重启、开机自启与公网入口纪律，不引入新的业务行为。
 
 ### 6.7 依赖顺序
 
@@ -536,5 +559,10 @@ flowchart TD
 4. `WI-4` outbox + delivery + retry + receipt
 5. `WI-5` OpenClaw webhook / response contract + reference runtime
 6. `WI-6` audit + replay + ops + production deployment
+
+补充说明：
+
+- 当前实现已经把 resident orchestrator、`progress_summary` 主动推送、`launchd` 开机自启安装脚本一起落库；
+- 这几项不是对 OpenClaw 边界的放宽，反而是为了进一步收紧“OpenClaw 只是 I/O 宿主”的系统纪律。
 
 后续新增需求若触碰前五个 WI 的冻结契约，应作为新 work item 或 defect 处理，而不是在 `029` 中回写边界。

@@ -101,27 +101,38 @@ class OpenClawDeliveryClient:
         envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
     ) -> DeliveryAttemptResult:
         url = f"{self._settings.openclaw_webhook_base_url.rstrip('/')}/openclaw/v1/watchdog/envelopes"
-        with httpx.Client(timeout=self._settings.http_timeout_s, transport=self._transport) as client:
-            try:
+        try:
+            with httpx.Client(
+                timeout=self._settings.http_timeout_s,
+                transport=self._transport,
+                trust_env=False,
+            ) as client:
                 response = client.post(
                     url,
                     headers=self._headers(envelope.envelope_id),
                     json=envelope.model_dump(mode="json"),
                 )
-            except httpx.TimeoutException:
-                return DeliveryAttemptResult(
-                    envelope_id=envelope.envelope_id,
-                    delivery_status="retryable_failure",
-                    accepted=False,
-                    failure_code="transport_timeout",
-                )
-            except httpx.RequestError:
-                return DeliveryAttemptResult(
-                    envelope_id=envelope.envelope_id,
-                    delivery_status="retryable_failure",
-                    accepted=False,
-                    failure_code="transport_error",
-                )
+        except httpx.TimeoutException:
+            return DeliveryAttemptResult(
+                envelope_id=envelope.envelope_id,
+                delivery_status="retryable_failure",
+                accepted=False,
+                failure_code="transport_timeout",
+            )
+        except httpx.RequestError:
+            return DeliveryAttemptResult(
+                envelope_id=envelope.envelope_id,
+                delivery_status="retryable_failure",
+                accepted=False,
+                failure_code="transport_error",
+            )
+        except ImportError:
+            return DeliveryAttemptResult(
+                envelope_id=envelope.envelope_id,
+                delivery_status="retryable_failure",
+                accepted=False,
+                failure_code="transport_configuration_error",
+            )
         if 200 <= response.status_code < 300:
             return self._classify_success(envelope_id=envelope.envelope_id, response=response)
         return self._classify_status_failure(envelope.envelope_id, response)

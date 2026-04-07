@@ -33,10 +33,24 @@ python -m uvicorn a_control_agent.main:app --host 127.0.0.1 --port 8710 --app-di
 ```bash
 export WATCHDOG_API_TOKEN=dev-token-change-me
 export WATCHDOG_A_AGENT_TOKEN=dev-token-change-me
-python -m uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
+uv run uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 ```
 
 配置样例：`config/examples/*.env.example`。
+
+若需要常驻与开机自启，仓库已提供：
+
+- `scripts/start_watchdog.sh`
+- `scripts/install_watchdog_launchd.sh`
+- `config/examples/com.openclaw.watchdog.plist`
+
+在 macOS 上准备好 `.env.w` 后可直接执行：
+
+```bash
+WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_launchd.sh
+```
+
+该脚本会安装 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`，并执行 `launchctl bootstrap` 与 `launchctl kickstart -k`；重启后会自动恢复。
 
 ## 可观测性（M5 / 029）
 
@@ -54,6 +68,8 @@ python -m uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 相关阈值与刷新周期由以下环境变量控制：
 
 - `WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS`
+- `WATCHDOG_RESIDENT_ORCHESTRATOR_INTERVAL_SECONDS`
+- `WATCHDOG_PROGRESS_SUMMARY_INTERVAL_SECONDS`
 - `WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS`
 - `WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS`
 

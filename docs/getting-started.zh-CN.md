@@ -299,6 +299,8 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS` | delivery 重试初始退避秒数（默认 `5` 秒，之后指数退避） |
 | `WATCHDOG_DELIVERY_MAX_ATTEMPTS` | 单 envelope 最大投递次数；超限后落 `delivery_failed` |
 | `WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS` | resident session spine 后台刷新周期（默认 `30` 秒） |
+| `WATCHDOG_RESIDENT_ORCHESTRATOR_INTERVAL_SECONDS` | resident policy/execution/delivery 编排周期（默认 `5` 秒） |
+| `WATCHDOG_PROGRESS_SUMMARY_INTERVAL_SECONDS` | 同项目 progress summary 主动推送的最短间隔（默认 `300` 秒） |
 | `WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS` | `block_and_alert` 未消解多久后触发 `blocked_too_long`（默认 `900` 秒） |
 | `WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS` | pending approval 超过多久后触发 `approval_pending_too_long`（默认 `900` 秒） |
 
@@ -318,6 +320,8 @@ WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS=5
 WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS=5
 WATCHDOG_DELIVERY_MAX_ATTEMPTS=3
 WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS=30
+WATCHDOG_RESIDENT_ORCHESTRATOR_INTERVAL_SECONDS=5
+WATCHDOG_PROGRESS_SUMMARY_INTERVAL_SECONDS=300
 WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS=900
 WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS=900
 WATCHDOG_BASE_URL=http://127.0.0.1:8720
@@ -332,8 +336,15 @@ WATCHDOG_OPERATOR=openclaw
 - `require_user_decision` 只先发 `ApprovalEnvelope`；OpenClaw 调 `POST /api/v1/watchdog/openclaw/responses` 完成 `approve` / `reject` / `execute_action` 后，Watchdog 会再补发 `NotificationEnvelope(notification_kind=approval_result)`。
 - delivered 判定必须同时满足 `HTTP 2xx`、`accepted=true`、响应 `envelope_id` 与请求一致、以及存在 `receipt_id`；协议不完整的 `2xx` 仍会重试。
 - worker 会在 `operator_notes` 中记录 `delivery_retry_scheduled`、`delivery_succeeded`、`delivery_dead_letter`，便于最小运维排障。
+- 当前仓库还新增了 resident orchestrator：后台会持续执行 `session spine refresh -> policy evaluate -> auto recovery / approval materialize -> enqueue delivery -> call OpenClaw`，并对普通进展变化按 `progress_summary` 做节流主动推送；OpenClaw 不需要记住流程状态。
 
-写启动脚本 `"$APP_DIR/bin/start-watchdog.sh"`：
+仓库已经直接提供可复用脚本与模板：
+
+- `scripts/start_watchdog.sh`
+- `scripts/install_watchdog_launchd.sh`
+- `config/examples/com.openclaw.watchdog.plist`
+
+如果你仍想自己写，等价启动脚本如下：
 
 ```bash
 #!/bin/zsh
@@ -355,7 +366,7 @@ exec uv run uvicorn watchdog.main:app \
 chmod +x "$APP_DIR/bin/start-watchdog.sh"
 ```
 
-写 `launchd` 文件 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`：
+等价的 `launchd` 模板如下；仓库内已提供 `config/examples/com.openclaw.watchdog.plist`：
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -383,7 +394,20 @@ chmod +x "$APP_DIR/bin/start-watchdog.sh"
 </plist>
 ```
 
-将 `YOUR_USER` 替换为真实用户名后，加载并启动：
+最简单的安装方式是直接执行：
+
+```bash
+cd "$APP_DIR"
+WATCHDOG_ENV_FILE="$APP_DIR/.env.w" ./scripts/install_watchdog_launchd.sh
+```
+
+这会自动把模板渲染到 `~/Library/LaunchAgents/com.openclaw.watchdog.plist`，并完成 `launchctl bootstrap` 与 `launchctl kickstart -k`。若你需要手工重启服务，可直接执行：
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.openclaw.watchdog"
+```
+
+如果仍要手工安装，命令如下：
 
 ```bash
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.openclaw.watchdog.plist" 2>/dev/null || true

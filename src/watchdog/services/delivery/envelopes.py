@@ -10,11 +10,13 @@ from watchdog.services.approvals.service import (
     CanonicalApprovalResponseRecord,
 )
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.policy.rules import POLICY_VERSION
 from watchdog.services.policy.rules import (
     DECISION_AUTO_EXECUTE_AND_NOTIFY,
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
 )
+from watchdog.services.session_spine.store import PersistedSessionRecord
 
 
 def _short_hash(value: str) -> str:
@@ -45,6 +47,73 @@ def _recommended_actions(decision: CanonicalDecisionRecord) -> list[dict[str, st
             "action_ref": decision.action_ref,
         }
     ]
+
+
+def _progress_summary_severity(record: PersistedSessionRecord) -> str:
+    fact_codes = {fact.fact_code for fact in record.facts}
+    if "context_critical" in fact_codes or "control_link_error" in fact_codes:
+        return "critical"
+    if fact_codes.intersection({"approval_pending", "awaiting_human_direction", "stuck_no_progress", "repeat_failure"}):
+        return "warning"
+    return "info"
+
+
+def progress_summary_fingerprint(record: PersistedSessionRecord) -> str:
+    payload = {
+        "project_id": record.project_id,
+        "session_state": record.session.session_state,
+        "attention_state": record.session.attention_state,
+        "activity_phase": record.progress.activity_phase,
+        "summary": record.progress.summary,
+        "files_touched": list(record.progress.files_touched),
+        "context_pressure": record.progress.context_pressure,
+        "stuck_level": record.progress.stuck_level,
+        "last_progress_at": record.progress.last_progress_at,
+        "pending_approval_count": record.session.pending_approval_count,
+    }
+    return _short_hash(repr(payload))
+
+
+def build_progress_summary_envelope(
+    record: PersistedSessionRecord,
+    *,
+    created_at: str,
+    progress_fingerprint: str | None = None,
+) -> NotificationEnvelope:
+    fingerprint = progress_fingerprint or progress_summary_fingerprint(record)
+    summary = record.progress.summary or record.session.headline
+    files = list(record.progress.files_touched)[:3]
+    reason_parts = [
+        f"phase={record.progress.activity_phase}",
+        f"context={record.progress.context_pressure}",
+        f"stuck={record.progress.stuck_level}",
+    ]
+    if files:
+        reason_parts.append(f"files={', '.join(files)}")
+    return NotificationEnvelope(
+        envelope_id=_envelope_id(
+            f"{record.thread_id}|{record.fact_snapshot_version}|{fingerprint}",
+            "notification",
+            "progress_summary",
+        ),
+        correlation_id=f"progress-summary:{record.project_id}:{fingerprint}",
+        session_id=record.thread_id,
+        project_id=record.project_id,
+        native_thread_id=record.native_thread_id,
+        policy_version=POLICY_VERSION,
+        fact_snapshot_version=record.fact_snapshot_version,
+        idempotency_key=f"{record.thread_id}|{record.fact_snapshot_version}|progress_summary|{fingerprint}",
+        audit_ref=f"progress-summary:{record.project_id}:{record.fact_snapshot_version}",
+        created_at=created_at,
+        event_id=f"event:{_short_hash(record.project_id + '|progress_summary|' + fingerprint)}",
+        severity=_progress_summary_severity(record),
+        notification_kind="progress_summary",
+        title=f"progress update for {record.project_id}",
+        summary=summary,
+        reason="; ".join(reason_parts),
+        facts=[fact.model_dump(mode="json") for fact in record.facts],
+        recommended_actions=[],
+    )
 
 
 class EnvelopeBase(BaseModel):
