@@ -58,10 +58,12 @@ class DeliveryWorker:
         for record in records:
             if record.session_id in seen_sessions:
                 continue
-            seen_sessions.add(record.session_id)
             next_retry = _parse_iso(record.next_retry_at)
             if next_retry is None or next_retry <= now:
                 return record
+            if record.failure_code == "suppressed_local_manual_activity":
+                continue
+            seen_sessions.add(record.session_id)
         return None
 
     def _apply_retryable_failure(
@@ -133,26 +135,28 @@ class DeliveryWorker:
         )
         return self._store.update_delivery_record(updated)
 
-    def _apply_local_manual_activity_suppression(
+    def _apply_local_manual_activity_deferral(
         self,
         *,
         record: DeliveryOutboxRecord,
         last_local_manual_activity_at: str,
         age_seconds: int,
+        next_retry_at: str,
         now: datetime,
     ) -> DeliveryOutboxRecord:
         notes = list(record.operator_notes)
         notes.append(
-            "delivery_skipped "
+            "delivery_deferred "
             "failure_code=suppressed_local_manual_activity "
             f"last_local_manual_activity_at={last_local_manual_activity_at} "
-            f"age_seconds={age_seconds}"
+            f"age_seconds={age_seconds} "
+            f"next_retry_at={next_retry_at}"
         )
         updated = record.model_copy(
             update={
-                "delivery_status": "delivery_failed",
+                "delivery_status": "retrying",
                 "failure_code": "suppressed_local_manual_activity",
-                "next_retry_at": None,
+                "next_retry_at": next_retry_at,
                 "operator_notes": notes,
                 "updated_at": _iso_z(now),
             }
@@ -184,7 +188,7 @@ class DeliveryWorker:
         *,
         record: DeliveryOutboxRecord,
         now: datetime,
-    ) -> tuple[str, int] | None:
+    ) -> tuple[str, int, str] | None:
         if self._session_spine_store is None:
             return None
         payload = record.envelope_payload
@@ -210,12 +214,17 @@ class DeliveryWorker:
         parsed = _parse_iso(last_local_manual_activity_at)
         if parsed is None:
             return None
-        age_seconds = int((now - parsed.astimezone(UTC)).total_seconds())
+        parsed_utc = parsed.astimezone(UTC)
+        age_seconds = int((now - parsed_utc).total_seconds())
         if age_seconds < 0:
             return None
-        if age_seconds > max(self._settings.local_manual_activity_quiet_window_seconds, 0.0):
+        quiet_window_seconds = max(self._settings.local_manual_activity_quiet_window_seconds, 0.0)
+        if quiet_window_seconds <= 0:
             return None
-        return (str(last_local_manual_activity_at), age_seconds)
+        next_retry = parsed_utc + timedelta(seconds=quiet_window_seconds)
+        if next_retry <= now:
+            return None
+        return (str(last_local_manual_activity_at), age_seconds, _iso_z(next_retry))
 
     def process_next_ready(
         self,
@@ -237,11 +246,12 @@ class DeliveryWorker:
             )
         suppressed = self._suppressed_for_local_manual_activity(record=record, now=now)
         if suppressed is not None:
-            last_local_manual_activity_at, age_seconds = suppressed
-            return self._apply_local_manual_activity_suppression(
+            last_local_manual_activity_at, age_seconds, next_retry_at = suppressed
+            return self._apply_local_manual_activity_deferral(
                 record=record,
                 last_local_manual_activity_at=last_local_manual_activity_at,
                 age_seconds=age_seconds,
+                next_retry_at=next_retry_at,
                 now=now,
             )
         result = self._delivery_client.deliver_record(record)

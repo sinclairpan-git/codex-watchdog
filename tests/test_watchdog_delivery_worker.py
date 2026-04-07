@@ -610,7 +610,7 @@ def test_delivery_worker_treats_naive_progress_summary_timestamp_as_utc(
     assert client.calls == []
 
 
-def test_delivery_worker_suppresses_non_critical_notifications_during_local_manual_activity_quiet_window(
+def test_delivery_worker_defers_non_critical_notifications_during_local_manual_activity_quiet_window(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -670,27 +670,86 @@ def test_delivery_worker_suppresses_non_critical_notifications_during_local_manu
 
     suppressed = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 20, 0, tzinfo=timezone.utc),
-        session_id="session:repo-a",
     )
     delivered = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
-        session_id="session:repo-a",
     )
 
     assert suppressed is not None
     assert suppressed.envelope_id == suppressed_record.envelope_id
-    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.delivery_status == "retrying"
     assert suppressed.failure_code == "suppressed_local_manual_activity"
     assert suppressed.delivery_attempt == 0
+    assert suppressed.next_retry_at == "2026-04-07T00:29:50Z"
     assert suppressed.operator_notes[-1] == (
-        "delivery_skipped failure_code=suppressed_local_manual_activity "
-        "last_local_manual_activity_at=2026-04-07T00:19:50Z age_seconds=10"
+        "delivery_deferred failure_code=suppressed_local_manual_activity "
+        "last_local_manual_activity_at=2026-04-07T00:19:50Z age_seconds=10 "
+        "next_retry_at=2026-04-07T00:29:50Z"
     )
 
     assert delivered is not None
     assert delivered.envelope_id == delivered_record.envelope_id
     assert delivered.delivery_status == "delivered"
     assert client.calls == [delivered_record.envelope_id]
+
+
+def test_delivery_worker_delivers_deferred_notification_after_local_manual_activity_quiet_window(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    progress_summary = NotificationEnvelope(
+        envelope_id="notification-envelope:quiet-progress-followup",
+        correlation_id="progress-summary:repo-a:quiet-window-followup",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|quiet-window-followup",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:20:00Z",
+        event_id="event:quiet-progress-followup",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="still coding locally",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    (record,) = store.enqueue_envelopes([progress_summary])
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            last_local_manual_activity_at="2026-04-07T00:19:50Z"
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    deferred = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 0, tzinfo=timezone.utc),
+    )
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 29, 51, tzinfo=timezone.utc),
+    )
+
+    assert deferred is not None
+    assert deferred.envelope_id == record.envelope_id
+    assert deferred.delivery_status == "retrying"
+    assert deferred.failure_code == "suppressed_local_manual_activity"
+    assert deferred.delivery_attempt == 0
+    assert deferred.next_retry_at == "2026-04-07T00:29:50Z"
+
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert delivered.failure_code is None
+    assert delivered.delivery_attempt == 1
+    assert client.calls == [record.envelope_id]
 
 
 def test_delivery_worker_attempts_stale_auto_execute_envelopes_downstream(
