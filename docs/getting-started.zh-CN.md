@@ -9,13 +9,13 @@
 | 交付物 | 说明 |
 |--------|------|
 | **A-Control-Agent** | 运行在 **A 机** 的 FastAPI 服务：任务创建/查询、steer、handoff、resume、审批、工作区活动摘要、审计与 `/metrics`。已内置两层 Codex 集成：`1)` 默认读取同机 `~/.codex` 自动发现当前 active workspace 的 thread；`2)` 可选启动本地 `codex app-server --listen stdio://` bridge，执行下行控制与审批回写。 |
-| **Watchdog** | 运行在 **B 机** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。从 025 开始，策略层只消费 resident session spine 的 persisted snapshot，并产出 canonical decision record / decision evidence，而不再向 A 侧直接发 raw fact query。 |
+| **Watchdog** | 逻辑上位于 **OpenClaw 前** 的 FastAPI 服务：通过 HTTP **调用 A** 拉取任务状态，提供 stable session spine、稳定 supervision evaluation / recover / 审批与事件读面，以及 `/metrics`。它既可以独立运行在 **B 机**，也可以与 `A-Control-Agent` 同机部署在 **A 机** 后再通过稳定入口暴露给 B。 从 025 开始，策略层只消费 resident session spine 的 persisted snapshot，并产出 canonical decision record / decision evidence，而不再向 A 侧直接发 raw fact query。 |
 | **OpenClaw 侧** | 本仓库**不包含**飞书机器人或生产级 OpenClaw 插件；当前提供 **HTTP API**、`examples/openclaw_watchdog_client.py` 调用模板，以及 `examples/openclaw_webhook_runtime.py` 最小 reference runtime，供你在 OpenClaw 宿主里对接 Watchdog。 |
 
 **数据流（目标架构）**：
 
 ```text
-飞书 → OpenClaw(B) → Watchdog(B) ──HTTPS+Bearer──→ A-Control-Agent(A) ──stdio/本地子进程──→ Codex app-server（可选）
+飞书 → OpenClaw(B) → Watchdog(可在 A 或 B) ──HTTPS+Bearer──→ A-Control-Agent(A) ──stdio/本地子进程──→ Codex app-server（可选）
 ```
 
 当前实现中，**OpenClaw 只需对接 Watchdog**；Watchdog 再对接 A-Control-Agent。
@@ -266,6 +266,8 @@ uv run python examples/register_native_thread.py \
 
 ### 3.1 Watchdog 安装、启动与开机自启（macOS 推荐）
 
+若你采用“**Watchdog 与 A-Control-Agent 同机部署在 A**”的形态，这一节可跳过；B 机只需要拿到 `WATCHDOG_BASE_URL` 与 `WATCHDOG_API_TOKEN` 去调用 A 上暴露出来的 Watchdog 稳定入口。
+
 同样在 B 机准备并安装到指定版本：
 
 ```bash
@@ -471,7 +473,7 @@ OpenClaw 模板的环境变量建议最少包括：
 
 | 变量 | 作用 |
 |------|------|
-| `WATCHDOG_BASE_URL` | Watchdog 对外根 URL，例如 `http://<B的IP>:8720` |
+| `WATCHDOG_BASE_URL` | Watchdog 对外根 URL，例如 `http://<Watchdog的IP或域名>:8720` |
 | `WATCHDOG_API_TOKEN` | OpenClaw 调 Watchdog 时使用的 Bearer Token |
 | `WATCHDOG_DEFAULT_PROJECT_ID` | 缺省 `project_id`；显式参数优先，适合单项目会话或固定路由 |
 | `WATCHDOG_OPERATOR` | 缺省操作人，示例模板默认值为 `openclaw` |
@@ -713,8 +715,7 @@ uv run python examples/openclaw_watchdog_client.py
 可以（同一套 Bearer），但架构上推荐 **只让 OpenClaw → Watchdog**，由 Watchdog 统一策略与审计。
 
 **Q：A 和 B 需不需要各自保留一份代码工程？**
-需要。A 要跑 `A-Control-Agent`，B 要跑 `Watchdog`；最稳的部署方式是两台机器都各自 clone
-同一个仓库，并固定在同一个 `RELEASE_REF`。
+需要，但不要求两边承担相同组件。A 至少要跑 `A-Control-Agent`；`Watchdog` 既可跑在 B，也可与 A 同机。最稳的方式仍是两边都固定到同一个 `RELEASE_REF`，避免契约漂移。
 
 **Q：没有 Codex app-server 能用吗？**  
 能。若 A-Control-Agent 与 Codex Desktop 同机，可直接走本地 `~/.codex` 自动采集；否则也能用

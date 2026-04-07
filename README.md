@@ -9,7 +9,7 @@
 | 目录 | 说明 |
 |------|------|
 | `src/a_control_agent/` | A 机侧：任务 / steer / handoff / resume / 审批、持久化、`/metrics` |
-| `src/watchdog/` | B 机侧：stable session spine、progress / evaluate / recover / 审批代理、`/metrics` |
+| `src/watchdog/` | 宿主前置层：stable session spine、progress / evaluate / recover / 审批代理、`/metrics`；可独立跑在 OpenClaw 所在机，也可与 A 同机常驻后再对外暴露稳定入口 |
 | `docs/openapi/` | OpenAPI JSON（`python scripts/export_openapi.py` 生成） |
 | `examples/` | OpenClaw 侧调用 Watchdog 的 HTTP 示例（无飞书） |
 
@@ -85,6 +85,8 @@ WATCHDOG_ENV_FILE="$PWD/.env.w" ./scripts/install_watchdog_launchd.sh
 
 ## 部署纪律
 
+- 逻辑拓扑保持 `OpenClaw -> Watchdog -> A-Control-Agent -> Codex`；`Watchdog` 不再强制要求物理部署在 B 机。
+- 若 A 机就是唯一稳定的 Codex 宿主机，可直接把 `Watchdog` 与 `A-Control-Agent` 同机部署在 A，再通过 HTTPS / tunnel / 反代把 `Watchdog` 暴露给 B 上的 OpenClaw。
 - A 与 B 必须运行同一提交；升级顺序固定为先 A、再 B、最后验证 OpenClaw -> Watchdog。
 - 回滚时同样按提交回退，避免 A/B 漂在不同契约版本。
 - Bearer token 需要独立保管并支持轮换；公网暴露只建议经 TLS 反向代理对外开放 Watchdog，不建议让 OpenClaw 直连 A。
