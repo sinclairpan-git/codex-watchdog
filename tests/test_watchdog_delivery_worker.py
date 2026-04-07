@@ -402,4 +402,41 @@ def test_delivery_worker_records_dead_letter_note_when_retry_budget_is_exhausted
     assert failed is not None
     assert failed.delivery_status == "delivery_failed"
     assert failed.failure_code == "upstream_503"
-    assert failed.operator_notes[-1] == "delivery_failed failure_code=upstream_503 attempts=2"
+    assert failed.operator_notes[-2] == (
+        "delivery_retry_scheduled "
+        "failure_code=upstream_503 attempts=1 "
+        "next_retry_at=2026-04-07T00:00:05Z"
+    )
+    assert failed.operator_notes[-1] == "delivery_dead_letter failure_code=upstream_503 attempts=2"
+
+
+def test_delivery_worker_records_retry_note_with_next_retry_at(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first = store.enqueue_envelopes(
+        build_envelopes_for_decision(
+            _decision(
+                decision_result="auto_execute_and_notify",
+                fact_snapshot_version="fact-v7",
+            )
+        )
+    )[0]
+
+    client = _OrderedClient(first.envelope_id)
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    retried = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert retried is not None
+    assert retried.delivery_status == "retrying"
+    assert retried.operator_notes[-1] == (
+        "delivery_retry_scheduled "
+        "failure_code=upstream_503 attempts=1 "
+        "next_retry_at=2026-04-07T00:00:05Z"
+    )

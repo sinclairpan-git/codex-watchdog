@@ -293,6 +293,11 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_HTTP_TIMEOUT_S` | 调用 A 的超时（秒） |
 | `WATCHDOG_DATA_DIR` | Watchdog 侧审计等（默认 `.data/watchdog`） |
 | `WATCHDOG_RECOVER_AUTO_RESUME` | `context_pressure` 为 critical 时，handoff 成功后是否再自动调 A 的 `resume`（`true`/`false`） |
+| `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL` | Watchdog 主动回调 OpenClaw 的根 URL；实际投递路径固定为 `/openclaw/v1/watchdog/envelopes` |
+| `WATCHDOG_OPENCLAW_WEBHOOK_TOKEN` | Watchdog 调 OpenClaw webhook 时使用的 Bearer token |
+| `WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS` | delivery worker 轮询 `delivery_outbox` 的周期（默认 `5` 秒） |
+| `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS` | delivery 重试初始退避秒数（默认 `5` 秒，之后指数退避） |
+| `WATCHDOG_DELIVERY_MAX_ATTEMPTS` | 单 envelope 最大投递次数；超限后落 `delivery_failed` |
 
 推荐环境文件内容：
 
@@ -304,10 +309,23 @@ WATCHDOG_A_AGENT_BASE_URL=http://<A的IP>:8710
 WATCHDOG_A_AGENT_TOKEN=<必须等于A_AGENT_API_TOKEN>
 WATCHDOG_HTTP_TIMEOUT_S=10
 WATCHDOG_RECOVER_AUTO_RESUME=true
+WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL=http://<OpenClaw的IP或域名>:8740
+WATCHDOG_OPENCLAW_WEBHOOK_TOKEN=<强随机tokenOC>
+WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS=5
+WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS=5
+WATCHDOG_DELIVERY_MAX_ATTEMPTS=3
 WATCHDOG_BASE_URL=http://127.0.0.1:8720
 WATCHDOG_DEFAULT_PROJECT_ID=
 WATCHDOG_OPERATOR=openclaw
 ```
+
+027 当前新增的最小可靠投递约定如下：
+
+- Watchdog 会把 canonical decision / approval response 先持久化到 `WATCHDOG_DATA_DIR/policy_decisions.json` 与 `WATCHDOG_DATA_DIR/delivery_outbox.json`，再由后台 worker 异步投递给 OpenClaw。
+- 同一 `session_id` 内固定按 `fact_snapshot_version` 再按 `outbox_seq` 投递；被 retry backoff 卡住的 session 只阻塞自己，不阻塞其他 session。
+- `require_user_decision` 只先发 `ApprovalEnvelope`；OpenClaw 调 `POST /api/v1/watchdog/openclaw/responses` 完成 `approve` / `reject` / `execute_action` 后，Watchdog 会再补发 `NotificationEnvelope(notification_kind=approval_result)`。
+- delivered 判定必须同时满足 `HTTP 2xx`、`accepted=true`、响应 `envelope_id` 与请求一致、以及存在 `receipt_id`；协议不完整的 `2xx` 仍会重试。
+- worker 会在 `operator_notes` 中记录 `delivery_retry_scheduled`、`delivery_succeeded`、`delivery_dead_letter`，便于最小运维排障。
 
 写启动脚本 `"$APP_DIR/bin/start-watchdog.sh"`：
 

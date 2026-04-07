@@ -119,6 +119,16 @@ advisory-only，只返回恢复可用性说明，不触发真实 handoff / resum
 `execute_action` 三种 canonical response action；同一
 `(envelope_id, response_action, client_request_id)` 重放时，不会重复执行 approval
 decision 或底层 canonical action。
+027 在此基础上新增 reliable delivery outbox baseline。canonical decision / approval response
+现在会写入持久 `decision_outbox` 与 `delivery_outbox`，由后台 `DeliveryWorker` 按
+同一 `session_id` 下 `fact_snapshot_version -> outbox_seq` 的顺序回调
+`POST /openclaw/v1/watchdog/envelopes`；不同 session 允许并行。当前冻结的投递矩阵是：
+`auto_execute_and_notify -> DecisionEnvelope + NotificationEnvelope(decision_result)`、
+`require_user_decision -> ApprovalEnvelope`、审批响应后再补
+`NotificationEnvelope(notification_kind=approval_result)`、`block_and_alert -> critical notification`。
+只有同时满足 `HTTP 2xx + accepted=true + envelope_id match + receipt_id present` 才算 delivered；
+协议不完整的 `2xx`、`408`、`429`、`5xx` 与网络超时都会进入指数退避重试，超过
+`WATCHDOG_DELIVERY_MAX_ATTEMPTS` 后记录 `delivery_failed` 与 dead-letter operator note。
 017 在此基础上新增了 `GET /api/v1/watchdog/sessions`，把“未知 project_id 时的跨项目会话发现”
 收敛为稳定 `ReplyModel(reply_code=session_directory, sessions=SessionProjection[])`；
 OpenClaw adapter 同步新增 `list_sessions` intent，继续复用同一份 L2 directory builder，
@@ -197,6 +207,19 @@ A-Control-Agent 会以子进程方式拉起本地 Codex app-server，并通过 s
 若暂时不启用 bridge，仍可继续用 `POST /api/v1/tasks/native-threads` 或
 `python examples/register_native_thread.py --payload examples/native_thread_payload.json`
 把当前原生 Codex thread 注册进 A-Control-Agent，再经 Watchdog / OpenClaw 查询。
+
+027 新增的 Watchdog 下行配置最少包括：
+
+- `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL`
+- `WATCHDOG_OPENCLAW_WEBHOOK_TOKEN`
+- `WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS`
+- `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS`
+- `WATCHDOG_DELIVERY_MAX_ATTEMPTS`
+
+对应本地持久文件默认位于 `WATCHDOG_DATA_DIR` 下：
+
+- `policy_decisions.json`
+- `delivery_outbox.json`
 
 ## GitHub PR / Codex Review 演示
 

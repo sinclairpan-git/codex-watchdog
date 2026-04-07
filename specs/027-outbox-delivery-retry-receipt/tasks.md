@@ -17,7 +17,7 @@
 ## Task 27.2 新增 envelope builder 与持久 outbox
 
 - **任务编号**：T272
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：新增 envelope builder、outbox store 与 `outbox_seq`。
 - **涉及文件**：
   - `src/watchdog/services/delivery/envelopes.py`
@@ -28,7 +28,7 @@
 ## Task 27.3 新增 delivery worker、receipt 与 retry
 
 - **任务编号**：T273
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：落回调发送、receipt 校验、重试与失败升级。
 - **涉及文件**：
   - `src/watchdog/services/delivery/worker.py`
@@ -39,7 +39,7 @@
 ## Task 27.4 锁住顺序语义与最小 operator notes
 
 - **任务编号**：T274
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：锁住 session 内顺序与 dead-letter / failure notes。
 - **涉及文件**：
   - `src/watchdog/services/delivery/worker.py`

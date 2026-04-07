@@ -66,7 +66,7 @@ class DeliveryWorker:
         if attempt >= self._settings.delivery_max_attempts:
             notes = list(record.operator_notes)
             notes.append(
-                f"delivery_failed failure_code={result.failure_code or 'unknown'} attempts={attempt}"
+                f"delivery_dead_letter failure_code={result.failure_code or 'unknown'} attempts={attempt}"
             )
             updated = record.model_copy(
                 update={
@@ -79,16 +79,19 @@ class DeliveryWorker:
             )
             return self._store.update_delivery_record(updated)
         delay = self._settings.delivery_initial_backoff_seconds * (2 ** (attempt - 1))
+        next_retry_at = _iso_z(now + timedelta(seconds=delay))
         notes = list(record.operator_notes)
         notes.append(
-            f"delivery_retry_scheduled failure_code={result.failure_code or 'unknown'} attempts={attempt}"
+            "delivery_retry_scheduled "
+            f"failure_code={result.failure_code or 'unknown'} "
+            f"attempts={attempt} next_retry_at={next_retry_at}"
         )
         updated = record.model_copy(
             update={
                 "delivery_status": "retrying",
                 "delivery_attempt": attempt,
                 "failure_code": result.failure_code,
-                "next_retry_at": _iso_z(now + timedelta(seconds=delay)),
+                "next_retry_at": next_retry_at,
                 "operator_notes": notes,
             }
         )
@@ -106,7 +109,11 @@ class DeliveryWorker:
         result = self._delivery_client.deliver_record(record)
         if result.delivery_status == "delivered":
             notes = list(record.operator_notes)
-            notes.append(f"delivery_succeeded receipt_id={result.receipt_id or ''}")
+            notes.append(
+                "delivery_succeeded "
+                f"receipt_id={result.receipt_id or ''} "
+                f"attempts={record.delivery_attempt + 1}"
+            )
             updated = record.model_copy(
                 update={
                     "delivery_status": "delivered",
