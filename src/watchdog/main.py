@@ -123,18 +123,23 @@ def create_app(
         resident_orchestrator_task: asyncio.Task[None] | None = None
         delivery_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
-            _run_background_step(
+            await _run_background_step_async(
                 "session_spine_runtime.refresh_all",
                 app.state.session_spine_runtime.refresh_all,
             )
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
             now = datetime.now(UTC)
-            _run_background_step(
+            await _run_background_step_async(
                 "resident_orchestrator.orchestrate_all",
                 app.state.resident_orchestrator.orchestrate_all,
                 now=now,
             )
-            _drain_delivery_outbox(app, now=now)
+            await _run_background_step_async(
+                "delivery_drain_outbox",
+                _drain_delivery_outbox,
+                app,
+                now=now,
+            )
             resident_orchestrator_task = asyncio.create_task(_run_resident_orchestrator_loop(app))
             delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
             _run_background_step(

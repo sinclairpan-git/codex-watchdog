@@ -465,3 +465,58 @@ async def test_delivery_loop_runs_drain_outside_event_loop(
             await delivery_loop_task
 
     assert time.perf_counter() - started < 0.03
+
+
+@pytest.mark.asyncio
+async def test_startup_drain_runs_outside_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+
+    def blocking_drain(_app, *, now=None) -> None:
+        _ = now
+        time.sleep(0.05)
+
+    monkeypatch.setattr("watchdog.main._drain_delivery_outbox", blocking_drain)
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+    started = time.perf_counter()
+    ticker = asyncio.create_task(asyncio.sleep(0.01))
+
+    try:
+        await ticker
+        assert time.perf_counter() - started < 0.03
+        await startup_task
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
