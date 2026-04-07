@@ -117,6 +117,7 @@ class TaskStore:
                 rec["last_substantive_user_input_fingerprint"] = last_user_input_fingerprint
             else:
                 rec.pop("last_substantive_user_input_fingerprint", None)
+            self._reconcile_local_manual_activity(rec)
             tasks[thread_id] = rec
 
         projects: dict[str, dict[str, Any]] = {}
@@ -245,6 +246,7 @@ class TaskStore:
             }
         )
         rec["recent_service_inputs"] = recent[-_RECENT_SERVICE_INPUT_LIMIT:]
+        self._reconcile_local_manual_activity(rec)
 
     def _is_recent_service_echo(
         self,
@@ -268,6 +270,25 @@ class TaskStore:
             if -self._service_input_match_window_seconds <= age_seconds <= self._service_input_match_window_seconds:
                 return True
         return False
+
+    def _reconcile_local_manual_activity(self, rec: dict[str, Any]) -> None:
+        last_user_input_at = rec.get("last_substantive_user_input_at")
+        last_user_input_fingerprint = rec.get("last_substantive_user_input_fingerprint")
+        manual_activity_at = rec.get("last_local_manual_activity_at")
+        if (
+            not isinstance(last_user_input_at, str)
+            or not last_user_input_at
+            or not isinstance(last_user_input_fingerprint, str)
+            or not last_user_input_fingerprint
+            or manual_activity_at != last_user_input_at
+        ):
+            return
+        if self._is_recent_service_echo(
+            rec,
+            fingerprint=last_user_input_fingerprint,
+            input_at=last_user_input_at,
+        ):
+            rec["last_local_manual_activity_at"] = None
 
     def _get_current_task(self, data: dict[str, Any], project_id: str) -> dict[str, Any] | None:
         project = data.get("projects", {}).get(project_id)
@@ -411,6 +432,7 @@ class TaskStore:
                 )
             ):
                 rec["last_local_manual_activity_at"] = last_user_input_at
+            self._reconcile_local_manual_activity(rec)
             rec.setdefault("created_at", now)
             rec.setdefault("context_pressure", "low")
             rec.setdefault("stuck_level", 0)
