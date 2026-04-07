@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from typing import Callable
 
 from pydantic import BaseModel, Field
 
@@ -138,6 +139,23 @@ class ApprovalResponseStore(_JsonModelStore):
         if not isinstance(row, dict):
             return None
         return CanonicalApprovalResponseRecord.model_validate(row)
+
+    def create_or_get(
+        self,
+        idempotency_key: str,
+        factory: Callable[[], CanonicalApprovalResponseRecord],
+    ) -> CanonicalApprovalResponseRecord:
+        # Serialize idempotent response creation so concurrent retries cannot
+        # duplicate approval or action side effects before the response is stored.
+        with self._lock:
+            data = self._read()
+            existing = data.get(idempotency_key)
+            if isinstance(existing, dict):
+                return CanonicalApprovalResponseRecord.model_validate(existing)
+            record = factory()
+            data[idempotency_key] = record.model_dump(mode="json")
+            self._write(data)
+        return record
 
     def put(self, record: CanonicalApprovalResponseRecord) -> CanonicalApprovalResponseRecord:
         with self._lock:
@@ -283,89 +301,90 @@ def respond_to_canonical_approval(
         response_action=response_action,
         client_request_id=client_request_id,
     )
-    existing = response_store.get(response_key)
-    if existing is not None:
-        return existing
-    approval = approval_store.get(envelope_id)
-    if approval is None:
-        raise KeyError(f"unknown approval envelope: {envelope_id}")
-    if approval.status == "rejected" and response_action in {"approve", "execute_action"}:
-        raise ValueError("rejected approval cannot be approved or executed")
-    if approval.status == "approved" and response_action == "reject":
-        raise ValueError("approved approval cannot be rejected")
+    def _build_response() -> CanonicalApprovalResponseRecord:
+        approval = approval_store.get(envelope_id)
+        if approval is None:
+            raise KeyError(f"unknown approval envelope: {envelope_id}")
+        if approval.status == "rejected" and response_action in {"approve", "execute_action"}:
+            raise ValueError("rejected approval cannot be approved or executed")
+        if approval.status == "approved" and response_action == "reject":
+            raise ValueError("approved approval cannot be rejected")
 
-    approval_result: WatchdogActionResult | None = None
-    execution_result: WatchdogActionResult | None = None
-    next_status = approval.status
+        approval_result: WatchdogActionResult | None = None
+        execution_result: WatchdogActionResult | None = None
+        next_status = approval.status
 
-    if response_action == "reject":
-        approval_result = _approval_action_result(
-            approval,
-            response_action="reject",
-            operator=operator,
-            note=note,
-            settings=settings,
-            client=client,
-            receipt_store=receipt_store,
-        )
-        next_status = "rejected"
-    else:
-        if approval.status != "approved":
+        if response_action == "reject":
             approval_result = _approval_action_result(
                 approval,
-                response_action="approve",
+                response_action="reject",
                 operator=operator,
                 note=note,
                 settings=settings,
                 client=client,
                 receipt_store=receipt_store,
             )
-        next_status = "approved"
-        execution_result = execute_registered_action_for_decision(
-            approval.decision,
-            settings=settings,
-            client=client,
-            receipt_store=receipt_store,
+            next_status = "rejected"
+        else:
+            if approval.status != "approved":
+                approval_result = _approval_action_result(
+                    approval,
+                    response_action="approve",
+                    operator=operator,
+                    note=note,
+                    settings=settings,
+                    client=client,
+                    receipt_store=receipt_store,
+                )
+            next_status = "approved"
+            execution_result = execute_registered_action_for_decision(
+                approval.decision,
+                settings=settings,
+                client=client,
+                receipt_store=receipt_store,
+                operator=operator,
+            )
+
+        updated_approval = _transition_approval(
+            approval,
+            status=next_status,
             operator=operator,
+            response_action=response_action,
         )
+        approval_store.update(updated_approval)
 
-    updated_approval = _transition_approval(
-        approval,
-        status=next_status,
-        operator=operator,
-        response_action=response_action,
-    )
-    approval_store.update(updated_approval)
-
-    operator_notes = [
-        f"response={response_action} operator={operator}",
-        f"approval_status={next_status}",
-    ]
-    if execution_result is not None:
-        operator_notes.append(
-            f"execution={execution_result.action_status} effect={execution_result.effect}"
+        operator_notes = [
+            f"response={response_action} operator={operator}",
+            f"approval_status={next_status}",
+        ]
+        if execution_result is not None:
+            operator_notes.append(
+                f"execution={execution_result.action_status} effect={execution_result.effect}"
+            )
+        response = CanonicalApprovalResponseRecord(
+            response_id=f"approval-response:{_short_hash(response_key)}",
+            envelope_id=envelope_id,
+            approval_id=updated_approval.approval_id,
+            response_action=response_action,
+            client_request_id=client_request_id,
+            idempotency_key=response_key,
+            project_id=updated_approval.project_id,
+            approval_status=next_status,
+            operator=operator,
+            note=note,
+            created_at=_utc_now_iso(),
+            operator_notes=operator_notes,
+            approval_result=approval_result,
+            execution_result=execution_result,
         )
-    response = CanonicalApprovalResponseRecord(
-        response_id=f"approval-response:{_short_hash(response_key)}",
-        envelope_id=envelope_id,
-        approval_id=updated_approval.approval_id,
-        response_action=response_action,
-        client_request_id=client_request_id,
-        idempotency_key=response_key,
-        project_id=updated_approval.project_id,
-        approval_status=next_status,
-        operator=operator,
-        note=note,
-        created_at=_utc_now_iso(),
-        operator_notes=operator_notes,
-        approval_result=approval_result,
-        execution_result=execution_result,
-    )
-    persisted_response = response_store.put(response)
-    if delivery_outbox_store is not None:
-        from watchdog.services.delivery.envelopes import build_envelopes_for_approval_response
+        if delivery_outbox_store is not None:
+            from watchdog.services.delivery.envelopes import (
+                build_envelopes_for_approval_response,
+            )
 
-        delivery_outbox_store.enqueue_envelopes(
-            build_envelopes_for_approval_response(updated_approval, persisted_response)
-        )
-    return persisted_response
+            delivery_outbox_store.enqueue_envelopes(
+                build_envelopes_for_approval_response(updated_approval, response)
+            )
+        return response
+
+    return response_store.create_or_get(response_key, _build_response)

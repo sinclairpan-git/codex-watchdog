@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 from fastapi.testclient import TestClient
 
@@ -297,3 +298,60 @@ def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: 
     assert second.status_code == 200
     assert first.json()["success"] is True
     assert first.json()["data"] == second.json()["data"]
+
+
+def test_concurrent_approval_responses_execute_side_effects_once(tmp_path: Path) -> None:
+    from watchdog.services.approvals.service import (
+        ApprovalResponseStore,
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+    from watchdog.services.delivery.store import DeliveryOutboxStore
+
+    client = FakeAClient(context_pressure="critical")
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        delivery_outbox_store=delivery_store,
+    )
+
+    barrier = threading.Barrier(3)
+    results: list[object] = []
+
+    def _worker() -> None:
+        barrier.wait()
+        results.append(
+            respond_to_canonical_approval(
+                envelope_id=approval.envelope_id,
+                response_action="approve",
+                client_request_id="req-concurrent",
+                operator="alice",
+                note="looks safe",
+                approval_store=approval_store,
+                response_store=response_store,
+                settings=_settings(tmp_path),
+                client=client,
+                receipt_store=receipt_store,
+                delivery_outbox_store=delivery_store,
+            )
+        )
+
+    first = threading.Thread(target=_worker)
+    second = threading.Thread(target=_worker)
+    first.start()
+    second.start()
+    barrier.wait()
+    first.join()
+    second.join()
+
+    assert len(results) == 2
+    assert results[0].model_dump(mode="json") == results[1].model_dump(mode="json")
+    assert client.decision_calls == [("appr_001", "approve", "alice", "looks safe")]
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    pending = delivery_store.list_pending_delivery_records(session_id=approval.session_id)
+    assert [record.envelope_type for record in pending] == ["approval", "notification"]
