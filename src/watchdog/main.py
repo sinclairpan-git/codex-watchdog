@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 import uvicorn
@@ -19,6 +20,10 @@ from watchdog.api import supervision as supervision_routes
 from watchdog.observability.metrics_export import PROM_CONTENT_TYPE, build_watchdog_metrics_text
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.approvals.service import ApprovalResponseStore, CanonicalApprovalStore
+from watchdog.services.delivery.http_client import OpenClawDeliveryClient
+from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.delivery.worker import DeliveryWorker
+from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
@@ -35,6 +40,21 @@ async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
         app.state.session_spine_runtime.refresh_all()
 
 
+async def _run_delivery_loop(app: FastAPI) -> None:
+    interval_seconds = max(
+        float(app.state.settings.delivery_worker_interval_seconds),
+        0.01,
+    )
+    while True:
+        while True:
+            delivered = app.state.delivery_worker.process_next_ready(
+                now=datetime.now(UTC),
+            )
+            if delivered is None:
+                break
+        await asyncio.sleep(interval_seconds)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -46,9 +66,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         session_spine_loop_task: asyncio.Task[None] | None = None
+        delivery_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
             app.state.session_spine_runtime.refresh_all()
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
+            delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
             supervision_routes.run_background_supervision(app.state.settings, app.state.a_client)
         try:
             yield
@@ -57,6 +79,10 @@ def create_app(
                 session_spine_loop_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await session_spine_loop_task
+            if delivery_loop_task is not None:
+                delivery_loop_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await delivery_loop_task
 
     app = FastAPI(title="Watchdog", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -64,11 +90,23 @@ def create_app(
     app.state.action_receipt_store = ActionReceiptStore(
         Path(settings.data_dir) / "action_receipts.json"
     )
+    app.state.policy_decision_store = PolicyDecisionStore(
+        Path(settings.data_dir) / "policy_decisions.json"
+    )
     app.state.canonical_approval_store = CanonicalApprovalStore(
         Path(settings.data_dir) / "canonical_approvals.json"
     )
     app.state.approval_response_store = ApprovalResponseStore(
         Path(settings.data_dir) / "approval_responses.json"
+    )
+    app.state.delivery_outbox_store = DeliveryOutboxStore(
+        Path(settings.data_dir) / "delivery_outbox.json"
+    )
+    app.state.delivery_client = OpenClawDeliveryClient(settings=settings)
+    app.state.delivery_worker = DeliveryWorker(
+        store=app.state.delivery_outbox_store,
+        delivery_client=app.state.delivery_client,
+        settings=settings,
     )
     app.state.session_spine_store = SessionSpineStore(
         Path(settings.data_dir) / "session_spine.json"

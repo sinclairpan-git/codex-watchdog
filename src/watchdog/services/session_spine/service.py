@@ -350,6 +350,7 @@ def evaluate_session_policy_from_persisted_spine(
     trigger: str,
     store: SessionSpineStore,
     decision_store: PolicyDecisionStore | None = None,
+    delivery_outbox_store: object | None = None,
 ) -> CanonicalDecisionRecord:
     record = load_persisted_session_record_or_raise(project_id, store=store)
     decision = evaluate_persisted_session_policy(
@@ -357,9 +358,12 @@ def evaluate_session_policy_from_persisted_spine(
         action_ref=action_ref,
         trigger=trigger,
     )
-    if decision_store is not None:
-        return decision_store.put(decision)
-    return decision
+    canonical_decision = decision_store.put(decision) if decision_store is not None else decision
+    if delivery_outbox_store is not None:
+        from watchdog.services.delivery.envelopes import build_envelopes_for_decision
+
+        delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(canonical_decision))
+    return canonical_decision
 
 
 def build_session_read_bundle(

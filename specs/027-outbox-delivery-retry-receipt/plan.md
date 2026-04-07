@@ -22,7 +22,7 @@ related_doc:
 | 层 | 文件落点 | 责任 |
 |---|---|---|
 | Envelope Builder | `src/watchdog/services/delivery/envelopes.py` | 从 canonical decision / result records 构造 envelope |
-| Outbox Store | `src/watchdog/services/delivery/store.py` | `decision_outbox`、`delivery_outbox`、`outbox_seq` |
+| Outbox Store | `src/watchdog/services/delivery/store.py` | `decision_outbox` 保存待投递 envelope 真值，`delivery_outbox` 保存 attempt / retry / receipt，`outbox_seq` 提供稳定顺序 |
 | Delivery Worker | `src/watchdog/services/delivery/worker.py` | 排序、回调、retry、receipt 校验 |
 | Transport | `src/watchdog/services/delivery/http_client.py` | OpenClaw webhook HTTP 发送与响应解析 |
 | 验证 | `tests/test_watchdog_delivery_worker.py`, `tests/test_watchdog_delivery_http.py` | 顺序、重试、receipt、失败升级 |
@@ -37,8 +37,8 @@ related_doc:
 
 ### Phase 1：冻结投递矩阵与 outbox 模型
 
-- `decision_outbox`
-- `delivery_outbox`
+- `decision_outbox` 只持有待投递 envelope 与稳定排序真值
+- `delivery_outbox` 只持有 attempt / retry / receipt / failed 语义
 - `outbox_seq`
 - 决策结果到 envelope 的映射矩阵
 

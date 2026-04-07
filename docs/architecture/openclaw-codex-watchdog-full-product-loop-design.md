@@ -347,6 +347,11 @@ OpenClaw 不负责：
 | `require_user_decision` | `ApprovalEnvelope` | 先只发 `ApprovalEnvelope`；用户响应后，再发 `NotificationEnvelope(notification_kind=approval_result)` |
 | `block_and_alert` | `NotificationEnvelope` | 只发 `NotificationEnvelope(severity=critical)` |
 
+outbox 边界同时冻结为：
+
+- `decision_outbox`：持久化记录 canonical records 推导出的待投递 envelope 真值与 `outbox_seq`，不记录 HTTP attempt。
+- `delivery_outbox`：持久化记录按 `envelope_id` 驱动的 delivery 状态、attempt、next retry、receipt 与 dead-letter 结果。
+
 ### 5.5 OpenClaw Webhook
 
 Watchdog 主动调用 OpenClaw 的固定入口冻结为：

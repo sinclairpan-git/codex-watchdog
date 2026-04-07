@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.settings import Settings
+from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
@@ -439,6 +440,34 @@ def test_policy_evaluation_reuses_canonical_decision_for_same_persisted_snapshot
     assert a_client.get_envelope_calls == []
     assert a_client.get_envelope_by_thread_calls == []
     assert a_client.list_approvals_calls == []
+
+
+def test_policy_evaluation_enqueues_delivery_envelopes_from_persisted_decision(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path, fact_snapshot_version="fact-v12")
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+
+    decision = evaluate_session_policy_from_persisted_spine(
+        "repo-a",
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        store=app.state.session_spine_store,
+        decision_store=decision_store,
+        delivery_outbox_store=delivery_store,
+    )
+
+    pending = delivery_store.list_pending_delivery_records(session_id=decision.session_id)
+
+    assert decision.decision_result == "require_user_decision"
+    assert [record.envelope_type for record in pending] == ["approval"]
+    assert pending[0].envelope_payload["requested_action"] == "continue_session"
 
 
 def test_session_spine_facts_route_returns_stable_truth_source_without_touching_explanations(

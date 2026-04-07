@@ -5,7 +5,7 @@
 ## Task 27.1 冻结 envelope 投递矩阵与 outbox 边界
 
 - **任务编号**：T271
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：把 `decision_outbox / delivery_outbox / outbox_seq` 与投递矩阵收敛成 formal boundary。
 - **涉及文件**：
   - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`

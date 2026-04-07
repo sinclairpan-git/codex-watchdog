@@ -12,6 +12,7 @@ from watchdog.services.approvals.service import (
     CanonicalApprovalStore,
     respond_to_canonical_approval,
 )
+from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -38,6 +39,10 @@ def get_response_store(request: Request) -> ApprovalResponseStore:
     return request.app.state.approval_response_store
 
 
+def get_delivery_outbox_store(request: Request) -> DeliveryOutboxStore:
+    return request.app.state.delivery_outbox_store
+
+
 @router.post(
     "/openclaw/responses",
     summary="Record canonical openclaw approval responses",
@@ -54,6 +59,7 @@ def post_openclaw_response(
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     approval_store: CanonicalApprovalStore = Depends(get_approval_store),
     response_store: ApprovalResponseStore = Depends(get_response_store),
+    delivery_outbox_store: DeliveryOutboxStore = Depends(get_delivery_outbox_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -82,6 +88,7 @@ def post_openclaw_response(
             settings=settings,
             client=client,
             receipt_store=receipt_store,
+            delivery_outbox_store=delivery_outbox_store,
         )
     except KeyError as exc:
         return err(rid, {"code": "NOT_FOUND", "message": str(exc)})

@@ -161,7 +161,7 @@ def build_canonical_approval_record(
         raise ValueError("canonical approval requires require_user_decision")
     digest = _short_hash(decision.decision_key)
     approval_id = decision.approval_id or f"approval:{digest}"
-    envelope_id = f"approval-envelope:{digest}"
+    envelope_id = f"approval-envelope:{_short_hash(f'{decision.decision_key}|approval')}"
     approval_token = f"approval-token:{digest}"
     return CanonicalApprovalRecord(
         approval_id=approval_id,
@@ -192,8 +192,14 @@ def materialize_canonical_approval(
     decision: CanonicalDecisionRecord,
     *,
     approval_store: CanonicalApprovalStore,
+    delivery_outbox_store: object | None = None,
 ) -> CanonicalApprovalRecord:
-    return approval_store.put(build_canonical_approval_record(decision))
+    record = approval_store.put(build_canonical_approval_record(decision))
+    if delivery_outbox_store is not None:
+        from watchdog.services.delivery.envelopes import build_envelopes_for_decision
+
+        delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(record.decision))
+    return record
 
 
 def _approval_action_result(
@@ -258,6 +264,7 @@ def respond_to_canonical_approval(
     settings: Settings,
     client: AControlAgentClient,
     receipt_store: ActionReceiptStore,
+    delivery_outbox_store: object | None = None,
 ) -> CanonicalApprovalResponseRecord:
     if response_action not in {"approve", "reject", "execute_action"}:
         raise ValueError("response_action must be approve, reject, or execute_action")
@@ -344,4 +351,11 @@ def respond_to_canonical_approval(
         approval_result=approval_result,
         execution_result=execution_result,
     )
-    return response_store.put(response)
+    persisted_response = response_store.put(response)
+    if delivery_outbox_store is not None:
+        from watchdog.services.delivery.envelopes import build_envelopes_for_approval_response
+
+        delivery_outbox_store.enqueue_envelopes(
+            build_envelopes_for_approval_response(updated_approval, persisted_response)
+        )
+    return persisted_response

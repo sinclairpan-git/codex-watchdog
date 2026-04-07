@@ -135,16 +135,29 @@ def test_materialize_canonical_approval_reuses_same_record_for_same_decision(tmp
         CanonicalApprovalStore,
         materialize_canonical_approval,
     )
+    from watchdog.services.delivery.store import DeliveryOutboxStore
 
     store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
 
-    first = materialize_canonical_approval(_decision(), approval_store=store)
-    second = materialize_canonical_approval(_decision(), approval_store=store)
+    first = materialize_canonical_approval(
+        _decision(),
+        approval_store=store,
+        delivery_outbox_store=delivery_store,
+    )
+    second = materialize_canonical_approval(
+        _decision(),
+        approval_store=store,
+        delivery_outbox_store=delivery_store,
+    )
 
     assert first.envelope_id == second.envelope_id
     assert first.approval_id == "appr_001"
     assert first.requested_action == "execute_recovery"
     assert first.decision_options == ["approve", "reject", "execute_action"]
+    pending = delivery_store.list_pending_delivery_records(session_id=first.session_id)
+    assert [record.envelope_type for record in pending] == ["approval"]
+    assert pending[0].envelope_id == first.envelope_id
 
 
 def test_approve_response_is_idempotent_and_executes_requested_action_once(
@@ -156,12 +169,18 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
         materialize_canonical_approval,
         respond_to_canonical_approval,
     )
+    from watchdog.services.delivery.store import DeliveryOutboxStore
 
     client = FakeAClient(context_pressure="critical")
     approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
     response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
     receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
-    approval = materialize_canonical_approval(_decision(), approval_store=approval_store)
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        delivery_outbox_store=delivery_store,
+    )
 
     first = respond_to_canonical_approval(
         envelope_id=approval.envelope_id,
@@ -174,6 +193,7 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
         settings=_settings(tmp_path),
         client=client,
         receipt_store=receipt_store,
+        delivery_outbox_store=delivery_store,
     )
     second = respond_to_canonical_approval(
         envelope_id=approval.envelope_id,
@@ -186,6 +206,7 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
         settings=_settings(tmp_path),
         client=client,
         receipt_store=receipt_store,
+        delivery_outbox_store=delivery_store,
     )
 
     assert client.decision_calls == [("appr_001", "approve", "alice", "looks safe")]
@@ -194,6 +215,9 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
     assert first.approval_status == "approved"
     assert first.execution_result is not None
     assert first.execution_result.effect == "handoff_triggered"
+    pending = delivery_store.list_pending_delivery_records(session_id=approval.session_id)
+    assert [record.envelope_type for record in pending] == ["approval", "notification"]
+    assert pending[1].envelope_payload["notification_kind"] == "approval_result"
 
 
 def test_reject_response_records_rejection_without_executing_requested_action(
@@ -205,11 +229,17 @@ def test_reject_response_records_rejection_without_executing_requested_action(
         materialize_canonical_approval,
         respond_to_canonical_approval,
     )
+    from watchdog.services.delivery.store import DeliveryOutboxStore
 
     client = FakeAClient(context_pressure="critical")
     approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
     response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
-    approval = materialize_canonical_approval(_decision(), approval_store=approval_store)
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        delivery_outbox_store=delivery_store,
+    )
 
     result = respond_to_canonical_approval(
         envelope_id=approval.envelope_id,
@@ -222,12 +252,16 @@ def test_reject_response_records_rejection_without_executing_requested_action(
         settings=_settings(tmp_path),
         client=client,
         receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+        delivery_outbox_store=delivery_store,
     )
 
     assert client.decision_calls == [("appr_001", "reject", "bob", "needs more evidence")]
     assert client.handoff_calls == []
     assert result.approval_status == "rejected"
     assert result.execution_result is None
+    pending = delivery_store.list_pending_delivery_records(session_id=approval.session_id)
+    assert [record.envelope_type for record in pending] == ["approval", "notification"]
+    assert pending[1].envelope_payload["severity"] == "critical"
 
 
 def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: Path) -> None:

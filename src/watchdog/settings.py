@@ -14,3 +14,8 @@ class Settings(BaseSettings):
     recover_auto_resume: bool = False
     session_spine_refresh_interval_seconds: float = 30.0
     session_spine_freshness_window_seconds: float = 60.0
+    openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
+    openclaw_webhook_token: str = "dev-token-change-me"
+    delivery_worker_interval_seconds: float = 5.0
+    delivery_initial_backoff_seconds: float = 5.0
+    delivery_max_attempts: int = 3
