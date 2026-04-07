@@ -693,7 +693,7 @@ def test_delivery_worker_suppresses_non_critical_notifications_during_local_manu
     assert client.calls == [delivered_record.envelope_id]
 
 
-def test_delivery_worker_drops_stale_auto_execute_decision_envelopes_without_calling_downstream(
+def test_delivery_worker_attempts_stale_auto_execute_envelopes_downstream(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -754,38 +754,30 @@ def test_delivery_worker_drops_stale_auto_execute_decision_envelopes_without_cal
     client = _OrderedClient("never-match")
     worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
 
-    dropped_decision = worker.process_next_ready(
+    delivered_decision = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
         session_id="session:repo-a",
     )
-    dropped_notification = worker.process_next_ready(
+    delivered_notification = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
         session_id="session:repo-a",
     )
 
-    assert dropped_decision is not None
-    assert dropped_decision.envelope_id == decision_record.envelope_id
-    assert dropped_decision.delivery_status == "delivery_failed"
-    assert dropped_decision.failure_code == "stale_auto_execute_notification"
-    assert dropped_decision.delivery_attempt == 0
-    assert dropped_decision.operator_notes[-1] == (
-        "delivery_skipped failure_code=stale_auto_execute_notification "
-        "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
-    )
+    assert delivered_decision is not None
+    assert delivered_decision.envelope_id == decision_record.envelope_id
+    assert delivered_decision.delivery_status == "delivered"
+    assert delivered_decision.failure_code is None
+    assert delivered_decision.delivery_attempt == 1
 
-    assert dropped_notification is not None
-    assert dropped_notification.envelope_id == notification_record.envelope_id
-    assert dropped_notification.delivery_status == "delivery_failed"
-    assert dropped_notification.failure_code == "stale_auto_execute_notification"
-    assert dropped_notification.delivery_attempt == 0
-    assert dropped_notification.operator_notes[-1] == (
-        "delivery_skipped failure_code=stale_auto_execute_notification "
-        "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
-    )
-    assert client.calls == []
+    assert delivered_notification is not None
+    assert delivered_notification.envelope_id == notification_record.envelope_id
+    assert delivered_notification.delivery_status == "delivered"
+    assert delivered_notification.failure_code is None
+    assert delivered_notification.delivery_attempt == 1
+    assert client.calls == [decision_record.envelope_id, notification_record.envelope_id]
 
 
-def test_delivery_worker_drops_stale_auto_execute_notification_without_payload_decision_result(
+def test_delivery_worker_attempts_legacy_auto_execute_notification_without_payload_decision_result(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -825,18 +817,14 @@ def test_delivery_worker_drops_stale_auto_execute_notification_without_payload_d
     client = _OrderedClient("never-match")
     worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
 
-    dropped = worker.process_next_ready(
+    delivered = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
         session_id="session:repo-a",
     )
 
-    assert dropped is not None
-    assert dropped.envelope_id == record.envelope_id
-    assert dropped.delivery_status == "delivery_failed"
-    assert dropped.failure_code == "stale_auto_execute_notification"
-    assert dropped.delivery_attempt == 0
-    assert dropped.operator_notes[-1] == (
-        "delivery_skipped failure_code=stale_auto_execute_notification "
-        "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
-    )
-    assert client.calls == []
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert delivered.failure_code is None
+    assert delivered.delivery_attempt == 1
+    assert client.calls == [record.envelope_id]

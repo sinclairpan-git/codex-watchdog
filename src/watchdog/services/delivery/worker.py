@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 
 from watchdog.services.delivery.http_client import DeliveryAttemptResult, OpenClawDeliveryClient
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
-from watchdog.services.policy.rules import DECISION_AUTO_EXECUTE_AND_NOTIFY
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
@@ -24,24 +23,6 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 def _iso_z(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _decision_result(record: DeliveryOutboxRecord) -> str | None:
-    payload = record.envelope_payload
-    raw = payload.get("decision_result")
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
-    correlation_id = str(record.correlation_id or payload.get("correlation_id") or "")
-    if correlation_id.startswith("decision:"):
-        inferred = correlation_id.rsplit(":", 1)[-1].strip()
-        if inferred:
-            return inferred
-    title = str(payload.get("title") or "")
-    if title.startswith("decision "):
-        inferred = title[len("decision ") :].strip()
-        if inferred:
-            return inferred
-    return None
 
 
 class DeliveryWorker:
@@ -152,31 +133,6 @@ class DeliveryWorker:
         )
         return self._store.update_delivery_record(updated)
 
-    def _apply_stale_auto_execute_notification(
-        self,
-        *,
-        record: DeliveryOutboxRecord,
-        occurred_at: str,
-        age_seconds: int,
-        now: datetime,
-    ) -> DeliveryOutboxRecord:
-        notes = list(record.operator_notes)
-        notes.append(
-            "delivery_skipped "
-            "failure_code=stale_auto_execute_notification "
-            f"occurred_at={occurred_at} age_seconds={age_seconds}"
-        )
-        updated = record.model_copy(
-            update={
-                "delivery_status": "delivery_failed",
-                "failure_code": "stale_auto_execute_notification",
-                "next_retry_at": None,
-                "operator_notes": notes,
-                "updated_at": _iso_z(now),
-            }
-        )
-        return self._store.update_delivery_record(updated)
-
     def _apply_local_manual_activity_suppression(
         self,
         *,
@@ -220,35 +176,6 @@ class DeliveryWorker:
             return None
         age_seconds = int((now - parsed.astimezone(UTC)).total_seconds())
         if age_seconds <= max(self._settings.progress_summary_max_age_seconds, 0.0):
-            return None
-        return (occurred_at, age_seconds)
-
-    def _stale_auto_execute_notification(
-        self,
-        *,
-        record: DeliveryOutboxRecord,
-        now: datetime,
-    ) -> tuple[str, int] | None:
-        payload = record.envelope_payload
-        envelope_type = payload.get("envelope_type")
-        decision_result = _decision_result(record)
-        is_auto_execute_decision = (
-            envelope_type == "decision"
-            and decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY
-        )
-        is_auto_execute_notification = (
-            envelope_type == "notification"
-            and payload.get("notification_kind") == "decision_result"
-            and decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY
-        )
-        if not (is_auto_execute_decision or is_auto_execute_notification):
-            return None
-        occurred_at = payload.get("occurred_at") or payload.get("created_at") or record.created_at
-        parsed = _parse_iso(occurred_at)
-        if parsed is None:
-            return None
-        age_seconds = int((now - parsed.astimezone(UTC)).total_seconds())
-        if age_seconds <= max(self._settings.auto_execute_notification_max_age_seconds, 0.0):
             return None
         return (occurred_at, age_seconds)
 
@@ -303,15 +230,6 @@ class DeliveryWorker:
         if stale_progress is not None:
             occurred_at, age_seconds = stale_progress
             return self._apply_stale_progress_summary(
-                record=record,
-                occurred_at=occurred_at,
-                age_seconds=age_seconds,
-                now=now,
-            )
-        stale_auto_execute = self._stale_auto_execute_notification(record=record, now=now)
-        if stale_auto_execute is not None:
-            occurred_at, age_seconds = stale_auto_execute
-            return self._apply_stale_auto_execute_notification(
                 record=record,
                 occurred_at=occurred_at,
                 age_seconds=age_seconds,
