@@ -341,8 +341,10 @@ def test_background_runtime_orchestrates_context_critical_session_into_auto_reco
 
     assert a_client.handoff_calls == [("repo-a", "context_critical")]
     assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
-    assert not any(
+    assert any(
         record.get("notification_kind") == "decision_result"
+        and record.get("decision_result") == "auto_execute_and_notify"
+        and record.get("action_name") == "execute_recovery"
         for record in delivery_client.records
     )
 

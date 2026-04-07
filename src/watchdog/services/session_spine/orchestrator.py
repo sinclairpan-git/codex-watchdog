@@ -143,7 +143,7 @@ class ResidentOrchestrator:
             decision_result = decision.decision_result
             if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
                 try:
-                    execute_canonical_decision(
+                    result = execute_canonical_decision(
                         decision,
                         settings=self._settings,
                         client=self._client,
@@ -153,7 +153,10 @@ class ResidentOrchestrator:
                     if not self._cache_auto_continue_control_link_error(decision, exc):
                         raise
                 else:
-                    self._delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(decision))
+                    if result.action_status == ActionStatus.COMPLETED:
+                        self._delivery_outbox_store.enqueue_envelopes(
+                            build_envelopes_for_decision(decision)
+                        )
             elif decision.decision_result == DECISION_REQUIRE_USER_DECISION:
                 materialize_canonical_approval(
                     decision,

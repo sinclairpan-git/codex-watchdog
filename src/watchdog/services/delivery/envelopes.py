@@ -283,7 +283,7 @@ def build_envelopes_for_decision(
     decision: CanonicalDecisionRecord,
 ) -> list[DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope]:
     if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
-        return []
+        return [_build_decision_notification(decision)]
     if decision.decision_result == DECISION_REQUIRE_USER_DECISION:
         return [_build_approval_envelope(decision)]
     if decision.decision_result == DECISION_BLOCK_AND_ALERT:

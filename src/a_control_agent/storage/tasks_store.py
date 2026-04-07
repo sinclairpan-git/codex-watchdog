@@ -16,6 +16,7 @@ class TaskRecord(dict[str, Any]):
 
 
 _RECENT_SERVICE_INPUT_LIMIT = 8
+_SERVICE_INPUT_ECHO_SKEW_TOLERANCE_SECONDS = 5.0
 
 
 def _now_iso() -> str:
@@ -263,7 +264,11 @@ class TaskStore:
             if service_dt is None:
                 continue
             age_seconds = (input_dt - service_dt).total_seconds()
-            if 0.0 <= age_seconds <= self._service_input_match_window_seconds:
+            if (
+                -min(self._service_input_match_window_seconds, _SERVICE_INPUT_ECHO_SKEW_TOLERANCE_SECONDS)
+                <= age_seconds
+                <= self._service_input_match_window_seconds
+            ):
                 return True
         return False
 

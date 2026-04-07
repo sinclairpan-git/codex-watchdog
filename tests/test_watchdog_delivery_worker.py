@@ -153,7 +153,10 @@ def test_envelope_builder_freezes_delivery_matrix_for_decision_results() -> None
         _decision(decision_result="block_and_alert", action_ref="continue_session")
     )
 
-    assert auto_execute == []
+    assert [envelope.envelope_type for envelope in auto_execute] == ["notification"]
+    assert auto_execute[0].notification_kind == "decision_result"
+    assert auto_execute[0].decision_result == "auto_execute_and_notify"
+    assert auto_execute[0].severity == "info"
 
     assert [envelope.envelope_type for envelope in require_user] == ["approval"]
     assert require_user[0].approval_id == "appr_001"
