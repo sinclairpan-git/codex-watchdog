@@ -38,9 +38,41 @@ python -m uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
 
 配置样例：`config/examples/*.env.example`。
 
-## 可观测性（M5）
+## 可观测性（M5 / 029）
 
-两侧服务均提供 **`GET /metrics`**（Prometheus 文本），便于抓取任务数、审计事件计数与 Watchdog 自动 steer 等（见 PRD §14.3）。
+两侧服务均提供 **`GET /metrics`**（Prometheus 文本）。其中 Watchdog 从 029 起额外冻结了最小运维面：
+
+- `GET /healthz`：返回 `status=ok|degraded` 与 `active_alerts`。
+- `GET /api/v1/watchdog/ops/alerts`：返回当前活动告警清单，需 `Authorization: Bearer <WATCHDOG_API_TOKEN>`。
+- `GET /metrics`：除既有审计计数外，固定导出 `watchdog_ops_alert_active{alert="..."}` 五类 gauge：
+  - `approval_pending_too_long`
+  - `blocked_too_long`
+  - `delivery_failed`
+  - `mapping_incomplete`
+  - `recovery_failed`
+
+相关阈值与刷新周期由以下环境变量控制：
+
+- `WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS`
+- `WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS`
+- `WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS`
+
+## 审计与回放（029）
+
+029 新增的审计与回放语义只消费前序 work item 已持久化的 canonical records，不反向改写业务契约：
+
+- 审计查询：`src/watchdog/services/audit/service.py`
+- forensic replay：`src/watchdog/services/audit/replay.py`
+- truth sources：`policy_decisions.json`、`canonical_approvals.json`、`delivery_outbox.json`、`action_receipts.json`
+
+回放只回答“发生了什么、按什么顺序发生”，不重放动作，不补执行 delivery，也不回退到 raw/legacy route 推断状态。
+
+## 部署纪律
+
+- A 与 B 必须运行同一提交；升级顺序固定为先 A、再 B、最后验证 OpenClaw -> Watchdog。
+- 回滚时同样按提交回退，避免 A/B 漂在不同契约版本。
+- Bearer token 需要独立保管并支持轮换；公网暴露只建议经 TLS 反向代理对外开放 Watchdog，不建议让 OpenClaw 直连 A。
+- 完整 operator runbook、安装/升级/回滚、密钥轮换与公网暴露建议见 `docs/getting-started.zh-CN.md`。
 
 ## OpenAPI 与集成示例
 

@@ -495,14 +495,20 @@ OpenClaw 回传 Watchdog 的固定入口冻结为：
 
 - 目标：把当前“能跑”补成“可长期运营”。
 - 范围：
-  - 审计
-  - 回放与 forensic tooling
-  - 公网标准方案
-  - install / upgrade
-  - metrics / health / alerts
-  - runbook / recovery / 生产部署
+  - canonical records 审计查询
+  - 基于 `decision_id / envelope_id / approval_id / receipt_id` 的 forensic replay
+  - `GET /healthz`、`GET /metrics`、`GET /api/v1/watchdog/ops/alerts`
+  - 五类冻结运维告警：`approval_pending_too_long`、`blocked_too_long`、`delivery_failed`、`mapping_incomplete`、`recovery_failed`
+  - install / upgrade / rollback / secret rotation / 公网标准方案
+  - operator runbook / production deployment
 - 非目标：
   - 不反向重写前五个 WI 已冻结的核心契约
+
+当前已交付的 WI-6 责任边界：
+
+- 审计与 replay 只消费 `policy_decisions.json`、`canonical_approvals.json`、`delivery_outbox.json`、`action_receipts.json` 等 canonical records。
+- ops surface 只回答“系统是否退化、哪些告警在亮、值班先查哪里”，不承载新的业务策略。
+- 部署文档只冻结安装、升级、回滚、密钥轮换与公网入口纪律，不引入新的业务行为。
 
 ### 6.7 依赖顺序
 
@@ -520,18 +526,15 @@ flowchart TD
 - `WI-3` 只拥有 canonical action / approval execution 语义，不拥有 delivery 重试逻辑。
 - `WI-5` 的 reference runtime 只是宿主模板，不得演化成第二个 Watchdog 内核。
 
-## 7. 当前实现状态与下一步
+## 7. 当前实现状态
 
-当前仓库**还没有**进入这套完整产品闭环的新实现；现有能力仍以 stable spine / query+action MVP 为主。
+`WI-1 -> WI-6` 当前已按依赖顺序落地到仓库：
 
-下一步正式落点固定为：
+1. `WI-1` resident supervision + session spine persistence
+2. `WI-2` policy engine + decision evidence
+3. `WI-3` canonical action + approval response
+4. `WI-4` outbox + delivery + retry + receipt
+5. `WI-5` OpenClaw webhook / response contract + reference runtime
+6. `WI-6` audit + replay + ops + production deployment
 
-1. 把本总设计作为跨多个 work item 的冻结架构真值；
-2. 先启动 `WI-1：常驻监督与 Session Spine 持久化` 的 formal spec / plan / tasks；
-3. 按 `WI-1 -> WI-6` 的依赖顺序逐项推进。
-
-附加约束：
-
-- 框架违约 backlog 已单独记录在 `docs/framework-defect-backlog.zh-CN.md`；
-- 该 backlog 的规则修复不并入本轮产品闭环设计实现；
-- 按当前用户指令，待整体开发完成后再回头处理该 backlog 的框架修复项。
+后续新增需求若触碰前五个 WI 的冻结契约，应作为新 work item 或 defect 处理，而不是在 `029` 中回写边界。

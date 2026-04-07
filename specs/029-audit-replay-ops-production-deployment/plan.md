@@ -64,9 +64,18 @@ related_doc:
   - canonical records 查询
 - `tests/test_watchdog_replay.py`
   - 按 `decision_id / envelope_id / approval_id` 回放
+- `tests/test_watchdog_ops.py`
+  - `/healthz` / `/api/v1/watchdog/ops/alerts` / `/metrics` 告警面
 - `tests/integration/test_openclaw_integration_spine.py`
   - A/B restart / restore
   - 接入链路不回归
+
+## 当前实现对齐
+
+- 审计查询已落到 `src/watchdog/services/audit/service.py`
+- forensic replay 已落到 `src/watchdog/services/audit/replay.py`
+- 运维面已落到 `src/watchdog/api/ops.py` 与 `src/watchdog/api/metrics.py`
+- 正式部署与 runbook 已回写到 `README.md` 与 `docs/getting-started.zh-CN.md`
 
 ## 主要风险与应对
 

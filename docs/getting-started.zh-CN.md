@@ -298,6 +298,9 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS` | delivery worker 轮询 `delivery_outbox` 的周期（默认 `5` 秒） |
 | `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS` | delivery 重试初始退避秒数（默认 `5` 秒，之后指数退避） |
 | `WATCHDOG_DELIVERY_MAX_ATTEMPTS` | 单 envelope 最大投递次数；超限后落 `delivery_failed` |
+| `WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS` | resident session spine 后台刷新周期（默认 `30` 秒） |
+| `WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS` | `block_and_alert` 未消解多久后触发 `blocked_too_long`（默认 `900` 秒） |
+| `WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS` | pending approval 超过多久后触发 `approval_pending_too_long`（默认 `900` 秒） |
 
 推荐环境文件内容：
 
@@ -314,6 +317,9 @@ WATCHDOG_OPENCLAW_WEBHOOK_TOKEN=<强随机tokenOC>
 WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS=5
 WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS=5
 WATCHDOG_DELIVERY_MAX_ATTEMPTS=3
+WATCHDOG_SESSION_SPINE_REFRESH_INTERVAL_SECONDS=30
+WATCHDOG_OPS_BLOCKED_TOO_LONG_SECONDS=900
+WATCHDOG_OPS_APPROVAL_PENDING_TOO_LONG_SECONDS=900
 WATCHDOG_BASE_URL=http://127.0.0.1:8720
 WATCHDOG_DEFAULT_PROJECT_ID=
 WATCHDOG_OPERATOR=openclaw
@@ -389,9 +395,11 @@ launchctl kickstart -k "gui/$(id -u)/com.openclaw.watchdog"
 
 ```bash
 curl http://127.0.0.1:8720/healthz
-curl http://<A的IP>:8710/healthz
+curl http://<B的IP>:8720/healthz
 curl -H "Authorization: Bearer <WATCHDOG_API_TOKEN>" \
   http://127.0.0.1:8720/api/v1/watchdog/sessions
+curl -H "Authorization: Bearer <WATCHDOG_API_TOKEN>" \
+  http://127.0.0.1:8720/api/v1/watchdog/ops/alerts
 ```
 
 看日志：
@@ -589,9 +597,54 @@ uv run python examples/openclaw_watchdog_client.py
 
 ## 5. 监控与文档
 
-- **Prometheus**：`GET /metrics`（A、Watchdog 各一份）。  
+- **Prometheus**：`GET /metrics`（A、Watchdog 各一份）。Watchdog 额外固定导出 `watchdog_ops_alert_active{alert="..."}` 五类告警 gauge：`approval_pending_too_long`、`blocked_too_long`、`delivery_failed`、`mapping_incomplete`、`recovery_failed`。  
+- **Health**：`GET /healthz`。Watchdog 返回 `status` 与 `active_alerts`；有活动告警时状态会降为 `degraded`。  
+- **Ops Alerts**：`GET /api/v1/watchdog/ops/alerts`。这个接口是 operator 看的结构化告警面。  
+- **Audit / Replay**：forensic 只消费 canonical records：`policy_decisions.json`、`canonical_approvals.json`、`delivery_outbox.json`、`action_receipts.json`。  
 - **OpenAPI**：`uv run python scripts/export_openapi.py` → `docs/openapi/`。  
 - **需求真值**：仓库根目录 `openclaw-codex-watchdog-prd.md`。
+
+---
+
+### 5.1 最小 operator runbook
+
+1. 先看 `GET /healthz`。若 `status=degraded`，读取 `active_alerts` 判断是否需要进一步排障。
+2. 再看 `GET /api/v1/watchdog/ops/alerts`。当前冻结的五类告警分别对应：
+   - `approval_pending_too_long`：审批长期未处理，先检查 `GET /api/v1/watchdog/approval-inbox` 与宿主消息投递。
+   - `blocked_too_long`：策略已判定 `block_and_alert` 但长期未消解，先看 `policy_decisions.json` 与人工处置记录。
+   - `delivery_failed`：delivery worker 已进入死信，先查 `delivery_outbox.json` 与 OpenClaw receipt。
+   - `mapping_incomplete`：映射不完整导致决策退化，需要补宿主展示映射或 policy 侧字段映射。
+   - `recovery_failed`：`execute_recovery` 有非 completed receipt，先查 `action_receipts.json` 与 A 侧 handoff / resume 执行情况。
+3. 若要做 forensic，使用本地 canonical records 做审计与 replay；不要用 raw/legacy route 反推真值。
+4. 若问题是 A 侧连通性，先从 B 机验证 `WATCHDOG_A_AGENT_BASE_URL/healthz`，再核对 `WATCHDOG_A_AGENT_TOKEN` 与 A 的 `A_AGENT_API_TOKEN`。
+
+### 5.2 安装、升级、回滚与密钥轮换
+
+安装与升级纪律固定如下：
+
+1. 在 A、B 两机分别执行 `git fetch --tags origin`，记录 `origin/main` 的最新提交摘要。
+2. 先在 A 机 `git checkout <RELEASE_REF> && uv sync`，然后 `launchctl kickstart -k` 重启 A-Control-Agent。
+3. 验证 A 机 `GET /healthz` 正常后，再在 B 机执行同一 `git checkout <RELEASE_REF> && uv sync`，然后重启 Watchdog。
+4. 升级完成后，从 B 机验证 `GET /healthz`、`GET /api/v1/watchdog/ops/alerts`、`GET /api/v1/watchdog/sessions`，最后再验证 OpenClaw 调用 Watchdog。
+
+回滚纪律固定如下：
+
+1. 先选定同一历史提交 `ROLLBACK_REF`，A、B 都只回滚到这个提交，不做手工混搭。
+2. 若是 Watchdog 新版本问题，先回滚 B 并验证 `GET /healthz` 与 stable routes；若问题来自 A/B 契约不匹配，再同步回滚 A。
+3. 回滚后保留原数据目录，不删除 `policy_decisions.json`、`delivery_outbox.json`、`action_receipts.json` 与 `session_spine.json`，以免丢失审计链。
+
+密钥轮换纪律固定如下：
+
+1. 先生成新的 `A_AGENT_API_TOKEN`、`WATCHDOG_API_TOKEN`、`WATCHDOG_OPENCLAW_WEBHOOK_TOKEN`。
+2. 先更新服务端接受方配置，再更新调用方配置，避免短时间双向鉴权错配。
+3. 轮换 A/B 之间共享凭证时，按 A -> B 顺序重启；轮换 OpenClaw <-> Watchdog webhook 凭证时，按 OpenClaw -> Watchdog 顺序更新。
+4. 轮换完成后重新验证 `GET /healthz`、`GET /api/v1/watchdog/ops/alerts` 与一次最小 webhook / response 闭环。
+
+### 5.3 公网与入口方案
+
+- 推荐做法是只让 Watchdog 暴露在固定 HTTPS 域名后面，由 nginx / Caddy / cloudflared tunnel 等反向代理处理 TLS 与公网入口。
+- A-Control-Agent 只建议暴露在内网、VPN 或固定 allowlist 网段，不建议让 OpenClaw 或公网直接访问 A。
+- 若必须跨公网访问 A，应至少增加 TLS、源地址限制、独立 token 与更短轮换周期；默认部署口径仍是不开放 A 的公网入口。
 
 ---
 

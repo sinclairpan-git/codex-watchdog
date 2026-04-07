@@ -5,7 +5,7 @@
 ## Task 29.1 冻结审计、回放与生产化边界
 
 - **任务编号**：T291
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：把审计、回放、运维与生产部署的边界冻结为 formal docs，不反向改写前五个 WI。
 - **涉及文件**：
   - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
@@ -13,11 +13,12 @@
   - `specs/029-audit-replay-ops-production-deployment/plan.md`
   - `specs/029-audit-replay-ops-production-deployment/tasks.md`
 - **验证**：人工审阅 formal docs 是否与总设计 Section 5 的 WI-6 边界一致。
+- **完成情况**：已回写 `README.md`、`docs/getting-started.zh-CN.md`、`docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md` 与本 work item 的 plan/tasks 状态。
 
 ## Task 29.2 新增审计与回放服务
 
 - **任务编号**：T292
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：新增 canonical audit query 与 replay 服务。
 - **涉及文件**：
   - `src/watchdog/services/audit/service.py`
@@ -25,29 +26,32 @@
   - `tests/test_watchdog_audit.py`
   - `tests/test_watchdog_replay.py`
 - **验证**：`uv run pytest -q tests/test_watchdog_audit.py tests/test_watchdog_replay.py`
+- **完成情况**：已交付 canonical audit query、forensic replay 与对应测试。
 
 ## Task 29.3 补 ops surface、关键告警与 runbook
 
 - **任务编号**：T293
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：补齐 metrics / health / alerts 与 operator runbook。
 - **涉及文件**：
   - `src/watchdog/api/ops.py`
   - `src/watchdog/api/metrics.py`
   - `README.md`
   - `docs/getting-started.zh-CN.md`
-- **验证**：人工审阅关键告警、runbook 与运维说明是否闭环。
+- **验证**：`uv run pytest -q tests/test_watchdog_ops.py`
+- **完成情况**：已交付 `/healthz`、`/api/v1/watchdog/ops/alerts`、`/metrics` 告警 gauge 与 operator runbook。
 
 ## Task 29.4 锁住安装、升级、回滚与公网方案
 
 - **任务编号**：T294
-- **状态**：待开始
+- **状态**：已完成
 - **目标**：把安装、升级、回滚、密钥轮换与公网方案收成正式交付。
 - **涉及文件**：
   - `README.md`
   - `docs/getting-started.zh-CN.md`
   - `tests/integration/test_openclaw_integration_spine.py`
 - **验证**：`uv run pytest -q tests/integration/test_openclaw_integration_spine.py`
+- **完成情况**：已把安装、升级、回滚、密钥轮换与公网入口纪律收成正式文档交付。
 
 ## 整体验收
 
