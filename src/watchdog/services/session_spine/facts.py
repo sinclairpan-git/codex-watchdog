@@ -5,6 +5,7 @@ from typing import Any
 
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.services.session_spine.approval_visibility import is_actionable_approval
+from watchdog.services.session_spine.task_state import is_terminal_task
 
 
 def _now_iso() -> str:
@@ -75,10 +76,23 @@ def build_fact_records(
         ]
 
     pending_approvals = [approval for approval in approvals if is_actionable_approval(approval)]
-    if bool(_task_value(task, "pending_approval", False)) or pending_approvals:
-        related_ids: dict[str, Any] = {}
-        if pending_approvals:
-            related_ids["approval_id"] = str(pending_approvals[0].get("approval_id") or "")
+    if is_terminal_task(task) and not pending_approvals:
+        return [
+            _build_fact(
+                project_id,
+                fact_code="task_completed",
+                fact_kind="advisory",
+                severity="info",
+                summary="session completed",
+                detail="session reached a terminal completed state",
+                source="watchdog_projection",
+                observed_at=observed_at,
+            )
+        ]
+    if pending_approvals:
+        related_ids: dict[str, Any] = {
+            "approval_id": str(pending_approvals[0].get("approval_id") or "")
+        }
         facts.append(
             _build_fact(
                 project_id,

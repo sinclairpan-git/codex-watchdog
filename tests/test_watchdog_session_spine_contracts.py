@@ -280,6 +280,7 @@ def test_supervision_evaluation_contract_extensions_are_stable() -> None:
     assert ActionCode.EVALUATE_SUPERVISION == "evaluate_supervision"
     assert ReplyCode.SUPERVISION_EVALUATION == "supervision_evaluation"
     assert SupervisionReasonCode.STUCK_SOFT == "stuck_soft"
+    assert SupervisionReasonCode.TERMINAL_STATE == "terminal_state"
     assert payload["supervision_evaluation"]["thread_id"] == "session:repo-a"
     assert payload["supervision_evaluation"]["native_thread_id"] == "thr_native_1"
     assert payload["supervision_evaluation"]["reason_code"] == "stuck_soft"

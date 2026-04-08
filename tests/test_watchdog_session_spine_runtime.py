@@ -177,6 +177,7 @@ def test_background_runtime_persists_session_spine_and_keeps_fact_snapshot_versi
         a_agent_token="at",
         a_agent_base_url="http://a.test",
         data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
     )
     a_client = FakeResidentAClient(
         task={
@@ -252,6 +253,19 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
             },
         ]
     )
+    a_client._approvals = [
+        {
+            "approval_id": "appr_001",
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "risk_level": "L2",
+            "command": "uv run pytest",
+            "reason": "verify tests",
+            "alternative": "",
+            "status": "pending",
+            "requested_at": "2099-01-01T00:01:30Z",
+        }
+    ]
 
     with TestClient(create_app(settings, a_client=a_client, start_background_workers=True)):
         first_snapshot = _read_store(tmp_path)
@@ -265,6 +279,93 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
     assert int(refreshed_snapshot["sessions"]["repo-a"]["session_seq"]) > first_seq
     assert refreshed_snapshot["sessions"]["repo-a"]["session"]["session_state"] == "awaiting_approval"
     assert refreshed_snapshot["sessions"]["repo-a"]["progress"]["activity_phase"] == "approval"
+
+
+def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_set(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        progress_summary_max_age_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    app.state.session_spine_runtime.refresh_all()
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+    snapshot = _read_store(tmp_path)
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert snapshot["sessions"]["repo-a"]["session"]["session_state"] == "active"
+    assert snapshot["sessions"]["repo-a"]["session"]["pending_approval_count"] == 0
+    assert snapshot["sessions"]["repo-a"]["facts"] == []
+    assert app.state.delivery_outbox_store.list_records() == []
+
+
+def test_resident_orchestrator_skips_auto_continue_for_done_session(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_done",
+            "status": "waiting_human",
+            "phase": "done",
+            "pending_approval": False,
+            "last_summary": "task complete",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    app.state.session_spine_runtime.refresh_all()
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    snapshot = _read_store(tmp_path)
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert len(snapshot["sessions"]["repo-a"]["facts"]) == 1
+    assert snapshot["sessions"]["repo-a"]["facts"][0]["fact_id"] == "repo-a:task_completed"
+    assert snapshot["sessions"]["repo-a"]["facts"][0]["fact_code"] == "task_completed"
+    assert snapshot["sessions"]["repo-a"]["facts"][0]["detail"] == (
+        "session reached a terminal completed state"
+    )
+    assert app.state.delivery_outbox_store.list_records() == []
+    assert steer_mock.call_count == 0
 
 
 def test_background_runtime_persists_last_local_manual_activity_from_a_side_task(
@@ -358,6 +459,7 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
         a_agent_token="at",
         a_agent_base_url="http://a.test",
         data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
     )
     a_client = FakeResidentAClient(
         task={
@@ -415,6 +517,75 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
         "continue_session",
         "continue_session",
     ]
+
+
+def test_resident_orchestrator_applies_cooldown_to_repeated_auto_continue(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=300.0,
+    )
+    a_client = CyclingResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "still stuck",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 2,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "still stuck after retry",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:25:00Z",
+            },
+        ]
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+
+        app.state.session_spine_runtime.refresh_all()
+        first = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+        app.state.session_spine_runtime.refresh_all()
+        second = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 2, 0, tzinfo=UTC)
+        )
+
+        app.state.session_spine_runtime.refresh_all()
+        third = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 6, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in first] == ["continue_session"]
+    assert [outcome.decision_result for outcome in first] == ["auto_execute_and_notify"]
+    assert [outcome.action_ref for outcome in second] == [None]
+    assert [outcome.decision_result for outcome in second] == [None]
+    assert [outcome.action_ref for outcome in third] == ["continue_session"]
+    assert [outcome.decision_result for outcome in third] == ["auto_execute_and_notify"]
+    assert steer_mock.call_count == 2
 
 
 def test_background_runtime_pushes_progress_summary_when_project_progress_changes(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 
@@ -13,8 +12,14 @@ class ProgressSummaryCheckpoint(BaseModel):
     last_progress_notification_at: str
 
 
+class AutoContinueCheckpoint(BaseModel):
+    project_id: str
+    last_auto_continue_at: str
+
+
 class ResidentOrchestrationStateFile(BaseModel):
     progress_summaries: dict[str, ProgressSummaryCheckpoint] = Field(default_factory=dict)
+    auto_continue_checkpoints: dict[str, AutoContinueCheckpoint] = Field(default_factory=dict)
 
 
 class ResidentOrchestrationStateStore:
@@ -56,5 +61,26 @@ class ResidentOrchestrationStateStore:
         with self._lock:
             data = self._read()
             data.progress_summaries[project_id] = checkpoint
+            self._write(data)
+        return checkpoint
+
+    def get_auto_continue_checkpoint(self, project_id: str) -> AutoContinueCheckpoint | None:
+        with self._lock:
+            data = self._read()
+            return data.auto_continue_checkpoints.get(project_id)
+
+    def put_auto_continue_checkpoint(
+        self,
+        *,
+        project_id: str,
+        last_auto_continue_at: str,
+    ) -> AutoContinueCheckpoint:
+        checkpoint = AutoContinueCheckpoint(
+            project_id=project_id,
+            last_auto_continue_at=last_auto_continue_at,
+        )
+        with self._lock:
+            data = self._read()
+            data.auto_continue_checkpoints[project_id] = checkpoint
             self._write(data)
         return checkpoint

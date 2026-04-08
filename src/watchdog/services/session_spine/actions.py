@@ -19,6 +19,7 @@ from watchdog.services.session_spine.service import (
     build_session_read_bundle,
 )
 from watchdog.services.session_spine.supervision import execute_supervision_evaluation
+from watchdog.services.session_spine.task_state import is_terminal_task
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
@@ -97,6 +98,15 @@ def _execute_continue(
 ) -> WatchdogActionResult:
     bundle = build_session_read_bundle(client, action.project_id)
     fact_codes = {fact.fact_code for fact in bundle.facts}
+    if "task_completed" in fact_codes or is_terminal_task(bundle.task):
+        return _result(
+            action,
+            action_status=ActionStatus.NOOP,
+            effect=Effect.NOOP,
+            reply_code=ReplyCode.ACTION_NOT_AVAILABLE,
+            message="session is already complete",
+            facts=bundle.facts,
+        )
     if fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
         return _result(
             action,

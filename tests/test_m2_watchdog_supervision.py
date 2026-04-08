@@ -119,6 +119,15 @@ def test_background_supervision_scans_running_and_waiting_threads(tmp_path) -> N
                     "stuck_level": 0,
                 },
                 {
+                    "project_id": "proj-d",
+                    "thread_id": "thr_done_waiting",
+                    "status": "waiting_human",
+                    "phase": "done",
+                    "cwd": "",
+                    "last_progress_at": old,
+                    "stuck_level": 0,
+                },
+                {
                     "project_id": "proj-c",
                     "thread_id": "thr_fresh",
                     "status": "running",

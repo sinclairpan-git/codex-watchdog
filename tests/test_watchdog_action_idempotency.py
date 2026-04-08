@@ -152,6 +152,52 @@ def test_continue_session_is_idempotent_and_posts_steer_once(tmp_path: Path) -> 
     assert first.reply_code == "action_result"
 
 
+def test_continue_session_is_not_available_for_completed_session(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_done",
+            "status": "waiting_human",
+            "phase": "done",
+            "pending_approval": False,
+            "last_summary": "task complete",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-continue-done",
+        arguments={},
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        result = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+        )
+
+    assert steer_mock.call_count == 0
+    assert result.action_status == "noop"
+    assert result.effect == "noop"
+    assert result.reply_code == "action_not_available"
+    assert result.message == "session is already complete"
+    assert [fact.fact_code for fact in result.facts] == ["task_completed"]
+
+
 def test_request_recovery_returns_advisory_only_result(tmp_path: Path) -> None:
     settings = Settings(
         api_token="wt",

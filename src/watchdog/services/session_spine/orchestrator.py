@@ -43,6 +43,8 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 def _select_action_ref(record: PersistedSessionRecord) -> str | None:
     fact_codes = {fact.fact_code for fact in record.facts}
+    if "task_completed" in fact_codes:
+        return None
     if "context_critical" in fact_codes:
         return "execute_recovery"
     if fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
@@ -116,6 +118,33 @@ class ResidentOrchestrator:
         )
         return True
 
+    def _is_auto_continue_in_cooldown(
+        self,
+        project_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        checkpoint = self._state_store.get_auto_continue_checkpoint(project_id)
+        if checkpoint is None:
+            return False
+        last_auto_continue = _parse_iso(checkpoint.last_auto_continue_at)
+        if last_auto_continue is None:
+            return False
+        elapsed = (now - last_auto_continue.astimezone(UTC)).total_seconds()
+        return elapsed < max(self._settings.auto_continue_cooldown_seconds, 0.0)
+
+    def _record_auto_continue(
+        self,
+        project_id: str,
+        *,
+        now: datetime,
+    ) -> None:
+        created_at = now.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        self._state_store.put_auto_continue_checkpoint(
+            project_id=project_id,
+            last_auto_continue_at=created_at,
+        )
+
     def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
         return [
@@ -131,6 +160,12 @@ class ResidentOrchestrator:
     ) -> ResidentOrchestrationOutcome:
         action_ref = _select_action_ref(record)
         decision_result: str | None = None
+
+        if action_ref == "continue_session" and self._is_auto_continue_in_cooldown(
+            record.project_id,
+            now=now,
+        ):
+            action_ref = None
 
         if action_ref is not None:
             decision = self._decision_store.put(
@@ -150,10 +185,14 @@ class ResidentOrchestrator:
                         client=self._client,
                         receipt_store=self._action_receipt_store,
                     )
+                    if decision.action_ref == "continue_session":
+                        self._record_auto_continue(record.project_id, now=now)
                     should_enqueue_delivery = True
                 except SessionSpineUpstreamError as exc:
                     if not self._cache_auto_continue_control_link_error(decision, exc):
                         raise
+                    if decision.action_ref == "continue_session":
+                        self._record_auto_continue(record.project_id, now=now)
                     should_enqueue_delivery = True
                 if should_enqueue_delivery:
                     self._delivery_outbox_store.enqueue_envelopes(

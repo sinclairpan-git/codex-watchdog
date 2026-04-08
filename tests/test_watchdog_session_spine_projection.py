@@ -59,6 +59,60 @@ def test_projection_builds_awaiting_approval_session_and_pending_approval_fact()
     assert projected_approvals[0].native_thread_id == "thr_native_1"
 
 
+def test_projection_ignores_stale_pending_approval_flag_without_actionable_approvals() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "waiting_human",
+        "phase": "approval",
+        "pending_approval": True,
+        "approval_risk": "L2",
+        "last_summary": "waiting for approval",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
+    progress = build_task_progress_view(project_id="repo-a", task=raw_task, facts=facts)
+
+    assert facts == []
+    assert session.session_state == "active"
+    assert session.attention_state == "normal"
+    assert session.pending_approval_count == 0
+    assert progress.blocker_fact_codes == []
+
+
+def test_projection_marks_done_session_complete_and_omits_continue_intent() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_done",
+        "status": "waiting_human",
+        "phase": "done",
+        "pending_approval": False,
+        "last_summary": "task complete",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
+    progress = build_task_progress_view(project_id="repo-a", task=raw_task, facts=facts)
+
+    assert [fact.fact_code for fact in facts] == ["task_completed"]
+    assert session.session_state == "active"
+    assert session.attention_state == "normal"
+    assert "continue_session" not in session.available_intents
+    assert progress.primary_fact_codes == ["task_completed"]
+    assert progress.blocker_fact_codes == []
+
+
 def test_projection_builds_recovery_related_facts_from_stuck_and_critical_pressure() -> None:
     raw_task = {
         "project_id": "repo-a",
