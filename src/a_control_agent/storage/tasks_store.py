@@ -181,14 +181,16 @@ class TaskStore:
             at = str(item.get("at") or "").strip()
             if not fingerprint or not at:
                 continue
-            normalized.append(
-                {
-                    "fingerprint": fingerprint,
-                    "at": at,
-                    "source": str(item.get("source") or ""),
-                    "kind": str(item.get("kind") or ""),
-                }
-            )
+            row = {
+                "fingerprint": fingerprint,
+                "at": at,
+                "source": str(item.get("source") or ""),
+                "kind": str(item.get("kind") or ""),
+            }
+            matched_input_at = str(item.get("matched_input_at") or "").strip()
+            if matched_input_at:
+                row["matched_input_at"] = matched_input_at
+            normalized.append(row)
         return normalized[-_RECENT_SERVICE_INPUT_LIMIT:]
 
     def _new_record(
@@ -248,7 +250,7 @@ class TaskStore:
         rec["recent_service_inputs"] = recent[-_RECENT_SERVICE_INPUT_LIMIT:]
         self._reconcile_local_manual_activity(rec)
 
-    def _is_recent_service_echo(
+    def _consume_recent_service_echo(
         self,
         rec: dict[str, Any],
         *,
@@ -258,17 +260,28 @@ class TaskStore:
         input_dt = _parse_iso(input_at)
         if input_dt is None:
             return False
-        for item in reversed(self._normalize_recent_service_inputs(rec.get("recent_service_inputs"))):
+        recent = self._normalize_recent_service_inputs(rec.get("recent_service_inputs"))
+        for index in range(len(recent) - 1, -1, -1):
+            item = recent[index]
             if str(item.get("fingerprint") or "") != fingerprint:
+                continue
+            matched_input_at = str(item.get("matched_input_at") or "").strip()
+            if matched_input_at:
+                if matched_input_at == input_at:
+                    rec["recent_service_inputs"] = recent
+                    return True
                 continue
             service_dt = _parse_iso(item.get("at"))
             if service_dt is None:
                 continue
             age_seconds = (input_dt - service_dt).total_seconds()
             # Service input is recorded after the bridge accepts it, while the echoed
-            # user message timestamp can arrive slightly earlier or later.
-            if -self._service_input_match_window_seconds <= age_seconds <= self._service_input_match_window_seconds:
+            # user message timestamp can arrive slightly earlier or much later.
+            if age_seconds >= -self._service_input_match_window_seconds:
+                recent[index]["matched_input_at"] = input_at
+                rec["recent_service_inputs"] = recent
                 return True
+        rec["recent_service_inputs"] = recent
         return False
 
     def _reconcile_local_manual_activity(self, rec: dict[str, Any]) -> None:
@@ -283,7 +296,7 @@ class TaskStore:
             or manual_activity_at != last_user_input_at
         ):
             return
-        if self._is_recent_service_echo(
+        if self._consume_recent_service_echo(
             rec,
             fingerprint=last_user_input_fingerprint,
             input_at=last_user_input_at,
@@ -425,7 +438,7 @@ class TaskStore:
                 and last_user_input_at
                 and isinstance(last_user_input_fingerprint, str)
                 and last_user_input_fingerprint
-                and not self._is_recent_service_echo(
+                and not self._consume_recent_service_echo(
                     rec,
                     fingerprint=last_user_input_fingerprint,
                     input_at=last_user_input_at,

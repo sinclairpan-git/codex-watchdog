@@ -191,8 +191,6 @@ class ResidentOrchestrator:
                 except SessionSpineUpstreamError as exc:
                     if not self._cache_auto_continue_control_link_error(decision, exc):
                         raise
-                    if decision.action_ref == "continue_session":
-                        self._record_auto_continue(record.project_id, now=now)
                     should_enqueue_delivery = True
                 if should_enqueue_delivery:
                     self._delivery_outbox_store.enqueue_envelopes(

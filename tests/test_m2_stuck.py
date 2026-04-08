@@ -211,3 +211,94 @@ def test_task_store_clears_manual_activity_when_service_input_arrives_late(tmp_p
 
     assert reconciled is not None
     assert reconciled.get("last_local_manual_activity_at") is None
+
+
+def test_task_store_treats_large_positive_delay_as_service_echo(tmp_path, monkeypatch) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:00:10Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:10:00Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") is None
+
+
+def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:00:10Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:10:00Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+    manual = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:15:00Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") is None
+    assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:15:00Z"
