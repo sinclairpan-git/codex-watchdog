@@ -98,5 +98,6 @@ class Effect(str, Enum):
 class SupervisionReasonCode(str, Enum):
     FILESYSTEM_ACTIVITY_RECENT = "filesystem_activity_recent"
     NO_LAST_PROGRESS_AT = "no_last_progress_at"
+    TERMINAL_STATE = "terminal_state"
     WITHIN_THRESHOLD = "within_threshold"
     STUCK_SOFT = "stuck_soft"

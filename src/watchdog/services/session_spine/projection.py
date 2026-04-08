@@ -14,6 +14,7 @@ from watchdog.services.session_spine.approval_visibility import (
     actionable_approval_count,
     has_rejectable_approval,
 )
+from watchdog.services.session_spine.task_state import is_terminal_task
 
 
 def stable_thread_id_for_project(project_id: str) -> str:
@@ -130,12 +131,13 @@ def build_workspace_activity_view(
 def _build_available_intents(
     *,
     has_task: bool,
+    is_terminal: bool,
     pending_approval_count: int,
     can_reject_approval: bool,
     fact_codes: set[str],
 ) -> list[str]:
     intents = ["get_session"]
-    if has_task:
+    if has_task and not is_terminal:
         intents.append("continue_session")
     if pending_approval_count > 0:
         intents.extend(["list_pending_approvals", "approve_approval"])
@@ -161,6 +163,9 @@ def build_session_projection(
     fact_codes = {fact.fact_code for fact in facts}
     pending_approval_count = actionable_approval_count(approvals)
     can_reject_approval = has_rejectable_approval(approvals)
+    terminal = "task_completed" in fact_codes or (
+        pending_approval_count == 0 and is_terminal_task(task)
+    )
 
     session_state = SessionState.ACTIVE
     attention_state = AttentionState.NORMAL
@@ -190,6 +195,7 @@ def build_session_projection(
         pending_approval_count=pending_approval_count,
         available_intents=_build_available_intents(
             has_task=isinstance(task, dict),
+            is_terminal=terminal,
             pending_approval_count=pending_approval_count,
             can_reject_approval=can_reject_approval,
             fact_codes=fact_codes,

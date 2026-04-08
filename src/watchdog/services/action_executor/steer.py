@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -11,6 +13,18 @@ SOFT_STEER_MESSAGE = (
     "3. 下一步最小动作\n"
     "如果无阻塞，请立即继续执行。"
 )
+
+
+def _trust_env_for_base_url(base_url: str) -> bool:
+    host = urlparse(base_url).hostname
+    if not host:
+        return True
+    if host.lower() == "localhost":
+        return False
+    try:
+        return not ip_address(host).is_loopback
+    except ValueError:
+        return True
 
 
 def post_steer(
@@ -28,7 +42,7 @@ def post_steer(
     body: dict[str, Any] = {"message": message, "source": "watchdog", "reason": reason}
     if stuck_level is not None:
         body["stuck_level"] = stuck_level
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=timeout, trust_env=_trust_env_for_base_url(base_url)) as client:
         r = client.post(url, json=body, headers=headers)
         r.raise_for_status()
         try:

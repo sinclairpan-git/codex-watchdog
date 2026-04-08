@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from a_control_agent.services.codex.client import fingerprint_input_text
 from a_control_agent.storage.tasks_store import TaskStore
 from watchdog.services.status_analyzer.stuck import (
     StuckThresholds,
@@ -42,3 +43,262 @@ def test_bump_failure_new_sig(tmp_path) -> None:
     c2, r2 = bump_failure_if_same_signature("x", "x", 2)
     assert c2 == 3
     assert r2 is True
+
+
+def test_task_store_updates_last_local_manual_activity_only_for_non_service_echo(tmp_path) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    echoed_at = (now + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    manual_at = (now + timedelta(seconds=45)).isoformat().replace("+00:00", "Z")
+
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": echoed_at,
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+    manual = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": manual_at,
+            "last_substantive_user_input_fingerprint": fingerprint_input_text(
+                "不要把我正在本地看的动态再往飞书发。"
+            ),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") is None
+    assert manual["last_local_manual_activity_at"] == manual_at
+
+
+def test_task_store_treats_small_negative_skew_as_service_echo(tmp_path, monkeypatch) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:00:10Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:00:08Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") is None
+
+
+def test_task_store_treats_larger_negative_skew_as_service_echo(tmp_path, monkeypatch) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:02:00Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:01:15Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") is None
+
+
+def test_task_store_clears_manual_activity_when_service_input_arrives_late(tmp_path, monkeypatch) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    echoed = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:00:08Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert echoed.get("last_local_manual_activity_at") == "2026-04-07T00:00:08Z"
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:00:10Z",
+    )
+    reconciled = store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    assert reconciled is not None
+    assert reconciled.get("last_local_manual_activity_at") is None
+
+
+def test_task_store_treats_large_positive_delay_as_manual_activity(tmp_path, monkeypatch) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:00:10Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    manual = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:10:00Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:10:00Z"
+
+
+def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
+    store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+
+    monkeypatch.setattr(
+        "a_control_agent.storage.tasks_store._now_iso",
+        lambda: "2026-04-07T00:00:10Z",
+    )
+    store.apply_steer(
+        "repo-a",
+        message="continue coding",
+        source="watchdog",
+        reason="openclaw_continue_session",
+    )
+
+    first_manual = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:10:00Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+    manual = store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+            "last_substantive_user_input_at": "2026-04-07T00:15:00Z",
+            "last_substantive_user_input_fingerprint": fingerprint_input_text("continue coding"),
+        }
+    )
+
+    assert first_manual.get("last_local_manual_activity_at") == "2026-04-07T00:10:00Z"
+    assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:15:00Z"

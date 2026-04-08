@@ -116,3 +116,41 @@ def test_execute_supervision_evaluation_suppresses_steer_when_repo_activity_rece
     assert result.supervision_evaluation.reason_code == "filesystem_activity_recent"
     assert result.supervision_evaluation.repo_recent_change_count == 2
     assert result.supervision_evaluation.steer_sent is False
+
+
+def test_execute_supervision_evaluation_skips_done_terminal_session(
+    tmp_path: Path,
+) -> None:
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_done",
+            "status": "waiting_human",
+            "phase": "done",
+            "cwd": "",
+            "pending_approval": False,
+            "last_summary": "task complete",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": old,
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.EVALUATE_SUPERVISION,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-supervision-done",
+        arguments={},
+    )
+
+    with patch("watchdog.services.session_spine.supervision.post_steer") as steer_mock:
+        result = execute_supervision_evaluation(action, settings=_settings(tmp_path), client=client)
+
+    assert steer_mock.call_count == 0
+    assert result.effect == "noop"
+    assert result.supervision_evaluation is not None
+    assert result.supervision_evaluation.reason_code == "terminal_state"
+    assert result.supervision_evaluation.steer_sent is False

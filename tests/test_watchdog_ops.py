@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
+from watchdog.api.ops import build_ops_summary
 from watchdog.main import create_app
 from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
@@ -97,7 +98,7 @@ def _seed_ops_alerts(data_dir: Path) -> None:
             fact_snapshot_version="fact-v9",
             idempotency_key="decision:blocked-1|delivery",
             audit_ref="decision:blocked-1",
-            created_at="2000-01-01T00:20:00Z",
+            created_at="2099-01-01T00:20:00Z",
             outbox_seq=1,
             delivery_status="delivery_failed",
             delivery_attempt=3,
@@ -171,3 +172,198 @@ def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> N
     assert 'watchdog_ops_alert_active{alert="delivery_failed"} 1' in response.text
     assert 'watchdog_ops_alert_active{alert="mapping_incomplete"} 1' in response.text
     assert 'watchdog_ops_alert_active{alert="recovery_failed"} 1' in response.text
+
+
+def test_build_ops_summary_ignores_delivery_skips_and_recovery_noops(tmp_path: Path) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:suppressed-local-manual",
+            envelope_type="notification",
+            correlation_id="progress-summary:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|progress_summary|suppressed",
+            audit_ref="progress-summary:repo-a",
+            created_at="2000-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=0,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="suppressed_local_manual_activity",
+            operator_notes=["delivery_skipped failure_code=suppressed_local_manual_activity"],
+            envelope_payload={},
+        )
+    )
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:stale-progress",
+            envelope_type="notification",
+            correlation_id="progress-summary:repo-b",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            native_thread_id="thr_native_2",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v8",
+            idempotency_key="session:repo-b|fact-v8|progress_summary|stale",
+            audit_ref="progress-summary:repo-b",
+            created_at="2000-01-01T00:00:00Z",
+            outbox_seq=2,
+            delivery_status="delivery_failed",
+            delivery_attempt=0,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="stale_progress_summary",
+            operator_notes=["delivery_skipped failure_code=stale_progress_summary"],
+            envelope_payload={},
+        )
+    )
+    receipt_store.put(
+        receipt_key(
+            action_code=ActionCode.EXECUTE_RECOVERY,
+            project_id="repo-a",
+            approval_id=None,
+            idempotency_key="session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery|",
+        ),
+        WatchdogActionResult(
+            action_code=ActionCode.EXECUTE_RECOVERY,
+            project_id="repo-a",
+            approval_id=None,
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery|"
+            ),
+            action_status=ActionStatus.NOOP,
+            effect=Effect.NOOP,
+            reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+            message="recovery not executed because context is not critical",
+            facts=[],
+        ),
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_ignores_stale_delivery_failures(tmp_path: Path) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    settings = Settings(
+        data_dir=str(tmp_path),
+        ops_delivery_failed_alert_window_seconds=900,
+    )
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:old-failure",
+            envelope_type="notification",
+            correlation_id="decision:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|decision_result|old",
+            audit_ref="decision:repo-a",
+            created_at="2000-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="upstream_502",
+            operator_notes=["delivery_dead_letter failure_code=upstream_502 attempts=3"],
+            envelope_payload={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_keeps_recent_delivery_failures_active(tmp_path: Path) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    settings = Settings(
+        data_dir=str(tmp_path),
+        ops_delivery_failed_alert_window_seconds=900,
+    )
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:recent-failure",
+            envelope_type="notification",
+            correlation_id="decision:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|decision_result|recent",
+            audit_ref="decision:repo-a",
+            created_at="2099-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="upstream_502",
+            operator_notes=["delivery_dead_letter failure_code=upstream_502 attempts=3"],
+            envelope_payload={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 1
+    assert [item.alert_code for item in summary.alerts] == ["delivery_failed"]
+
+
+def test_build_ops_summary_uses_delivery_failure_update_time(tmp_path: Path) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    settings = Settings(
+        data_dir=str(tmp_path),
+        ops_delivery_failed_alert_window_seconds=900,
+    )
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:late-failure",
+            envelope_type="notification",
+            correlation_id="decision:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|decision_result|late",
+            audit_ref="decision:repo-a",
+            created_at="2000-01-01T00:00:00Z",
+            updated_at="2099-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="upstream_502",
+            operator_notes=["delivery_dead_letter failure_code=upstream_502 attempts=3"],
+            envelope_payload={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 1
+    assert [item.alert_code for item in summary.alerts] == ["delivery_failed"]

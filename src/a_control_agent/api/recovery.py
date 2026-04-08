@@ -129,6 +129,12 @@ async def resume(
                     await bridge.steer_turn(thread_id, message=summary)
                 else:
                     await bridge.start_turn(thread_id, prompt=summary)
+                store.record_service_input(
+                    project_id,
+                    message=summary,
+                    source="a_control_agent",
+                    kind="resume_summary",
+                )
     except Exception as exc:
         store.merge_update(
             project_id,

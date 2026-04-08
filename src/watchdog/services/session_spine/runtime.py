@@ -69,4 +69,7 @@ class SessionSpineRuntime:
             progress=bundle.progress,
             facts=bundle.facts,
             approval_queue=bundle.approval_queue,
+            last_local_manual_activity_at=(
+                str(task.get("last_local_manual_activity_at") or "") or None
+            ),
         )

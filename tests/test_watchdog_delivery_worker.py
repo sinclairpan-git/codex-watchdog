@@ -2,17 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from watchdog.contracts.session_spine.models import FactRecord, SessionProjection, TaskProgressView
 from watchdog.services.approvals.service import (
     CanonicalApprovalRecord,
     CanonicalApprovalResponseRecord,
 )
 from watchdog.services.delivery.envelopes import (
+    DecisionEnvelope,
+    NotificationEnvelope,
+    build_progress_summary_envelope,
     build_envelopes_for_approval_response,
     build_envelopes_for_decision,
 )
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.session_spine.store import PersistedSessionRecord
 from watchdog.settings import Settings
 
 
@@ -23,7 +28,7 @@ def _decision(
     thread_id: str = "session:repo-a",
     native_thread_id: str = "thr_native_1",
     fact_snapshot_version: str = "fact-v7",
-    decision_result: str = "auto_execute_and_notify",
+    decision_result: str = "block_and_alert",
     action_ref: str = "execute_recovery",
     approval_id: str | None = None,
 ) -> CanonicalDecisionRecord:
@@ -136,6 +141,54 @@ def _approval_response(
     return approval, response
 
 
+def _progress_record(*, last_progress_at: str = "2026-04-07T00:00:00Z") -> PersistedSessionRecord:
+    return PersistedSessionRecord(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        session_seq=7,
+        fact_snapshot_version="fact-v7",
+        last_refreshed_at="2026-04-07T00:20:00Z",
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state="active",
+            activity_phase="editing_source",
+            attention_state="normal",
+            headline="editing files",
+            pending_approval_count=0,
+            available_intents=["continue"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="editing_source",
+            summary="editing files",
+            files_touched=["src/example.py"],
+            context_pressure="low",
+            stuck_level=0,
+            primary_fact_codes=["recovery_available"],
+            blocker_fact_codes=[],
+            last_progress_at=last_progress_at,
+        ),
+        facts=[
+            FactRecord(
+                fact_id="fact-recovery-available",
+                fact_code="recovery_available",
+                fact_kind="signal",
+                severity="info",
+                summary="recovery available",
+                detail="recovery available",
+                source="watchdog",
+                observed_at="2026-04-07T00:00:00Z",
+            )
+        ],
+        approval_queue=[],
+    )
+
+
 def test_envelope_builder_freezes_delivery_matrix_for_decision_results() -> None:
     auto_execute = build_envelopes_for_decision(
         _decision(decision_result="auto_execute_and_notify", action_ref="execute_recovery")
@@ -153,7 +206,10 @@ def test_envelope_builder_freezes_delivery_matrix_for_decision_results() -> None
 
     assert [envelope.envelope_type for envelope in auto_execute] == ["decision", "notification"]
     assert auto_execute[0].decision_result == "auto_execute_and_notify"
+    assert auto_execute[0].execution_state == "queued"
+    assert auto_execute[0].risk_class == "none"
     assert auto_execute[1].notification_kind == "decision_result"
+    assert auto_execute[1].decision_result == "auto_execute_and_notify"
     assert auto_execute[1].severity == "info"
 
     assert [envelope.envelope_type for envelope in require_user] == ["approval"]
@@ -188,21 +244,21 @@ def test_delivery_outbox_store_assigns_monotonic_outbox_seq_and_seeds_delivery_s
 
     first = store.enqueue_envelopes(
         build_envelopes_for_decision(
-            _decision(decision_result="auto_execute_and_notify", fact_snapshot_version="fact-v7")
+            _decision(decision_result="block_and_alert", fact_snapshot_version="fact-v7")
         )
     )
     second = store.enqueue_envelopes(
         build_envelopes_for_decision(
-            _decision(decision_result="block_and_alert", fact_snapshot_version="fact-v8")
+            _decision(
+                decision_result="require_user_decision",
+                fact_snapshot_version="fact-v8",
+                approval_id="appr_001",
+            )
         )
     )
 
-    assert [record.outbox_seq for record in first + second] == [1, 2, 3]
-    assert [record.delivery_status for record in first + second] == [
-        "pending",
-        "pending",
-        "pending",
-    ]
+    assert [record.outbox_seq for record in first + second] == [1, 2]
+    assert [record.delivery_status for record in first + second] == ["pending", "pending"]
 
 
 def test_delivery_outbox_store_orders_same_session_by_fact_snapshot_then_outbox_seq(
@@ -213,7 +269,7 @@ def test_delivery_outbox_store_orders_same_session_by_fact_snapshot_then_outbox_
     later_snapshot = store.enqueue_envelopes(
         build_envelopes_for_decision(
             _decision(
-                decision_result="auto_execute_and_notify",
+                decision_result="block_and_alert",
                 fact_snapshot_version="fact-v10",
                 action_ref="execute_recovery",
             )
@@ -222,7 +278,7 @@ def test_delivery_outbox_store_orders_same_session_by_fact_snapshot_then_outbox_
     earlier_snapshot = store.enqueue_envelopes(
         build_envelopes_for_decision(
             _decision(
-                decision_result="auto_execute_and_notify",
+                decision_result="block_and_alert",
                 fact_snapshot_version="fact-v2",
                 action_ref="continue_session",
             )
@@ -231,17 +287,10 @@ def test_delivery_outbox_store_orders_same_session_by_fact_snapshot_then_outbox_
 
     pending = store.list_pending_delivery_records(session_id="session:repo-a")
 
-    assert [record.fact_snapshot_version for record in pending] == [
-        "fact-v2",
-        "fact-v2",
-        "fact-v10",
-        "fact-v10",
-    ]
+    assert [record.fact_snapshot_version for record in pending] == ["fact-v2", "fact-v10"]
     assert [record.envelope_id for record in pending] == [
         earlier_snapshot[0].envelope_id,
-        earlier_snapshot[1].envelope_id,
         later_snapshot[0].envelope_id,
-        later_snapshot[1].envelope_id,
     ]
 
 
@@ -250,6 +299,8 @@ def _settings(tmp_path: Path) -> Settings:
         data_dir=str(tmp_path),
         delivery_initial_backoff_seconds=5.0,
         delivery_max_attempts=2,
+        progress_summary_max_age_seconds=600.0,
+        local_manual_activity_quiet_window_seconds=600.0,
     )
 
 
@@ -277,6 +328,21 @@ class _OrderedClient:
         )
 
 
+class _SessionSpineStoreStub:
+    def __init__(self, *, last_local_manual_activity_at: str | None) -> None:
+        self._last_local_manual_activity_at = last_local_manual_activity_at
+
+    def get(self, project_id: str):
+        if project_id != "repo-a" or self._last_local_manual_activity_at is None:
+            return None
+
+        class _Record:
+            def __init__(self, value: str) -> None:
+                self.last_local_manual_activity_at = value
+
+        return _Record(self._last_local_manual_activity_at)
+
+
 def test_delivery_worker_blocks_later_records_in_same_session_while_head_is_retrying(
     tmp_path: Path,
 ) -> None:
@@ -286,7 +352,7 @@ def test_delivery_worker_blocks_later_records_in_same_session_while_head_is_retr
     first = store.enqueue_envelopes(
         build_envelopes_for_decision(
             _decision(
-                decision_result="auto_execute_and_notify",
+                decision_result="block_and_alert",
                 fact_snapshot_version="fact-v7",
                 action_ref="execute_recovery",
             )
@@ -295,7 +361,7 @@ def test_delivery_worker_blocks_later_records_in_same_session_while_head_is_retr
     second = store.enqueue_envelopes(
         build_envelopes_for_decision(
             _decision(
-                decision_result="auto_execute_and_notify",
+                decision_result="block_and_alert",
                 fact_snapshot_version="fact-v8",
                 action_ref="continue_session",
             )
@@ -381,7 +447,7 @@ def test_delivery_worker_records_dead_letter_note_when_retry_budget_is_exhausted
     first = store.enqueue_envelopes(
         build_envelopes_for_decision(
             _decision(
-                decision_result="auto_execute_and_notify",
+                decision_result="block_and_alert",
                 fact_snapshot_version="fact-v7",
             )
         )
@@ -419,7 +485,7 @@ def test_delivery_worker_records_retry_note_with_next_retry_at(
     first = store.enqueue_envelopes(
         build_envelopes_for_decision(
             _decision(
-                decision_result="auto_execute_and_notify",
+                decision_result="block_and_alert",
                 fact_snapshot_version="fact-v7",
             )
         )
@@ -440,3 +506,384 @@ def test_delivery_worker_records_retry_note_with_next_retry_at(
         "failure_code=upstream_503 attempts=1 "
         "next_retry_at=2026-04-07T00:00:05Z"
     )
+
+
+def test_delivery_worker_drops_stale_progress_summary_without_calling_downstream(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    stale_progress = NotificationEnvelope(
+        envelope_id="notification-envelope:stale-progress",
+        correlation_id="progress-summary:repo-a:stale",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|stale",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:00:00Z",
+        event_id="event:stale-progress",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="old progress",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    record = store.enqueue_envelopes([stale_progress])[0]
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    dropped = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert dropped is not None
+    assert dropped.envelope_id == record.envelope_id
+    assert dropped.delivery_status == "delivery_failed"
+    assert dropped.failure_code == "stale_progress_summary"
+    assert dropped.delivery_attempt == 0
+    assert dropped.operator_notes[-1] == (
+        "delivery_skipped failure_code=stale_progress_summary "
+        "occurred_at=2026-04-07T00:00:00Z age_seconds=1201"
+    )
+    assert client.calls == []
+
+
+def test_build_progress_summary_envelope_normalizes_naive_occurred_at_to_utc() -> None:
+    envelope = build_progress_summary_envelope(
+        _progress_record(last_progress_at="2026-04-07T00:00:00"),
+        created_at="2026-04-07T00:20:00Z",
+    )
+
+    assert envelope.occurred_at == "2026-04-07T00:00:00Z"
+
+
+def test_delivery_worker_treats_naive_progress_summary_timestamp_as_utc(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    stale_progress = NotificationEnvelope(
+        envelope_id="notification-envelope:naive-stale-progress",
+        correlation_id="progress-summary:repo-a:naive-stale",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|naive-stale",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:00:00",
+        event_id="event:naive-stale-progress",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="old progress",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    record = store.enqueue_envelopes([stale_progress])[0]
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    dropped = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert dropped is not None
+    assert dropped.envelope_id == record.envelope_id
+    assert dropped.delivery_status == "delivery_failed"
+    assert dropped.failure_code == "stale_progress_summary"
+    assert dropped.operator_notes[-1] == (
+        "delivery_skipped failure_code=stale_progress_summary "
+        "occurred_at=2026-04-07T00:00:00 age_seconds=1201"
+    )
+    assert client.calls == []
+
+
+def test_delivery_worker_defers_non_critical_notifications_during_local_manual_activity_quiet_window(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    progress_summary = NotificationEnvelope(
+        envelope_id="notification-envelope:quiet-progress",
+        correlation_id="progress-summary:repo-a:quiet-window",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|quiet-window",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:20:00Z",
+        event_id="event:quiet-progress",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="still coding locally",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    critical_rejection = NotificationEnvelope(
+        envelope_id="notification-envelope:critical-rejection",
+        correlation_id="approval:repo-a:critical-rejection",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|approval_result|critical-rejection",
+        audit_ref="approval-response:repo-a:critical-rejection",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:20:00Z",
+        event_id="event:critical-rejection",
+        severity="critical",
+        notification_kind="approval_result",
+        title="approval rejected",
+        summary="approval rejected via reject",
+        reason="operator rejected the action",
+    )
+    suppressed_record, delivered_record = store.enqueue_envelopes(
+        [progress_summary, critical_rejection]
+    )
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            last_local_manual_activity_at="2026-04-07T00:19:50Z"
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 0, tzinfo=timezone.utc),
+    )
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == suppressed_record.envelope_id
+    assert suppressed.delivery_status == "retrying"
+    assert suppressed.failure_code == "suppressed_local_manual_activity"
+    assert suppressed.delivery_attempt == 0
+    assert suppressed.next_retry_at == "2026-04-07T00:29:50Z"
+    assert suppressed.operator_notes[-1] == (
+        "delivery_deferred failure_code=suppressed_local_manual_activity "
+        "last_local_manual_activity_at=2026-04-07T00:19:50Z age_seconds=10 "
+        "next_retry_at=2026-04-07T00:29:50Z"
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == delivered_record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert client.calls == [delivered_record.envelope_id]
+
+
+def test_delivery_worker_delivers_deferred_notification_after_local_manual_activity_quiet_window(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    progress_summary = NotificationEnvelope(
+        envelope_id="notification-envelope:quiet-progress-followup",
+        correlation_id="progress-summary:repo-a:quiet-window-followup",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:repo-a|fact-v7|progress_summary|quiet-window-followup",
+        audit_ref="progress-summary:repo-a:fact-v7",
+        created_at="2026-04-07T00:20:00Z",
+        occurred_at="2026-04-07T00:20:00Z",
+        event_id="event:quiet-progress-followup",
+        severity="info",
+        notification_kind="progress_summary",
+        title="progress update for repo-a",
+        summary="still coding locally",
+        reason="phase=editing_source; context=low; stuck=0",
+    )
+    (record,) = store.enqueue_envelopes([progress_summary])
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            last_local_manual_activity_at="2026-04-07T00:19:50Z"
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    deferred = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 0, tzinfo=timezone.utc),
+    )
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 29, 51, tzinfo=timezone.utc),
+    )
+
+    assert deferred is not None
+    assert deferred.envelope_id == record.envelope_id
+    assert deferred.delivery_status == "retrying"
+    assert deferred.failure_code == "suppressed_local_manual_activity"
+    assert deferred.delivery_attempt == 0
+    assert deferred.next_retry_at == "2026-04-07T00:29:50Z"
+
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert delivered.failure_code is None
+    assert delivered.delivery_attempt == 1
+    assert client.calls == [record.envelope_id]
+
+
+def test_delivery_worker_attempts_stale_auto_execute_envelopes_downstream(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    stale_envelopes = [
+        DecisionEnvelope(
+            envelope_id="decision-envelope:stale-auto-execute",
+            correlation_id="decision:repo-a:fact-v7:auto_execute_and_notify",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery|",
+            audit_ref="decision:repo-a:fact-v7:auto_execute_and_notify",
+            created_at="2026-04-07T00:20:00Z",
+            occurred_at="2026-04-07T00:00:00Z",
+            decision_id="decision:repo-a:fact-v7:auto_execute_and_notify",
+            decision_result="auto_execute_and_notify",
+            action_name="execute_recovery",
+            action_args={},
+            risk_class="none",
+            decision_reason="old auto execute",
+            facts=[],
+            matched_policy_rules=["registered_action"],
+            why_not_escalated="policy_allows_auto_execution",
+        ),
+        NotificationEnvelope(
+            envelope_id="notification-envelope:stale-auto-execute",
+            correlation_id="decision:repo-a:fact-v7:auto_execute_and_notify",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery||"
+                "decision_result"
+            ),
+            audit_ref="decision:repo-a:fact-v7:auto_execute_and_notify",
+            created_at="2026-04-07T00:20:00Z",
+            event_id="event:stale-auto-execute",
+            severity="info",
+            notification_kind="decision_result",
+            occurred_at="2026-04-07T00:00:00Z",
+            decision_result="auto_execute_and_notify",
+            action_name="execute_recovery",
+            title="decision auto_execute_and_notify",
+            summary="old auto execute",
+            reason="old auto execute",
+            facts=[],
+            recommended_actions=[],
+        ),
+    ]
+    decision_record, notification_record = store.enqueue_envelopes(stale_envelopes)
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    delivered_decision = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+    delivered_notification = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered_decision is not None
+    assert delivered_decision.envelope_id == decision_record.envelope_id
+    assert delivered_decision.delivery_status == "delivered"
+    assert delivered_decision.failure_code is None
+    assert delivered_decision.delivery_attempt == 1
+
+    assert delivered_notification is not None
+    assert delivered_notification.envelope_id == notification_record.envelope_id
+    assert delivered_notification.delivery_status == "delivered"
+    assert delivered_notification.failure_code is None
+    assert delivered_notification.delivery_attempt == 1
+    assert client.calls == [decision_record.envelope_id, notification_record.envelope_id]
+
+
+def test_delivery_worker_attempts_legacy_auto_execute_notification_without_payload_decision_result(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    notification = NotificationEnvelope(
+        envelope_id="notification-envelope:legacy-stale-auto-execute",
+        correlation_id="decision:repo-a:fact-v7:auto_execute_and_notify",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key=(
+            "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery||"
+            "decision_result"
+        ),
+        audit_ref="decision:repo-a:fact-v7:auto_execute_and_notify",
+        created_at="2026-04-07T00:20:00Z",
+        event_id="event:legacy-stale-auto-execute",
+        severity="info",
+        notification_kind="decision_result",
+        occurred_at="2026-04-07T00:00:00Z",
+        decision_result="auto_execute_and_notify",
+        action_name="execute_recovery",
+        title="decision auto_execute_and_notify",
+        summary="old auto execute",
+        reason="old auto execute",
+        facts=[],
+        recommended_actions=[],
+    )
+    (record,) = store.enqueue_envelopes([notification])
+    legacy_payload = dict(record.envelope_payload)
+    legacy_payload.pop("decision_result", None)
+    store.update_delivery_record(record.model_copy(update={"envelope_payload": legacy_payload}))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert delivered.failure_code is None
+    assert delivered.delivery_attempt == 1
+    assert client.calls == [record.envelope_id]

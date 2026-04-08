@@ -30,7 +30,7 @@ def _decision(
     project_id: str = "repo-a",
     session_id: str = "session:repo-a",
     fact_snapshot_version: str = "fact-v7",
-    decision_result: str = "auto_execute_and_notify",
+    decision_result: str = "block_and_alert",
     action_ref: str = "execute_recovery",
 ) -> CanonicalDecisionRecord:
     return CanonicalDecisionRecord(
@@ -70,6 +70,8 @@ def _settings(tmp_path: Path) -> Settings:
         openclaw_webhook_token="watchdog-token",
         delivery_initial_backoff_seconds=5.0,
         delivery_max_attempts=3,
+        progress_summary_max_age_seconds=315360000.0,
+        auto_execute_notification_max_age_seconds=315360000.0,
     )
 
 
@@ -280,6 +282,6 @@ def test_background_delivery_worker_drains_pending_outbox_records(
     delivered = [
         app.state.delivery_outbox_store.get_delivery_record(record.envelope_id) for record in records
     ]
-    assert [record.delivery_status for record in delivered] == ["delivered", "delivered"]
-    assert [record.receipt_id for record in delivered] == ["rcpt_001", "rcpt_001"]
+    assert [record.delivery_status for record in delivered] == ["delivered"]
+    assert [record.receipt_id for record in delivered] == ["rcpt_001"]
     assert calls == [record.envelope_id for record in records]

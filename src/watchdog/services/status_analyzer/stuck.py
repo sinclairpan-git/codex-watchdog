@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from watchdog.services.session_spine.task_state import is_terminal_task
+
 
 def _parse_ts(raw: str | None) -> datetime | None:
     if not raw or not isinstance(raw, str):
@@ -33,6 +35,13 @@ def evaluate_stuck(
     thresholds = thresholds or StuckThresholds()
     now = now or datetime.now(timezone.utc)
     level = int(task.get("stuck_level", 0))
+    if is_terminal_task(task):
+        return {
+            "should_steer": False,
+            "reason": "terminal_state",
+            "next_stuck_level": level,
+            "detail": "session is already complete",
+        }
     if repo_recent_change_count is not None and repo_recent_change_count > 0:
         return {
             "should_steer": False,

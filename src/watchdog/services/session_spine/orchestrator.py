@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from watchdog.services.actions.executor import execute_canonical_decision
+from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
+from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
+from watchdog.services.actions.executor import (
+    build_watchdog_action_from_decision,
+    execute_canonical_decision,
+)
 from watchdog.services.approvals.service import CanonicalApprovalStore, materialize_canonical_approval
 from watchdog.services.delivery.envelopes import (
     build_envelopes_for_decision,
@@ -18,11 +23,12 @@ from watchdog.services.policy.rules import (
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
 )
+from watchdog.services.session_spine.service import SessionSpineUpstreamError
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.settings import Settings
-from watchdog.storage.action_receipts import ActionReceiptStore
+from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -30,13 +36,18 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
     normalized = value.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _select_action_ref(record: PersistedSessionRecord) -> str | None:
     fact_codes = {fact.fact_code for fact in record.facts}
+    if "task_completed" in fact_codes:
+        return None
     if "context_critical" in fact_codes:
         return "execute_recovery"
     if fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
@@ -44,6 +55,13 @@ def _select_action_ref(record: PersistedSessionRecord) -> str | None:
     if fact_codes.intersection({"stuck_no_progress", "repeat_failure"}):
         return "continue_session"
     return None
+
+
+def _decision_facts(decision) -> list[FactRecord]:
+    facts = decision.evidence.get("facts")
+    if not isinstance(facts, list):
+        return []
+    return [FactRecord.model_validate(fact) for fact in facts if isinstance(fact, dict)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +94,60 @@ class ResidentOrchestrator:
         self._delivery_outbox_store = delivery_outbox_store
         self._state_store = state_store
 
+    def _cache_auto_continue_control_link_error(
+        self,
+        decision,
+        exc: SessionSpineUpstreamError,
+    ) -> bool:
+        error = exc.error if isinstance(exc.error, dict) else {}
+        if decision.action_ref != "continue_session":
+            return False
+        if str(error.get("code") or "") != "CONTROL_LINK_ERROR":
+            return False
+        action = build_watchdog_action_from_decision(decision)
+        self._action_receipt_store.put(
+            receipt_key_for_action(action),
+            WatchdogActionResult(
+                action_code=action.action_code,
+                project_id=action.project_id,
+                approval_id=str(action.arguments.get("approval_id") or "") or None,
+                idempotency_key=action.idempotency_key,
+                action_status=ActionStatus.ERROR,
+                effect=Effect.NOOP,
+                reply_code=ReplyCode.CONTROL_LINK_ERROR,
+                message=str(error.get("message") or "resident continue_session failed"),
+                facts=_decision_facts(decision),
+            ),
+        )
+        return True
+
+    def _is_auto_continue_in_cooldown(
+        self,
+        project_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        checkpoint = self._state_store.get_auto_continue_checkpoint(project_id)
+        if checkpoint is None:
+            return False
+        last_auto_continue = _parse_iso(checkpoint.last_auto_continue_at)
+        if last_auto_continue is None:
+            return False
+        elapsed = (now - last_auto_continue.astimezone(UTC)).total_seconds()
+        return elapsed < max(self._settings.auto_continue_cooldown_seconds, 0.0)
+
+    def _record_auto_continue(
+        self,
+        project_id: str,
+        *,
+        now: datetime,
+    ) -> None:
+        created_at = now.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        self._state_store.put_auto_continue_checkpoint(
+            project_id=project_id,
+            last_auto_continue_at=created_at,
+        )
+
     def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
         return [
@@ -92,6 +164,12 @@ class ResidentOrchestrator:
         action_ref = _select_action_ref(record)
         decision_result: str | None = None
 
+        if action_ref == "continue_session" and self._is_auto_continue_in_cooldown(
+            record.project_id,
+            now=now,
+        ):
+            action_ref = None
+
         if action_ref is not None:
             decision = self._decision_store.put(
                 evaluate_persisted_session_policy(
@@ -102,13 +180,25 @@ class ResidentOrchestrator:
             )
             decision_result = decision.decision_result
             if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
-                execute_canonical_decision(
-                    decision,
-                    settings=self._settings,
-                    client=self._client,
-                    receipt_store=self._action_receipt_store,
-                )
-                self._delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(decision))
+                try:
+                    result = execute_canonical_decision(
+                        decision,
+                        settings=self._settings,
+                        client=self._client,
+                        receipt_store=self._action_receipt_store,
+                    )
+                    if (
+                        decision.action_ref == "continue_session"
+                        and result.action_status == ActionStatus.COMPLETED
+                    ):
+                        self._record_auto_continue(record.project_id, now=now)
+                    if result.action_status == ActionStatus.COMPLETED:
+                        self._delivery_outbox_store.enqueue_envelopes(
+                            build_envelopes_for_decision(decision)
+                        )
+                except SessionSpineUpstreamError as exc:
+                    if not self._cache_auto_continue_control_link_error(decision, exc):
+                        raise
             elif decision.decision_result == DECISION_REQUIRE_USER_DECISION:
                 materialize_canonical_approval(
                     decision,
@@ -132,6 +222,12 @@ class ResidentOrchestrator:
         *,
         now: datetime,
     ) -> bool:
+        progress_at = _parse_iso(record.progress.last_progress_at)
+        if progress_at is None:
+            return False
+        age_seconds = (now - progress_at.astimezone(UTC)).total_seconds()
+        if age_seconds > max(self._settings.progress_summary_max_age_seconds, 0.0):
+            return False
         fingerprint = progress_summary_fingerprint(record)
         checkpoint = self._state_store.get_progress_checkpoint(record.project_id)
         if checkpoint is not None and checkpoint.progress_fingerprint == fingerprint:

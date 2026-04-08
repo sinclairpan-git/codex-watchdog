@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from a_control_agent.services.codex.client import LocalCodexClient
+from a_control_agent.services.codex.client import LocalCodexClient, fingerprint_input_text
 
 
 def _write_rollout(path: Path, events: list[dict[str, object]]) -> None:
@@ -234,3 +234,75 @@ def test_local_codex_client_marks_pending_approval_from_tool_calls(tmp_path: Pat
     assert session["pending_approval"] is True
     assert session["approval_risk"] == "L2"
     assert session["last_summary"] == "Awaiting approval: uv add --optional dev ruff"
+
+
+def test_local_codex_client_tracks_last_substantive_user_input_and_ignores_environment_context(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    codex_home = tmp_path / ".codex"
+    rollout = codex_home / "sessions/2026/04/05/rollout-user-input.jsonl"
+    manual_input = "继续，把 quiet window 的通知抑制补上。"
+    _seed_codex_home(
+        codex_home,
+        active_workspaces=[str(repo)],
+        threads=[
+            {
+                "thread_id": "thr_repo_a",
+                "cwd": str(repo),
+                "task_title": "Track local manual activity",
+                "updated_at": 200,
+                "model": "gpt-5.4",
+                "sandbox": "workspace-write",
+                "approval_policy": "on-request",
+                "rollout_path": rollout,
+                "events": [
+                    {
+                        "timestamp": "2026-04-05T00:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "thr_repo_a", "cwd": str(repo)},
+                    },
+                    {
+                        "timestamp": "2026-04-05T00:00:01Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": (
+                                        "<environment_context>\n"
+                                        f"  <cwd>{repo}</cwd>\n"
+                                        "  <shell>zsh</shell>\n"
+                                        "  <current_date>2026-04-05</current_date>\n"
+                                        "  <timezone>Asia/Shanghai</timezone>\n"
+                                        "</environment_context>"
+                                    ),
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "timestamp": "2026-04-05T00:00:02Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": manual_input}],
+                        },
+                    },
+                ],
+            }
+        ],
+    )
+
+    client = LocalCodexClient(codex_home=codex_home)
+    session = client.describe_thread("thr_repo_a")
+
+    assert session["thread_id"] == "thr_repo_a"
+    assert session["last_substantive_user_input_at"] == "2026-04-05T00:00:02Z"
+    assert session["last_substantive_user_input_fingerprint"] == fingerprint_input_text(
+        manual_input
+    )

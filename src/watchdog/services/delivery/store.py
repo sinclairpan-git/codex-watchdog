@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 import re
 import threading
 from pathlib import Path
@@ -30,6 +28,7 @@ class DeliveryOutboxRecord(BaseModel):
     idempotency_key: str
     audit_ref: str
     created_at: str
+    updated_at: str | None = None
     outbox_seq: int
     delivery_status: str = "pending"
     delivery_attempt: int = 0
@@ -89,6 +88,7 @@ class DeliveryOutboxStore:
                     idempotency_key=envelope.idempotency_key,
                     audit_ref=envelope.audit_ref,
                     created_at=envelope.created_at,
+                    updated_at=envelope.created_at,
                     outbox_seq=data.next_outbox_seq,
                     envelope_payload=envelope.model_dump(mode="json"),
                 )

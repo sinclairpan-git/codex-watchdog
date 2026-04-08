@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import hashlib
 from typing import Any
 
@@ -49,6 +50,19 @@ def _recommended_actions(decision: CanonicalDecisionRecord) -> list[dict[str, st
     ]
 
 
+def _canonical_timestamp(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _progress_summary_severity(record: PersistedSessionRecord) -> str:
     fact_codes = {fact.fact_code for fact in record.facts}
     if "context_critical" in fact_codes or "control_link_error" in fact_codes:
@@ -81,6 +95,7 @@ def build_progress_summary_envelope(
     progress_fingerprint: str | None = None,
 ) -> NotificationEnvelope:
     fingerprint = progress_fingerprint or progress_summary_fingerprint(record)
+    occurred_at = _canonical_timestamp(record.progress.last_progress_at)
     summary = record.progress.summary or record.session.headline
     files = list(record.progress.files_touched)[:3]
     reason_parts = [
@@ -108,6 +123,7 @@ def build_progress_summary_envelope(
         event_id=f"event:{_short_hash(record.project_id + '|progress_summary|' + fingerprint)}",
         severity=_progress_summary_severity(record),
         notification_kind="progress_summary",
+        occurred_at=occurred_at,
         title=f"progress update for {record.project_id}",
         summary=summary,
         reason="; ".join(reason_parts),
@@ -135,6 +151,7 @@ class EnvelopeBase(BaseModel):
 
 class DecisionEnvelope(EnvelopeBase):
     envelope_type: str = "decision"
+    occurred_at: str | None = None
     decision_id: str
     decision_result: str
     execution_state: str = "queued"
@@ -154,6 +171,9 @@ class NotificationEnvelope(EnvelopeBase):
     event_id: str
     severity: str
     notification_kind: str
+    occurred_at: str | None = None
+    decision_result: str | None = None
+    action_name: str | None = None
     title: str
     summary: str
     reason: str
@@ -179,6 +199,7 @@ class ApprovalEnvelope(EnvelopeBase):
 
 
 def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvelope:
+    occurred_at = _canonical_timestamp(decision.created_at)
     return DecisionEnvelope(
         envelope_id=_envelope_id(decision.decision_key, "decision"),
         correlation_id=decision.decision_id,
@@ -189,7 +210,8 @@ def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvel
         fact_snapshot_version=decision.fact_snapshot_version,
         idempotency_key=decision.idempotency_key,
         audit_ref=decision.decision_id,
-        created_at=decision.created_at,
+        created_at=occurred_at or decision.created_at,
+        occurred_at=occurred_at,
         decision_id=decision.decision_id,
         decision_result=decision.decision_result,
         action_name=decision.action_ref,
@@ -204,6 +226,7 @@ def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvel
 
 
 def _build_decision_notification(decision: CanonicalDecisionRecord) -> NotificationEnvelope:
+    occurred_at = _canonical_timestamp(decision.created_at)
     return NotificationEnvelope(
         envelope_id=_envelope_id(decision.decision_key, "notification", "decision_result"),
         correlation_id=decision.decision_id,
@@ -214,10 +237,13 @@ def _build_decision_notification(decision: CanonicalDecisionRecord) -> Notificat
         fact_snapshot_version=decision.fact_snapshot_version,
         idempotency_key=f"{decision.idempotency_key}|decision_result",
         audit_ref=decision.decision_id,
-        created_at=decision.created_at,
+        created_at=occurred_at or decision.created_at,
         event_id=f"event:{_short_hash(decision.decision_id + '|decision_result')}",
         severity="critical" if decision.decision_result == DECISION_BLOCK_AND_ALERT else "info",
         notification_kind="decision_result",
+        occurred_at=occurred_at,
+        decision_result=decision.decision_result,
+        action_name=decision.action_ref,
         title=f"decision {decision.decision_result}",
         summary=decision.decision_reason,
         reason=decision.decision_reason,
@@ -228,6 +254,7 @@ def _build_decision_notification(decision: CanonicalDecisionRecord) -> Notificat
 
 def _build_approval_envelope(decision: CanonicalDecisionRecord) -> ApprovalEnvelope:
     digest = _short_hash(decision.decision_key)
+    occurred_at = _canonical_timestamp(decision.created_at)
     return ApprovalEnvelope(
         envelope_id=_envelope_id(decision.decision_key, "approval"),
         correlation_id=decision.decision_id,
@@ -238,7 +265,7 @@ def _build_approval_envelope(decision: CanonicalDecisionRecord) -> ApprovalEnvel
         fact_snapshot_version=decision.fact_snapshot_version,
         idempotency_key=f"{decision.idempotency_key}|approval",
         audit_ref=decision.decision_id,
-        created_at=decision.created_at,
+        created_at=occurred_at or decision.created_at,
         approval_id=decision.approval_id or f"approval:{digest}",
         approval_kind="canonical_user_decision",
         requested_action=decision.action_ref,
@@ -270,6 +297,7 @@ def build_envelopes_for_approval_response(
     response: CanonicalApprovalResponseRecord,
 ) -> list[NotificationEnvelope]:
     decision = approval.decision
+    occurred_at = _canonical_timestamp(response.created_at)
     return [
         NotificationEnvelope(
             envelope_id=_envelope_id(decision.decision_key, "notification", "approval_result"),
@@ -281,10 +309,11 @@ def build_envelopes_for_approval_response(
             fact_snapshot_version=approval.fact_snapshot_version,
             idempotency_key=response.idempotency_key,
             audit_ref=response.response_id,
-            created_at=response.created_at,
+            created_at=occurred_at or response.created_at,
             event_id=f"event:{_short_hash(response.response_id + '|approval_result')}",
             severity="critical" if response.approval_status == "rejected" else "info",
             notification_kind="approval_result",
+            occurred_at=occurred_at,
             title=f"approval {response.approval_status}",
             summary=f"approval {response.approval_status} via {response.response_action}",
             reason=response.note or response.response_action,
