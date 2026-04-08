@@ -213,7 +213,7 @@ def test_task_store_clears_manual_activity_when_service_input_arrives_late(tmp_p
     assert reconciled.get("last_local_manual_activity_at") is None
 
 
-def test_task_store_treats_large_positive_delay_as_service_echo(tmp_path, monkeypatch) -> None:
+def test_task_store_treats_large_positive_delay_as_manual_activity(tmp_path, monkeypatch) -> None:
     store = TaskStore(tmp_path / "tasks.json", service_input_match_window_seconds=120.0)
     store.upsert_native_thread(
         {
@@ -236,7 +236,7 @@ def test_task_store_treats_large_positive_delay_as_service_echo(tmp_path, monkey
         reason="openclaw_continue_session",
     )
 
-    echoed = store.upsert_native_thread(
+    manual = store.upsert_native_thread(
         {
             "project_id": "repo-a",
             "thread_id": "thr_native_1",
@@ -248,7 +248,7 @@ def test_task_store_treats_large_positive_delay_as_service_echo(tmp_path, monkey
         }
     )
 
-    assert echoed.get("last_local_manual_activity_at") is None
+    assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:10:00Z"
 
 
 def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
@@ -277,7 +277,7 @@ def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
         reason="openclaw_continue_session",
     )
 
-    echoed = store.upsert_native_thread(
+    first_manual = store.upsert_native_thread(
         {
             "project_id": "repo-a",
             "thread_id": "thr_native_1",
@@ -300,5 +300,5 @@ def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
         }
     )
 
-    assert echoed.get("last_local_manual_activity_at") is None
+    assert first_manual.get("last_local_manual_activity_at") == "2026-04-07T00:10:00Z"
     assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:15:00Z"

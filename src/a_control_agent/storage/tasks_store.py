@@ -276,8 +276,8 @@ class TaskStore:
                 continue
             age_seconds = (input_dt - service_dt).total_seconds()
             # Service input is recorded after the bridge accepts it, while the echoed
-            # user message timestamp can arrive slightly earlier or much later.
-            if age_seconds >= -self._service_input_match_window_seconds:
+            # user message timestamp can drift slightly on either side of that write.
+            if abs(age_seconds) <= self._service_input_match_window_seconds:
                 recent[index]["matched_input_at"] = input_at
                 rec["recent_service_inputs"] = recent
                 return True
