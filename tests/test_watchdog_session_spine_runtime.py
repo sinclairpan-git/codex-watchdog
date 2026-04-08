@@ -514,16 +514,7 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
         "stuck_no_progress",
         "recovery_available",
     ]
-    deliveries = app.state.delivery_outbox_store.list_records()
-    assert [record.envelope_type for record in deliveries] == ["decision", "notification"]
-    assert [record.envelope_payload.get("decision_result") for record in deliveries] == [
-        "auto_execute_and_notify",
-        "auto_execute_and_notify",
-    ]
-    assert [record.envelope_payload.get("action_name") for record in deliveries] == [
-        "continue_session",
-        "continue_session",
-    ]
+    assert app.state.delivery_outbox_store.list_records() == []
 
 
 def test_resident_orchestrator_applies_cooldown_to_repeated_auto_continue(
@@ -717,6 +708,7 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_error_receip
     assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
     assert execute_mock.call_count == 2
     assert app.state.resident_orchestration_state_store.get_auto_continue_checkpoint("repo-a") is None
+    assert app.state.delivery_outbox_store.list_records() == []
 
 
 def test_background_runtime_pushes_progress_summary_when_project_progress_changes(

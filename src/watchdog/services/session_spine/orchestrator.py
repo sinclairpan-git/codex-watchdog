@@ -180,7 +180,6 @@ class ResidentOrchestrator:
             )
             decision_result = decision.decision_result
             if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
-                should_enqueue_delivery = False
                 try:
                     result = execute_canonical_decision(
                         decision,
@@ -193,15 +192,13 @@ class ResidentOrchestrator:
                         and result.action_status == ActionStatus.COMPLETED
                     ):
                         self._record_auto_continue(record.project_id, now=now)
-                    should_enqueue_delivery = True
+                    if result.action_status == ActionStatus.COMPLETED:
+                        self._delivery_outbox_store.enqueue_envelopes(
+                            build_envelopes_for_decision(decision)
+                        )
                 except SessionSpineUpstreamError as exc:
                     if not self._cache_auto_continue_control_link_error(decision, exc):
                         raise
-                    should_enqueue_delivery = True
-                if should_enqueue_delivery:
-                    self._delivery_outbox_store.enqueue_envelopes(
-                        build_envelopes_for_decision(decision)
-                    )
             elif decision.decision_result == DECISION_REQUIRE_USER_DECISION:
                 materialize_canonical_approval(
                     decision,
