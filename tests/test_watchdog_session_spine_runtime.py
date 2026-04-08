@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import _run_delivery_loop, create_app
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.session_spine.orchestrator import _parse_iso
 from watchdog.settings import Settings
 
 
@@ -769,6 +770,12 @@ def test_background_runtime_skips_stale_progress_summary_even_when_project_progr
     ]
 
     assert progress_notifications == []
+
+
+def test_parse_iso_treats_naive_timestamps_as_utc() -> None:
+    parsed = _parse_iso("2026-04-08T08:00:00")
+
+    assert parsed == datetime(2026, 4, 8, 8, 0, 0, tzinfo=UTC)
 
 
 def test_background_workers_survive_transient_startup_and_loop_failures(
