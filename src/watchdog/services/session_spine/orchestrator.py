@@ -182,13 +182,16 @@ class ResidentOrchestrator:
             if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
                 should_enqueue_delivery = False
                 try:
-                    execute_canonical_decision(
+                    result = execute_canonical_decision(
                         decision,
                         settings=self._settings,
                         client=self._client,
                         receipt_store=self._action_receipt_store,
                     )
-                    if decision.action_ref == "continue_session":
+                    if (
+                        decision.action_ref == "continue_session"
+                        and result.action_status == ActionStatus.COMPLETED
+                    ):
                         self._record_auto_continue(record.project_id, now=now)
                     should_enqueue_delivery = True
                 except SessionSpineUpstreamError as exc:
