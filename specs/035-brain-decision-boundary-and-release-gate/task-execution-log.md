@@ -103,3 +103,20 @@
 - 当前判断再更新为：
   - Brain-first runtime wiring 已从“可观测”推进到“可约束”：Brain identity、policy hard block、approval identity 与 release/validator gate 都开始在 runtime 上真实生效；
   - 剩余未完成项仍集中在更完整的 release gate/validator 覆盖面与后续 control-plane/e2e 消费方，不在本次提交里扩面。
+- 已继续推进剩余 Brain intent 的 runtime consume，补齐 `require_approval / propose_recovery / suggest_only`：
+  - 在 `tests/test_watchdog_session_spine_runtime.py` 先补红测，要求 fake Brain 返回 `require_approval` 时必须落为 `continue_session -> require_user_decision`，返回 `propose_recovery` 时必须落为 `execute_recovery -> require_user_decision`，返回 `suggest_only` 时必须落为 `block_and_alert` notification，而不是被 runtime 静默吞掉；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `1 failed, 2 passed, 28 deselected in 1.45s`，失败点是 `suggest_only` 仍然得到 `action_ref=None` 且没有 canonical decision；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 `suggest_only` 显式映射为推荐 action `continue_session`，并在 `src/watchdog/services/policy/engine.py` 中新增 `brain_suggest_only` 分支，把它物化为 `block_and_alert` canonical decision，再经 delivery outbox 发 notification。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `3 passed, 28 deselected in 2.09s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `38 passed in 3.60s`
+- 当前判断继续更新为：
+  - 剩余 Brain intent 里，`require_approval / propose_recovery / suggest_only` 都已经有真实 runtime 语义，不再只有 `propose_execute` 一条路被 consume；
+  - 下一步更像是扩 validator/release gate 在这些分支上的 evidence/trace 一致性，而不是再补新的 intent 枚举。
+- 已完成这一小步的对抗式复审与修正：
+  - Hermes 复审指出一个新的 P1：`require_approval` 与 `suggest_only` 复用 `continue_session` 作为推荐 action，但 orchestrator 的 auto-continue cooldown 仍会在 policy 之前把任何 `continue_session` 都压成 `None`，导致这两类 intent 在 cooldown 窗口里被静默吞掉；
+  - 已先补红测 `test_resident_orchestrator_cooldown_only_suppresses_propose_execute(...)`，初次结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k cooldown_only_suppresses_propose_execute` -> `1 failed, 31 deselected in 0.94s`；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 cooldown 约束收窄到 `brain_intent == "propose_execute"`，不再影响 `require_approval / suggest_only` 的 decision/approval/notification 路径。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `4 passed, 28 deselected in 1.19s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `39 passed in 8.10s`

@@ -62,11 +62,15 @@ working_set_snapshot:
 
     - `decision_key` 已纳入 `brain_intent`，candidate-closure approval identity 已纳入 `fact_snapshot_version` 与 `brain_intent`，而 auto-execute 现在还会硬校验 validator/release-gate verdict 为 `pass`。
 
-    - 下一步应继续把 `observe_only / suggest_only / propose_recovery` 等 Brain intent 纳入 Brain-first runtime wiring，并补足对应红测。'
+    - `require_approval / propose_recovery / suggest_only` 现在也都有显式 runtime consume；其中 `suggest_only` 会落成 `block_and_alert` notification，而不是被 orchestrator 吞掉。
+
+    - auto-continue cooldown 现在只压 `propose_execute`，不会再把复用 `continue_session` 的 `require_approval / suggest_only` 一起吞掉。
+
+    - 下一步应继续补齐 `observe_only` 以及各 Brain intent 的 validator/release-gate trace 绑定与一致性验证，而不是再补枚举级 runtime consume。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T19:58:00+08:00'
+timestamp: '2026-04-13T20:25:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

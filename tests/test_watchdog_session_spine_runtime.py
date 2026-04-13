@@ -389,6 +389,201 @@ def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
     steer_mock.assert_not_called()
 
 
+def test_resident_orchestrator_routes_brain_require_approval_to_human_gate(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "require_approval"
+    approvals = app.state.canonical_approval_store.list_records()
+    assert len(approvals) == 1
+    assert approvals[0].requested_action == "continue_session"
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_routes_brain_propose_recovery_to_human_gate(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["execute_recovery"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "propose_recovery"
+    approvals = app.state.canonical_approval_store.list_records()
+    assert len(approvals) == 1
+    assert approvals[0].requested_action == "execute_recovery"
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_routes_brain_suggest_only_to_notification(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="suggest_only")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "suggest_only"
+    outbox = app.state.delivery_outbox_store.list_records()
+    assert len(outbox) == 1
+    assert outbox[0].envelope_type == "notification"
+    assert app.state.canonical_approval_store.list_records() == []
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_cooldown_only_suppresses_propose_execute(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=600.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    app.state.resident_orchestration_state_store.put_auto_continue_checkpoint(
+        project_id="repo-a",
+        last_auto_continue_at="2026-04-07T00:00:00Z",
+    )
+
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="suggest_only")
+    suggest_outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 5, 0, tzinfo=UTC)
+    )
+
+    app.state.policy_decision_store = type(app.state.policy_decision_store)(
+        tmp_path / "policy_decisions_2.json"
+    )
+    app.state.delivery_outbox_store = type(app.state.delivery_outbox_store)(
+        tmp_path / "delivery_outbox_2.json"
+    )
+    app.state.resident_orchestrator._decision_store = app.state.policy_decision_store
+    app.state.resident_orchestrator._delivery_outbox_store = app.state.delivery_outbox_store
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
+    require_outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 5, 0, tzinfo=UTC)
+    )
+
+    assert [outcome.action_ref for outcome in suggest_outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in suggest_outcomes] == ["block_and_alert"]
+    assert [outcome.action_ref for outcome in require_outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in require_outcomes] == ["require_user_decision"]
+
+
 def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
     tmp_path: Path,
 ) -> None:

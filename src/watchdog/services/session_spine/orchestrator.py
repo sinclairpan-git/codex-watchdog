@@ -327,7 +327,7 @@ class ResidentOrchestrator:
 
     @staticmethod
     def _action_ref_for_brain_intent(brain_intent: str) -> str | None:
-        if brain_intent in {"propose_execute", "require_approval"}:
+        if brain_intent in {"propose_execute", "require_approval", "suggest_only"}:
             return "continue_session"
         if brain_intent == "propose_recovery":
             return "execute_recovery"
@@ -398,9 +398,13 @@ class ResidentOrchestrator:
         action_ref = self._action_ref_for_brain_intent(brain_intent.intent)
         decision_result: str | None = None
 
-        if action_ref == "continue_session" and self._is_auto_continue_in_cooldown(
+        if (
+            brain_intent.intent == "propose_execute"
+            and action_ref == "continue_session"
+            and self._is_auto_continue_in_cooldown(
             record.project_id,
             now=now,
+            )
         ):
             action_ref = None
 
