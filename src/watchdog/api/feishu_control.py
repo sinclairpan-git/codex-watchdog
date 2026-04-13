@@ -98,11 +98,13 @@ def post_feishu_control(
         session_service=session_service,
     )
     try:
-        result = service.handle_approval_response(contract)
+        result = service.handle_request(contract)
     except KeyError as exc:
         return err(rid, {"code": "NOT_FOUND", "message": str(exc)})
     except FeishuControlError as exc:
         return err(rid, {"code": "INVALID_ARGUMENT", "message": exc.message})
     except ValueError as exc:
         return err(rid, {"code": "INVALID_ARGUMENT", "message": str(exc)})
-    return ok(rid, result.model_dump(mode="json"))
+    if hasattr(result, "model_dump"):
+        return ok(rid, result.model_dump(mode="json"))
+    return ok(rid, result)

@@ -16,3 +16,23 @@
 - 已按该反馈把 `tool_schema_hash` 补回 `spec.md`、`plan.md` 与 `tasks.md` 的 hard-blocker / drift 校验清单。
 - Hermes Agent 专家修订后快速复核：无 blocking/P1。
 - `T371` 已满足 formal docs baseline 条件，下一执行入口切到 `T372`，开始一期 golden path / midstate recovery / release gate e2e 红测。
+
+### Phase 2 / 3：golden path e2e red -> green
+
+- 已新增：
+  - `tests/e2e/test_watchdog_autonomy_golden_path.py`
+  - `tests/e2e/test_watchdog_midstate_recovery.py`
+  - `tests/e2e/test_watchdog_release_gate_e2e.py`
+- 首轮红测明确暴露三条跨模块缺口：
+  - `Feishu` control 只能处理 approval response，缺少 Goal Contract kickoff contract；
+  - recovery transaction 虽能写 lineage/adopt truth，但尚未收口 stale interaction supersede；
+  - runtime evidence 只有 `release_gate_verdict`，没有 formal `release_gate_evidence_bundle`。
+- 已完成最小 green 接线：
+  - `src/watchdog/services/feishu_control/service.py` 与 `src/watchdog/api/feishu_control.py` 现在支持 `goal_contract_bootstrap`，由 Feishu DM 创建或修订 Goal Contract；
+  - `src/watchdog/services/session_spine/recovery.py` 现在会在 recovery continuation 时显式 supersede 旧 interaction context，并生成新的 recovery context；
+  - `src/watchdog/services/session_spine/orchestrator.py` 现在把 `release_gate_evidence_bundle` 落入 decision evidence；
+  - `src/watchdog/settings.py` 补齐 formal evidence artifact refs。
+- 本地验证：
+  - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py` -> `3 passed in 1.45s`
+  - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_feishu_control.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `70 passed in 4.77s`
+- 当前下一执行入口停在 `T373`，继续补 completion evidence / replay-metrics 归档与更完整的一期主链闭环。

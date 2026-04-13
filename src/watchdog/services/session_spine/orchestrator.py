@@ -11,6 +11,11 @@ from pydantic import ValidationError
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
+from watchdog.services.brain.release_gate_evidence import (
+    CertificationPacketCorpus,
+    ReleaseGateEvidenceBundle,
+    ShadowDecisionLedger,
+)
 from watchdog.services.brain.release_gate import (
     parse_release_gate_report,
     ReleaseGateEvaluator,
@@ -481,6 +486,16 @@ class ResidentOrchestrator:
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
         evidence["release_gate_verdict"] = release_gate_verdict.model_dump(mode="json")
+        if self._settings.release_gate_report_path:
+            evidence["release_gate_evidence_bundle"] = ReleaseGateEvidenceBundle(
+                certification_packet_corpus=CertificationPacketCorpus(
+                    artifact_ref=self._settings.release_gate_certification_packet_corpus_ref
+                ),
+                shadow_decision_ledger=ShadowDecisionLedger(
+                    artifact_ref=self._settings.release_gate_shadow_decision_ledger_ref
+                ),
+                release_gate_report_ref=self._settings.release_gate_report_path,
+            ).model_dump(mode="json")
         if brain_intent.intent == "candidate_closure":
             evidence["requested_action_args"] = self._candidate_closure_action_args(record)
         return evidence

@@ -36,7 +36,7 @@
 ## Task 37.2 写失败测试锁定一期 golden path、midstate recovery 与 release gate e2e blocker
 
 - **任务编号**：T372
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定一期正式通关标准，避免实现阶段把 e2e 降成演示脚本或旁路验收。
 - **文件**：
   - `tests/e2e/test_watchdog_autonomy_golden_path.py`
@@ -51,11 +51,15 @@
   5. 覆盖这些 e2e 本身是 release blocker，而不是可跳过样例。
 - **验证**：
   - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py`
+- **完成情况**：
+  1. 已新增三条 e2e contract 测试，分别锁定 Feishu DM kickoff、midstate recovery/child continuation 与 release gate evidence bundle；
+  2. 已明确看到三类真实缺口：Feishu kickoff contract 缺失、recovery 未收口 stale interaction、runtime 未暴露 formal release gate evidence bundle；
+  3. 当前三条 e2e 已在最小接线后转绿。
 
 ## Task 37.3 补齐 golden path 所需的跨模块 glue 与恢复接续
 
 - **任务编号**：T373
-- **状态**：未开始
+- **状态**：进行中
 - **目标**：在不引入旁路状态机的前提下，把 Task 8 所需的 canonical refs、恢复接续与 completion evidence 真正接通。
 - **文件**：
   - `src/watchdog/services/brain/release_gate.py`
@@ -70,6 +74,11 @@
   4. golden path 在不手工修状态的前提下可重复通过。
 - **验证**：
   - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py`
+- **当前进展**：
+  1. 已在 `feishu_control` 中补上 `goal_contract_bootstrap` kickoff contract，使 Feishu DM 能创建/修订 Goal Contract，并把 session 交给既有 runtime/orchestrator 消费；
+  2. 已在 `recovery.py` 中把 stale interaction supersede 与 recovery continuation 收口到同一条恢复真相链；
+  3. 已在 runtime evidence 中补上 `release_gate_evidence_bundle`，把 `certification_packet_corpus`、`shadow_decision_ledger` 与 `release_gate_report_ref` 暴露到 decision evidence；
+  4. completion evidence / replay-metrics 归档仍待后续继续补齐。
 
 ## Task 37.4 收口 release gate formal artifacts、阻断语义与 ops surfacing
 

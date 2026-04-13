@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -225,6 +227,13 @@ def _record_recovery_truth(
         goal_contract_version=goal_contract_version,
         source_packet_id=source_packet_id,
     )
+    _supersede_stale_interactions_for_recovery(
+        project_id=project_id,
+        session_service=service,
+        data_dir=settings.data_dir,
+        recovery_transaction_id=recorded.recovery_transaction_id,
+        source_packet_id=recorded.source_packet_id,
+    )
     if (
         recorded.child_session_id is None
         or goal_contract_version == "goal-contract:unknown"
@@ -244,3 +253,91 @@ def _record_recovery_truth(
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
     )
+
+
+def _supersede_stale_interactions_for_recovery(
+    *,
+    project_id: str,
+    session_service: SessionService,
+    data_dir: str,
+    recovery_transaction_id: str,
+    source_packet_id: str,
+) -> None:
+    from watchdog.services.delivery.store import DeliveryOutboxStore
+
+    store = DeliveryOutboxStore(Path(data_dir) / "delivery_outbox.json")
+    records = store.list_records()
+    latest_by_family = {}
+    for record in records:
+        if record.project_id != project_id:
+            continue
+        family_id = str(record.envelope_payload.get("interaction_family_id") or "").strip()
+        context_id = str(record.envelope_payload.get("interaction_context_id") or "").strip()
+        if not family_id or not context_id:
+            continue
+        current = latest_by_family.get(family_id)
+        if current is None or record.outbox_seq > current.outbox_seq:
+            latest_by_family[family_id] = record
+
+    now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    for family_id, record in latest_by_family.items():
+        old_context_id = str(record.envelope_payload.get("interaction_context_id") or "").strip()
+        new_context_id = f"{old_context_id}:recovery"
+        new_envelope_id = f"{record.envelope_id}:recovery"
+        session_service.record_event(
+            event_type="interaction_context_superseded",
+            project_id=record.project_id,
+            session_id=record.session_id,
+            correlation_id=f"corr:recovery-interaction:{family_id}",
+            causation_id=recovery_transaction_id,
+            related_ids={
+                "interaction_context_id": old_context_id,
+                "interaction_family_id": family_id,
+                "recovery_transaction_id": recovery_transaction_id,
+                "source_packet_id": source_packet_id,
+            },
+            occurred_at=now,
+            payload={
+                "active_interaction_context_id": new_context_id,
+                "active_envelope_id": new_envelope_id,
+                "channel_kind": str(record.envelope_payload.get("channel_kind") or "dm"),
+            },
+        )
+        store.update_delivery_record(
+            record.model_copy(
+                update={
+                    "delivery_status": "superseded",
+                    "updated_at": now,
+                    "operator_notes": [
+                        *record.operator_notes,
+                        "delivery_superseded reason=recovery_continuation",
+                    ],
+                }
+            )
+        )
+        store.update_delivery_record(
+            record.model_copy(
+                update={
+                    "envelope_id": new_envelope_id,
+                    "correlation_id": f"{record.correlation_id}:recovery",
+                    "idempotency_key": f"{record.idempotency_key}:recovery",
+                    "audit_ref": f"{record.audit_ref}:recovery",
+                    "created_at": now,
+                    "updated_at": now,
+                    "outbox_seq": record.outbox_seq + 1,
+                    "delivery_status": "pending",
+                    "delivery_attempt": 0,
+                    "receipt_id": None,
+                    "failure_code": None,
+                    "next_retry_at": None,
+                    "operator_notes": [
+                        *record.operator_notes,
+                        "delivery_reissued_by_recovery",
+                    ],
+                    "envelope_payload": {
+                        **record.envelope_payload,
+                        "interaction_context_id": new_context_id,
+                    },
+                }
+            )
+        )

@@ -13,6 +13,7 @@ from watchdog.services.approvals.service import (
     respond_to_canonical_approval,
 )
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
+from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -42,13 +43,16 @@ class FeishuControlRequest(BaseModel):
     channel_kind: str = Field(min_length=1)
     occurred_at: str = Field(min_length=1)
     action_window_expires_at: str = Field(min_length=1)
-    envelope_id: str = Field(min_length=1)
-    approval_id: str = Field(min_length=1)
-    decision_id: str = Field(min_length=1)
-    response_action: str = Field(min_length=1)
-    response_token: str = Field(min_length=1)
+    envelope_id: str | None = None
+    approval_id: str | None = None
+    decision_id: str | None = None
+    response_action: str | None = None
+    response_token: str | None = None
     client_request_id: str = Field(min_length=1)
     note: str = ""
+    project_id: str | None = None
+    session_id: str | None = None
+    goal_message: str | None = None
 
 
 class FeishuControlService:
@@ -71,16 +75,28 @@ class FeishuControlService:
         self._delivery_outbox_store = delivery_outbox_store
         self._session_service = session_service
 
+    def handle_request(
+        self,
+        request: FeishuControlRequest,
+    ) -> CanonicalApprovalResponseRecord | dict[str, str]:
+        if request.event_type == "approval_response":
+            return self.handle_approval_response(request)
+        if request.event_type == "goal_contract_bootstrap":
+            return self.handle_goal_contract_bootstrap(request)
+        raise FeishuControlError(f"unsupported event_type: {request.event_type}")
+
     def handle_approval_response(
         self,
         request: FeishuControlRequest,
     ) -> CanonicalApprovalResponseRecord:
         if request.event_type != "approval_response":
             raise FeishuControlError("event_type must be approval_response")
+        envelope_id = self._require_field(request.envelope_id, "envelope_id")
+        response_action = self._require_field(request.response_action, "response_action")
 
-        approval = self._approval_store.get(request.envelope_id)
+        approval = self._approval_store.get(envelope_id)
         if approval is None:
-            raise KeyError(f"unknown approval envelope: {request.envelope_id}")
+            raise KeyError(f"unknown approval envelope: {envelope_id}")
         self._validate_approval_contract(approval, request)
         self._assert_dm_channel(request)
         self._assert_not_expired(approval, request)
@@ -88,8 +104,8 @@ class FeishuControlService:
         self._record_receipt(approval, request)
 
         return respond_to_canonical_approval(
-            envelope_id=request.envelope_id,
-            response_action=request.response_action,
+            envelope_id=envelope_id,
+            response_action=response_action,
             client_request_id=request.client_request_id,
             operator=request.actor_id,
             note=request.note,
@@ -102,6 +118,45 @@ class FeishuControlService:
             session_service=self._session_service,
         )
 
+    def handle_goal_contract_bootstrap(
+        self,
+        request: FeishuControlRequest,
+    ) -> dict[str, str]:
+        self._assert_dm_channel(request)
+        project_id = self._require_field(request.project_id, "project_id")
+        session_id = self._require_field(request.session_id, "session_id")
+        goal_message = self._require_field(request.goal_message, "goal_message")
+        service = GoalContractService(self._session_service)
+        current = service.get_current_contract(project_id=project_id, session_id=session_id)
+        if current is None:
+            contract = service.bootstrap_contract(
+                project_id=project_id,
+                session_id=session_id,
+                task_title=goal_message,
+                task_prompt=goal_message,
+                last_user_instruction=goal_message,
+                phase="bootstrap",
+                last_summary="feishu dm bootstrap",
+                explicit_deliverables=[goal_message],
+                completion_signals=["autonomy golden path release blocker passes"],
+            )
+        else:
+            contract = service.revise_contract(
+                project_id=project_id,
+                session_id=session_id,
+                expected_version=current.version,
+                current_phase_goal=goal_message,
+                explicit_deliverables=current.explicit_deliverables or [goal_message],
+                completion_signals=current.completion_signals
+                or ["autonomy golden path release blocker passes"],
+            )
+        return {
+            "event_type": request.event_type,
+            "project_id": project_id,
+            "session_id": session_id,
+            "goal_contract_version": contract.version,
+        }
+
     def _validate_approval_contract(
         self,
         approval: CanonicalApprovalRecord,
@@ -113,6 +168,13 @@ class FeishuControlService:
             raise FeishuControlError("decision_id does not match envelope_id")
         if request.response_token != approval.approval_token:
             raise FeishuControlError("response_token does not match envelope_id")
+
+    @staticmethod
+    def _require_field(value: str | None, field_name: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise FeishuControlError(f"{field_name} is required")
+        return normalized
 
     @staticmethod
     def _assert_dm_channel(request: FeishuControlRequest) -> None:

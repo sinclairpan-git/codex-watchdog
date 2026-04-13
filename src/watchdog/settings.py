@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     release_gate_policy_engine_version: str = "policy:v1"
     release_gate_tool_schema_hash: str = "tool:abc"
     release_gate_memory_provider_adapter_hash: str = "memory:abc"
+    release_gate_certification_packet_corpus_ref: str = "tests/fixtures/release_gate_packets.jsonl"
+    release_gate_shadow_decision_ledger_ref: str = "tests/fixtures/release_gate_shadow_runs.jsonl"
 
     def build_runtime_contract(
         self,
