@@ -33,6 +33,10 @@ Last Committed Task: T351
   - 已新增 `scripts/generate_release_gate_report.py`、`docs/operations/release-gate-runbook.md` 和 `tests/fixtures/release_gate_*`，把 deterministic `release_gate_report`、冻结窗口、`label_manifest`、`generated_by`、`report_approved_by` 与 `artifact_ref` 先固化进 repo；
   - `ReleaseGateEvaluator` 现在在显式提供 `ReleaseGateReport` 时会校验报告过期、输入哈希漂移以及 provider/schema/runtime contract 漂移，不再只是无条件回显 verdict；
   - 当前还没把正式 artifact report 接回 resident runtime 默认放行路径，`replay.py` 和 `provider_certification.py` 也还没有从 schema 骨架推进到可验证逻辑。
+- 最新切片继续把 schema 骨架收成可验证逻辑：
+  - `DecisionReplayService.packet_replay(...)` 现在会对缺 `decision_packet_input` 返回 `replay_incomplete`，并对 runtime contract 漂移返回显式 mismatch；
+  - `DecisionReplayService.session_semantic_replay(...)` 现在会对缺失的 required events 返回 `missing_context`，不再默认“成功回放”；
+  - `ProviderCompatibilityEvaluator.compare(...)` 已落地，`ProviderCompatibilityMatrix` 开始真正用于比对 provider/model/schema/tool/risk/policy/memory-adapter 漂移，而不是只做字段容器。
 - 最新验证结果：
   - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 passed in 0.16s`
   - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `17 passed in 0.15s`
@@ -60,4 +64,8 @@ Last Committed Task: T351
   - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'accepts_current_matching_report or degrades_expired_report or degrades_on_input_hash_drift'` -> `3 passed, 4 deselected in 0.24s`
   - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `14 passed in 0.28s`
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `74 passed in 3.76s`
-- 下一执行入口已收敛到两块：一是把正式 `release_gate_report` artifact 接回 runtime 默认路径，二是把 `replay.py / provider_certification.py` 从 schema 骨架推进到真正的 drift/incomplete 校验逻辑。
+  - `uv run pytest -q tests/test_watchdog_decision_replay.py -k 'missing_packet_input_as_incomplete or detects_runtime_contract_drift or missing_required_events_as_incomplete'` -> `3 passed, 2 deselected in 0.19s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py -k 'accepts_matching_runtime_contract or reports_runtime_drift_fields'` -> `2 passed, 2 deselected in 0.18s`
+  - `uv run pytest -q tests/test_watchdog_decision_replay.py tests/test_watchdog_provider_certification.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `20 passed in 0.34s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_long_running_autonomy_doc_contracts.py` -> `73 passed in 3.66s`
+- 下一执行入口已进一步收敛：优先把正式 `release_gate_report` artifact 接回 runtime 默认放行路径，其次再把 replay/provider-certification 继续扩到更完整的 drift matrix，而不是继续停留在 resident-default report。

@@ -165,3 +165,17 @@
 - 当前判断再更新为：
   - release gate 不再只有 schema 占位；repo 内已经具备最小的 deterministic report 生成脚本、冻结 fixture 与 runbook，evaluator 也开始真正校验 report 过期和漂移；
   - 但 `replay.py` 与 `provider_certification.py` 仍主要停留在 schema 层，正式 `release_gate_report` 也还没有接回 runtime 默认路径；下一步应该继续把 replay/provider-certification 变成可验证逻辑，并把 runtime 改为优先消费正式 artifact report，而不是停留在 resident-default report。
+- 已继续推进 `replay.py / provider_certification.py` 的可验证逻辑，先收掉 schema-only 的剩余空壳：
+  - 先补红测锁住三个 replay/certification 缺口：`packet_replay` 缺 `decision_packet_input` 时必须显式 `replay_incomplete`；`packet_replay` 在 runtime contract 漂移时必须显式返回 mismatch；`session_semantic_replay` 缺 required event 时必须返回缺口，而不是默认成功；
+  - 同时给 provider certification 补红测，要求新增 `ProviderCompatibilityEvaluator`，并在 provider/model/schema/tool/risk/policy/memory-adapter 漂移时返回精确 mismatch 字段列表；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_decision_replay.py -k 'missing_packet_input_as_incomplete or detects_runtime_contract_drift or missing_required_events_as_incomplete'` -> `3 failed`；`uv run pytest -q tests/test_watchdog_provider_certification.py -k 'accepts_matching_runtime_contract or reports_runtime_drift_fields'` -> `2 failed`，失败点分别是 replay 方法签名仍为空壳、provider compatibility evaluator 尚不存在；
+  - 已在 `src/watchdog/services/brain/replay.py` 中补入最小 replay 逻辑：`packet_replay(...)` 现在会区分 `missing_packet_input` 与 runtime drift，`session_semantic_replay(...)` 现在会对 `required_event_ids` 缺口返回 `replay_incomplete + missing_context`；
+  - 已在 `src/watchdog/services/brain/provider_certification.py` 中新增 `ProviderCompatibilityEvaluator.compare(...)`，把 `ProviderCompatibilityMatrix` 真正用于比对 `provider/model/prompt/output/tool/risk/decision_input_builder/policy_engine/memory_provider_adapter` 漂移，而不是只保留数据模型。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_decision_replay.py -k 'missing_packet_input_as_incomplete or detects_runtime_contract_drift or missing_required_events_as_incomplete'` -> `3 passed, 2 deselected in 0.19s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py -k 'accepts_matching_runtime_contract or reports_runtime_drift_fields'` -> `2 passed, 2 deselected in 0.18s`
+  - `uv run pytest -q tests/test_watchdog_decision_replay.py tests/test_watchdog_provider_certification.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `20 passed in 0.34s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_long_running_autonomy_doc_contracts.py` -> `73 passed in 3.66s`
+- 当前判断再更新为：
+  - release gate artifact、replay、provider certification 现在都已经不是纯 schema 占位，至少开始对缺输入、过期、输入哈希漂移和 runtime contract 漂移给出显式结果；
+  - 但 runtime 默认放行路径仍优先使用 resident-default report，而不是 repo 内冻结的正式 `release_gate_report` artifact；下一步应继续把 artifact report 接回 orchestrator/release gate 默认链路，并让 runtime 真正消费而不是只在单元测试里校验。

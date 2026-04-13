@@ -78,11 +78,15 @@ working_set_snapshot:
 
     - `ReleaseGateEvaluator` 现在在显式提供 `ReleaseGateReport` 时会校验报告过期、输入哈希漂移以及 provider/schema/runtime contract 漂移，不再只是无条件透传。
 
-    - 当前仍未完成的主缺口有两块：一是把正式 artifact report 接回 resident runtime 默认放行路径；二是把 `replay.py / provider_certification.py` 从 schema 骨架推进到真正的 drift/incomplete 校验逻辑。'
+    - `DecisionReplayService` 现在已经会对缺 packet input、缺 required events 和 runtime contract 漂移给出显式 `replay_incomplete / missing_context / *_mismatch` 结果，不再默认成功回放。
+
+    - `ProviderCompatibilityEvaluator.compare(...)` 也已经落地，`ProviderCompatibilityMatrix` 开始真正用于比对 provider/model/schema/tool/risk/policy/memory-adapter 漂移。
+
+    - 当前仍未完成的主缺口收敛为：把正式 artifact report 接回 resident runtime 默认放行路径，让 runtime 真正优先消费 repo 内冻结的 `release_gate_report`，而不是继续依赖 resident-default report。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T20:27:37+08:00'
+timestamp: '2026-04-13T20:43:04+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

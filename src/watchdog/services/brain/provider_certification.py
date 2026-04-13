@@ -30,3 +30,30 @@ class ProviderCompatibilityMatrix(_ProviderCertificationModel):
     policy_engine_version: str = Field(min_length=1)
     memory_provider_adapter_hash: str = Field(min_length=1)
 
+
+class ProviderCompatibilityEvaluator:
+    _FIELDS = (
+        "provider",
+        "model",
+        "prompt_schema_ref",
+        "output_schema_ref",
+        "tool_schema_hash",
+        "risk_policy_version",
+        "decision_input_builder_version",
+        "policy_engine_version",
+        "memory_provider_adapter_hash",
+    )
+
+    def compare(
+        self,
+        *,
+        matrix: ProviderCompatibilityMatrix,
+        runtime_contract: dict[str, str],
+    ) -> list[str]:
+        mismatches: list[str] = []
+        for field_name in self._FIELDS:
+            expected = str(getattr(matrix, field_name))
+            actual = str(runtime_contract.get(field_name, ""))
+            if actual != expected:
+                mismatches.append(field_name)
+        return mismatches

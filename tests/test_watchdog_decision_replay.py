@@ -24,3 +24,55 @@ def test_replay_result_exposes_incomplete_and_drift_fields() -> None:
 
     assert result.replay_incomplete is True
     assert result.missing_context == ["session:event:42"]
+
+
+def test_packet_replay_marks_missing_packet_input_as_incomplete() -> None:
+    module = importlib.import_module("watchdog.services.brain.replay")
+
+    result = module.DecisionReplayService().packet_replay(
+        packet_input=None,
+        frozen_contract={"model": "model-a"},
+        current_contract={"model": "model-a"},
+    )
+
+    assert result.replay_incomplete is True
+    assert result.drift_detected is False
+    assert result.missing_context == ["decision_packet_input"]
+    assert "missing_packet_input" in result.failure_reasons
+
+
+def test_packet_replay_detects_runtime_contract_drift() -> None:
+    module = importlib.import_module("watchdog.services.brain.replay")
+
+    result = module.DecisionReplayService().packet_replay(
+        packet_input={"packet_id": "packet:1"},
+        frozen_contract={
+            "provider": "provider-a",
+            "model": "model-a",
+            "policy_engine_version": "policy:v1",
+        },
+        current_contract={
+            "provider": "provider-a",
+            "model": "model-b",
+            "policy_engine_version": "policy:v2",
+        },
+    )
+
+    assert result.replay_incomplete is False
+    assert result.drift_detected is True
+    assert "model_mismatch" in result.failure_reasons
+    assert "policy_engine_version_mismatch" in result.failure_reasons
+
+
+def test_session_semantic_replay_marks_missing_required_events_as_incomplete() -> None:
+    module = importlib.import_module("watchdog.services.brain.replay")
+
+    result = module.DecisionReplayService().session_semantic_replay(
+        session_events=[{"event_id": "evt:1"}, {"event_id": "evt:3"}],
+        required_event_ids=["evt:1", "evt:2", "evt:3"],
+    )
+
+    assert result.replay_incomplete is True
+    assert result.drift_detected is False
+    assert result.missing_context == ["evt:2"]
+    assert "missing_required_events" in result.failure_reasons
