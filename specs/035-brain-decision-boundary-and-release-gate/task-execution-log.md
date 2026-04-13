@@ -23,3 +23,15 @@
   - 明确 release gate verdict、degrade reason、report/input hash、approval read ref 必须先写入 canonical Session decision event，再允许 command 创建/执行；
   - 明确 future worker schema 只冻结声明式 trace refs，不允许越权字段。
 - 当前下一执行入口固定为 `T352`：先写失败测试锁住 `DecisionIntent`、`DecisionTrace`、provider certification、replay 与 runtime enforced release gate contract，再进入实现。
+- 已启动 `T352/T353` 的第一轮 red-green：
+  - 新增 `tests/test_watchdog_brain_decision_loop.py`、`tests/test_watchdog_provider_certification.py`、`tests/test_watchdog_decision_replay.py`、`tests/test_watchdog_release_gate.py`、`tests/test_watchdog_release_gate_evidence.py`，先锁 `brain` 模块存在性、DecisionTrace/approval/future-worker schema、provider/runtime drift 字段、release gate verdict 字段与 evidence bundle contract；
+  - 初次 red 测试结果为：`uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 failed in 0.13s`，失败点全部集中在 `watchdog.services.brain` 模块缺失；
+  - 已补齐最小 `src/watchdog/services/brain/` contract 骨架：`models.py`、`decision_input_builder.py`、`service.py`、`validator.py`、`provider_certification.py`、`replay.py`、`release_gate.py`、`release_gate_evidence.py`；
+  - 已补上 `src/watchdog/services/policy/decisions.py` 中的 `brain_intent -> runtime disposition` 显式 adapter，与 `CanonicalDecisionRecord.brain_intent / runtime_disposition` 字段，避免 Brain intent 只停留在文档。
+- 当前已通过的局部验证：
+  - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 passed in 0.16s`
+  - `uv run pytest -q tests/test_watchdog_policy_decisions.py -k 'brain_intent_adapter or carries_brain_intent'` -> `2 passed, 3 deselected in 0.09s`
+  - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `17 passed in 0.15s`
+- 当前判断：
+  - `T352` 已完成第一批 contract 红测与最小 green，但还没覆盖 release verdict canonical event、approval freshness 旧 session/旧 snapshot 降级、以及替换旧 action-first 入口；
+  - `T353` 已开始落最小 contract skeleton，但还未接入 `policy.engine` / `ResidentOrchestrator` 的真实 runtime wiring。

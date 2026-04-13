@@ -10,6 +10,7 @@ from watchdog.contracts.session_spine.models import (
 from watchdog.services.policy.decisions import (
     CanonicalDecisionRecord,
     PolicyDecisionStore,
+    brain_intent_to_runtime_disposition,
     build_canonical_decision_record,
     build_decision_key,
 )
@@ -146,3 +147,34 @@ def test_canonical_decision_record_carries_policy_and_fact_snapshot_evidence() -
     assert record.evidence["idempotency_key"] == record.decision_key
     assert record.evidence["operator_notes"] == record.operator_notes
     assert record.evidence["facts"][0]["fact_code"] == "recovery_available"
+
+
+def test_brain_intent_adapter_keeps_runtime_disposition_compatible() -> None:
+    auto_execute = brain_intent_to_runtime_disposition("propose_execute")
+    require_approval = brain_intent_to_runtime_disposition("require_approval")
+    suggest_only = brain_intent_to_runtime_disposition("suggest_only")
+
+    assert auto_execute == "auto_execute_and_notify"
+    assert require_approval == "require_user_decision"
+    assert suggest_only == "block_and_alert"
+
+
+def test_canonical_decision_record_carries_brain_intent_alongside_runtime_disposition() -> None:
+    record = build_canonical_decision_record(
+        persisted_record=_record(),
+        decision_result="auto_execute_and_notify",
+        brain_intent="propose_execute",
+        risk_class="none",
+        action_ref="continue_session",
+        matched_policy_rules=["registered_action"],
+        decision_reason="registered action and complete evidence",
+        why_not_escalated="policy_allows_auto_execution",
+        why_escalated=None,
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+    )
+
+    assert record.brain_intent == "propose_execute"
+    assert record.runtime_disposition == "auto_execute_and_notify"
+    assert record.evidence["decision"]["brain_intent"] == "propose_execute"
+    assert record.evidence["decision"]["runtime_disposition"] == "auto_execute_and_notify"

@@ -21,6 +21,19 @@ def _decision_id_for_key(decision_key: str) -> str:
     return f"decision:{digest}"
 
 
+def brain_intent_to_runtime_disposition(brain_intent: str) -> str:
+    mapping = {
+        "propose_execute": "auto_execute_and_notify",
+        "require_approval": "require_user_decision",
+        "propose_recovery": "require_user_decision",
+        "candidate_closure": "require_user_decision",
+        "suggest_only": "block_and_alert",
+        "observe_only": "block_and_alert",
+        "reject": "block_and_alert",
+    }
+    return mapping[brain_intent]
+
+
 def build_decision_key(
     *,
     session_id: str,
@@ -80,6 +93,8 @@ class CanonicalDecisionRecord(BaseModel):
     approval_id: str | None = None
     action_ref: str
     trigger: str = "resident_supervision"
+    brain_intent: str | None = None
+    runtime_disposition: str | None = None
     decision_result: str
     risk_class: str
     decision_reason: str
@@ -99,6 +114,7 @@ def build_canonical_decision_record(
     *,
     persisted_record: PersistedSessionRecord,
     decision_result: str,
+    brain_intent: str | None = None,
     risk_class: str,
     action_ref: str,
     matched_policy_rules: list[str],
@@ -122,6 +138,7 @@ def build_canonical_decision_record(
         action_ref=action_ref,
         approval_id=approval_id,
     )
+    runtime_disposition = decision_result
     operator_notes = _build_operator_notes(
         session_id=session_id,
         fact_snapshot_version=persisted_record.fact_snapshot_version,
@@ -142,6 +159,8 @@ def build_canonical_decision_record(
         "why_not_escalated": why_not_escalated,
         "why_escalated": why_escalated,
         "decision": {
+            "brain_intent": brain_intent,
+            "runtime_disposition": runtime_disposition,
             "decision_result": decision_result,
             "decision_reason": decision_reason,
             "why_not_escalated": why_not_escalated,
@@ -175,6 +194,8 @@ def build_canonical_decision_record(
         approval_id=approval_id,
         action_ref=action_ref,
         trigger=trigger,
+        brain_intent=brain_intent,
+        runtime_disposition=runtime_disposition,
         decision_result=decision_result,
         risk_class=risk_class,
         decision_reason=decision_reason,
