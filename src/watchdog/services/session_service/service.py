@@ -77,6 +77,75 @@ class SessionService:
             payload=dict(payload),
         )
 
+    def record_memory_unavailable_degraded(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        memory_scope: str,
+        fallback_mode: str,
+        degradation_reason: str,
+        causation_id: str | None = None,
+        related_ids: dict[str, str] | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        event_related_ids = {"memory_scope": memory_scope}
+        event_related_ids.update(dict(related_ids or {}))
+        return self.record_event(
+            event_type="memory_unavailable_degraded",
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=_stable_id(
+                "corr:memory-unavailable",
+                session_id,
+                memory_scope,
+                degradation_reason,
+                causation_id or "",
+            ),
+            causation_id=causation_id,
+            related_ids=event_related_ids,
+            occurred_at=occurred_at,
+            payload={
+                "fallback_mode": fallback_mode,
+                "degradation_reason": degradation_reason,
+            },
+        )
+
+    def record_memory_conflict_detected(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        memory_scope: str,
+        conflict_reason: str,
+        resolution: str,
+        causation_id: str | None = None,
+        related_ids: dict[str, str] | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        event_related_ids = {"memory_scope": memory_scope}
+        event_related_ids.update(dict(related_ids or {}))
+        return self.record_event(
+            event_type="memory_conflict_detected",
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=_stable_id(
+                "corr:memory-conflict",
+                session_id,
+                memory_scope,
+                conflict_reason,
+                resolution,
+                causation_id or "",
+            ),
+            causation_id=causation_id,
+            related_ids=event_related_ids,
+            occurred_at=occurred_at,
+            payload={
+                "conflict_reason": conflict_reason,
+                "resolution": resolution,
+            },
+        )
+
     def record_recovery_execution(
         self,
         *,

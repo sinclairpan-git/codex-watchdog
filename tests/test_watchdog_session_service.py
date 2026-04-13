@@ -249,3 +249,65 @@ def test_session_service_records_recovery_truth_in_canonical_order(
     assert lineage_records[0].parent_session_id == "session:repo-a"
     assert lineage_records[0].child_session_id == recorded.child_session_id
     assert lineage_records[0].relation == "resumes_after_interruption"
+
+
+def test_session_service_records_memory_anomaly_events_with_stable_writers(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    first = service.record_memory_unavailable_degraded(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        memory_scope="project",
+        fallback_mode="reference_only",
+        degradation_reason="memory_hub_unreachable",
+        causation_id="memory-hub:offline",
+        occurred_at="2026-04-12T01:00:00Z",
+    )
+    replay = service.record_memory_unavailable_degraded(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        memory_scope="project",
+        fallback_mode="reference_only",
+        degradation_reason="memory_hub_unreachable",
+        causation_id="memory-hub:offline",
+        occurred_at="2026-04-12T01:00:00Z",
+    )
+    conflict = service.record_memory_conflict_detected(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        memory_scope="project",
+        conflict_reason="goal_contract_version_mismatch",
+        resolution="reference_only",
+        causation_id="memory-sync:conflict",
+        occurred_at="2026-04-12T01:01:00Z",
+        related_ids={"goal_contract_version": "goal-v9"},
+    )
+
+    events = service.list_events(session_id="session:repo-a")
+
+    assert first.event_id == replay.event_id
+    assert first.log_seq == replay.log_seq == 1
+    assert first.event_type == "memory_unavailable_degraded"
+    assert first.correlation_id.startswith("corr:memory-unavailable:")
+    assert first.related_ids == {"memory_scope": "project"}
+    assert first.payload == {
+        "fallback_mode": "reference_only",
+        "degradation_reason": "memory_hub_unreachable",
+    }
+
+    assert conflict.event_type == "memory_conflict_detected"
+    assert conflict.correlation_id.startswith("corr:memory-conflict:")
+    assert conflict.related_ids == {
+        "memory_scope": "project",
+        "goal_contract_version": "goal-v9",
+    }
+    assert conflict.payload == {
+        "conflict_reason": "goal_contract_version_mismatch",
+        "resolution": "reference_only",
+    }
+    assert [event.event_type for event in events] == [
+        "memory_unavailable_degraded",
+        "memory_conflict_detected",
+    ]
