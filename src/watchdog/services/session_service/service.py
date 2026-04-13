@@ -146,6 +146,38 @@ class SessionService:
             },
         )
 
+    def record_approval_expired(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        approval_id: str,
+        decision_id: str,
+        envelope_id: str,
+        requested_action: str,
+        expiration_reason: str,
+        causation_id: str | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        return self.record_event(
+            event_type="approval_expired",
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=f"corr:approval:{approval_id}",
+            causation_id=causation_id,
+            related_ids={
+                "approval_id": approval_id,
+                "decision_id": decision_id,
+                "envelope_id": envelope_id,
+            },
+            occurred_at=occurred_at,
+            payload={
+                "approval_status": "expired",
+                "requested_action": requested_action,
+                "expiration_reason": expiration_reason,
+            },
+        )
+
     def record_recovery_execution(
         self,
         *,

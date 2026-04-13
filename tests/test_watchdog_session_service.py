@@ -311,3 +311,50 @@ def test_session_service_records_memory_anomaly_events_with_stable_writers(
         "memory_unavailable_degraded",
         "memory_conflict_detected",
     ]
+
+
+def test_session_service_records_approval_expired_with_stable_writer(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    first = service.record_approval_expired(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        approval_id="approval:123",
+        decision_id="decision:456",
+        envelope_id="approval-envelope:789",
+        requested_action="system.shell.exec",
+        expiration_reason="timeout_elapsed",
+        causation_id="approval-timeout:tick-1",
+        occurred_at="2026-04-12T01:05:00Z",
+    )
+    replay = service.record_approval_expired(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        approval_id="approval:123",
+        decision_id="decision:456",
+        envelope_id="approval-envelope:789",
+        requested_action="system.shell.exec",
+        expiration_reason="timeout_elapsed",
+        causation_id="approval-timeout:tick-1",
+        occurred_at="2026-04-12T01:05:00Z",
+    )
+
+    events = service.list_events(session_id="session:repo-a")
+
+    assert first.event_id == replay.event_id
+    assert first.log_seq == replay.log_seq == 1
+    assert first.event_type == "approval_expired"
+    assert first.correlation_id == "corr:approval:approval:123"
+    assert first.related_ids == {
+        "approval_id": "approval:123",
+        "decision_id": "decision:456",
+        "envelope_id": "approval-envelope:789",
+    }
+    assert first.payload == {
+        "approval_status": "expired",
+        "requested_action": "system.shell.exec",
+        "expiration_reason": "timeout_elapsed",
+    }
+    assert [event.event_type for event in events] == ["approval_expired"]
