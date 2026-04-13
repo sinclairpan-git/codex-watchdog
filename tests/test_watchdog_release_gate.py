@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from watchdog.services.brain.models import DecisionTrace
 from watchdog.services.brain.release_gate import (
     DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
@@ -170,6 +172,122 @@ def test_generate_release_gate_report_script_embeds_runtime_governance_contract(
         == DEFAULT_RUNTIME_CONTRACT_SURFACE_REF
     )
     assert payload["runtime_gate_reason_taxonomy"] == DEFAULT_RUNTIME_GATE_REASON_TAXONOMY
+
+
+def test_parse_release_gate_report_rejects_governance_contract_drift() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate")
+
+    payload = {
+        "report_id": "report-1",
+        "report_hash": "sha256:report",
+        "sample_window": "2026-04-01..2026-04-07",
+        "shadow_window": "2026-04-08..2026-04-09",
+        "label_manifest": "tests/fixtures/release_gate_label_manifest.json",
+        "generated_by": "codex",
+        "report_approved_by": "operator-a",
+        "artifact_ref": "tests/fixtures/release_gate_expected_report.json",
+        "expires_at": "2026-05-01T00:00:00Z",
+        "provider": "provider-a",
+        "model": "model-a",
+        "prompt_schema_ref": "prompt:v1",
+        "output_schema_ref": "schema:v1",
+        "risk_policy_version": "risk:v1",
+        "decision_input_builder_version": "dib:v1",
+        "policy_engine_version": "policy:v1",
+        "tool_schema_hash": "tool:abc",
+        "memory_provider_adapter_hash": "memory:abc",
+        "input_hash": "sha256:input",
+        "runtime_contract_surface_ref": "custom.builder",
+        "runtime_gate_reason_taxonomy": DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+    }
+
+    with pytest.raises(ValueError, match="runtime_contract_surface_ref"):
+        module.parse_release_gate_report(payload)
+
+    payload["runtime_contract_surface_ref"] = DEFAULT_RUNTIME_CONTRACT_SURFACE_REF
+    payload["runtime_gate_reason_taxonomy"] = {
+        **DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+        "fallback_bucket": "unexpected",
+    }
+
+    with pytest.raises(ValueError, match="runtime_gate_reason_taxonomy"):
+        module.parse_release_gate_report(payload)
+
+
+def test_parse_release_gate_report_rejects_defaulted_governance_metadata() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate")
+
+    payload = {
+        "report_id": "report-1",
+        "report_hash": "sha256:report",
+        "sample_window": "2026-04-01..2026-04-07",
+        "shadow_window": "2026-04-08..2026-04-09",
+        "label_manifest": "tests/fixtures/release_gate_label_manifest.json",
+        "generated_by": "codex",
+        "report_approved_by": "operator-a",
+        "artifact_ref": "tests/fixtures/release_gate_expected_report.json",
+        "expires_at": "2026-05-01T00:00:00Z",
+        "provider": "provider-a",
+        "model": "model-a",
+        "prompt_schema_ref": "prompt:v1",
+        "output_schema_ref": "schema:v1",
+        "risk_policy_version": "risk:v1",
+        "decision_input_builder_version": "dib:v1",
+        "policy_engine_version": "policy:v1",
+        "tool_schema_hash": "tool:abc",
+        "memory_provider_adapter_hash": "memory:abc",
+        "input_hash": "sha256:input",
+        "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+        "runtime_gate_reason_taxonomy": {
+            key: value
+            for key, value in DEFAULT_RUNTIME_GATE_REASON_TAXONOMY.items()
+            if key != "raw_reason_labels_forbidden"
+        },
+    }
+
+    with pytest.raises(ValueError, match="runtime_gate_reason_taxonomy"):
+        module.parse_release_gate_report(payload)
+
+
+def test_parse_release_gate_report_rejects_non_object_payload() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate")
+
+    with pytest.raises(ValueError, match="JSON object"):
+        module.parse_release_gate_report([])
+
+
+def test_parse_release_gate_report_rejects_python_equal_but_json_drifted_taxonomy() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate")
+
+    payload = {
+        "report_id": "report-1",
+        "report_hash": "sha256:report",
+        "sample_window": "2026-04-01..2026-04-07",
+        "shadow_window": "2026-04-08..2026-04-09",
+        "label_manifest": "tests/fixtures/release_gate_label_manifest.json",
+        "generated_by": "codex",
+        "report_approved_by": "operator-a",
+        "artifact_ref": "tests/fixtures/release_gate_expected_report.json",
+        "expires_at": "2026-05-01T00:00:00Z",
+        "provider": "provider-a",
+        "model": "model-a",
+        "prompt_schema_ref": "prompt:v1",
+        "output_schema_ref": "schema:v1",
+        "risk_policy_version": "risk:v1",
+        "decision_input_builder_version": "dib:v1",
+        "policy_engine_version": "policy:v1",
+        "tool_schema_hash": "tool:abc",
+        "memory_provider_adapter_hash": "memory:abc",
+        "input_hash": "sha256:input",
+        "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+        "runtime_gate_reason_taxonomy": {
+            **DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+            "raw_reason_labels_forbidden": 1,
+        },
+    }
+
+    with pytest.raises(ValueError, match="runtime_gate_reason_taxonomy"):
+        module.parse_release_gate_report(payload)
 
 
 def test_release_gate_evaluator_accepts_current_matching_report() -> None:

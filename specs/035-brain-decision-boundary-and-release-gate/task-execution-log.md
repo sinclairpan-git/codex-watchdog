@@ -291,3 +291,38 @@
 - 当前判断再更新为：
   - runtime governance 现在已经从 code/runbook 进一步下沉到 generated report + checked-in fixture contract，并且 ops/read-side 与 report generation 复用同一份 taxonomy classifier，第二真相已收口；
   - 下一步更适合继续评估是否要把这组 governance metadata 继续上提到 evidence bundle 或 report validation helper，或者收掉 `T354` 里剩余的流程文档引用，而不是再新增独立的口头规则。
+- 已继续推进 report validation helper，先收掉“shape 正确但治理 contract 漂移的手写 report”仍可被 runtime 接受的余量：
+  - 先在 `tests/test_watchdog_release_gate.py` 补红测，要求新增 `parse_release_gate_report(...)` helper；当 `runtime_contract_surface_ref` 或 `runtime_gate_reason_taxonomy` 偏离 canonical default 时必须直接抛错，而不是只做 shape validation；
+  - 同时在 `tests/test_watchdog_session_spine_runtime.py` 补红测，要求 resident runtime 遇到 governance-drifted 的 `release_gate_report` 时沿既有 fail-closed 路径降级为 `report_load_failed`，禁止继续 auto execute；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'parse_release_gate_report_rejects_governance_contract_drift or governance_drifts'` -> `2 failed, 43 deselected in 1.06s`，失败点分别是 helper 不存在、orchestrator 仍直接接受 drifted report；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `parse_release_gate_report(...)`，先做 `ReleaseGateReport.model_validate(...)`，再强制校验 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy` 必须等于 canonical default；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 的 `_load_release_gate_report()` 切到该 helper，并把 governance drift 触发的 `ValueError` 纳入既有 `report_load_failed` fail-closed 分支；
+  - 这一步之后，release gate runtime 不再只相信“字段都在”，而是会显式拒绝治理 contract 漂移的 hand-authored report。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'parse_release_gate_report_rejects_governance_contract_drift or governance_drifts'` -> `2 passed, 43 deselected in 0.51s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `72 passed in 4.18s`
+- 已按对抗评审规则对这一切片做复核并处理一条有效 P1：
+  - Anthropic Manager 专家指出，我新加的 `parse_release_gate_report(...)` 仍会在 Pydantic normalization 之后再比较 taxonomy，因此缺失 `raw_reason_labels_forbidden` 这类会被默认值补回的 hand-authored payload 仍可能被 runtime 接受；
+  - 已据此在 `tests/test_watchdog_release_gate.py` 补一条更尖的红测，锁定缺失 governance 字段也必须被视为 drift，而不是让默认值把它“修好”；
+  - 已把 `parse_release_gate_report(...)` 改成先比较原始 `payload["runtime_contract_surface_ref"]` 和 `payload["runtime_gate_reason_taxonomy"]` 是否与 canonical JSON contract 完全一致，再交给 `ReleaseGateReport.model_validate(...)` 做 shape 校验；
+  - 现在 runtime load path 不仅会拒绝显式改坏的治理元数据，也会拒绝靠默认值/类型宽松偷偷混过去的 drifted payload。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'parse_release_gate_report_rejects_governance_contract_drift or defaulted_governance_metadata'` -> `2 passed, 8 deselected in 0.10s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `73 passed in 3.44s`
+- 已按对抗评审规则继续复核并处理另一条有效 P1：
+  - Hermes Agent 专家指出，`parse_release_gate_report(...)` 直接对 `payload.get(...)` 做比较；当配置文件是合法但非对象 JSON（如 `[]`、`null`、`"{}"`）时会抛 `AttributeError`，从而绕过 orchestrator 现有的 `report_load_failed` fail-closed 处理；
+  - 已据此在 `tests/test_watchdog_release_gate.py` 补红测，锁定非对象 payload 必须被 helper 视为非法；同时在 `tests/test_watchdog_session_spine_runtime.py` 补运行时红测，锁定配置的 report 文件若是 `[]` 这类非对象 JSON，也必须降级为 `report_load_failed`；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 为 `parse_release_gate_report(...)` 增加显式 `dict` guard，非对象 JSON 一律抛 `ValueError("...JSON object")`，从而稳定落入 runtime 的 load-failure 分支。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'non_object_payload or not_json_object or defaulted_governance_metadata or governance_drifts'` -> `4 passed, 44 deselected in 0.58s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `75 passed in 4.33s`
+- 已按对抗评审规则继续复核并处理最后一条有效 P1：
+  - Hermes Agent 专家指出，我把 raw taxonomy 比较改成 Python dict equality 后，`raw_reason_labels_forbidden=1` 这类在 Python 中与 `True` 相等、但在 JSON contract 上并不等价的 payload 仍可能被误接收；
+  - 已据此在 `tests/test_watchdog_release_gate.py` 补红测，锁定 “Python 相等但 JSON contract 漂移” 的 taxonomy payload 也必须被拒绝；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `_canonical_json(...)`，把 raw taxonomy 比较收紧为 canonical JSON 序列化后的精确相等，而不是继续依赖 Python 对象相等语义。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'defaulted_governance_metadata or non_object_payload or python_equal_but_json_drifted_taxonomy or parse_release_gate_report_rejects_governance_contract_drift'` -> `4 passed, 8 deselected in 0.14s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `76 passed in 4.96s`
+- 当前判断再更新为：
+  - report-level governance 现在已经不仅能被脚本生成和 fixture 记录，还会按 canonical JSON contract 在 runtime load path 被强制校验；无论是 drifted metadata、非对象 JSON，还是 Python 宽松相等语义带来的伪等价 payload，都只能走 `report_load_failed` fail-closed；
+  - 下一步更适合评估是否把这条 parse/validate contract 再显式挂到 evidence bundle 或 runbook 的“加载规范”章节，而不是继续只靠代码路径暗含。

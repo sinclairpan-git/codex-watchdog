@@ -45,6 +45,10 @@ DEFAULT_RUNTIME_GATE_REASON_TAXONOMY = {
 }
 
 
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
 class RuntimeGateReasonTaxonomy(_ReleaseGateModel):
     passthrough_reasons: list[str] = Field(min_length=1)
     validator_reasons: list[str] = Field(min_length=1)
@@ -90,6 +94,19 @@ class ReleaseGateReport(_ReleaseGateModel):
     input_hash: str = Field(min_length=1)
     runtime_contract_surface_ref: str = Field(min_length=1)
     runtime_gate_reason_taxonomy: RuntimeGateReasonTaxonomy
+
+
+def parse_release_gate_report(payload: dict[str, object]) -> ReleaseGateReport:
+    if not isinstance(payload, dict):
+        raise ValueError("release_gate_report payload must be a JSON object")
+    if payload.get("runtime_contract_surface_ref") != DEFAULT_RUNTIME_CONTRACT_SURFACE_REF:
+        raise ValueError("runtime_contract_surface_ref drifted from canonical source")
+    if _canonical_json(payload.get("runtime_gate_reason_taxonomy")) != _canonical_json(
+        DEFAULT_RUNTIME_GATE_REASON_TAXONOMY
+    ):
+        raise ValueError("runtime_gate_reason_taxonomy drifted from canonical taxonomy")
+    report = ReleaseGateReport.model_validate(payload)
+    return report
 
 
 class ReleaseGateVerdict(_ReleaseGateModel):

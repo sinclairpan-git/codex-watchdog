@@ -12,6 +12,7 @@ from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCo
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
 from watchdog.services.brain.release_gate import (
+    parse_release_gate_report,
     ReleaseGateEvaluator,
     ReleaseGateReport,
     ReleaseGateVerdict,
@@ -399,7 +400,7 @@ class ResidentOrchestrator:
         if not report_path:
             return None
         payload = json.loads(Path(report_path).read_text(encoding="utf-8"))
-        return ReleaseGateReport.model_validate(payload)
+        return parse_release_gate_report(payload)
 
     @staticmethod
     def _release_gate_now(now: datetime) -> str:
@@ -461,7 +462,7 @@ class ResidentOrchestrator:
         if self._settings.release_gate_report_path:
             try:
                 report = self._load_release_gate_report()
-            except (OSError, json.JSONDecodeError, ValidationError):
+            except (OSError, ValueError, json.JSONDecodeError, ValidationError):
                 verdict = self._report_load_failure_verdict(
                     trace=decision_trace,
                     approval_read=approval_read,
