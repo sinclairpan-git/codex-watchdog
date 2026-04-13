@@ -1,6 +1,6 @@
-current_stage: implementation
-current_batch: 3
-last_committed_task: T365
+current_stage: completed
+current_batch: 5
+last_committed_task: T375
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -36,17 +36,24 @@ working_set_snapshot:
       - `tests/e2e/test_watchdog_midstate_recovery.py`
       - `tests/e2e/test_watchdog_release_gate_e2e.py`
       - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py` -> `3 passed in 1.45s`
-    - `T373` 正在进行：
+    - `T373` 已完成：
       - Feishu `goal_contract_bootstrap` kickoff 已落地
       - recovery stale interaction supersede 已接入
       - runtime `release_gate_evidence_bundle` 已接入
-      - completion evidence / replay-metrics 归档仍待继续补齐
+      - `command_executed / command_failed` 已归档 `completion_evidence_ref`、`completion_judgment`、`replay_ref`、`replay_summary`、`metrics_ref` 与 `metrics_summary`
+    - `T374` 已完成：
+      - ops/read-side 现在暴露 `release_gate_blockers` formal metadata
+      - `/metrics` 已导出 `watchdog_release_gate_blocker_active{reason=...}`
+    - `T375` 已完成：
+      - task log 与 `.ai-sdlc` 元数据已收口到完成态
+      - Anthropic Manager 专家与 Hermes Agent 专家口径复核均无 blocking/P1
     - 最新相关回归：
-      - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_feishu_control.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `70 passed in 4.77s`
+      - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/test_watchdog_command_leases.py tests/test_watchdog_ops.py` -> `19 passed in 0.92s`
+      - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_command_leases.py tests/test_watchdog_ops.py tests/test_watchdog_feishu_control.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `88 passed in 5.37s`
 current_branch: codex/wi-036-feishu-control-plane
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T03:42:00+08:00'
+timestamp: '2026-04-14T01:40:48+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

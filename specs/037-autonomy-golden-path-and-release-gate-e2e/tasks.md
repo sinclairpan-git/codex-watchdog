@@ -59,13 +59,15 @@
 ## Task 37.3 补齐 golden path 所需的跨模块 glue 与恢复接续
 
 - **任务编号**：T373
-- **状态**：进行中
+- **状态**：已完成（2026-04-14）
 - **目标**：在不引入旁路状态机的前提下，把 Task 8 所需的 canonical refs、恢复接续与 completion evidence 真正接通。
 - **文件**：
   - `src/watchdog/services/brain/release_gate.py`
   - `src/watchdog/services/brain/release_gate_evidence.py`
   - `src/watchdog/services/feishu_control/service.py`
   - `src/watchdog/services/session_service/service.py`
+  - `src/watchdog/services/session_spine/command_leases.py`
+  - `src/watchdog/services/session_spine/orchestrator.py`
 - **可并行**：否
 - **验收标准**：
   1. 命令租约恢复、通知投递恢复、人工接管、child session continuation 与 completion evidence 都已进入同一条 canonical 主链；
@@ -73,21 +75,23 @@
   3. 不引入“先改 store 再补 event”或 e2e 专用真相层；
   4. golden path 在不手工修状态的前提下可重复通过。
 - **验证**：
-  - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py`
-- **当前进展**：
+  - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/test_watchdog_command_leases.py tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
   1. 已在 `feishu_control` 中补上 `goal_contract_bootstrap` kickoff contract，使 Feishu DM 能创建/修订 Goal Contract，并把 session 交给既有 runtime/orchestrator 消费；
   2. 已在 `recovery.py` 中把 stale interaction supersede 与 recovery continuation 收口到同一条恢复真相链；
   3. 已在 runtime evidence 中补上 `release_gate_evidence_bundle`，把 `certification_packet_corpus`、`shadow_decision_ledger` 与 `release_gate_report_ref` 暴露到 decision evidence；
-  4. completion evidence / replay-metrics 归档仍待后续继续补齐。
+  4. 已在 `command_executed / command_failed` 的 canonical terminal payload 中补上 `completion_evidence_ref`、`completion_judgment`、`replay_ref`、`replay_summary`、`metrics_ref` 与 `metrics_summary`，并复用命令租约到 `Session Service` 的镜像链完成回读。
 
 ## Task 37.4 收口 release gate formal artifacts、阻断语义与 ops surfacing
 
 - **任务编号**：T374
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：把 low-risk auto-decision 的 formal blocking inputs 与 fail-closed 行为真正接到 runtime 和 ops 观察面。
 - **文件**：
   - `src/watchdog/services/brain/release_gate.py`
   - `src/watchdog/services/brain/release_gate_evidence.py`
+  - `src/watchdog/api/ops.py`
+  - `src/watchdog/observability/metrics_export.py`
   - `tests/e2e/test_watchdog_release_gate_e2e.py`
   - `tests/test_watchdog_ops.py`
 - **可并行**：否
@@ -98,11 +102,15 @@
   4. 037 不会把 release gate 退回“人工说明即可放行”的软约束。
 - **验证**：
   - `uv run pytest -q tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_ops.py`
+- **完成情况**：
+  1. 已把 release gate degraded 决策收口为 `OpsSummary.release_gate_blockers`，显式暴露 `reason`、`report_id`、`report_hash`、`input_hash`、`release_gate_report_ref`、`certification_packet_corpus_ref` 与 `shadow_decision_ledger_ref`；
+  2. `/api/v1/watchdog/ops/alerts` 现在会返回 formal blocker metadata，而不是只有抽象 alert 计数；
+  3. `/metrics` 现在会导出 `watchdog_release_gate_blocker_active{reason=...}` gauge，保持 release gate 阻断语义在 read-side/metrics 双面可见。
 
 ## Task 37.5 更新执行日志与 handoff 摘要
 
 - **任务编号**：T375
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定下一执行入口与 release blocker 口径。
 - **文件**：
   - `specs/037-autonomy-golden-path-and-release-gate-e2e/task-execution-log.md`
@@ -119,6 +127,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已把 T373/T374 的 green 与验证证据同步回 `task-execution-log.md`；
+  2. 已把 `.ai-sdlc/work-items/037-*` 的 batch/task/runtime 状态更新为可恢复的完成态；
+  3. handoff 已明确 037 形成了一期正式通关与 release blocker 基线，后续工作不得回退到手工补状态或口头放行。
 
 ## 整体验收
 

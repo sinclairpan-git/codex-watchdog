@@ -349,6 +349,7 @@ class CommandLeaseStore:
         claim_seq: int,
         result_type: str,
         occurred_at: str,
+        payload: dict[str, Any] | None = None,
     ) -> CommandLeaseEvent:
         if result_type not in {"command_executed", "command_failed"}:
             raise ValueError(f"unsupported result type: {result_type}")
@@ -369,6 +370,7 @@ class CommandLeaseStore:
                 claim_seq=claim_seq,
                 worker_id=worker_id,
                 lease_expires_at=state.lease_expires_at,
+                payload=payload,
             )
             data.commands[command_id] = state.model_copy(
                 update={

@@ -36,3 +36,21 @@
   - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py` -> `3 passed in 1.45s`
   - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_feishu_control.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `70 passed in 4.77s`
 - 当前下一执行入口停在 `T373`，继续补 completion evidence / replay-metrics 归档与更完整的一期主链闭环。
+
+### Phase 3 / 4 / 5：completion evidence、ops surfacing 与 handoff 收口
+
+- 已完成 `T373` 剩余 glue：
+  - `src/watchdog/services/session_spine/command_leases.py` 的 terminal result 现在接受结构化 payload，并沿既有 `command lease -> Session Service` 镜像链写回 canonical 事件；
+  - `src/watchdog/services/session_spine/orchestrator.py` 现在会在 `command_executed / command_failed` payload 中落账 `completion_evidence_ref`、`completion_judgment`、`replay_ref`、`replay_summary`、`metrics_ref` 与 `metrics_summary`；
+  - golden path e2e 现在显式断言 completion / replay / metrics refs 来自主链终态事件，而不是额外测试专用存储。
+- 已完成 `T374` 收口：
+  - `src/watchdog/api/ops.py` 现在把 release gate degraded 决策暴露为 `release_gate_blockers`，包含 formal blocker 元数据；
+  - `src/watchdog/observability/metrics_export.py` 现在导出 `watchdog_release_gate_blocker_active{reason=...}`；
+  - `tests/test_watchdog_ops.py` 已固定 read-side 与 metrics 面都能看到 release gate blocker metadata。
+- 本轮验证：
+  - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/test_watchdog_command_leases.py tests/test_watchdog_ops.py` -> `19 passed in 0.92s`
+  - `uv run pytest -q tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_command_leases.py tests/test_watchdog_ops.py tests/test_watchdog_feishu_control.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `88 passed in 5.37s`
+- 对抗复核：
+  - Anthropic Manager 专家：无 blocking/P1；
+  - Hermes Agent 专家口径复核：无 blocking/P1。
+- `T373`、`T374` 与 `T375` 已满足收口条件，`WI-037` 现可视作一期正式通关与 release blocker 基线。

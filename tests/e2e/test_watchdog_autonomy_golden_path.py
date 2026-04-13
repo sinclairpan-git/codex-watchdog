@@ -86,7 +86,10 @@ def test_feishu_dm_bootstrap_starts_goal_contract_to_release_gate_chain(
     app.state.session_spine_runtime.refresh_all()
     with patch(
         "watchdog.services.session_spine.actions.post_steer",
-        return_value={"accepted": True, "action_ref": "continue_session", "reply_code": "ok"},
+        return_value={
+            "success": True,
+            "data": {"accepted": True, "action_ref": "continue_session", "reply_code": "ok"},
+        },
     ):
         app.state.resident_orchestrator.orchestrate_all()
 
@@ -99,3 +102,17 @@ def test_feishu_dm_bootstrap_starts_goal_contract_to_release_gate_chain(
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     assert "release_gate_verdict" in decisions[0].evidence
+    command_event = next(event for event in events if event.event_type == "command_executed")
+    assert command_event.payload["completion_evidence_ref"].startswith(
+        "receipt:continue_session|repo-a|"
+    )
+    assert command_event.payload["completion_judgment"]["status"] == "completed"
+    assert command_event.payload["replay_ref"] == f"replay:{decisions[0].decision_id}"
+    assert command_event.payload["replay_summary"]["packet_replay"]["drift_detected"] is False
+    assert (
+        command_event.payload["replay_summary"]["session_semantic_replay"]["replay_incomplete"]
+        is False
+    )
+    assert command_event.payload["metrics_ref"] == f"metrics:{decisions[0].decision_id}"
+    assert command_event.payload["metrics_summary"]["release_gate_status"] == "pass"
+    assert command_event.payload["release_gate_verdict"]["status"] == "pass"

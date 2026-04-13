@@ -172,6 +172,7 @@ def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> N
     assert 'watchdog_ops_alert_active{alert="delivery_failed"} 1' in response.text
     assert 'watchdog_ops_alert_active{alert="mapping_incomplete"} 1' in response.text
     assert 'watchdog_ops_alert_active{alert="recovery_failed"} 1' in response.text
+    assert 'watchdog_release_gate_blocker_active{reason="none"} 0' in response.text
 
 
 def test_build_ops_summary_ignores_delivery_skips_and_recovery_noops(tmp_path: Path) -> None:
@@ -557,6 +558,10 @@ def test_build_ops_summary_surfaces_runtime_gate_degradation_alert(tmp_path: Pat
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["runtime_gate_report_load_failed"]
     assert summary.alerts[0].count == 1
+    assert len(summary.release_gate_blockers) == 1
+    assert summary.release_gate_blockers[0].reason == "report_load_failed"
+    assert summary.release_gate_blockers[0].report_id == "report:load_failed"
+    assert summary.release_gate_blockers[0].input_hash == "sha256:input"
 
 
 def test_build_ops_summary_breaks_runtime_gate_alerts_down_by_degrade_reason(
@@ -616,6 +621,79 @@ def test_build_ops_summary_breaks_runtime_gate_alerts_down_by_degrade_reason(
         "runtime_gate_approval_stale": 1,
         "runtime_gate_report_expired": 2,
     }
+
+
+def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:runtime-gate-metadata",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="release gate blocks autonomous execution",
+            matched_policy_rules=["release_gate_degraded"],
+            why_not_escalated=None,
+            why_escalated="release gate verdict is not pass: report_expired",
+            uncertainty_reasons=["report_expired"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "degraded",
+                    "degrade_reason": "report_expired",
+                    "report_id": "report:2026-04-14",
+                    "report_hash": "sha256:report",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:1",
+                    "approval_read_ref": "approval:none",
+                },
+                "release_gate_evidence_bundle": {
+                    "certification_packet_corpus": {
+                        "artifact_ref": "artifacts/certification-packets.jsonl"
+                    },
+                    "shadow_decision_ledger": {
+                        "artifact_ref": "artifacts/shadow-ledger.jsonl"
+                    },
+                    "release_gate_report_ref": "artifacts/release-gate-report.json",
+                },
+            },
+        )
+    )
+
+    response = client.get(
+        "/api/v1/watchdog/ops/alerts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    blocker = response.json()["data"]["release_gate_blockers"][0]
+    assert blocker["reason"] == "report_expired"
+    assert blocker["report_id"] == "report:2026-04-14"
+    assert blocker["report_ref"] == "artifacts/release-gate-report.json"
+    assert blocker["certification_packet_corpus_ref"] == "artifacts/certification-packets.jsonl"
+    assert blocker["shadow_decision_ledger_ref"] == "artifacts/shadow-ledger.jsonl"
 
 
 def test_build_ops_summary_normalizes_runtime_gate_reason_taxonomy(tmp_path: Path) -> None:

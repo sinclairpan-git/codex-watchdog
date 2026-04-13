@@ -85,10 +85,12 @@ def test_command_lease_store_accepts_terminal_result_for_current_claim(
         claim_seq=claimed.claim_seq,
         result_type="command_executed",
         occurred_at="2026-04-12T01:03:00Z",
+        payload={"completion_evidence_ref": "receipt:continue_session|repo-a||demo"},
     )
 
     assert executed.event_type == "command_executed"
     assert executed.claim_seq == claimed.claim_seq
+    assert executed.payload["completion_evidence_ref"] == "receipt:continue_session|repo-a||demo"
     state = store.get_command("command:repo-a:2")
     assert state is not None
     assert state.status == "executed"
@@ -217,6 +219,52 @@ def test_command_lease_store_mirrors_lifecycle_events_into_session_service(
     assert events[0].correlation_id == "corr:command:command:repo-a:4:claim:1"
     assert events[2].payload["reason"] == "lease_timeout"
     assert events[-1].payload["worker_id"] == "worker:d"
+
+
+def test_command_lease_store_mirrors_terminal_payload_into_session_service(tmp_path: Path) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    claimed = store.claim_command(
+        command_id="command:repo-a:5",
+        session_id="session:repo-a",
+        worker_id="worker:e",
+        claimed_at="2026-04-12T04:00:00Z",
+        lease_expires_at="2026-04-12T04:05:00Z",
+    )
+    store.record_terminal_result(
+        command_id="command:repo-a:5",
+        worker_id="worker:e",
+        claim_seq=claimed.claim_seq,
+        result_type="command_executed",
+        occurred_at="2026-04-12T04:01:00Z",
+        payload={
+            "completion_evidence_ref": "receipt:continue_session|repo-a||demo",
+            "replay_ref": "replay:decision:demo",
+            "metrics_ref": "metrics:decision:demo",
+        },
+    )
+
+    mirrored = [
+        event
+        for event in session_service.list_events(
+            session_id="session:repo-a",
+            related_id_key="command_id",
+            related_id_value="command:repo-a:5",
+        )
+        if event.event_type == "command_executed"
+    ]
+
+    assert len(mirrored) == 1
+    assert mirrored[0].payload["completion_evidence_ref"] == "receipt:continue_session|repo-a||demo"
+    assert mirrored[0].payload["replay_ref"] == "replay:decision:demo"
+    assert mirrored[0].payload["metrics_ref"] == "metrics:decision:demo"
 
 
 def test_command_lease_store_mirrors_multiple_renewals_into_session_service(

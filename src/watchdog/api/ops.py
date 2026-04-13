@@ -46,10 +46,24 @@ class OpsAlert(BaseModel):
     summary: str
 
 
+class OpsReleaseGateBlocker(BaseModel):
+    decision_id: str
+    project_id: str
+    session_id: str
+    reason: str
+    report_id: str | None = None
+    report_hash: str | None = None
+    input_hash: str | None = None
+    report_ref: str | None = None
+    certification_packet_corpus_ref: str | None = None
+    shadow_decision_ledger_ref: str | None = None
+
+
 class OpsSummary(BaseModel):
     status: str
     active_alerts: int
     alerts: list[OpsAlert] = Field(default_factory=list)
+    release_gate_blockers: list[OpsReleaseGateBlocker] = Field(default_factory=list)
 
 
 def _parse_iso8601(value: str | None) -> datetime | None:
@@ -115,6 +129,51 @@ def _runtime_gate_reason_counts(decisions) -> dict[str, int]:
     return counts
 
 
+def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
+    blockers: list[OpsReleaseGateBlocker] = []
+    for record in decisions:
+        evidence = record.evidence if isinstance(record.evidence, dict) else {}
+        verdict = evidence.get("release_gate_verdict")
+        if not isinstance(verdict, dict) or str(verdict.get("status")) == "pass":
+            continue
+        bundle = (
+            evidence.get("release_gate_evidence_bundle")
+            if isinstance(evidence.get("release_gate_evidence_bundle"), dict)
+            else {}
+        )
+        certification = (
+            bundle.get("certification_packet_corpus")
+            if isinstance(bundle.get("certification_packet_corpus"), dict)
+            else {}
+        )
+        ledger = (
+            bundle.get("shadow_decision_ledger")
+            if isinstance(bundle.get("shadow_decision_ledger"), dict)
+            else {}
+        )
+        reason = normalize_runtime_gate_reason(
+            str(verdict.get("degrade_reason") or "") or "unknown"
+        )
+        blockers.append(
+            OpsReleaseGateBlocker(
+                decision_id=record.decision_id,
+                project_id=record.project_id,
+                session_id=record.session_id,
+                reason=reason,
+                report_id=str(verdict.get("report_id") or "") or None,
+                report_hash=str(verdict.get("report_hash") or "") or None,
+                input_hash=str(verdict.get("input_hash") or "") or None,
+                report_ref=str(bundle.get("release_gate_report_ref") or "") or None,
+                certification_packet_corpus_ref=(
+                    str(certification.get("artifact_ref") or "") or None
+                ),
+                shadow_decision_ledger_ref=str(ledger.get("artifact_ref") or "") or None,
+            )
+        )
+    blockers.sort(key=lambda item: (item.reason, item.project_id, item.decision_id))
+    return blockers
+
+
 def build_ops_summary(
     *,
     data_dir: Path,
@@ -163,6 +222,7 @@ def build_ops_summary(
         1 for record in decisions if "mapping_incomplete" in record.uncertainty_reasons
     )
     runtime_gate_reason_counts = _runtime_gate_reason_counts(decisions)
+    release_gate_blockers = _release_gate_blockers(decisions)
     recovery_failed = sum(
         1
         for _, result in receipt_items
@@ -231,6 +291,7 @@ def build_ops_summary(
         status="degraded" if alerts else "ok",
         active_alerts=len(alerts),
         alerts=alerts,
+        release_gate_blockers=release_gate_blockers,
     )
 
 
@@ -249,5 +310,8 @@ def get_ops_alerts(
             "status": summary.status,
             "active_alerts": summary.active_alerts,
             "alerts": [item.model_dump(mode="json") for item in summary.alerts],
+            "release_gate_blockers": [
+                item.model_dump(mode="json") for item in summary.release_gate_blockers
+            ],
         },
     )

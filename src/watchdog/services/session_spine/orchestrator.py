@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -22,6 +23,7 @@ from watchdog.services.brain.release_gate import (
     ReleaseGateReport,
     ReleaseGateVerdict,
 )
+from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.brain.validator import DecisionValidator
 from watchdog.services.actions.executor import (
@@ -104,6 +106,7 @@ class ResidentOrchestrator:
         state_store: ResidentOrchestrationStateStore,
         session_service: SessionService | None = None,
         brain_service: BrainDecisionService | None = None,
+        replay_service: DecisionReplayService | None = None,
         decision_validator: DecisionValidator | None = None,
         release_gate_evaluator: ReleaseGateEvaluator | None = None,
     ) -> None:
@@ -118,6 +121,7 @@ class ResidentOrchestrator:
         self._state_store = state_store
         self._session_service = session_service
         self._brain_service = brain_service or BrainDecisionService()
+        self._replay_service = replay_service or DecisionReplayService()
         self._decision_validator = decision_validator or DecisionValidator()
         self._release_gate_evaluator = release_gate_evaluator or ReleaseGateEvaluator()
 
@@ -255,27 +259,169 @@ class ResidentOrchestrator:
     def _record_command_terminal_result(
         self,
         *,
+        decision,
+        result: WatchdogActionResult,
         command_id: str,
         claim_seq: int | None,
-        action_status: ActionStatus,
         now: datetime,
     ) -> None:
         if claim_seq is None:
             return
+        payload = self._command_terminal_payload(
+            decision=decision,
+            command_id=command_id,
+            claim_seq=claim_seq,
+            result=result,
+        )
         self._command_lease_store.record_terminal_result(
             command_id=command_id,
             worker_id="resident_orchestrator",
             claim_seq=claim_seq,
             result_type=(
                 "command_executed"
-                if action_status == ActionStatus.COMPLETED
+                if result.action_status == ActionStatus.COMPLETED
                 else "command_failed"
             ),
             occurred_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
                 "+00:00",
                 "Z",
             ),
+            payload=payload,
         )
+
+    @staticmethod
+    def _artifact_ref(prefix: str, identifier: str) -> str:
+        return f"{prefix}:{identifier}"
+
+    @staticmethod
+    def _decision_evidence_map(decision) -> dict[str, Any]:
+        return decision.evidence if isinstance(decision.evidence, dict) else {}
+
+    def _decision_relevant_session_events(self, decision, *, command_id: str):
+        if self._session_service is None:
+            return []
+        return [
+            event
+            for event in self._session_service.list_events(session_id=decision.session_id)
+            if event.related_ids.get("decision_id") == decision.decision_id
+            or event.related_ids.get("command_id") == command_id
+        ]
+
+    def _command_terminal_replay_summary(self, decision, *, command_id: str) -> dict[str, Any]:
+        evidence = self._decision_evidence_map(decision)
+        trace = evidence.get("decision_trace")
+        if not isinstance(trace, dict):
+            return {
+                "packet_replay": self._replay_service.packet_replay(
+                    packet_input=None,
+                    frozen_contract={},
+                    current_contract={},
+                ).model_dump(mode="json"),
+                "session_semantic_replay": self._replay_service.session_semantic_replay(
+                    session_events=[],
+                    required_event_ids=[],
+                ).model_dump(mode="json"),
+            }
+        runtime_contract = self._release_gate_runtime_contract(
+            trace=DecisionTrace.model_validate(trace)
+        )
+        relevant_events = self._decision_relevant_session_events(decision, command_id=command_id)
+        required_event_ids = [
+            event.event_id
+            for event in relevant_events
+            if event.event_type in {"decision_proposed", "decision_validated", "command_created"}
+        ]
+        return {
+            "packet_replay": self._replay_service.packet_replay(
+                packet_input={
+                    "decision_trace_ref": trace.get("trace_id"),
+                    "goal_contract_version": trace.get("goal_contract_version"),
+                    "action_ref": decision.action_ref,
+                },
+                frozen_contract=runtime_contract,
+                current_contract=runtime_contract,
+            ).model_dump(mode="json"),
+            "session_semantic_replay": self._replay_service.session_semantic_replay(
+                session_events=[{"event_id": event.event_id} for event in relevant_events],
+                required_event_ids=required_event_ids,
+            ).model_dump(mode="json"),
+        }
+
+    def _command_terminal_metrics_summary(
+        self,
+        decision,
+        *,
+        claim_seq: int,
+        result: WatchdogActionResult,
+    ) -> dict[str, Any]:
+        evidence = self._decision_evidence_map(decision)
+        release_gate_verdict = evidence.get("release_gate_verdict")
+        return {
+            "decision_result": decision.decision_result,
+            "action_status": str(result.action_status),
+            "reply_code": str(result.reply_code) if result.reply_code is not None else None,
+            "claim_seq": claim_seq,
+            "auto_execute_total": 1,
+            "delivery_enqueue_expected": int(result.action_status == ActionStatus.COMPLETED),
+            "release_gate_status": (
+                str(release_gate_verdict.get("status"))
+                if isinstance(release_gate_verdict, dict)
+                else "unknown"
+            ),
+        }
+
+    def _command_terminal_payload(
+        self,
+        *,
+        decision,
+        command_id: str,
+        claim_seq: int,
+        result: WatchdogActionResult,
+    ) -> dict[str, Any]:
+        evidence = self._decision_evidence_map(decision)
+        trace = evidence.get("decision_trace")
+        release_gate_verdict = evidence.get("release_gate_verdict")
+        bundle = evidence.get("release_gate_evidence_bundle")
+        action = build_watchdog_action_from_decision(decision)
+        completion_evidence_ref = self._artifact_ref(
+            "receipt",
+            receipt_key_for_action(action),
+        )
+        replay_ref = self._artifact_ref("replay", decision.decision_id)
+        metrics_ref = self._artifact_ref("metrics", decision.decision_id)
+        payload: dict[str, Any] = {
+            "completion_evidence_ref": completion_evidence_ref,
+            "completion_judgment": {
+                "status": (
+                    "completed" if result.action_status == ActionStatus.COMPLETED else "failed"
+                ),
+                "action_status": str(result.action_status),
+                "reply_code": str(result.reply_code) if result.reply_code is not None else None,
+                "decision_trace_ref": (
+                    trace.get("trace_id") if isinstance(trace, dict) else None
+                ),
+                "goal_contract_version": (
+                    trace.get("goal_contract_version") if isinstance(trace, dict) else None
+                ),
+                "receipt_ref": completion_evidence_ref,
+            },
+            "replay_ref": replay_ref,
+            "replay_summary": self._command_terminal_replay_summary(
+                decision,
+                command_id=command_id,
+            ),
+            "metrics_ref": metrics_ref,
+            "metrics_summary": self._command_terminal_metrics_summary(
+                decision,
+                claim_seq=claim_seq,
+                result=result,
+            ),
+        }
+        if isinstance(release_gate_verdict, dict):
+            payload["release_gate_verdict"] = release_gate_verdict
+        if isinstance(bundle, dict):
+            payload["release_gate_evidence_bundle"] = bundle
+        return payload
 
     def _cache_auto_continue_control_link_error(
         self,
@@ -744,9 +890,10 @@ class ResidentOrchestrator:
                             session_service=self._session_service,
                         )
                         self._record_command_terminal_result(
+                            decision=decision,
+                            result=result,
                             command_id=command_plan.command_id,
                             claim_seq=command_plan.claim_seq,
-                            action_status=result.action_status,
                             now=now,
                         )
                         if (
@@ -759,10 +906,22 @@ class ResidentOrchestrator:
                                 build_envelopes_for_decision(decision)
                             )
                     except SessionSpineUpstreamError as exc:
+                        action = build_watchdog_action_from_decision(decision)
                         self._record_command_terminal_result(
+                            decision=decision,
+                            result=WatchdogActionResult(
+                                action_code=action.action_code,
+                                project_id=action.project_id,
+                                approval_id=str(action.arguments.get("approval_id") or "") or None,
+                                idempotency_key=action.idempotency_key,
+                                action_status=ActionStatus.ERROR,
+                                effect=Effect.NOOP,
+                                reply_code=ReplyCode.CONTROL_LINK_ERROR,
+                                message=str(exc),
+                                facts=_decision_facts(decision),
+                            ),
                             command_id=command_plan.command_id,
                             claim_seq=command_plan.claim_seq,
-                            action_status=ActionStatus.ERROR,
                             now=now,
                         )
                         if not self._cache_auto_continue_control_link_error(decision, exc):

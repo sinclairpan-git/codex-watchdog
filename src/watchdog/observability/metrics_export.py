@@ -31,9 +31,14 @@ def build_watchdog_metrics_text(
     counts = aggregate_watchdog_audit_actions(audit_path)
     label_vals = {k: float(v) for k, v in sorted(counts.items())}
     alert_vals: dict[str, float] = {}
+    release_gate_blocker_vals: dict[str, float] = {}
     if data_dir is not None and settings is not None:
         summary = build_ops_summary(data_dir=data_dir, settings=settings)
         alert_vals = {item.alert_code: float(item.count) for item in summary.alerts}
+        for blocker in summary.release_gate_blockers:
+            release_gate_blocker_vals[blocker.reason] = (
+                release_gate_blocker_vals.get(blocker.reason, 0.0) + 1.0
+            )
     parts: list[str] = [
         render_labeled_counter(
             "watchdog_audit_events_total",
@@ -58,6 +63,12 @@ def build_watchdog_metrics_text(
                 "mapping_incomplete": 0.0,
                 "recovery_failed": 0.0,
             },
+        ),
+        _render_labeled_gauge(
+            "watchdog_release_gate_blocker_active",
+            "Active release gate blockers by normalized reason.",
+            label_key="reason",
+            values=release_gate_blocker_vals if release_gate_blocker_vals else {"none": 0.0},
         ),
     ]
     return "".join(parts)
