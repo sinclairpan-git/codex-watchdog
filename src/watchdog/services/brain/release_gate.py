@@ -14,6 +14,60 @@ class _ReleaseGateModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+DEFAULT_RUNTIME_CONTRACT_SURFACE_REF = (
+    "watchdog.settings.Settings.build_runtime_contract"
+)
+RUNTIME_GATE_REASON_FALLBACK = "unknown"
+RUNTIME_GATE_PASSTHROUGH_REASONS = (
+    "approval_stale",
+    "report_expired",
+    "report_load_failed",
+    "input_hash_mismatch",
+)
+RUNTIME_GATE_VALIDATOR_REASONS = (
+    "memory_conflict",
+    "memory_unavailable",
+    "goal_contract_not_ready",
+    "validator_missing",
+    "validator_blocked",
+)
+RUNTIME_GATE_CONTRACT_MISMATCH_SUFFIX = "_mismatch"
+RUNTIME_GATE_VALIDATOR_BUCKET = "validator_degraded"
+RUNTIME_GATE_CONTRACT_MISMATCH_BUCKET = "contract_mismatch"
+DEFAULT_RUNTIME_GATE_REASON_TAXONOMY = {
+    "passthrough_reasons": list(RUNTIME_GATE_PASSTHROUGH_REASONS),
+    "validator_reasons": list(RUNTIME_GATE_VALIDATOR_REASONS),
+    "validator_bucket": RUNTIME_GATE_VALIDATOR_BUCKET,
+    "contract_mismatch_suffix": RUNTIME_GATE_CONTRACT_MISMATCH_SUFFIX,
+    "contract_mismatch_bucket": RUNTIME_GATE_CONTRACT_MISMATCH_BUCKET,
+    "fallback_bucket": RUNTIME_GATE_REASON_FALLBACK,
+    "raw_reason_labels_forbidden": True,
+}
+
+
+class RuntimeGateReasonTaxonomy(_ReleaseGateModel):
+    passthrough_reasons: list[str] = Field(min_length=1)
+    validator_reasons: list[str] = Field(min_length=1)
+    validator_bucket: str = Field(min_length=1)
+    contract_mismatch_suffix: str = Field(min_length=1)
+    contract_mismatch_bucket: str = Field(min_length=1)
+    fallback_bucket: str = Field(min_length=1)
+    raw_reason_labels_forbidden: bool = True
+
+
+def normalize_runtime_gate_reason(reason: str) -> str:
+    normalized = str(reason).strip()
+    if not normalized:
+        return RUNTIME_GATE_REASON_FALLBACK
+    if normalized in RUNTIME_GATE_PASSTHROUGH_REASONS:
+        return normalized
+    if normalized in RUNTIME_GATE_VALIDATOR_REASONS:
+        return RUNTIME_GATE_VALIDATOR_BUCKET
+    if normalized.endswith(RUNTIME_GATE_CONTRACT_MISMATCH_SUFFIX):
+        return RUNTIME_GATE_CONTRACT_MISMATCH_BUCKET
+    return RUNTIME_GATE_REASON_FALLBACK
+
+
 class ReleaseGateReport(_ReleaseGateModel):
     report_id: str = Field(min_length=1)
     report_hash: str = Field(min_length=1)
@@ -34,6 +88,8 @@ class ReleaseGateReport(_ReleaseGateModel):
     tool_schema_hash: str = Field(min_length=1)
     memory_provider_adapter_hash: str = Field(min_length=1)
     input_hash: str = Field(min_length=1)
+    runtime_contract_surface_ref: str = Field(min_length=1)
+    runtime_gate_reason_taxonomy: RuntimeGateReasonTaxonomy
 
 
 class ReleaseGateVerdict(_ReleaseGateModel):

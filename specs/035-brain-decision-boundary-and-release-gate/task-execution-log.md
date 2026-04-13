@@ -266,3 +266,28 @@
 - 当前判断再更新为：
   - runtime contract canonical source 与 runtime gate reason taxonomy 已经同时进入测试、代码、runbook 与 resume metadata 四层约束，035 这一段治理面基本闭环；
   - 下一步更适合继续评估是否要把这套治理规则延伸进 fixture/report generation contract，或继续推进 T354 余下未落地的 release-gate 文档与流程边界，而不是再回头放宽 taxonomy。
+- 已继续推进 fixture/report generation contract，下沉 runbook 中的治理规则到 `release_gate_report` 本体：
+  - 先在 `tests/test_watchdog_release_gate.py` 补红测，要求 `ReleaseGateReport` 显式携带 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy`，并要求 `scripts/generate_release_gate_report.py` 生成的报告默认写入这组 governance metadata；
+  - 同时在 `tests/test_watchdog_release_gate_evidence.py` 补红测，要求冻结的 `tests/fixtures/release_gate_expected_report.json` 也必须持有同一组字段，避免 runbook/脚本/fixture 三方再漂移；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py -k 'runtime_governance_contract or runtime_invalidation_fields or fixtures_are_checked_in'` -> `3 failed, 10 deselected in 0.37s`，失败点分别是 `ReleaseGateReport` 仍 forbids extra fields、脚本未生成 governance metadata、fixture 也还没跟上；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `RuntimeGateReasonTaxonomy` 与默认 governance 常量，并把 `ReleaseGateReport` 扩成必须包含 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy`；
+  - 已在 `scripts/generate_release_gate_report.py` 复用同一组默认常量，让脚本产出的报告自动固化 `Settings.build_runtime_contract(...)` 作为 canonical source，并把稳定 taxonomy 一起归档到 report payload；
+  - 已用脚本重生成 `tests/fixtures/release_gate_expected_report.json`，并同步更新 `tests/test_watchdog_session_spine_runtime.py` 的本地 report helper，确保 runtime 载入路径与 fixture/report generation contract 保持单一真相；
+  - 已在 `docs/operations/release-gate-runbook.md` 明确把 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy` 列为必须归档字段，避免治理规则重新退回 runbook-only 口头约束。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py -k 'runtime_governance_contract or runtime_invalidation_fields or fixtures_are_checked_in or configured_release_gate_report'` -> `5 passed, 43 deselected in 1.27s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `59 passed in 4.60s`
+- 已按对抗评审规则对这一切片做复核并处理一条有效 P1：
+  - Hermes Agent 专家与 Anthropic Manager 专家都指出，我新加的 `runtime_gate_reason_taxonomy` 仍然是不完整的第二套定义：它只列了 passthrough reasons 和 bucket 名，没有把 validator reason set 与 `*_mismatch` 规则一并归档，而 `src/watchdog/api/ops.py` 也还保留自己的独立 normalizer；
+  - 已据此把 runtime gate taxonomy 真正收口到 `src/watchdog/services/brain/release_gate.py`：新增共享常量 `RUNTIME_GATE_PASSTHROUGH_REASONS / RUNTIME_GATE_VALIDATOR_REASONS / RUNTIME_GATE_CONTRACT_MISMATCH_SUFFIX` 与 `normalize_runtime_gate_reason(...)`；
+  - 已让 `src/watchdog/api/ops.py` 直接导入同一个 shared normalizer，不再维护独立 reason bucket 集合；
+  - 已扩展 `RuntimeGateReasonTaxonomy` 与脚本/fixture/report helper，使 `validator_reasons` 与 `contract_mismatch_suffix` 也成为 machine-readable report contract 的一部分，而不是只活在 runbook 文字里。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py -k 'runtime_governance_contract or runtime_invalidation_fields or fixtures_are_checked_in or normalizes_runtime_gate_reason_taxonomy or unknown_runtime_gate_reason'` -> `5 passed, 19 deselected in 1.14s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `70 passed in 5.38s`
+- 已完成 fix 后复核：
+  - Anthropic Manager 专家与 Hermes Agent 专家二次确认均已无 blocking/P1；
+  - 顺手把测试 helper 中重复的 taxonomy literal 也改成直接导入默认常量，避免 test-only 漂移。
+- 当前判断再更新为：
+  - runtime governance 现在已经从 code/runbook 进一步下沉到 generated report + checked-in fixture contract，并且 ops/read-side 与 report generation 复用同一份 taxonomy classifier，第二真相已收口；
+  - 下一步更适合继续评估是否要把这组 governance metadata 继续上提到 evidence bundle 或 report validation helper，或者收掉 `T354` 里剩余的流程文档引用，而不是再新增独立的口头规则。

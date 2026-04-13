@@ -15,6 +15,8 @@
 - `generated_by`
 - `report_approved_by`
 - `artifact_ref`
+- `runtime_contract_surface_ref`
+- `runtime_gate_reason_taxonomy`
 
 执行要求：
 
@@ -25,12 +27,14 @@
 ## Runtime Contract Surface
 
 - runtime contract 的唯一配置入口是 `Settings.build_runtime_contract(...)`。
+- `release_gate_report` 必须把这条入口归档到 `runtime_contract_surface_ref`，禁止 report 与 runtime 口径分叉。
 - `provider / replay / resident runtime` 必须消费同一份 contract 字段集合，至少包括 `provider`、`model`、`prompt_schema_ref`、`output_schema_ref`、`tool_schema_hash`、`risk_policy_version`、`decision_input_builder_version`、`policy_engine_version`、`memory_provider_adapter_hash`。
 - `provider_certification`、decision replay、resident orchestrator 只能复用这条统一入口，禁止调用方手写 runtime contract 或私自裁剪字段。
 
 ## Runtime Gate Reason Taxonomy
 
 - ops 侧告警标签必须基于稳定 taxonomy 聚合，禁止直接把 raw degrade_reason 暴露成最终 alert code 或 metrics label。
+- `release_gate_report` 必须把这组规则归档到 `runtime_gate_reason_taxonomy`，确保 fixture、脚本产物与 runtime/read-side 使用同一套 bucket 定义。
 - 以下原因保持原样透传：`approval_stale`、`report_expired`、`report_load_failed`、`input_hash_mismatch`。
 - 以下 validator 侧原因统一折叠到 `validator_degraded`：`memory_conflict`、`memory_unavailable`、`goal_contract_not_ready`、`validator_missing`、`validator_blocked`。
 - 其他所有 `*_mismatch` 原因统一折叠到 `contract_mismatch`。

@@ -15,7 +15,11 @@ from watchdog.main import _run_delivery_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
 from watchdog.services.brain.models import DecisionIntent, DecisionTrace
-from watchdog.services.brain.release_gate import ReleaseGateEvaluator
+from watchdog.services.brain.release_gate import (
+    DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+    DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+    ReleaseGateEvaluator,
+)
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
 from watchdog.services.goal_contract.service import GoalContractService
@@ -183,6 +187,8 @@ def _write_release_gate_report(
         "tool_schema_hash": "tool:abc",
         "memory_provider_adapter_hash": "memory:abc",
         "input_hash": evaluator._input_hash_for_trace(trace),
+        "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+        "runtime_gate_reason_taxonomy": DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
     }
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report

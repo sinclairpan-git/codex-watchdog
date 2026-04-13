@@ -12,6 +12,7 @@ from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus
 from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.brain.release_gate import normalize_runtime_gate_reason
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -28,21 +29,6 @@ _RUNTIME_GATE_ALERT_RULES = {
     "runtime_gate_missing",
     "release_gate_degraded",
     "validator_gate_degraded",
-}
-
-_RUNTIME_GATE_REASON_FALLBACK = "unknown"
-_RUNTIME_GATE_PASSTHROUGH_REASONS = {
-    "approval_stale",
-    "report_expired",
-    "report_load_failed",
-    "input_hash_mismatch",
-}
-_RUNTIME_GATE_VALIDATOR_REASONS = {
-    "memory_conflict",
-    "memory_unavailable",
-    "goal_contract_not_ready",
-    "validator_missing",
-    "validator_blocked",
 }
 
 
@@ -122,24 +108,11 @@ def _runtime_gate_reason_counts(decisions) -> dict[str, int]:
                 for item in reasons
                 if str(item).strip()
             ),
-            _RUNTIME_GATE_REASON_FALLBACK,
+            "",
         )
-        normalized = _normalize_runtime_gate_reason(reason)
+        normalized = normalize_runtime_gate_reason(reason)
         counts[normalized] = counts.get(normalized, 0) + 1
     return counts
-
-
-def _normalize_runtime_gate_reason(reason: str) -> str:
-    normalized = str(reason).strip()
-    if not normalized:
-        return _RUNTIME_GATE_REASON_FALLBACK
-    if normalized in _RUNTIME_GATE_PASSTHROUGH_REASONS:
-        return normalized
-    if normalized in _RUNTIME_GATE_VALIDATOR_REASONS:
-        return "validator_degraded"
-    if normalized.endswith("_mismatch"):
-        return "contract_mismatch"
-    return _RUNTIME_GATE_REASON_FALLBACK
 
 
 def build_ops_summary(

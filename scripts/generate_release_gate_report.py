@@ -5,6 +5,11 @@ import hashlib
 import json
 from pathlib import Path
 
+from watchdog.services.brain.release_gate import (
+    DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+    DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+)
+
 
 def _read_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -89,6 +94,8 @@ def build_report(
             packets, "memory_provider_adapter_hash"
         ),
         "input_hash": input_hash,
+        "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+        "runtime_gate_reason_taxonomy": DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
         "shadow_decision_count": len(shadow_runs),
         "certification_packet_count": len(packets),
     }

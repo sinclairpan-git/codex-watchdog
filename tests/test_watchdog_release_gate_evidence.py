@@ -52,6 +52,20 @@ def test_release_gate_fixtures_are_checked_in() -> None:
 
     assert expected["label_manifest"] == "tests/fixtures/release_gate_label_manifest.json"
     assert expected["artifact_ref"] == "tests/fixtures/release_gate_expected_report.json"
+    assert (
+        expected["runtime_contract_surface_ref"]
+        == "watchdog.settings.Settings.build_runtime_contract"
+    )
+    assert expected["runtime_gate_reason_taxonomy"]["validator_reasons"] == [
+        "memory_conflict",
+        "memory_unavailable",
+        "goal_contract_not_ready",
+        "validator_missing",
+        "validator_blocked",
+    ]
+    assert expected["runtime_gate_reason_taxonomy"]["contract_mismatch_suffix"] == "_mismatch"
+    assert expected["runtime_gate_reason_taxonomy"]["validator_bucket"] == "validator_degraded"
+    assert expected["runtime_gate_reason_taxonomy"]["fallback_bucket"] == "unknown"
     assert labels["generated_by"] == "codex"
     assert labels["report_approved_by"] == "operator-a"
 

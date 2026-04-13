@@ -6,7 +6,18 @@ import subprocess
 from pathlib import Path
 
 from watchdog.services.brain.models import DecisionTrace
+from watchdog.services.brain.release_gate import (
+    DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+    DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+)
 from watchdog.services.brain.validator import DecisionValidationVerdict
+
+
+def _runtime_governance_fields() -> dict[str, object]:
+    return {
+        "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+        "runtime_gate_reason_taxonomy": DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+    }
 
 
 def test_release_gate_module_exports_report_and_verdict_types() -> None:
@@ -40,11 +51,17 @@ def test_release_gate_report_carries_runtime_invalidation_fields() -> None:
         tool_schema_hash="tool:abc",
         memory_provider_adapter_hash="memory:abc",
         input_hash="sha256:input",
+        **_runtime_governance_fields(),
     )
 
     assert report.decision_input_builder_version == "dib:v1"
     assert report.policy_engine_version == "policy:v1"
     assert report.report_approved_by == "operator-a"
+    assert (
+        report.runtime_contract_surface_ref
+        == DEFAULT_RUNTIME_CONTRACT_SURFACE_REF
+    )
+    assert report.runtime_gate_reason_taxonomy.validator_bucket == "validator_degraded"
 
 
 def test_release_gate_verdict_records_trace_and_approval_refs() -> None:
@@ -107,6 +124,54 @@ def test_generate_release_gate_report_script_produces_expected_fixture(tmp_path:
     )
 
 
+def test_generate_release_gate_report_script_embeds_runtime_governance_contract(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "generate_release_gate_report.py"
+    packets = root / "tests" / "fixtures" / "release_gate_packets.jsonl"
+    shadow_runs = root / "tests" / "fixtures" / "release_gate_shadow_runs.jsonl"
+    label_manifest = root / "tests" / "fixtures" / "release_gate_label_manifest.json"
+    output_path = tmp_path / "release_gate_report.json"
+
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            str(script),
+            "--packets",
+            str(packets),
+            "--shadow-runs",
+            str(shadow_runs),
+            "--label-manifest",
+            str(label_manifest),
+            "--generated-by",
+            "codex",
+            "--report-approved-by",
+            "operator-a",
+            "--artifact-ref",
+            "tests/fixtures/release_gate_expected_report.json",
+            "--sample-window",
+            "2026-04-01..2026-04-07",
+            "--shadow-window",
+            "2026-04-08..2026-04-09",
+            "--output",
+            str(output_path),
+        ],
+        check=True,
+        cwd=root,
+    )
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert (
+        payload["runtime_contract_surface_ref"]
+        == DEFAULT_RUNTIME_CONTRACT_SURFACE_REF
+    )
+    assert payload["runtime_gate_reason_taxonomy"] == DEFAULT_RUNTIME_GATE_REASON_TAXONOMY
+
+
 def test_release_gate_evaluator_accepts_current_matching_report() -> None:
     module = importlib.import_module("watchdog.services.brain.release_gate")
 
@@ -144,6 +209,7 @@ def test_release_gate_evaluator_accepts_current_matching_report() -> None:
         tool_schema_hash="tool:abc",
         memory_provider_adapter_hash="memory:abc",
         input_hash=evaluator._input_hash_for_trace(trace),
+        **_runtime_governance_fields(),
     )
 
     verdict = evaluator.evaluate(
@@ -202,6 +268,7 @@ def test_release_gate_evaluator_degrades_expired_report() -> None:
         tool_schema_hash="tool:abc",
         memory_provider_adapter_hash="memory:abc",
         input_hash=evaluator._input_hash_for_trace(trace),
+        **_runtime_governance_fields(),
     )
 
     verdict = evaluator.evaluate(
@@ -260,6 +327,7 @@ def test_release_gate_evaluator_degrades_on_input_hash_drift() -> None:
         tool_schema_hash="tool:abc",
         memory_provider_adapter_hash="memory:abc",
         input_hash="sha256:drifted",
+        **_runtime_governance_fields(),
     )
 
     verdict = evaluator.evaluate(

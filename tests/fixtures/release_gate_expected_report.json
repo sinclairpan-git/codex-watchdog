@@ -17,7 +17,28 @@
   "tool_schema_hash": "tool:abc",
   "memory_provider_adapter_hash": "memory:abc",
   "input_hash": "sha256:input-fixture",
+  "runtime_contract_surface_ref": "watchdog.settings.Settings.build_runtime_contract",
+  "runtime_gate_reason_taxonomy": {
+    "passthrough_reasons": [
+      "approval_stale",
+      "report_expired",
+      "report_load_failed",
+      "input_hash_mismatch"
+    ],
+    "validator_reasons": [
+      "memory_conflict",
+      "memory_unavailable",
+      "goal_contract_not_ready",
+      "validator_missing",
+      "validator_blocked"
+    ],
+    "validator_bucket": "validator_degraded",
+    "contract_mismatch_suffix": "_mismatch",
+    "contract_mismatch_bucket": "contract_mismatch",
+    "fallback_bucket": "unknown",
+    "raw_reason_labels_forbidden": true
+  },
   "shadow_decision_count": 2,
   "certification_packet_count": 2,
-  "report_hash": "sha256:6c48aa0c8299a8f0b7651eb71599abd908b5aa5fa68549d0ca102feb90757417"
+  "report_hash": "sha256:2538787d739be746ece4db75b964bd01d862af60657d87f1892af7a9471bc301"
 }
