@@ -109,3 +109,16 @@ def test_release_gate_runbook_documents_runtime_contract_surface_and_reason_taxo
     assert "contract_mismatch" in contents
     assert "unknown" in contents
     assert "禁止直接把 raw degrade_reason" in contents
+
+
+def test_release_gate_runbook_documents_runtime_load_time_validation() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runbook = root / "docs" / "operations" / "release-gate-runbook.md"
+
+    assert runbook.exists()
+    contents = runbook.read_text(encoding="utf-8")
+
+    assert "parse_release_gate_report" in contents
+    assert "JSON object" in contents
+    assert "canonical JSON contract" in contents
+    assert "report_load_failed" in contents

@@ -322,7 +322,11 @@
   - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `_canonical_json(...)`，把 raw taxonomy 比较收紧为 canonical JSON 序列化后的精确相等，而不是继续依赖 Python 对象相等语义。
 - 当前已通过的附加验证：
   - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'defaulted_governance_metadata or non_object_payload or python_equal_but_json_drifted_taxonomy or parse_release_gate_report_rejects_governance_contract_drift'` -> `4 passed, 8 deselected in 0.14s`
-  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `76 passed in 4.96s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 4.22s`
 - 当前判断再更新为：
   - report-level governance 现在已经不仅能被脚本生成和 fixture 记录，还会按 canonical JSON contract 在 runtime load path 被强制校验；无论是 drifted metadata、非对象 JSON，还是 Python 宽松相等语义带来的伪等价 payload，都只能走 `report_load_failed` fail-closed；
   - 下一步更适合评估是否把这条 parse/validate contract 再显式挂到 evidence bundle 或 runbook 的“加载规范”章节，而不是继续只靠代码路径暗含。
+- 035 完成态确认：
+  - `T352` 至 `T355` 的代码、文档、fixture、runtime consume、对抗评审与 handoff 元数据现已全部收口；
+  - 当前 `WI-035` 的正式 handoff 是：后续 work item 只能消费已冻结的 Brain trace / replay / release gate / future worker contract，而不能回退到 policy-only auto execute 或手写 report 直通 runtime；
+  - 下一潜在扩展点仅剩把 `parse_release_gate_report(...)` 上提到 shared loading API / evidence bundle，这属于后续 work item，不再阻塞 035 完成。

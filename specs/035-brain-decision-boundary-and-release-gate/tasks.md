@@ -31,7 +31,7 @@
 ## Task 35.2 写失败测试锁定 Brain contract、DecisionTrace、provider certification 与 release gate
 
 - **任务编号**：T352
-- **状态**：进行中（2026-04-13）
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 035 的正式输入输出 contract，避免实现回退到“policy 直接 auto execute”或“Brain 直接拼 prompt/动执行”的旧路径。
 - **文件**：
   - `tests/test_watchdog_brain_decision_loop.py`
@@ -56,11 +56,15 @@
   13. 覆盖 observe-only / session search / memory write mirror 不会被 release gate 误阻断。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py`
+- **完成情况**：
+  1. 已把 Brain contract、DecisionTrace、provider/runtime drift、release gate evidence/runbook 与 future worker 声明式边界锁进红绿测试；
+  2. 已持续补强 `runtime_gate_unknown`、report governance drift、non-object JSON 与 Python 宽松相等等回归，避免 release gate contract 只在 happy path 成立；
+  3. 当前相关 contract 测试与运行时回归已收口到稳定通过。
 
 ## Task 35.3 实现最小 Brain contracts、decision input builder 与 validator/certification/replay
 
 - **任务编号**：T353
-- **状态**：进行中（2026-04-13）
+- **状态**：已完成（2026-04-14）
 - **目标**：交付 Brain 的最小可用决策面与审计面，让 runtime 能消费声明式结果，而不是自由拼接 prompt 与执行。
 - **文件**：
   - `src/watchdog/services/brain/__init__.py`
@@ -84,11 +88,15 @@
   7. future worker trace/schema 已明确只读、声明式且不越权。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py`
+- **完成情况**：
+  1. 已交付最小 Brain contracts、decision input builder、validator、provider certification 与 replay 垂直切片；
+  2. `Settings.build_runtime_contract(...)` 已成为 shared runtime/config surface，provider certification / replay / resident runtime 不再各自手写 contract；
+  3. Brain intent、DecisionTrace 与 replay/certification 已能被现有 runtime 直接消费，而未引入新的第二真相层。
 
 ## Task 35.4 接入 release gate evidence/runtime consume，并锁定低风险自动决策资格门禁
 
 - **任务编号**：T354
-- **状态**：进行中（2026-04-13）
+- **状态**：已完成（2026-04-14）
 - **目标**：把 035 的决策与审计 contract 真正接到现有 runtime，让 orchestrator 只在资格满足时消费 `propose_execute`。
 - **文件**：
   - `src/watchdog/services/brain/release_gate_evidence.py`
@@ -119,11 +127,15 @@
   7. provider/model/prompt/schema/risk-policy/tool-schema/memory-adapter、`decision_input_builder_version`、`policy_engine_version`、TTL/expiry、当前 input hash 任一变化都会使旧 report 失效并自动降级。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
+  1. release gate evidence、report generation script、runbook、fixture 与 resident runtime consume 已全部接到同一组 canonical governance contract；
+  2. runtime gate taxonomy、runtime contract surface、report-level governance metadata 与 load-time parse/validate contract 已统一收口，任意 drift 都会 fail-closed 为 `report_load_failed`；
+  3. resident orchestrator 现在只会在 release gate / validator / approval / runtime 条件满足时进入 low-risk auto execute，相关 canonical event/evidence 与 ops surfacing 均已锁定。
 
 ## Task 35.5 更新执行日志与 handoff 摘要
 
 - **任务编号**：T355
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 handoff。
 - **文件**：
   - `specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`
@@ -140,6 +152,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已同步 `task-execution-log.md`、`execution-plan.yaml`、`runtime.yaml`、`resume-pack.yaml` 与 `latest-summary.md`；
+  2. 已把 Hermes / Anthropic 多轮对抗评审结论和对应 red/green/fix 闭环写回 handoff；
+  3. 已明确后续 work item 只应消费 Brain trace / replay / release gate contract，不得回退到 policy-only auto execute 或手写 report 直通 runtime。
 
 ## 整体验收
 

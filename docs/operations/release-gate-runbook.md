@@ -40,6 +40,13 @@
 - 其他所有 `*_mismatch` 原因统一折叠到 `contract_mismatch`。
 - 空值或未分类原因统一归到 `unknown`。
 
+## Runtime Load Validation
+
+- resident runtime 只能通过 `parse_release_gate_report(...)` 加载 `release_gate_report`，禁止直接绕过 helper 手写 `model_validate(...)`。
+- report 文件必须是 JSON object；`[]`、`null`、字符串或其他非对象 payload 都视为非法输入。
+- `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy` 必须和 canonical JSON contract 完全一致，不能依赖默认值补全、类型宽松或 Python 相等语义蒙混过关。
+- load-time 校验失败一律按 `report_load_failed` fail-closed，禁止继续走 auto execute。
+
 约束：
 
 - 禁止人工拼接放行材料。

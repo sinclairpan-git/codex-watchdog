@@ -1,6 +1,6 @@
-current_stage: execute
-current_batch: 4
-last_committed_task: T351
+current_stage: verify
+current_batch: 5
+last_committed_task: T355
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -9,39 +9,28 @@ working_set_snapshot:
   plan_path: specs/035-brain-decision-boundary-and-release-gate/plan.md
   tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
   active_files:
-  - '`src/watchdog/services/brain/release_gate.py`'
-  - '`src/watchdog/services/session_spine/orchestrator.py`'
-  - '`tests/test_watchdog_session_spine_runtime.py`'
-  - '`tests/test_watchdog_release_gate.py`'
+  - '`specs/035-brain-decision-boundary-and-release-gate/tasks.md`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md`'
   context_summary: |
     # Development Summary
 
-    - `WI-035` 当前仍在执行 `T354`：当前主线已经从“把这组治理规则下沉到 generated release_gate_report + fixture contract”推进到“把 report-level governance contract 接到 runtime load path，拒绝 drifted hand-authored report”。
-    - resident runtime 默认放行路径已经正式消费 `release_gate_report` artifact，不再一律回退到 `report:resident_default`。
-    - runtime gate 降级已进入现有 ops/read-side surface，并且 alert 已经按稳定 taxonomy 分桶，而不是直接暴露原始 reason。
-    - shared runtime contract 也已经有显式的 `Settings.build_runtime_contract(...)` surface。
-    - 最新切片继续把 report-level governance contract 接到 runtime load path：
-      - `parse_release_gate_report(...)` 现在会先做 `ReleaseGateReport.model_validate(...)`，再强制校验 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy` 必须等于 canonical default；
-      - resident orchestrator 已改成通过这条 helper 加载 report，因此治理 metadata 一旦漂移，就会沿既有 `report_load_failed` 路径 fail-closed；
-      - 结果是 hand-authored drifted report 不再能因为“字段齐了”就悄悄绕过 release gate。
-    - 对抗 review 又补出两条更细的 fail-closed 漏洞，现已收口：
-      - `parse_release_gate_report(...)` 现在是先比较原始 payload 的 governance JSON contract，再交给 Pydantic 做 shape 校验，因此缺失默认字段、依赖类型宽松或默认补全的 drifted report 也会被拒绝；
-      - `parse_release_gate_report(...)` 现在也会先验证 payload 必须是 JSON object，因此 `[]`、`null`、字符串这类合法但非对象的 report 文件，也会稳定走 `report_load_failed`。
-    - 对抗 review 最后又补出 Python 宽松相等语义的漏洞，现也已收口：
-      - raw taxonomy 比较现在改成 canonical JSON 精确相等，而不是 Python dict equality；
-      - 所以 `1` 冒充 `true` 这类 Python 看起来“相等”、但 JSON contract 实际漂移的 payload，也会被拒绝。
+    - `WI-035` 已完成：`T351` 到 `T355` 全部收口，当前主线不再有未完成的 Brain / release gate runtime slicing。
+    - 核心实现已经冻结：
+      - `Settings.build_runtime_contract(...)` 是 shared runtime/config surface；
+      - `release_gate_report`、fixture、ops/read-side taxonomy 与 runtime load path 共用同一套治理 contract；
+      - `parse_release_gate_report(...)` 会对 raw JSON contract 做精确校验，拒绝 drifted metadata、默认值补全、非对象 JSON 与 Python 宽松相等导致的伪等价 payload；
+      - resident runtime 对所有 report load 异常统一 fail-closed 为 `report_load_failed`。
     - 当前已完成验证：
       - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'defaulted_governance_metadata or non_object_payload or python_equal_but_json_drifted_taxonomy or parse_release_gate_report_rejects_governance_contract_drift'` -> `4 passed, 8 deselected in 0.14s`
-      - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'non_object_payload or not_json_object or defaulted_governance_metadata or governance_drifts'` -> `4 passed, 44 deselected in 0.58s`
-      - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'parse_release_gate_report_rejects_governance_contract_drift or governance_drifts'` -> `2 passed, 43 deselected in 0.51s`
-      - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `76 passed in 4.96s`
-    - 下一步优先评估两件事：
-      - 是否把这条 parse/validate contract 再上提到 evidence bundle 或 shared loading API，而不是只停在 release_gate helper；
-      - 是否让 release-gate/provider/replay 侧的后续流程文档明确引用 runtime load-time governance contract，而不是只在单一 runbook 中定义。
+      - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'runtime_contract_surface_and_reason_taxonomy or runtime_load_time_validation'` -> `2 passed, 4 deselected in 0.03s`
+      - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 4.22s`
+    - 后续 handoff：
+      - 下一 work item 只应评估是否把 `parse_release_gate_report(...)` 上提到 shared loading API / evidence bundle；
+      - Feishu/control-plane/e2e/worker work item 只消费已冻结的 Brain trace / replay / release gate / future worker contract，不能回退到 policy-only auto execute 或手写 report 直通 runtime。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
