@@ -11,8 +11,16 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 
 
 class FakeAClient:
-    def __init__(self, *, context_pressure: str = "critical") -> None:
+    def __init__(
+        self,
+        *,
+        context_pressure: str = "critical",
+        handoff_data: dict[str, object] | None = None,
+        resume_data: dict[str, object] | None = None,
+    ) -> None:
         self._context_pressure = context_pressure
+        self._handoff_data = dict(handoff_data or {})
+        self._resume_data = dict(resume_data or {})
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
@@ -41,9 +49,14 @@ class FakeAClient:
         reason: str,
     ) -> dict[str, object]:
         self.handoff_calls.append((project_id, reason))
+        handoff_data = {
+            "handoff_file": f"/tmp/{project_id}.handoff.md",
+            "summary": "handoff",
+        }
+        handoff_data.update(self._handoff_data)
         return {
             "success": True,
-            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+            "data": handoff_data,
         }
 
     def trigger_resume(
@@ -54,9 +67,15 @@ class FakeAClient:
         handoff_summary: str,
     ) -> dict[str, object]:
         self.resume_calls.append((project_id, mode, handoff_summary))
+        resume_data = {
+            "project_id": project_id,
+            "status": "running",
+            "mode": mode,
+        }
+        resume_data.update(self._resume_data)
         return {
             "success": True,
-            "data": {"project_id": project_id, "status": "running", "mode": mode},
+            "data": resume_data,
         }
 
 
@@ -221,3 +240,89 @@ def test_execute_canonical_decision_rejects_non_executable_decision_result(
             client=FakeAClient(),
             receipt_store=_receipt_store(tmp_path),
         )
+
+
+def test_create_app_recovery_execution_records_canonical_truth_once(
+    tmp_path: Path,
+) -> None:
+    from watchdog.main import create_app
+    from watchdog.services.actions.executor import execute_canonical_decision
+
+    settings = _settings(tmp_path).model_copy(update={"recover_auto_resume": True})
+    client = FakeAClient(context_pressure="critical")
+    app = create_app(settings, a_client=client, start_background_workers=False)
+    decision = _decision(action_ref="execute_recovery")
+
+    first = execute_canonical_decision(
+        decision,
+        settings=app.state.settings,
+        client=app.state.a_client,
+        receipt_store=app.state.action_receipt_store,
+        session_service=app.state.session_service,
+    )
+    second = execute_canonical_decision(
+        decision,
+        settings=app.state.settings,
+        client=app.state.a_client,
+        receipt_store=app.state.action_receipt_store,
+        session_service=app.state.session_service,
+    )
+
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+
+    recovery_records = app.state.session_service.list_recovery_transactions(
+        parent_session_id="session:repo-a"
+    )
+    assert [record.status for record in recovery_records] == [
+        "started",
+        "packet_frozen",
+        "child_created",
+        "lineage_committed",
+        "completed",
+    ]
+
+    lineage_records = app.state.session_service.list_lineage(
+        parent_session_id="session:repo-a"
+    )
+    assert len(lineage_records) == 1
+    assert lineage_records[0].relation == "resumes_after_interruption"
+
+
+def test_create_app_recovery_execution_preserves_handoff_provenance(
+    tmp_path: Path,
+) -> None:
+    from watchdog.main import create_app
+    from watchdog.services.actions.executor import execute_canonical_decision
+
+    settings = _settings(tmp_path).model_copy(update={"recover_auto_resume": True})
+    client = FakeAClient(
+        context_pressure="critical",
+        handoff_data={
+            "goal_contract_version": "goal-v9",
+            "source_packet_id": "packet:handoff-v9",
+        },
+        resume_data={"session_id": "session:repo-a:child-v9"},
+    )
+    app = create_app(settings, a_client=client, start_background_workers=False)
+
+    execute_canonical_decision(
+        _decision(action_ref="execute_recovery"),
+        settings=app.state.settings,
+        client=app.state.a_client,
+        receipt_store=app.state.action_receipt_store,
+        session_service=app.state.session_service,
+    )
+
+    lineage_records = app.state.session_service.list_lineage(
+        parent_session_id="session:repo-a"
+    )
+    assert len(lineage_records) == 1
+    assert lineage_records[0].child_session_id == "session:repo-a:child-v9"
+    assert lineage_records[0].goal_contract_version == "goal-v9"
+    assert lineage_records[0].source_packet_id == "packet:handoff-v9"
+
+    frozen_events = app.state.session_service.list_events(event_type="handoff_packet_frozen")
+    assert len(frozen_events) == 1
+    assert frozen_events[0].related_ids["source_packet_id"] == "packet:handoff-v9"

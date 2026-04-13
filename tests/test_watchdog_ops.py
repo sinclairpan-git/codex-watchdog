@@ -367,3 +367,137 @@ def test_build_ops_summary_uses_delivery_failure_update_time(tmp_path: Path) -> 
     assert summary.status == "degraded"
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["delivery_failed"]
+
+
+def test_build_ops_summary_counts_only_latest_pending_approval_per_session(tmp_path: Path) -> None:
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    template_decision = CanonicalDecisionRecord(
+        decision_id="decision:approval-template",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|approval-template",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        approval_id="approval:template",
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="needs approval",
+        matched_policy_rules=["human_gate"],
+        why_not_escalated=None,
+        why_escalated="destructive recovery needs approval",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key=(
+            "session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|approval-template"
+        ),
+        created_at="2000-01-01T00:00:00Z",
+        operator_notes=[],
+        evidence={},
+    )
+
+    def make_approval(
+        *,
+        approval_id: str,
+        envelope_id: str,
+        session_id: str,
+        project_id: str,
+        fact_snapshot_version: str,
+        status: str,
+        created_at: str,
+    ) -> CanonicalApprovalRecord:
+        return CanonicalApprovalRecord(
+            approval_id=approval_id,
+            envelope_id=envelope_id,
+            approval_kind="canonical_user_decision",
+            requested_action="execute_recovery",
+            requested_action_args={},
+            approval_token=f"approval-token:{approval_id}",
+            decision_options=["approve", "reject", "execute_action"],
+            policy_version="policy-v1",
+            fact_snapshot_version=fact_snapshot_version,
+            idempotency_key=(
+                f"{session_id}|{fact_snapshot_version}|policy-v1|require_user_decision|"
+                f"execute_recovery|{approval_id}|approval"
+            ),
+            project_id=project_id,
+            session_id=session_id,
+            thread_id=session_id,
+            native_thread_id="thr_native_1",
+            status=status,
+            created_at=created_at,
+            decided_at="2000-01-01T01:00:00Z" if status != "pending" else None,
+            decided_by="policy-test" if status != "pending" else None,
+            operator_notes=[],
+            decision=template_decision.model_copy(
+                update={
+                    "decision_id": f"decision:{approval_id}",
+                    "decision_key": (
+                        f"{session_id}|{fact_snapshot_version}|policy-v1|require_user_decision|"
+                        f"execute_recovery|{approval_id}"
+                    ),
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "thread_id": session_id,
+                    "approval_id": approval_id,
+                    "fact_snapshot_version": fact_snapshot_version,
+                    "created_at": created_at,
+                }
+            ),
+        )
+
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-a-old",
+            envelope_id="approval-envelope:repo-a-old",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            fact_snapshot_version="fact-v1",
+            status="pending",
+            created_at="2000-01-01T00:00:00Z",
+        )
+    )
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-a-new",
+            envelope_id="approval-envelope:repo-a-new",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            fact_snapshot_version="fact-v2",
+            status="superseded",
+            created_at="2000-01-01T00:10:00Z",
+        )
+    )
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-b-old",
+            envelope_id="approval-envelope:repo-b-old",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            fact_snapshot_version="fact-v1",
+            status="pending",
+            created_at="2000-01-01T00:00:00Z",
+        )
+    )
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-b-new",
+            envelope_id="approval-envelope:repo-b-new",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            fact_snapshot_version="fact-v2",
+            status="pending",
+            created_at="2000-01-01T00:10:00Z",
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 1
+    assert [item.alert_code for item in summary.alerts] == ["approval_pending_too_long"]
+    assert summary.alerts[0].count == 1

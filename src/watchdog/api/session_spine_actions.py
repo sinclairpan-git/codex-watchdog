@@ -96,12 +96,14 @@ def handle_action(
     receipt_store: ActionReceiptStore,
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
+    session_service = request.app.state.session_service
     try:
         result = execute_watchdog_action(
             action,
             settings=settings,
             client=client,
             receipt_store=receipt_store,
+            session_service=session_service,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)

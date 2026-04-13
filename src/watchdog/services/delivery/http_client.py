@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from pydantic import BaseModel
 
-from watchdog.services.delivery.envelopes import ApprovalEnvelope, DecisionEnvelope, NotificationEnvelope
+from watchdog.services.delivery.envelopes import (
+    ApprovalEnvelope,
+    DecisionEnvelope,
+    NotificationEnvelope,
+    _compatibility_command,
+    _compatibility_risk_level,
+)
 from watchdog.services.delivery.openclaw_webhook_store import (
     OpenClawWebhookEndpointStore,
     openclaw_webhook_endpoint_state_path,
@@ -117,6 +124,51 @@ class OpenClawDeliveryClient:
             return state.openclaw_webhook_base_url
         return self._settings.openclaw_webhook_base_url
 
+    @staticmethod
+    def _normalize_legacy_approval_payload(
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(payload)
+        requested_action = str(normalized.get("requested_action") or "")
+        requested_action_args = normalized.get("requested_action_args")
+        if not isinstance(requested_action_args, dict):
+            requested_action_args = {}
+        risk_class = str(normalized.get("risk_class") or "")
+        summary = str(normalized.get("summary") or "")
+        why_escalated = normalized.get("why_escalated")
+        reason = str(normalized.get("reason") or why_escalated or summary or requested_action)
+        title = str(normalized.get("title") or "")
+        if not title:
+            title = (
+                f"approval required for {requested_action}" if requested_action else "approval required"
+            )
+        normalized.update(
+            {
+                "requested_action_args": requested_action_args,
+                "risk_level": normalized.get("risk_level")
+                or (_compatibility_risk_level(risk_class) if risk_class else None),
+                "command": normalized.get("command")
+                or (_compatibility_command(requested_action, requested_action_args) if requested_action else ""),
+                "reason": reason,
+                "status": str(normalized.get("status") or "pending"),
+                "requested_at": str(
+                    normalized.get("requested_at")
+                    or normalized.get("created_at")
+                    or record.created_at
+                ),
+                "title": title,
+                "summary": summary or reason or title,
+            }
+        )
+        return normalized
+
+    def _normalize_record_payload(self, record: DeliveryOutboxRecord) -> dict[str, Any]:
+        payload = dict(record.envelope_payload)
+        if str(payload.get("envelope_type")) == "approval":
+            return self._normalize_legacy_approval_payload(record, payload)
+        return payload
+
     def deliver_envelope(
         self,
         envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
@@ -159,7 +211,8 @@ class OpenClawDeliveryClient:
         return self._classify_status_failure(envelope.envelope_id, response)
 
     def deliver_record(self, record: DeliveryOutboxRecord) -> DeliveryAttemptResult:
-        envelope_type = str(record.envelope_payload.get("envelope_type"))
+        payload = self._normalize_record_payload(record)
+        envelope_type = str(payload.get("envelope_type"))
         model_map = {
             "decision": DecisionEnvelope,
             "notification": NotificationEnvelope,
@@ -173,5 +226,5 @@ class OpenClawDeliveryClient:
                 accepted=False,
                 failure_code="unsupported_envelope_type",
             )
-        envelope = model.model_validate(record.envelope_payload)
+        envelope = model.model_validate(payload)
         return self.deliver_envelope(envelope)

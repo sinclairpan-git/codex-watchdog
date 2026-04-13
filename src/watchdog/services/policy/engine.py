@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any
+
+from watchdog.services.goal_contract.models import GoalContractReadiness
 from watchdog.services.policy.decisions import (
     CanonicalDecisionRecord,
     build_canonical_decision_record,
@@ -9,6 +12,7 @@ from watchdog.services.policy.rules import (
     DECISION_AUTO_EXECUTE_AND_NOTIFY,
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
+    EXPLICIT_USER_DECISION_ACTION_REFS,
     HUMAN_GATE_FACT_CODES,
     POLICY_VERSION,
     REGISTERED_ACTION_REFS,
@@ -25,11 +29,13 @@ def evaluate_persisted_session_policy(
     action_ref: str,
     trigger: str,
     policy_version: str = POLICY_VERSION,
+    goal_contract_readiness: GoalContractReadiness | None = None,
 ) -> CanonicalDecisionRecord:
     fact_codes = [fact.fact_code for fact in persisted_record.facts]
     uncertainty_reasons = [
         fact_code for fact_code in fact_codes if fact_code in CONTROLLED_UNCERTAINTY_REASONS
     ]
+    extra_evidence = _goal_contract_evidence(goal_contract_readiness)
 
     if any(fact_code in HUMAN_GATE_FACT_CODES for fact_code in fact_codes):
         return build_canonical_decision_record(
@@ -44,6 +50,7 @@ def evaluate_persisted_session_policy(
             uncertainty_reasons=[],
             policy_version=policy_version,
             trigger=trigger,
+            extra_evidence=extra_evidence,
         )
 
     if uncertainty_reasons:
@@ -59,6 +66,7 @@ def evaluate_persisted_session_policy(
             uncertainty_reasons=uncertainty_reasons,
             policy_version=policy_version,
             trigger=trigger,
+            extra_evidence=extra_evidence,
         )
 
     if action_ref not in REGISTERED_ACTION_REFS:
@@ -74,6 +82,40 @@ def evaluate_persisted_session_policy(
             uncertainty_reasons=["action_unregistered"],
             policy_version=policy_version,
             trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+
+    if action_ref in EXPLICIT_USER_DECISION_ACTION_REFS:
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_REQUIRE_USER_DECISION,
+            risk_class=RISK_CLASS_HUMAN_GATE,
+            action_ref=action_ref,
+            matched_policy_rules=["recovery_human_gate"],
+            decision_reason="recovery execution requires explicit human decision",
+            why_not_escalated=None,
+            why_escalated="recovery execution requires explicit human decision",
+            uncertainty_reasons=[],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+
+    if goal_contract_readiness is not None and goal_contract_readiness.mode != "autonomous_ready":
+        missing_summary = ", ".join(goal_contract_readiness.missing_fields) or "goal_contract"
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_REQUIRE_USER_DECISION,
+            risk_class=RISK_CLASS_HUMAN_GATE,
+            action_ref=action_ref,
+            matched_policy_rules=["goal_contract_readiness_gate"],
+            decision_reason="goal contract is incomplete for autonomous execution",
+            why_not_escalated=None,
+            why_escalated=f"goal contract is not autonomous_ready: {missing_summary}",
+            uncertainty_reasons=[],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
         )
 
     return build_canonical_decision_record(
@@ -88,4 +130,13 @@ def evaluate_persisted_session_policy(
         uncertainty_reasons=[],
         policy_version=policy_version,
         trigger=trigger,
+        extra_evidence=extra_evidence,
     )
+
+
+def _goal_contract_evidence(
+    readiness: GoalContractReadiness | None,
+) -> dict[str, Any] | None:
+    if readiness is None:
+        return None
+    return {"goal_contract_readiness": readiness.model_dump(mode="json")}

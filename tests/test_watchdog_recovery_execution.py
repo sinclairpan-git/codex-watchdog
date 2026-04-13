@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from watchdog.services.session_service.service import SessionService
+from watchdog.services.session_service.store import SessionServiceStore
 from watchdog.services.session_spine.recovery import perform_recovery_execution
 from watchdog.settings import Settings
 
 
 class FakeAClient:
-    def __init__(self, *, task: dict[str, object], resume_success: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        task: dict[str, object],
+        resume_success: bool = True,
+        handoff_data: dict[str, object] | None = None,
+    ) -> None:
         self._task = dict(task)
         self._resume_success = resume_success
+        self._handoff_data = dict(handoff_data or {})
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
@@ -21,9 +30,14 @@ class FakeAClient:
 
     def trigger_handoff(self, project_id: str, *, reason: str) -> dict[str, object]:
         self.handoff_calls.append((project_id, reason))
+        handoff_data = {
+            "handoff_file": f"/tmp/{project_id}.handoff.md",
+            "summary": "handoff",
+        }
+        handoff_data.update(self._handoff_data)
         return {
             "success": True,
-            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+            "data": handoff_data,
         }
 
     def trigger_resume(
@@ -111,3 +125,180 @@ def test_perform_recovery_execution_preserves_handoff_when_resume_fails(tmp_path
     assert outcome.handoff is not None
     assert outcome.resume is None
     assert outcome.resume_error == "resume_call_failed"
+
+
+def test_perform_recovery_execution_persists_goal_contract_version_from_handoff(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"goal_contract_version": "goal-v9"},
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+
+    lineage_records = session_service.list_lineage(parent_session_id="session:repo-a")
+    assert len(lineage_records) == 1
+    assert lineage_records[0].goal_contract_version == "goal-v9"
+
+    lineage_events = session_service.list_events(event_type="lineage_committed")
+    assert len(lineage_events) == 1
+    assert lineage_events[0].payload["goal_contract_version"] == "goal-v9"
+
+
+def test_perform_recovery_execution_preserves_upstream_source_packet_id(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"source_packet_id": "packet:handoff-v9"},
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+
+    lineage_records = session_service.list_lineage(parent_session_id="session:repo-a")
+    assert len(lineage_records) == 1
+    assert lineage_records[0].source_packet_id == "packet:handoff-v9"
+
+    frozen_events = session_service.list_events(event_type="handoff_packet_frozen")
+    assert len(frozen_events) == 1
+    assert frozen_events[0].related_ids["source_packet_id"] == "packet:handoff-v9"
+
+    recovery_records = session_service.list_recovery_transactions(
+        parent_session_id="session:repo-a"
+    )
+    assert recovery_records[-1].source_packet_id == "packet:handoff-v9"
+
+
+def test_perform_recovery_execution_adopts_goal_contract_for_child_session(
+    tmp_path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    goal_contracts = GoalContractService(session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="补 recovery 黄金路径测试",
+        task_prompt="先把 recovery 写点找出来，再补最小黄金路径测试",
+        last_user_instruction="继续按 recovery 顺序推进",
+        phase="implementation",
+        last_summary="正在补 recovery 红测",
+        explicit_deliverables=["补 recovery/goal contract 接线测试"],
+        completion_signals=["相关 pytest 通过"],
+    )
+    revised = goal_contracts.revise_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        expected_version=created.version,
+        current_phase_goal="让 recovery 为 child session 写 adopt truth",
+    )
+
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={
+            "goal_contract_version": revised.version,
+            "source_packet_id": "packet:handoff-v9",
+        },
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+
+    lineage_records = session_service.list_lineage(parent_session_id="session:repo-a")
+    assert len(lineage_records) == 1
+    child_session_id = lineage_records[0].child_session_id
+
+    child_contract = goal_contracts.get_current_contract(
+        project_id="repo-a",
+        session_id=child_session_id,
+    )
+    assert child_contract is not None
+    assert child_contract.version == revised.version
+    assert child_contract.current_phase_goal == "让 recovery 为 child session 写 adopt truth"
+
+    adoption_events = session_service.list_events(
+        session_id=child_session_id,
+        event_type="goal_contract_adopted_by_child_session",
+    )
+    assert len(adoption_events) == 1
+    assert adoption_events[0].related_ids["goal_contract_version"] == revised.version
+    assert adoption_events[0].related_ids["source_packet_id"] == "packet:handoff-v9"
+    assert adoption_events[0].related_ids["recovery_transaction_id"].startswith("recovery-tx:")

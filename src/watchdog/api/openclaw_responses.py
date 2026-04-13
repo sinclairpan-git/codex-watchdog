@@ -141,6 +141,7 @@ def post_openclaw_response(
             client=client,
             receipt_store=receipt_store,
             delivery_outbox_store=delivery_outbox_store,
+            session_service=request.app.state.session_service,
         )
     except KeyError as exc:
         return err(rid, {"code": "NOT_FOUND", "message": str(exc)})

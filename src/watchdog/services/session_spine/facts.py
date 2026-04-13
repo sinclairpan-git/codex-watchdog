@@ -55,7 +55,7 @@ def build_fact_records(
 ) -> list[FactRecord]:
     observed_at = _task_value(task, "last_progress_at", None)
     if observed_at is None and approvals:
-        observed_at = approvals[0].get("requested_at")
+        observed_at = approvals[0].get("requested_at") or approvals[0].get("created_at")
     if observed_at in (None, ""):
         observed_at = _now_iso()
     observed_at = str(observed_at)

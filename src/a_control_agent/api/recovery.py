@@ -51,7 +51,13 @@ def handoff(
     rec2 = store.get(project_id)
     assert rec2 is not None
     handoffs_dir = Path(settings.data_dir) / "handoffs"
-    hf_path, summary = write_handoff_file(handoffs_dir, project_id, reason, dict(rec2))
+    hf_path, summary, source_packet_id = write_handoff_file(
+        handoffs_dir,
+        project_id,
+        reason,
+        dict(rec2),
+    )
+    goal_contract_version = str(rec2.get("goal_contract_version") or "").strip() or None
     store.append_event(
         project_id,
         thread_id=str(rec2.get("thread_id") or ""),
@@ -60,8 +66,14 @@ def handoff(
         payload_json={
             "reason": reason,
             "handoff_file": hf_path,
+            "source_packet_id": source_packet_id,
             "status": rec2.get("status"),
             "phase": rec2.get("phase"),
+            **(
+                {"goal_contract_version": goal_contract_version}
+                if goal_contract_version is not None
+                else {}
+            ),
         },
     )
     now = datetime.now(timezone.utc).isoformat()
@@ -73,12 +85,27 @@ def handoff(
             "action": "handoff",
             "reason": reason,
             "source": "a_control_agent",
-            "payload": {"handoff_file": hf_path},
+            "payload": {
+                "handoff_file": hf_path,
+                "source_packet_id": source_packet_id,
+                **(
+                    {"goal_contract_version": goal_contract_version}
+                    if goal_contract_version is not None
+                    else {}
+                ),
+            },
         },
     )
+    response_data = {
+        "handoff_file": hf_path,
+        "summary": summary,
+        "source_packet_id": source_packet_id,
+    }
+    if goal_contract_version is not None:
+        response_data["goal_contract_version"] = goal_contract_version
     return ok(
         request.headers.get("x-request-id"),
-        {"handoff_file": hf_path, "summary": summary},
+        response_data,
     )
 
 

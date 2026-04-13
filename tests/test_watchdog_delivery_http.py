@@ -14,7 +14,7 @@ from watchdog.services.delivery.http_client import (
     DeliveryAttemptResult,
     OpenClawDeliveryClient,
 )
-from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.settings import Settings
@@ -202,6 +202,81 @@ def test_http_delivery_prefers_persisted_openclaw_webhook_endpoint_over_env(tmp_
 
     assert result.delivery_status == "delivered"
     assert result.receipt_id == "rcpt_dynamic_001"
+
+
+def test_http_delivery_normalizes_legacy_approval_record_without_requested_at(
+    tmp_path: Path,
+) -> None:
+    record = DeliveryOutboxRecord(
+        envelope_id="approval-envelope:legacy",
+        envelope_type="approval",
+        correlation_id="decision:legacy",
+        session_id="session:legacy",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="session:legacy|fact-v7|policy-v1|require_user_decision|execute_recovery|approval",
+        audit_ref="decision:legacy",
+        created_at="2026-04-07T00:00:00Z",
+        updated_at="2026-04-07T00:00:00Z",
+        outbox_seq=1,
+        envelope_payload={
+            "envelope_id": "approval-envelope:legacy",
+            "envelope_type": "approval",
+            "correlation_id": "decision:legacy",
+            "session_id": "session:legacy",
+            "project_id": "repo-a",
+            "native_thread_id": "thr_native_1",
+            "policy_version": "policy-v1",
+            "fact_snapshot_version": "fact-v7",
+            "idempotency_key": (
+                "session:legacy|fact-v7|policy-v1|require_user_decision|execute_recovery|approval"
+            ),
+            "audit_ref": "decision:legacy",
+            "created_at": "2026-04-07T00:00:00Z",
+            "approval_id": "appr_legacy",
+            "approval_kind": "canonical_user_decision",
+            "requested_action": "execute_recovery",
+            "requested_action_args": {"mode": "safe"},
+            "risk_class": "human_gate",
+            "decision_options": ["approve", "reject", "execute_action"],
+            "facts": [],
+            "matched_policy_rules": ["registered_action"],
+            "why_escalated": "manual decision required",
+            "approval_token": "approval-token:legacy",
+            "callback_action_ref": "/api/v1/watchdog/openclaw/responses",
+            "title": "approval required for execute_recovery",
+            "summary": "legacy summary",
+        },
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        assert body["requested_at"] == "2026-04-07T00:00:00Z"
+        assert body["status"] == "pending"
+        assert body["risk_level"] == "L2"
+        assert body["command"] == 'execute_recovery {"mode":"safe"}'
+        assert body["reason"] == "manual decision required"
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "envelope_id": record.envelope_id,
+                "receipt_id": "rcpt_legacy_001",
+                "received_at": "2026-04-07T00:00:10Z",
+            },
+        )
+
+    client = OpenClawDeliveryClient(
+        settings=_settings(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.deliver_record(record)
+
+    assert result.delivery_status == "delivered"
+    assert result.receipt_id == "rcpt_legacy_001"
 
 
 class _AlwaysRetryClient:

@@ -263,3 +263,30 @@ def test_reference_runtime_maps_approval_envelope_and_posts_structured_response(
         "operator": "openclaw",
         "note": "needs narrower scope",
     }
+
+
+def test_reference_runtime_prefers_compatibility_fields_when_rendering_decision_envelope() -> None:
+    runtime_module = _load_runtime_module()
+    envelope = build_envelopes_for_decision(
+        _decision(
+            decision_result="auto_execute_and_notify",
+            action_ref="continue_session",
+            approval_id=None,
+        )
+    )[0].model_dump(mode="json")
+    envelope["title"] = "compat decision title"
+    envelope["summary"] = "compat decision summary"
+
+    runtime = runtime_module.OpenClawWebhookRuntime(
+        watchdog_base_url="http://watchdog.test",
+        watchdog_api_token="watchdog-token",
+    )
+
+    rendered = runtime.render_envelope(envelope)
+
+    assert rendered == {
+        "host_behavior": "post_decision",
+        "title": "compat decision title",
+        "summary": "compat decision summary",
+        "decision_result": "auto_execute_and_notify",
+    }

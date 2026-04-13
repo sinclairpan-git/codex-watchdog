@@ -220,6 +220,7 @@ class TaskStore:
             "pending_approval": bool(body.get("pending_approval", False)),
             "approval_risk": body.get("approval_risk"),
             "last_error_signature": body.get("last_error_signature"),
+            "goal_contract_version": str(body.get("goal_contract_version", "")).strip() or None,
             "last_progress_at": str(body.get("last_progress_at", now) or now),
             "created_at": str(body.get("created_at", now) or now),
             "last_local_manual_activity_at": body.get("last_local_manual_activity_at"),
@@ -422,6 +423,7 @@ class TaskStore:
                 "pending_approval",
                 "approval_risk",
                 "last_error_signature",
+                "goal_contract_version",
                 "last_progress_at",
             ):
                 value = thread.get(key)

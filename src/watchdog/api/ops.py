@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 from a_control_agent.envelope import ok
 from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus
-from watchdog.services.approvals.service import CanonicalApprovalStore
+from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.settings import Settings
@@ -22,6 +23,13 @@ _NON_ALERTING_DELIVERY_FAILURE_CODES = {
     "stale_progress_summary",
     "stale_auto_execute_notification",
 }
+
+
+def _fact_snapshot_order(value: str) -> tuple[int, str]:
+    match = re.fullmatch(r"fact-v(\d+)", value)
+    if match is None:
+        return (2**31 - 1, value)
+    return (int(match.group(1)), value)
 
 
 class OpsAlert(BaseModel):
@@ -64,6 +72,23 @@ def _is_recent_enough(value: str | None, *, now: datetime, threshold_seconds: fl
     return (now - parsed).total_seconds() < threshold_seconds
 
 
+def _approval_recency_key(record: CanonicalApprovalRecord) -> tuple[tuple[int, str], datetime, str]:
+    created_at = _parse_iso8601(record.created_at) or datetime.min.replace(tzinfo=UTC)
+    return (_fact_snapshot_order(record.fact_snapshot_version), created_at, record.approval_id)
+
+
+def _latest_approval_records(
+    approvals: list[CanonicalApprovalRecord],
+) -> list[CanonicalApprovalRecord]:
+    latest_by_session: dict[tuple[str, str], CanonicalApprovalRecord] = {}
+    for record in approvals:
+        key = (record.session_id, record.project_id)
+        existing = latest_by_session.get(key)
+        if existing is None or _approval_recency_key(record) > _approval_recency_key(existing):
+            latest_by_session[key] = record
+    return list(latest_by_session.values())
+
+
 def build_ops_summary(
     *,
     data_dir: Path,
@@ -89,7 +114,7 @@ def build_ops_summary(
     )
     approval_pending_too_long = sum(
         1
-        for record in approvals
+        for record in _latest_approval_records(approvals)
         if record.status == "pending"
         and _is_older_than(
             record.created_at,

@@ -85,8 +85,8 @@ class OpenClawWebhookRuntime:
             payload = DecisionEnvelope.model_validate(envelope)
             return {
                 "host_behavior": "post_decision",
-                "title": payload.action_name,
-                "summary": payload.decision_reason,
+                "title": payload.title or payload.action_name,
+                "summary": payload.summary or payload.decision_reason,
                 "decision_result": payload.decision_result,
             }
         if envelope_type == "approval":

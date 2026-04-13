@@ -30,3 +30,7 @@ REGISTERED_ACTION_REFS = {
     "execute_recovery",
     "post_operator_guidance",
 }
+
+EXPLICIT_USER_DECISION_ACTION_REFS = {
+    "execute_recovery",
+}

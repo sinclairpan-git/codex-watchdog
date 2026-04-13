@@ -1,6 +1,6 @@
-current_stage: execute
-current_batch: 3
-last_committed_task: T321
+current_stage: verify
+current_batch: 5
+last_committed_task: T325
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -17,7 +17,10 @@ working_set_snapshot:
   - '`specs/032-goal-contract-persistence-and-governance/plan.md`'
   - '`specs/032-goal-contract-persistence-and-governance/tasks.md`'
   - '`specs/032-goal-contract-persistence-and-governance/task-execution-log.md`'
+  - '`src/watchdog/services/goal_contract/models.py`'
   - '`src/watchdog/services/goal_contract/service.py`'
+  - '`src/a_control_agent/storage/tasks_store.py`'
+  - '`src/watchdog/services/policy/engine.py`'
   - '`tests/test_watchdog_goal_contract.py`'
   - '`tests/test_watchdog_goal_contract_stage_boundary.py`'
   - '`tests/test_watchdog_policy_engine.py`'
@@ -29,40 +32,38 @@ working_set_snapshot:
   context_summary: '# Development Summary
 
 
-    Status: active
+    Status: completed
 
     Total Tasks: 5
 
-    Completed Tasks: 2
+    Completed Tasks: 5
 
     Halted Tasks: 0
 
     Total Batches: 5
 
-    Completed Batches: 2
+    Completed Batches: 5
 
-    Last Committed Task: T321
+    Last Committed Task: T325
 
 
     ## Notes
 
-    - 已把长时运行自治总实施计划中的 `Task 3` 正式拆成 `WI-032`。
+    - `WI-032` 已完成，Goal Contract 的 bootstrap、revision、adoption、policy gate 与 runtime 读口径已统一到 Session events truth。
 
-    - 032 的边界固定为“Goal Contract 持久化与治理”，并明确 stage conflict、child adoption 与 policy / orchestrator 消费口径一并纳入。
+    - `GoalContractSnapshot` 现在稳定保留 `contract_id / status / constraints / provenance`，contract lifecycle 不再在 bootstrap 或 child adoption 时丢失身份与 lineage。
 
-    - Goal Contract 只能由 Session events replay 得出，不允许演化成新的 snapshot truth。
+    - Goal Contract canonical events 已把 `contract_id` 纳入 `related_ids`，后续 Recovery / audit 可直接沿 Session events 追溯当前 contract。
 
-    - `T322` 已完成：新增 red test 锁定“缺失显式 deliverables / completion signals 时只能保持 observe-only”，并修正 `bootstrap_contract()` 的隐式兜底行为。
+    - 已验证 `tests/test_watchdog_goal_contract.py`、`tests/test_watchdog_goal_contract_stage_boundary.py`、`tests/test_watchdog_policy_engine.py` 与 `tests/test_watchdog_session_spine_runtime.py`，当前结果为 `35 passed in 3.15s`。
 
-    - 已验证 `tests/test_watchdog_goal_contract.py`、`tests/test_watchdog_goal_contract_stage_boundary.py` 以及 goal-contract 相关 policy/runtime 路径。
-
-    - 下一执行入口切换为 `T323`。
+    - 下一 work item 应直接消费 Goal Contract version / contract identity / provenance 与 Session projection，继续推进 Recovery，而不是回退到 `AI_AutoSDLC.stage / active_goal` 文本驱动。
 
     - 未改写 `.ai-sdlc/state/checkpoint.yml`，避免覆盖仓库当前全局 pipeline 状态。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T14:46:29+08:00'
+timestamp: '2026-04-13T15:08:58+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

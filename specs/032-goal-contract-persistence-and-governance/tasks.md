@@ -46,7 +46,7 @@
 ## Task 32.3 实现 Goal Contract canonical events 与 query facade
 
 - **任务编号**：T323
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：在 `Session Service` 与 `goal_contract` 服务层实现 Goal Contract 的持久化、replay 与治理 facade。
 - **文件**：
   - `src/watchdog/services/session_service/models.py`
@@ -59,12 +59,17 @@
   2. bootstrap、revision、child adoption 都有 canonical event；
   3. Goal Contract facade 不会成为独立真相层。
 - **验证**：
-  - `uv run pytest -q tests/test_watchdog_goal_contract.py`
+  - `uv run pytest -q tests/test_watchdog_goal_contract.py tests/test_watchdog_goal_contract_stage_boundary.py`
+- **完成情况**：
+  1. `GoalContractSnapshot` 已补齐 `contract_id / status / constraints / provenance`，并在 bootstrap、revision、child adoption 三条路径中保持稳定身份与 lineage；
+  2. Goal Contract canonical event 的 `related_ids` 现在显式记录 `goal_contract_version` 与 `contract_id`，便于后续 Recovery / audit 只沿 Session events 追溯当前 contract；
+  3. `GoalContractService` 通过 deterministic contract identity、约束构建与 provenance merge，确保 query facade 只是 Session events 的投影与治理读面，不引入独立真相层；
+  4. 验证结果：`6 passed in 0.40s`。
 
 ## Task 32.4 重接 context bridge、policy 与 orchestrator 的目标治理读口径
 
 - **任务编号**：T324
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：让 tasks store、policy 与 runtime 消费 Goal Contract facade，并把不完整或冲突 contract 降级为受控建议态。
 - **文件**：
   - `src/a_control_agent/storage/tasks_store.py`
@@ -79,11 +84,16 @@
   3. contract 缺失关键字段或发生冲突时，系统会 fail-closed 或降级到建议态。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_goal_contract_stage_boundary.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
+  1. `tasks_store` 已把 `goal_contract_version` 带入任务上下文与后续交接载荷，但不再把 `stage / active_goal` 当成当前 contract 真相；
+  2. `policy` 已显式消费 Goal Contract readiness，并把非 `autonomous_ready` 的 contract 降级为 `require_user_decision`，同时保留 evidence 与原因；
+  3. runtime 相关路径已对 goal-contract 相关上下文走受控建议态，不允许不完整 contract 直接推动自动执行；
+  4. 验证结果：`3 passed, 26 deselected in 1.49s`。
 
 ## Task 32.5 完成 032 验证并交接到 Recovery work item
 
 - **任务编号**：T325
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：跑完整体验证并写清 handoff，使后续 Recovery work item 直接消费 Goal Contract version 与 adopt lineage。
 - **文件**：
   - `tests/test_watchdog_goal_contract.py`
@@ -98,6 +108,10 @@
   3. handoff 明确后续 Recovery 只消费 Goal Contract version / adoption，不再把 stage 文本当真相。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_goal_contract.py tests/test_watchdog_goal_contract_stage_boundary.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
+  1. 032 目标测试已全部通过，当前验证结果为 `35 passed in 3.15s`；
+  2. `tasks.md`、`task-execution-log.md` 与 `.ai-sdlc/work-items/032-*` 元数据已同步到完成态；
+  3. handoff 已固定为：后续 Recovery work item 只消费 `GoalContractSnapshot.version / contract_id / provenance` 与 Session projection，不再把 `AI_AutoSDLC.stage / active_goal` 文本当真相。
 
 ## 整体验收
 

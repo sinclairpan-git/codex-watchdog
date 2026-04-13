@@ -34,7 +34,12 @@ def recover(
     """兼容旧 recover route，内部复用 stable recovery execution 内核。"""
     rid = request.headers.get("x-request-id")
     try:
-        outcome = perform_recovery_execution(project_id, settings=settings, client=client)
+        outcome = perform_recovery_execution(
+            project_id,
+            settings=settings,
+            client=client,
+            session_service=request.app.state.session_service,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
 

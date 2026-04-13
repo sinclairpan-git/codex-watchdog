@@ -13,6 +13,7 @@ from watchdog.contracts.session_spine.enums import (
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
 from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.recovery import perform_recovery_execution
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
@@ -202,11 +203,13 @@ def _execute_recovery(
     *,
     settings: Settings,
     client: AControlAgentClient,
+    session_service: SessionService | None = None,
 ) -> WatchdogActionResult:
     outcome = perform_recovery_execution(
         action.project_id,
         settings=settings,
         client=client,
+        session_service=session_service,
     )
     facts = list(outcome.facts)
     if outcome.action == "noop":
@@ -289,6 +292,7 @@ def execute_watchdog_action(
     settings: Settings,
     client: AControlAgentClient,
     receipt_store: ActionReceiptStore,
+    session_service: SessionService | None = None,
 ) -> WatchdogActionResult:
     approval_id = str(action.arguments.get("approval_id") or "") or None
     receipt_key = receipt_key_for_action(action, approval_id)
@@ -300,7 +304,12 @@ def execute_watchdog_action(
         if action.action_code == ActionCode.REQUEST_RECOVERY:
             return _execute_request_recovery(action, client=client)
         if action.action_code == ActionCode.EXECUTE_RECOVERY:
-            return _execute_recovery(action, settings=settings, client=client)
+            return _execute_recovery(
+                action,
+                settings=settings,
+                client=client,
+                session_service=session_service,
+            )
         if action.action_code == ActionCode.EVALUATE_SUPERVISION:
             return execute_supervision_evaluation(action, settings=settings, client=client)
         if action.action_code == ActionCode.APPROVE_APPROVAL:

@@ -6,6 +6,7 @@ from watchdog.contracts.session_spine.models import (
     SessionProjection,
     TaskProgressView,
 )
+from watchdog.services.goal_contract.models import GoalContractReadiness
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.session_spine.store import PersistedSessionRecord
 
@@ -100,7 +101,7 @@ def test_policy_engine_routes_controlled_uncertainty_to_block_and_alert() -> Non
     assert "controlled_uncertainty" in decision.matched_policy_rules
 
 
-def test_policy_engine_allows_registered_action_when_evidence_is_complete() -> None:
+def test_policy_engine_requires_user_decision_for_execute_recovery() -> None:
     record = _record(facts=[_fact("recovery_available", fact_kind="action")])
 
     decision = evaluate_persisted_session_policy(
@@ -109,7 +110,54 @@ def test_policy_engine_allows_registered_action_when_evidence_is_complete() -> N
         trigger="resident_supervision",
     )
 
+    assert decision.decision_result == "require_user_decision"
+    assert decision.risk_class == "human_gate"
+    assert decision.why_not_escalated is None
+    assert decision.why_escalated == "recovery execution requires explicit human decision"
+    assert "recovery_human_gate" in decision.matched_policy_rules
+
+
+def test_policy_engine_requires_user_decision_when_goal_contract_is_not_ready() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        goal_contract_readiness=GoalContractReadiness(
+            mode="observe_only",
+            missing_fields=["explicit_deliverables", "completion_signals"],
+        ),
+    )
+
+    assert decision.decision_result == "require_user_decision"
+    assert decision.risk_class == "human_gate"
+    assert "goal_contract_readiness_gate" in decision.matched_policy_rules
+    assert decision.why_escalated is not None
+    assert "explicit_deliverables" in decision.why_escalated
+    assert "completion_signals" in decision.why_escalated
+    assert decision.evidence["goal_contract_readiness"] == {
+        "mode": "observe_only",
+        "missing_fields": ["explicit_deliverables", "completion_signals"],
+    }
+
+
+def test_policy_engine_allows_auto_execution_when_goal_contract_is_ready() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        goal_contract_readiness=GoalContractReadiness(
+            mode="autonomous_ready",
+            missing_fields=[],
+        ),
+    )
+
     assert decision.decision_result == "auto_execute_and_notify"
     assert decision.risk_class == "none"
-    assert decision.why_not_escalated == "policy_allows_auto_execution"
-    assert "registered_action" in decision.matched_policy_rules
+    assert decision.evidence["goal_contract_readiness"] == {
+        "mode": "autonomous_ready",
+        "missing_fields": [],
+    }

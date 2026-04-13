@@ -108,6 +108,7 @@ def build_canonical_decision_record(
     uncertainty_reasons: list[str],
     policy_version: str,
     trigger: str = "resident_supervision",
+    extra_evidence: dict[str, Any] | None = None,
 ) -> CanonicalDecisionRecord:
     approval_id = (
         persisted_record.approval_queue[0].approval_id if persisted_record.approval_queue else None
@@ -133,6 +134,37 @@ def build_canonical_decision_record(
         why_not_escalated=why_not_escalated,
         why_escalated=why_escalated,
     )
+    evidence = {
+        "facts": [fact.model_dump(mode="json") for fact in persisted_record.facts],
+        "matched_policy_rules": list(matched_policy_rules),
+        "risk_class": risk_class,
+        "decision_reason": decision_reason,
+        "why_not_escalated": why_not_escalated,
+        "why_escalated": why_escalated,
+        "decision": {
+            "decision_result": decision_result,
+            "decision_reason": decision_reason,
+            "why_not_escalated": why_not_escalated,
+            "why_escalated": why_escalated,
+            "uncertainty_reasons": list(uncertainty_reasons),
+            "action_ref": action_ref,
+            "approval_id": approval_id,
+        },
+        "target": {
+            "session_id": session_id,
+            "project_id": persisted_record.project_id,
+            "thread_id": persisted_record.thread_id,
+            "native_thread_id": persisted_record.native_thread_id,
+            "approval_id": approval_id,
+        },
+        "policy_version": policy_version,
+        "fact_snapshot_version": persisted_record.fact_snapshot_version,
+        "idempotency_key": decision_key,
+        "operator_notes": operator_notes,
+    }
+    if extra_evidence:
+        evidence.update(extra_evidence)
+
     return CanonicalDecisionRecord(
         decision_id=_decision_id_for_key(decision_key),
         decision_key=decision_key,
@@ -155,34 +187,7 @@ def build_canonical_decision_record(
         idempotency_key=decision_key,
         created_at=_utc_now_iso(),
         operator_notes=operator_notes,
-        evidence={
-            "facts": [fact.model_dump(mode="json") for fact in persisted_record.facts],
-            "matched_policy_rules": list(matched_policy_rules),
-            "risk_class": risk_class,
-            "decision_reason": decision_reason,
-            "why_not_escalated": why_not_escalated,
-            "why_escalated": why_escalated,
-            "decision": {
-                "decision_result": decision_result,
-                "decision_reason": decision_reason,
-                "why_not_escalated": why_not_escalated,
-                "why_escalated": why_escalated,
-                "uncertainty_reasons": list(uncertainty_reasons),
-                "action_ref": action_ref,
-                "approval_id": approval_id,
-            },
-            "target": {
-                "session_id": session_id,
-                "project_id": persisted_record.project_id,
-                "thread_id": persisted_record.thread_id,
-                "native_thread_id": persisted_record.native_thread_id,
-                "approval_id": approval_id,
-            },
-            "policy_version": policy_version,
-            "fact_snapshot_version": persisted_record.fact_snapshot_version,
-            "idempotency_key": decision_key,
-            "operator_notes": operator_notes,
-        },
+        evidence=evidence,
     )
 
 

@@ -7,6 +7,7 @@ from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.actions.registry import get_registered_action
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.policy.rules import DECISION_AUTO_EXECUTE_AND_NOTIFY
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -62,6 +63,7 @@ def execute_canonical_decision(
     settings: Settings,
     client: AControlAgentClient,
     receipt_store: ActionReceiptStore,
+    session_service: SessionService | None = None,
     operator: str = "openclaw",
 ) -> WatchdogActionResult:
     if decision.decision_result != DECISION_AUTO_EXECUTE_AND_NOTIFY:
@@ -73,6 +75,7 @@ def execute_canonical_decision(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
         operator=operator,
     )
 
@@ -83,6 +86,7 @@ def execute_registered_action_for_decision(
     settings: Settings,
     client: AControlAgentClient,
     receipt_store: ActionReceiptStore,
+    session_service: SessionService | None = None,
     operator: str = "openclaw",
 ) -> WatchdogActionResult:
     action = build_watchdog_action_from_decision(decision, operator=operator)
@@ -91,4 +95,5 @@ def execute_registered_action_for_decision(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
     )

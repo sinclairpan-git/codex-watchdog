@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Any
 
 from watchdog.services.goal_contract.models import (
@@ -22,6 +23,11 @@ _DEFAULT_INFERENCE_BOUNDARY = (
 
 def _normalize_text(value: str | None) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _stable_contract_id(project_id: str, session_id: str) -> str:
+    material = f"{project_id}|{session_id}"
+    return f"goal-contract:{sha256(material.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _next_goal_contract_version(current: str | None) -> str:
@@ -56,15 +62,25 @@ class GoalContractService:
         active_goal: str | None = None,
     ) -> GoalContractSnapshot:
         version = "goal-v1"
+        normalized_non_goals = self._normalize_list(non_goals)
+        normalized_inference_boundary = (
+            _normalize_text(inference_boundary) or _DEFAULT_INFERENCE_BOUNDARY
+        )
         contract = GoalContractSnapshot(
+            contract_id=_stable_contract_id(project_id, session_id),
             version=version,
             project_id=project_id,
             session_id=session_id,
             original_goal=self._pick_first_nonempty(task_prompt, task_title, last_user_instruction, last_summary),
             explicit_deliverables=self._normalize_list(explicit_deliverables),
-            non_goals=self._normalize_list(non_goals),
+            non_goals=normalized_non_goals,
             completion_signals=self._normalize_list(completion_signals),
-            inference_boundary=_normalize_text(inference_boundary) or _DEFAULT_INFERENCE_BOUNDARY,
+            inference_boundary=normalized_inference_boundary,
+            constraints=self._build_constraints(
+                non_goals=normalized_non_goals,
+                inference_boundary=normalized_inference_boundary,
+            ),
+            status="active",
             current_phase_goal=self._pick_first_nonempty(
                 current_phase_goal,
                 active_goal,
@@ -75,6 +91,11 @@ class GoalContractService:
             phase=_normalize_text(phase) or None,
             stage=_normalize_text(stage) or None,
             active_goal=_normalize_text(active_goal) or None,
+            provenance=self._build_bootstrap_provenance(
+                explicit_deliverables=explicit_deliverables,
+                completion_signals=completion_signals,
+                non_goals=non_goals,
+            ),
             metadata={
                 "task_title": _normalize_text(task_title),
                 "last_summary": _normalize_text(last_summary),
@@ -111,6 +132,8 @@ class GoalContractService:
             raise ValueError(
                 f"goal contract version mismatch for {session_id}: expected {expected_version}, got {current.version}"
             )
+        next_non_goals = self._replace_if_provided(non_goals, fallback=current.non_goals)
+        next_inference_boundary = _normalize_text(inference_boundary) or current.inference_boundary
         revised = current.model_copy(
             update={
                 "version": _next_goal_contract_version(current.version),
@@ -127,11 +150,26 @@ class GoalContractService:
                     completion_signals,
                     fallback=current.completion_signals,
                 ),
-                "non_goals": self._replace_if_provided(non_goals, fallback=current.non_goals),
-                "inference_boundary": _normalize_text(inference_boundary) or current.inference_boundary,
+                "non_goals": next_non_goals,
+                "inference_boundary": next_inference_boundary,
+                "constraints": self._build_constraints(
+                    non_goals=next_non_goals,
+                    inference_boundary=next_inference_boundary,
+                ),
                 "active_goal": _normalize_text(active_goal) or current.active_goal,
                 "phase": _normalize_text(phase) or current.phase,
                 "stage": _normalize_text(stage) or current.stage,
+                "provenance": self._merge_revision_provenance(
+                    current.provenance,
+                    explicit_deliverables=explicit_deliverables,
+                    completion_signals=completion_signals,
+                    non_goals=non_goals,
+                    current_phase_goal=current_phase_goal,
+                    inference_boundary=inference_boundary,
+                    active_goal=active_goal,
+                    phase=phase,
+                    stage=stage,
+                ),
             }
         )
         self._record_goal_contract_event(
@@ -164,6 +202,10 @@ class GoalContractService:
             update={
                 "session_id": child_session_id,
                 "source_session_id": parent_session_id,
+                "provenance": {
+                    **parent.provenance,
+                    "source_session_id": "deterministic-derived",
+                },
             }
         )
         self._record_goal_contract_event(
@@ -292,6 +334,7 @@ class GoalContractService:
         payload_extra: dict[str, Any] | None = None,
     ) -> SessionEventRecord:
         normalized_related_ids = {
+            "contract_id": contract.contract_id,
             "goal_contract_version": contract.version,
             **dict(related_ids or {}),
         }
@@ -327,3 +370,68 @@ class GoalContractService:
         if values is None:
             return list(fallback)
         return cls._normalize_list(values)
+
+    @staticmethod
+    def _build_constraints(
+        *,
+        non_goals: list[str],
+        inference_boundary: str,
+    ) -> list[str]:
+        constraints: list[str] = []
+        for item in [*non_goals, inference_boundary]:
+            if item and item not in constraints:
+                constraints.append(item)
+        return constraints
+
+    @classmethod
+    def _build_bootstrap_provenance(
+        cls,
+        *,
+        explicit_deliverables: list[str] | None,
+        completion_signals: list[str] | None,
+        non_goals: list[str] | None,
+    ) -> dict[str, str]:
+        provenance = {
+            "contract_id": "deterministic-derived",
+            "version": "deterministic-derived",
+            "original_goal": "deterministic-derived",
+            "current_phase_goal": "deterministic-derived",
+            "inference_boundary": "deterministic-derived",
+            "constraints": "deterministic-derived",
+            "status": "deterministic-derived",
+        }
+        if explicit_deliverables is not None:
+            provenance["explicit_deliverables"] = "human-authored"
+        if completion_signals is not None:
+            provenance["completion_signals"] = "human-authored"
+        if non_goals is not None:
+            provenance["non_goals"] = "human-authored"
+        return provenance
+
+    @classmethod
+    def _merge_revision_provenance(
+        cls,
+        current: dict[str, str],
+        *,
+        explicit_deliverables: list[str] | None,
+        completion_signals: list[str] | None,
+        non_goals: list[str] | None,
+        current_phase_goal: str | None,
+        inference_boundary: str | None,
+        active_goal: str | None,
+        phase: str | None,
+        stage: str | None,
+    ) -> dict[str, str]:
+        provenance = dict(current)
+        if explicit_deliverables is not None:
+            provenance["explicit_deliverables"] = "human-authored"
+        if completion_signals is not None:
+            provenance["completion_signals"] = "human-authored"
+        if non_goals is not None:
+            provenance["non_goals"] = "human-authored"
+        if any(value is not None for value in (current_phase_goal, active_goal, phase, stage)):
+            provenance["current_phase_goal"] = "deterministic-derived"
+        if inference_boundary is not None:
+            provenance["inference_boundary"] = "deterministic-derived"
+            provenance["constraints"] = "deterministic-derived"
+        return provenance

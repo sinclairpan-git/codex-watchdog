@@ -7,6 +7,8 @@ import httpx
 
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.goal_contract.service import GoalContractService
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.service import (
     CONTROL_LINK_ERROR,
@@ -72,6 +74,7 @@ def perform_recovery_execution(
     *,
     settings: Settings,
     client: AControlAgentClient,
+    session_service: SessionService | None = None,
 ) -> RecoveryExecutionOutcome:
     task = _load_task_or_raise(client, project_id)
     facts = build_fact_records(project_id=project_id, task=task, approvals=[])
@@ -93,13 +96,21 @@ def perform_recovery_execution(
         raise _control_link_error("handoff 调用失败") from exc
 
     if not settings.recover_auto_resume:
-        return RecoveryExecutionOutcome(
+        outcome = RecoveryExecutionOutcome(
             project_id=project_id,
             context_pressure=context_pressure,
             action="handoff_triggered",
             facts=facts,
             handoff=handoff,
         )
+        _record_recovery_truth(
+            project_id=project_id,
+            task=task,
+            outcome=outcome,
+            settings=settings,
+            session_service=session_service,
+        )
+        return outcome
 
     try:
         resume_body = client.trigger_resume(
@@ -108,7 +119,7 @@ def perform_recovery_execution(
             handoff_summary="",
         )
     except (httpx.RequestError, RuntimeError, OSError):
-        return RecoveryExecutionOutcome(
+        outcome = RecoveryExecutionOutcome(
             project_id=project_id,
             context_pressure=context_pressure,
             action="handoff_triggered",
@@ -116,9 +127,17 @@ def perform_recovery_execution(
             handoff=handoff,
             resume_error="resume_call_failed",
         )
+        _record_recovery_truth(
+            project_id=project_id,
+            task=task,
+            outcome=outcome,
+            settings=settings,
+            session_service=session_service,
+        )
+        return outcome
 
     if not resume_body.get("success"):
-        return RecoveryExecutionOutcome(
+        outcome = RecoveryExecutionOutcome(
             project_id=project_id,
             context_pressure=context_pressure,
             action="handoff_triggered",
@@ -126,10 +145,18 @@ def perform_recovery_execution(
             handoff=handoff,
             resume_error="resume_call_failed",
         )
+        _record_recovery_truth(
+            project_id=project_id,
+            task=task,
+            outcome=outcome,
+            settings=settings,
+            session_service=session_service,
+        )
+        return outcome
 
     resume = resume_body.get("data")
     if not isinstance(resume, dict):
-        return RecoveryExecutionOutcome(
+        outcome = RecoveryExecutionOutcome(
             project_id=project_id,
             context_pressure=context_pressure,
             action="handoff_triggered",
@@ -137,12 +164,83 @@ def perform_recovery_execution(
             handoff=handoff,
             resume_error="resume_call_failed",
         )
+        _record_recovery_truth(
+            project_id=project_id,
+            task=task,
+            outcome=outcome,
+            settings=settings,
+            session_service=session_service,
+        )
+        return outcome
 
-    return RecoveryExecutionOutcome(
+    outcome = RecoveryExecutionOutcome(
         project_id=project_id,
         context_pressure=context_pressure,
         action="handoff_and_resume",
         facts=facts,
         handoff=handoff,
         resume=dict(resume),
+    )
+    _record_recovery_truth(
+        project_id=project_id,
+        task=task,
+        outcome=outcome,
+        settings=settings,
+        session_service=session_service,
+    )
+    return outcome
+
+
+def _record_recovery_truth(
+    *,
+    project_id: str,
+    task: dict[str, Any],
+    outcome: RecoveryExecutionOutcome,
+    settings: Settings,
+    session_service: SessionService | None,
+) -> None:
+    if outcome.handoff is None:
+        return
+    service = session_service or SessionService.from_data_dir(settings.data_dir)
+    goal_contract_version = str(
+        outcome.handoff.get("goal_contract_version")
+        or (outcome.resume or {}).get("goal_contract_version")
+        or "goal-contract:unknown"
+    ).strip() or "goal-contract:unknown"
+    source_packet_id = str(
+        outcome.handoff.get("source_packet_id")
+        or (outcome.resume or {}).get("source_packet_id")
+        or ""
+    ).strip() or None
+    recorded = service.record_recovery_execution(
+        project_id=project_id,
+        parent_session_id=f"session:{project_id}",
+        parent_native_thread_id=str(task.get("thread_id") or "").strip() or None,
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature=outcome.context_pressure,
+        handoff=outcome.handoff,
+        resume=outcome.resume,
+        resume_error=outcome.resume_error,
+        goal_contract_version=goal_contract_version,
+        source_packet_id=source_packet_id,
+    )
+    if (
+        recorded.child_session_id is None
+        or goal_contract_version == "goal-contract:unknown"
+    ):
+        return
+    goal_contracts = GoalContractService(service)
+    if goal_contracts.get_current_contract(
+        project_id=project_id,
+        session_id=recorded.parent_session_id,
+    ) is None:
+        return
+    goal_contracts.adopt_contract_for_child_session(
+        project_id=project_id,
+        parent_session_id=recorded.parent_session_id,
+        child_session_id=recorded.child_session_id,
+        expected_version=goal_contract_version,
+        recovery_transaction_id=recorded.recovery_transaction_id,
+        source_packet_id=recorded.source_packet_id,
     )

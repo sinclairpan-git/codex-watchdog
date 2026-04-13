@@ -79,6 +79,73 @@ def test_goal_contract_lifecycle_rebuilds_latest_version_from_session_events(
     assert child_events == ["goal_contract_adopted_by_child_session"]
 
 
+def test_goal_contract_lifecycle_preserves_identity_constraints_and_provenance(tmp_path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    service = GoalContractService(session_service)
+
+    created = service.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="补 Goal Contract 治理字段",
+        task_prompt="先把 Goal Contract identity 与 provenance 固定下来",
+        last_user_instruction="先补 contract identity 与 provenance",
+        phase="implementation",
+        stage="implementation",
+        active_goal="补 Goal Contract canonical 字段",
+        last_summary="正在补 Goal Contract 字段红测",
+        explicit_deliverables=["补 Goal Contract 结构字段测试"],
+        completion_signals=["相关 pytest 通过"],
+        non_goals=["不要直接部署生产"],
+    )
+
+    revised = service.revise_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        expected_version=created.version,
+        explicit_deliverables=[
+            "补 Goal Contract 结构字段测试",
+            "补 Goal Contract canonical event 持久化",
+        ],
+    )
+
+    adopted = service.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:child-1",
+        expected_version=revised.version,
+    )
+
+    assert created.contract_id.startswith("goal-contract:")
+    assert created.status == "active"
+    assert created.constraints == [
+        "不要直接部署生产",
+        created.inference_boundary,
+    ]
+    assert created.provenance["explicit_deliverables"] == "human-authored"
+    assert created.provenance["current_phase_goal"] == "deterministic-derived"
+    assert created.provenance["inference_boundary"] == "deterministic-derived"
+
+    assert revised.contract_id == created.contract_id
+    assert revised.status == "active"
+    assert revised.constraints == created.constraints
+
+    assert adopted.contract_id == created.contract_id
+    assert adopted.status == "active"
+    assert adopted.constraints == created.constraints
+    assert adopted.provenance["source_session_id"] == "deterministic-derived"
+
+    latest_child = service.get_current_contract(
+        project_id="repo-a",
+        session_id="session:repo-a:child-1",
+    )
+    assert latest_child is not None
+    assert latest_child.contract_id == created.contract_id
+    assert latest_child.constraints == created.constraints
+    assert latest_child.provenance["source_session_id"] == "deterministic-derived"
+
+
 def test_goal_contract_incomplete_contract_stays_observe_only(tmp_path) -> None:
     from watchdog.services.goal_contract.service import GoalContractService
 
