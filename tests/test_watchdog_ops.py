@@ -694,3 +694,50 @@ def test_build_ops_summary_normalizes_runtime_gate_reason_taxonomy(tmp_path: Pat
         "runtime_gate_contract_mismatch": 2,
         "runtime_gate_validator_degraded": 2,
     }
+
+
+def test_build_ops_summary_falls_back_to_unknown_runtime_gate_reason(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:runtime-gate-unknown",
+            decision_key=(
+                "session:runtime-gate-unknown|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            session_id="session:runtime-gate-unknown",
+            project_id="repo:runtime-gate-unknown",
+            thread_id="session:runtime-gate-unknown",
+            native_thread_id="thr_native:runtime-gate-unknown",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="runtime gate blocks autonomous execution",
+            matched_policy_rules=["release_gate_degraded"],
+            why_not_escalated=None,
+            why_escalated="release gate verdict is not pass: empty reason",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:runtime-gate-unknown|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 1
+    assert [item.alert_code for item in summary.alerts] == ["runtime_gate_unknown"]
+    assert summary.alerts[0].count == 1

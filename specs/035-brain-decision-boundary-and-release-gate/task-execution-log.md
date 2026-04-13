@@ -248,3 +248,21 @@
 - 当前判断再更新为：
   - runtime gate reason 现在已经被约束到稳定 taxonomy，ops label 不再直接跟随内部 reason 字符串膨胀；
   - 下一步更适合把这套 taxonomy 与 shared runtime contract 一起补进 docs/fixtures/runbook，形成正式治理面，而不是继续扩新的控制流。
+- 已继续推进 docs/runbook 治理收口，把 shared runtime contract 与稳定 taxonomy 正式写入 release gate 运维面：
+  - 先在 `tests/test_watchdog_release_gate_evidence.py` 补红测，要求 `docs/operations/release-gate-runbook.md` 明确点名 `Settings.build_runtime_contract(...)` 是 runtime contract 的唯一入口，并且写出 `provider / replay / resident runtime` 必须共用同一份 contract surface；
+  - 同一条 red test 也锁定 runtime gate taxonomy 的治理文案：`approval_stale / report_expired / report_load_failed / input_hash_mismatch` 必须保留独立桶，validator 侧原因必须折叠到 `validator_degraded`，其余 `*_mismatch` 必须折叠到 `contract_mismatch`，未知值归到 `unknown`，并明确禁止直接把 raw `degrade_reason` 暴露成最终 alert/metric label；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k runtime_contract_surface_and_reason_taxonomy` -> `1 failed, 4 deselected in 0.04s`，失败点是 runbook 还没有正式承载这组治理约束；
+  - 已更新 `docs/operations/release-gate-runbook.md`，新增 `Runtime Contract Surface` 与 `Runtime Gate Reason Taxonomy` 两节，把 runtime contract 的 canonical source 与 ops/read-side 可暴露的稳定 label 集合写成显式 runbook 规则；
+  - 这一步之后，release-gate/provider/replay/resident runtime 对同一份 contract surface 与 taxonomy 的依赖，不再只靠测试和代码隐含维持，运维文档也拥有正式治理文本。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k runtime_contract_surface_and_reason_taxonomy` -> `1 passed, 4 deselected in 0.02s`
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py tests/test_watchdog_ops.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `30 passed in 1.01s`
+- 已按对抗评审规则完成两轮 reviewer 复核并顺手补齐剩余覆盖：
+  - Hermes Agent 专家与 Anthropic Manager 专家都未发现 blocking/P1 问题；
+  - Anthropic reviewer 指出 `unknown` fallback 仍缺独立 ops 断言，因此已在 `tests/test_watchdog_ops.py` 新增红绿覆盖，锁定空 `uncertainty_reasons` 的 runtime gate 决策必须落成 `runtime_gate_unknown`；
+  - Hermes reviewer 指出 `.ai-sdlc` resume 文案里“按 reason 分桶”的旧说法可能误导后续恢复，因此已把 `latest-summary.md` / `resume-pack.yaml` 统一改写为“按稳定 taxonomy 分桶，而不是直接暴露原始 reason”。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k unknown_runtime_gate_reason` -> `1 passed, 10 deselected in 0.73s`
+- 当前判断再更新为：
+  - runtime contract canonical source 与 runtime gate reason taxonomy 已经同时进入测试、代码、runbook 与 resume metadata 四层约束，035 这一段治理面基本闭环；
+  - 下一步更适合继续评估是否要把这套治理规则延伸进 fixture/report generation contract，或继续推进 T354 余下未落地的 release-gate 文档与流程边界，而不是再回头放宽 taxonomy。

@@ -9,6 +9,7 @@ working_set_snapshot:
   plan_path: specs/035-brain-decision-boundary-and-release-gate/plan.md
   tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
   active_files:
+  - '`docs/operations/release-gate-runbook.md`'
   - '`src/watchdog/api/ops.py`'
   - '`src/watchdog/settings.py`'
   - '`src/watchdog/services/brain/provider_certification.py`'
@@ -20,6 +21,7 @@ working_set_snapshot:
   - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`tests/test_watchdog_release_gate.py`'
   - '`tests/test_watchdog_release_gate_evidence.py`'
+  - '`tests/test_watchdog_ops.py`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
@@ -27,24 +29,28 @@ working_set_snapshot:
   context_summary: |
     # Development Summary
 
-    - `WI-035` 当前仍在执行 `T354`：当前主线已经从“让 shared runtime contract 拥有显式 config surface”推进到“让 runtime gate reason 进入受治理的稳定 taxonomy”。
+    - `WI-035` 当前仍在执行 `T354`：当前主线已经从“让 runtime gate reason 进入受治理的稳定 taxonomy”推进到“把 shared runtime contract + taxonomy 正式写入 runbook，形成治理闭环”。
     - resident runtime 默认放行路径已经正式消费 `release_gate_report` artifact，不再一律回退到 `report:resident_default`。
-    - runtime gate 降级已进入现有 ops/read-side surface，并且 alert 已经按 reason 分桶。
+    - runtime gate 降级已进入现有 ops/read-side surface，并且 alert 已经按稳定 taxonomy 分桶，而不是直接暴露原始 reason。
     - shared runtime contract 也已经有显式的 `Settings.build_runtime_contract(...)` surface。
-    - 最新切片继续收掉 taxonomy 漂移风险：
+    - 最新切片把这组约束正式写入 `docs/operations/release-gate-runbook.md`：
+      - `provider / replay / resident runtime` 必须共用 `Settings.build_runtime_contract(...)`，禁止调用方手写 runtime contract；
       - `report_load_failed / report_expired / approval_stale / input_hash_mismatch` 保留为独立桶；
       - validator 侧原因统一归并为 `validator_degraded`；
       - 其余 `*_mismatch` 统一归并为 `contract_mismatch`。
+      - 空值或未分类原因统一归到 `unknown`；
+      - 禁止直接把 raw `degrade_reason` 暴露成最终 alert/metric label。
     - 当前已完成验证：
-      - `uv run pytest -q tests/test_watchdog_ops.py -k 'breaks_runtime_gate_alerts_down_by_degrade_reason or normalizes_runtime_gate_reason_taxonomy or runtime_gate_degradation_alert'` -> `3 passed, 7 deselected in 0.45s`
-      - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `76 passed in 3.86s`
+      - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k runtime_contract_surface_and_reason_taxonomy` -> `1 passed, 4 deselected in 0.02s`
+      - `uv run pytest -q tests/test_watchdog_ops.py -k unknown_runtime_gate_reason` -> `1 passed, 10 deselected in 0.73s`
+      - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py tests/test_watchdog_ops.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `30 passed in 1.01s`
     - 下一步优先评估两件事：
-      - 是否把 shared runtime contract 与 taxonomy 一并固化进 docs/fixtures/runbook，形成正式治理面；
-      - 是否让 release-gate/provider/replay 侧的 fixture/runbook 明确引用这套 taxonomy，而不是只靠测试隐含约束。
+      - 是否把这套治理规则进一步下沉到 fixture/report generation contract，而不是只停在 runbook 和测试；
+      - 是否让 release-gate/provider/replay 侧的后续流程文档明确引用这套 taxonomy，而不是只在单一 runbook 中定义。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T22:28:46+08:00'
+timestamp: '2026-04-13T22:46:47+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

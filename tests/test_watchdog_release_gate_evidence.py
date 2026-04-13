@@ -69,3 +69,29 @@ def test_release_gate_runbook_documents_scripted_artifacts_and_manual_splicing_b
     assert "report_approved_by" in contents
     assert "artifact_ref" in contents
     assert "禁止人工拼接" in contents
+
+
+def test_release_gate_runbook_documents_runtime_contract_surface_and_reason_taxonomy() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runbook = root / "docs" / "operations" / "release-gate-runbook.md"
+
+    assert runbook.exists()
+    contents = runbook.read_text(encoding="utf-8")
+
+    assert "Settings.build_runtime_contract" in contents
+    assert "provider / replay / resident runtime" in contents
+    assert "禁止调用方手写 runtime contract" in contents
+
+    assert "approval_stale" in contents
+    assert "report_expired" in contents
+    assert "report_load_failed" in contents
+    assert "input_hash_mismatch" in contents
+    assert "validator_degraded" in contents
+    assert "memory_conflict" in contents
+    assert "memory_unavailable" in contents
+    assert "goal_contract_not_ready" in contents
+    assert "validator_missing" in contents
+    assert "validator_blocked" in contents
+    assert "contract_mismatch" in contents
+    assert "unknown" in contents
+    assert "禁止直接把 raw degrade_reason" in contents
