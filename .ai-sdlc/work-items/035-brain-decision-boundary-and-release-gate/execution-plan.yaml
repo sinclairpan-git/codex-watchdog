@@ -128,7 +128,7 @@ batches:
   phase: 2
   tasks:
   - T352
-  status: pending
+  status: in_progress
 - batch_id: 3
   phase: 3
   tasks:

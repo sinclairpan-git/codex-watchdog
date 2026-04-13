@@ -31,7 +31,7 @@
 ## Task 35.2 写失败测试锁定 Brain contract、DecisionTrace、provider certification 与 release gate
 
 - **任务编号**：T352
-- **状态**：未开始
+- **状态**：进行中（2026-04-13）
 - **目标**：用失败测试先锁定 035 的正式输入输出 contract，避免实现回退到“policy 直接 auto execute”或“Brain 直接拼 prompt/动执行”的旧路径。
 - **文件**：
   - `tests/test_watchdog_brain_decision_loop.py`
@@ -60,7 +60,7 @@
 ## Task 35.3 实现最小 Brain contracts、decision input builder 与 validator/certification/replay
 
 - **任务编号**：T353
-- **状态**：未开始
+- **状态**：进行中（2026-04-13）
 - **目标**：交付 Brain 的最小可用决策面与审计面，让 runtime 能消费声明式结果，而不是自由拼接 prompt 与执行。
 - **文件**：
   - `src/watchdog/services/brain/__init__.py`
@@ -88,7 +88,7 @@
 ## Task 35.4 接入 release gate evidence/runtime consume，并锁定低风险自动决策资格门禁
 
 - **任务编号**：T354
-- **状态**：未开始
+- **状态**：进行中（2026-04-13）
 - **目标**：把 035 的决策与审计 contract 真正接到现有 runtime，让 orchestrator 只在资格满足时消费 `propose_execute`。
 - **文件**：
   - `src/watchdog/services/brain/release_gate_evidence.py`

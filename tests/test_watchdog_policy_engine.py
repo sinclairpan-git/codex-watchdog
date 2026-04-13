@@ -101,6 +101,36 @@ def test_policy_engine_routes_controlled_uncertainty_to_block_and_alert() -> Non
     assert "controlled_uncertainty" in decision.matched_policy_rules
 
 
+def test_policy_engine_does_not_let_candidate_closure_override_controlled_uncertainty() -> None:
+    record = _record(facts=[_fact("mapping_incomplete", fact_kind="availability", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="post_operator_guidance",
+        trigger="resident_supervision",
+        brain_intent="candidate_closure",
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "controlled_uncertainty" in decision.matched_policy_rules
+
+
+def test_policy_engine_does_not_let_require_approval_override_controlled_uncertainty() -> None:
+    record = _record(facts=[_fact("mapping_incomplete", fact_kind="availability", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="require_approval",
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "controlled_uncertainty" in decision.matched_policy_rules
+
+
 def test_policy_engine_requires_user_decision_for_execute_recovery() -> None:
     record = _record(facts=[_fact("recovery_available", fact_kind="action")])
 

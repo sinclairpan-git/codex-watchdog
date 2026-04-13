@@ -74,14 +74,38 @@ def test_build_decision_key_is_stable_for_same_snapshot_and_decision() -> None:
         fact_snapshot_version="fact-v7",
         policy_version="policy-v1",
         decision_result="auto_execute_and_notify",
+        brain_intent="propose_execute",
         action_ref="execute_recovery",
         approval_id=None,
     )
 
     assert (
         decision_key
-        == "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery|"
+        == "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|propose_execute|execute_recovery|"
     )
+
+
+def test_build_decision_key_distinguishes_brain_intent() -> None:
+    proposed = build_decision_key(
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        policy_version="policy-v1",
+        decision_result="auto_execute_and_notify",
+        brain_intent="propose_execute",
+        action_ref="continue_session",
+        approval_id=None,
+    )
+    legacy = build_decision_key(
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        policy_version="policy-v1",
+        decision_result="auto_execute_and_notify",
+        brain_intent=None,
+        action_ref="continue_session",
+        approval_id=None,
+    )
+
+    assert proposed != legacy
 
 
 def test_policy_decision_store_reuses_existing_canonical_decision_for_same_decision_key(

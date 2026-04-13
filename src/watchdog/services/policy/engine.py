@@ -28,6 +28,7 @@ def evaluate_persisted_session_policy(
     *,
     action_ref: str,
     trigger: str,
+    brain_intent: str | None = None,
     policy_version: str = POLICY_VERSION,
     goal_contract_readiness: GoalContractReadiness | None = None,
 ) -> CanonicalDecisionRecord:
@@ -41,6 +42,7 @@ def evaluate_persisted_session_policy(
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_REQUIRE_USER_DECISION,
+            brain_intent=brain_intent,
             risk_class=RISK_CLASS_HUMAN_GATE,
             action_ref=action_ref,
             matched_policy_rules=["human_gate"],
@@ -57,6 +59,7 @@ def evaluate_persisted_session_policy(
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_BLOCK_AND_ALERT,
+            brain_intent=brain_intent,
             risk_class=RISK_CLASS_HARD_BLOCK,
             action_ref=action_ref,
             matched_policy_rules=["controlled_uncertainty"],
@@ -73,6 +76,7 @@ def evaluate_persisted_session_policy(
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_BLOCK_AND_ALERT,
+            brain_intent=brain_intent,
             risk_class=RISK_CLASS_HARD_BLOCK,
             action_ref=action_ref,
             matched_policy_rules=["action_registration"],
@@ -89,6 +93,7 @@ def evaluate_persisted_session_policy(
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_REQUIRE_USER_DECISION,
+            brain_intent=brain_intent,
             risk_class=RISK_CLASS_HUMAN_GATE,
             action_ref=action_ref,
             matched_policy_rules=["recovery_human_gate"],
@@ -106,6 +111,7 @@ def evaluate_persisted_session_policy(
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_REQUIRE_USER_DECISION,
+            brain_intent=brain_intent,
             risk_class=RISK_CLASS_HUMAN_GATE,
             action_ref=action_ref,
             matched_policy_rules=["goal_contract_readiness_gate"],
@@ -118,9 +124,44 @@ def evaluate_persisted_session_policy(
             extra_evidence=extra_evidence,
         )
 
+    if brain_intent == "candidate_closure":
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_REQUIRE_USER_DECISION,
+            brain_intent=brain_intent,
+            risk_class=RISK_CLASS_HUMAN_GATE,
+            action_ref=action_ref,
+            matched_policy_rules=["task_completion_candidate"],
+            decision_reason="session completion requires explicit closure review",
+            why_not_escalated=None,
+            why_escalated="candidate closure requires explicit human confirmation",
+            uncertainty_reasons=[],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+
+    if brain_intent == "require_approval":
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_REQUIRE_USER_DECISION,
+            brain_intent=brain_intent,
+            risk_class=RISK_CLASS_HUMAN_GATE,
+            action_ref=action_ref,
+            matched_policy_rules=["brain_requires_approval"],
+            decision_reason="brain requested explicit human approval",
+            why_not_escalated=None,
+            why_escalated="brain intent requires explicit human approval",
+            uncertainty_reasons=[],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+
     return build_canonical_decision_record(
         persisted_record=persisted_record,
         decision_result=DECISION_AUTO_EXECUTE_AND_NOTIFY,
+        brain_intent=brain_intent,
         risk_class=RISK_CLASS_NONE,
         action_ref=action_ref,
         matched_policy_rules=["registered_action"],

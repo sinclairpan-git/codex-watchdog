@@ -95,7 +95,9 @@ def _approval_identity_seed(decision: CanonicalDecisionRecord) -> str:
             decision.session_id,
             decision.project_id,
             decision.policy_version,
+            decision.fact_snapshot_version,
             decision.decision_result,
+            decision.brain_intent or "",
             decision.action_ref,
         ]
     )

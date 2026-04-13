@@ -44,7 +44,7 @@ working_set_snapshot:
 
     ## Notes
 
-    - `WI-035` 已从总实施计划的 `Task 6` 正式拆出，当前 formal docs 与执行元数据已落地，下一执行入口固定为 `T352`。
+    - `WI-035` 已从总实施计划的 `Task 6` 正式拆出，当前 formal docs 与执行元数据已落地；虽然代码实现已触及 runtime wiring，但 formal batch 仍按依赖链回挂在 `T352/T353` 未完成状态。
 
     - 当前实现断点来自仓库现状：`policy.engine` 仍直接生成 `CanonicalDecisionRecord`，`ResidentOrchestrator` 仍直接根据 `decision_result` 进入 approval / auto execute。
 
@@ -54,11 +54,19 @@ working_set_snapshot:
 
     - 对抗式文档评审后，已额外冻结 `brain_intent -> runtime disposition` adapter、替换旧 action-first 入口、`action approval` 与 `report_approved_by` 分离、以及 release gate verdict/degrade 必须先写 canonical Session decision event。
 
-    - 下一步应先写失败测试锁定 Brain contract、DecisionTrace、provider certification 与 release gate，再进入实现。'
+    - 当前代码已让 done session 经由 `BrainDecisionService.evaluate_session(...)` 进入 `candidate_closure -> require_user_decision`，不再被旧 `_select_action_ref()` 直接短路。
+
+    - `policy.engine` 也已开始显式消费 `brain_intent`，所以 `continue_session` 的 canonical decision/session events 现在会携带 `brain_intent=propose_execute`。
+
+    - 对抗式代码评审已完成并收口 P1/P2：Brain intent 直接来自 persisted facts，`observe_only` 不再误触发 auto-continue，`candidate_closure`/`require_approval` 已回到 policy engine，decision projection 也改成 Session events 成功后再写 store。
+
+    - `decision_key` 已纳入 `brain_intent`，candidate-closure approval identity 已纳入 `fact_snapshot_version` 与 `brain_intent`，而 auto-execute 现在还会硬校验 validator/release-gate verdict 为 `pass`。
+
+    - 下一步应继续把 `observe_only / suggest_only / propose_recovery` 等 Brain intent 纳入 Brain-first runtime wiring，并补足对应红测。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T18:02:44+08:00'
+timestamp: '2026-04-13T19:58:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

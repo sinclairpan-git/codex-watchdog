@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from watchdog.main import _run_delivery_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
+from watchdog.services.brain.models import DecisionIntent
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
 from watchdog.services.goal_contract.service import GoalContractService
@@ -170,6 +171,16 @@ class FlakyDeliveryWorker:
         if self.calls == 1:
             raise RuntimeError("transient delivery failure")
         return self._delegate.process_next_ready(now=now, session_id=session_id)
+
+
+class StaticBrainService:
+    def __init__(self, *, intent: str, rationale: str = "test override") -> None:
+        self.intent = intent
+        self.rationale = rationale
+
+    def evaluate_session(self, **kwargs) -> DecisionIntent:
+        _ = kwargs
+        return DecisionIntent(intent=self.intent, rationale=self.rationale)
 
 
 def _store_path(root: Path) -> Path:
@@ -337,7 +348,48 @@ def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_
     assert app.state.delivery_outbox_store.list_records() == []
 
 
-def test_resident_orchestrator_skips_auto_continue_for_done_session(
+def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert app.state.policy_decision_store.list_records() == []
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -371,15 +423,23 @@ def test_resident_orchestrator_skips_auto_continue_for_done_session(
         )
 
     snapshot = _read_store(tmp_path)
-    assert [outcome.action_ref for outcome in outcomes] == [None]
-    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert [outcome.action_ref for outcome in outcomes] == ["post_operator_guidance"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
     assert len(snapshot["sessions"]["repo-a"]["facts"]) == 1
     assert snapshot["sessions"]["repo-a"]["facts"][0]["fact_id"] == "repo-a:task_completed"
     assert snapshot["sessions"]["repo-a"]["facts"][0]["fact_code"] == "task_completed"
     assert snapshot["sessions"]["repo-a"]["facts"][0]["detail"] == (
         "session reached a terminal completed state"
     )
-    assert app.state.delivery_outbox_store.list_records() == []
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "candidate_closure"
+    assert decisions[0].runtime_disposition == "require_user_decision"
+    assert decisions[0].action_ref == "post_operator_guidance"
+    assert "task_completion_candidate" in decisions[0].matched_policy_rules
+    approvals = app.state.canonical_approval_store.list_records()
+    assert len(approvals) == 1
+    assert approvals[0].requested_action == "post_operator_guidance"
     assert steer_mock.call_count == 0
 
 
@@ -627,7 +687,9 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
         "command_created",
     ]
     assert session_events[0].related_ids["decision_id"] == decision.decision_id
+    assert session_events[0].payload["brain_intent"] == "propose_execute"
     assert session_events[1].payload["decision_result"] == "auto_execute_and_notify"
+    assert session_events[1].payload["brain_intent"] == "propose_execute"
     assert session_events[2].related_ids["command_id"] == command_id
 
 
@@ -779,6 +841,80 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
     assert session_events[1].payload["release_gate_verdict"]["approval_read_ref"] == "approval:event:1"
 
 
+def test_resident_orchestrator_does_not_execute_when_release_gate_or_validator_do_not_pass(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    def _decision_with_degraded_gate(*args, **kwargs) -> CanonicalDecisionRecord:
+        persisted_record = args[0]
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result="auto_execute_and_notify",
+            brain_intent="propose_execute",
+            risk_class="none",
+            action_ref="continue_session",
+            matched_policy_rules=["registered_action"],
+            decision_reason="registered action and complete evidence",
+            why_not_escalated="policy_allows_auto_execution",
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            extra_evidence={
+                "validator_verdict": {
+                    "status": "degraded",
+                    "reason": "memory_conflict",
+                },
+                "release_gate_verdict": {
+                    "status": "degraded",
+                    "decision_trace_ref": "trace:1",
+                    "approval_read_ref": "approval:event:1",
+                    "report_id": "report-1",
+                    "report_hash": "sha256:report",
+                    "input_hash": "sha256:input",
+                    "degrade_reason": "approval_stale",
+                },
+            },
+        )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.evaluate_persisted_session_policy",
+        side_effect=_decision_with_degraded_gate,
+    ):
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            outcomes = app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+            )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
 def test_resident_orchestrator_fails_closed_when_decision_event_write_fails(
     tmp_path: Path,
 ) -> None:
@@ -822,6 +958,7 @@ def test_resident_orchestrator_fails_closed_when_decision_event_write_fails(
                 now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
             )
 
+    assert app.state.policy_decision_store.list_records() == []
     assert app.state.command_lease_store.list_events() == []
     steer_mock.assert_not_called()
 
@@ -860,6 +997,7 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
             record,
             action_ref="continue_session",
             trigger="resident_orchestrator",
+            brain_intent="propose_execute",
         )
     )
     command_id = f"command:{decision.decision_id}"
@@ -925,6 +1063,7 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
             record,
             action_ref="continue_session",
             trigger="resident_orchestrator",
+            brain_intent="propose_execute",
         )
     )
     command_id = f"command:{decision.decision_id}"
@@ -1005,6 +1144,7 @@ def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command
             record,
             action_ref="continue_session",
             trigger="resident_orchestrator",
+            brain_intent="propose_execute",
         )
     )
     command_id = f"command:{decision.decision_id}"

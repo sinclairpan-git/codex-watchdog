@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
+from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.actions.executor import (
     build_watchdog_action_from_decision,
     execute_canonical_decision,
@@ -46,21 +47,6 @@ def _parse_iso(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed
-
-
-def _select_action_ref(record: PersistedSessionRecord) -> str | None:
-    fact_codes = {fact.fact_code for fact in record.facts}
-    if "task_completed" in fact_codes:
-        return None
-    if "context_critical" in fact_codes:
-        return "execute_recovery"
-    if fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
-        return "continue_session"
-    if fact_codes.intersection({"stuck_no_progress", "repeat_failure"}):
-        return "continue_session"
-    return None
-
-
 def _decision_facts(decision) -> list[FactRecord]:
     facts = decision.evidence.get("facts")
     if not isinstance(facts, list):
@@ -97,6 +83,7 @@ class ResidentOrchestrator:
         command_lease_store: CommandLeaseStore,
         state_store: ResidentOrchestrationStateStore,
         session_service: SessionService | None = None,
+        brain_service: BrainDecisionService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
@@ -108,6 +95,7 @@ class ResidentOrchestrator:
         self._command_lease_store = command_lease_store
         self._state_store = state_store
         self._session_service = session_service
+        self._brain_service = brain_service or BrainDecisionService()
 
     @staticmethod
     def _command_id_for_decision(decision) -> str:
@@ -332,6 +320,63 @@ class ResidentOrchestrator:
             session_id=record.thread_id,
         )
 
+    def _evaluate_brain_intent(self, record: PersistedSessionRecord):
+        return self._brain_service.evaluate_session(
+            record=record,
+        )
+
+    @staticmethod
+    def _action_ref_for_brain_intent(brain_intent: str) -> str | None:
+        if brain_intent in {"propose_execute", "require_approval"}:
+            return "continue_session"
+        if brain_intent == "propose_recovery":
+            return "execute_recovery"
+        if brain_intent == "candidate_closure":
+            return "post_operator_guidance"
+        return None
+
+    @staticmethod
+    def _candidate_closure_action_args(record: PersistedSessionRecord) -> dict[str, object]:
+        return {
+            "message": (
+                "Review completion candidate for "
+                f"{record.project_id}: {record.progress.summary or 'session reached done state'}"
+            ),
+            "reason_code": "candidate_closure",
+            "stuck_level": 0,
+        }
+
+    def _decision_evidence_for_intent(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        brain_intent,
+    ) -> dict[str, object]:
+        evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
+        if brain_intent.intent == "candidate_closure":
+            evidence["requested_action_args"] = self._candidate_closure_action_args(record)
+        return evidence
+
+    def _record_and_store_decision(self, decision):
+        existing = self._decision_store.get(decision.decision_key)
+        if existing is not None:
+            return existing
+        self._record_decision_lifecycle(decision)
+        return self._decision_store.put(decision)
+
+    @staticmethod
+    def _decision_allows_auto_execute(decision) -> bool:
+        if decision.brain_intent not in (None, "propose_execute"):
+            return False
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        validator_verdict = evidence.get("validator_verdict")
+        if isinstance(validator_verdict, dict) and validator_verdict.get("status") != "pass":
+            return False
+        release_gate_verdict = evidence.get("release_gate_verdict")
+        if isinstance(release_gate_verdict, dict) and release_gate_verdict.get("status") != "pass":
+            return False
+        return True
+
     def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
         self._command_lease_store.expire_and_requeue_expired(
@@ -349,7 +394,8 @@ class ResidentOrchestrator:
         *,
         now: datetime,
     ) -> ResidentOrchestrationOutcome:
-        action_ref = _select_action_ref(record)
+        brain_intent = self._evaluate_brain_intent(record)
+        action_ref = self._action_ref_for_brain_intent(brain_intent.intent)
         decision_result: str | None = None
 
         if action_ref == "continue_session" and self._is_auto_continue_in_cooldown(
@@ -359,15 +405,22 @@ class ResidentOrchestrator:
             action_ref = None
 
         if action_ref is not None:
-            decision = self._decision_store.put(
-                evaluate_persisted_session_policy(
-                    record,
-                    action_ref=action_ref,
-                    trigger="resident_orchestrator",
-                    goal_contract_readiness=self._goal_contract_readiness_for_record(record),
-                )
+            decision = evaluate_persisted_session_policy(
+                record,
+                action_ref=action_ref,
+                trigger="resident_orchestrator",
+                brain_intent=brain_intent.intent,
+                goal_contract_readiness=self._goal_contract_readiness_for_record(record),
             )
-            self._record_decision_lifecycle(decision)
+            decision = decision.model_copy(
+                update={
+                    "evidence": {
+                        **decision.evidence,
+                        **self._decision_evidence_for_intent(record, brain_intent=brain_intent),
+                    }
+                }
+            )
+            decision = self._record_and_store_decision(decision)
             decision_result = decision.decision_result
             if decision.decision_result != DECISION_REQUIRE_USER_DECISION:
                 supersede_reason = (
@@ -394,7 +447,10 @@ class ResidentOrchestrator:
                         },
                         updated_at=updated_at,
             )
-            if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
+            if (
+                decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY
+                and self._decision_allows_auto_execute(decision)
+            ):
                 self._record_command_created(
                     decision,
                     command_id=self._command_id_for_decision(decision),

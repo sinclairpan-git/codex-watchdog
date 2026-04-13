@@ -40,6 +40,7 @@ def build_decision_key(
     fact_snapshot_version: str,
     policy_version: str,
     decision_result: str,
+    brain_intent: str | None,
     action_ref: str,
     approval_id: str | None,
 ) -> str:
@@ -49,6 +50,7 @@ def build_decision_key(
             fact_snapshot_version,
             policy_version,
             decision_result,
+            brain_intent or "",
             action_ref,
             approval_id or "",
         ]
@@ -135,6 +137,7 @@ def build_canonical_decision_record(
         fact_snapshot_version=persisted_record.fact_snapshot_version,
         policy_version=policy_version,
         decision_result=decision_result,
+        brain_intent=brain_intent,
         action_ref=action_ref,
         approval_id=approval_id,
     )
@@ -209,6 +212,38 @@ def build_canonical_decision_record(
         created_at=_utc_now_iso(),
         operator_notes=operator_notes,
         evidence=evidence,
+    )
+
+
+def build_brain_intent_decision_record(
+    *,
+    persisted_record: PersistedSessionRecord,
+    brain_intent: str,
+    risk_class: str,
+    action_ref: str,
+    matched_policy_rules: list[str],
+    decision_reason: str,
+    why_not_escalated: str | None,
+    why_escalated: str | None,
+    uncertainty_reasons: list[str],
+    policy_version: str,
+    trigger: str = "resident_supervision",
+    extra_evidence: dict[str, Any] | None = None,
+) -> CanonicalDecisionRecord:
+    return build_canonical_decision_record(
+        persisted_record=persisted_record,
+        decision_result=brain_intent_to_runtime_disposition(brain_intent),
+        brain_intent=brain_intent,
+        risk_class=risk_class,
+        action_ref=action_ref,
+        matched_policy_rules=matched_policy_rules,
+        decision_reason=decision_reason,
+        why_not_escalated=why_not_escalated,
+        why_escalated=why_escalated,
+        uncertainty_reasons=uncertainty_reasons,
+        policy_version=policy_version,
+        trigger=trigger,
+        extra_evidence=extra_evidence,
     )
 
 

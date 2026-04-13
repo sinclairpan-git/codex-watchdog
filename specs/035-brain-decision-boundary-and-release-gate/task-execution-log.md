@@ -47,3 +47,59 @@
 - 当前判断更新为：
   - release gate verdict 写回 canonical Session event 与 approval freshness contract 已开始落到真实代码，而不是只停留在 docs；
   - 下一硬边界仍是替换旧 `_select_action_ref()` 的 action-first 入口，让 Brain 不再被 runtime 预选动作短路。
+- 已继续推进第三轮 red-green，开始替换旧 action-first 入口：
+  - 先在 `tests/test_watchdog_session_spine_runtime.py` 把 done session 的旧行为打红，要求 runtime 不再把 `task_completed` 直接短路为 no-op，而是显式路由到 `candidate_closure -> require_user_decision`；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k candidate_closure_review` -> `1 failed, 25 deselected in 0.94s`，失败点是 `ResidentOrchestrator` 仍返回 `action_ref=None`；
+  - 已在 `src/watchdog/services/brain/service.py` 中补入最小 Brain 意图归纳：`task_completed -> candidate_closure`、`continue_session -> propose_execute`、`execute_recovery -> propose_recovery`、其他情况回退到 `observe_only`；
+  - 已在 `src/watchdog/services/policy/decisions.py` 中新增 `build_brain_intent_decision_record(...)`，强制 Brain intent 经由显式 adapter 物化成兼容的 runtime disposition，而不是在 orchestrator 分支里手写散落 mapping；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中接入默认 `BrainDecisionService`，并让 `task_completed` 在没有 legacy `action_ref` 时落成 `post_operator_guidance` 的 `candidate_closure` 审核请求，而不是被旧 `_select_action_ref()` 直接吞掉。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k candidate_closure_review` -> `1 passed, 25 deselected in 0.90s`
+  - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_session_spine_runtime.py` -> `34 passed in 2.56s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `62 passed in 2.81s`
+- 当前判断再次更新为：
+  - Brain 已不再被 done-session 的 legacy action-first 分支完全短路，`candidate_closure` 开始进入 canonical decision + approval 路径；
+  - 但 `policy.engine` 仍主要消费 legacy `action_ref`，后续还需要继续把 `observe_only / suggest_only / require_approval / propose_execute / propose_recovery` 收拢到完整的 Brain-first runtime wiring。
+- 已继续补强同一切片，避免 Brain 只是“被调用到”但未真正接线：
+  - 先在 `tests/test_watchdog_session_spine_runtime.py` 中把 `continue_session` 热路径打红，要求 auto-continue 的 `decision_proposed / decision_validated` 事件也必须显式携带 `brain_intent=propose_execute`；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k records_command_lease_for_auto_continue` -> `1 failed, 25 deselected in 1.20s`，失败点是 session event payload 中 `brain_intent` 仍为 `None`；
+  - 已在 `src/watchdog/services/policy/engine.py` 中给 `evaluate_persisted_session_policy(...)` 补入 `brain_intent` 参数，并在所有 `build_canonical_decision_record(...)` 分支里透传，使 legacy `continue_session / execute_recovery` 决策也开始携带显式 Brain intent；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 `brain_intent.intent` 传给 policy engine，确保 Brain 对 auto-continue / recovery 的判断不再停留在 orchestrator 局部变量里。
+- 当前已通过的补强验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or candidate_closure_review'` -> `2 passed, 24 deselected in 0.74s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `67 passed in 3.34s`
+- 当前判断最终更新为：
+  - done-session 的 `candidate_closure` 与 auto-continue 的 `propose_execute` 都已经真正进入 canonical decision/event 路径，而不只是旁路观测；
+  - 下一步应继续把 `observe_only / suggest_only / propose_recovery` 等剩余 Brain intent 的 runtime consume 收拢完整，并让 release gate/validator 更早参与这些分支的降级判断。
+- 已完成一轮对抗式代码评审并据此修正实现：
+  - Hermes Agent 专家与 Anthropic Manager 专家都指出同一个 P1：我上一版虽然把 Brain 接进 orchestrator，但 executable path 仍然由 legacy action-first 决定，`observe_only / require_approval` 无法真正阻断 auto-continue，且 `candidate_closure` 分支绕过了 policy gate；
+  - 另一个有效问题是 second-truth 风险：candidate_closure 分支把 decision 先写 `PolicyDecisionStore`，如果 canonical Session decision event 写失败，会留下 orphan projection。
+- 已按上述意见重新收口实现：
+  - `src/watchdog/services/brain/service.py` 不再从 legacy `action_ref` 反推出 Brain intent，而是直接从 persisted facts 归纳：`task_completed -> candidate_closure`、`approval_pending/awaiting_human_direction -> require_approval`、`context_critical -> propose_recovery`、`stuck_no_progress/repeat_failure -> propose_execute`，其他情况回退到 `observe_only`；
+  - `src/watchdog/services/session_spine/orchestrator.py` 已删除对 `_select_action_ref()` 的 runtime 依赖，改为先跑 Brain，再把 Brain intent 显式映射成 `action_ref`；
+  - `src/watchdog/services/policy/engine.py` 已新增 `brain_intent` 分支：`candidate_closure` 与 `require_approval` 都必须经 policy engine 落成 `require_user_decision`，不再由 orchestrator 私下生成第二套 policy；
+  - candidate-closure approval 现在会附带显式 `requested_action_args`，用于 `post_operator_guidance` 的人工复核提示，而不是留一个无法执行的空 action；
+  - orchestrator 现在先写 canonical Session decision events，再落 `PolicyDecisionStore`；若 event 写失败，不再留下 orphan canonical decision projection；
+  - auto-execute 新增硬门槛：只有 `brain_intent in (None, "propose_execute")` 的 decision 才能进入命令创建/claim/执行，既保证新路径 Brain-first，也兼容老格式已持久化 decision。
+- 针对 review 新增的红绿验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'does_not_execute_when_brain_observes_only or fails_closed_when_decision_event_write_fails'` 初次结果为 `2 failed, 25 deselected in 1.06s`，分别锁定 observe-only 仍被 auto-continue 穿透，以及 decision event 写失败后残留 orphan decision；
+  - 修复后，`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'does_not_execute_when_brain_observes_only or fails_closed_when_decision_event_write_fails or candidate_closure_review or records_command_lease_for_auto_continue'` -> `4 passed, 23 deselected in 0.72s`；
+  - 全量回归更新为：`uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `68 passed in 3.15s`
+- 当前判断最新更新为：
+  - 这一步已经把 Brain 从“旁路注释层”收紧成真正的 runtime gate：Brain 说 `observe_only` 时不会再 claim/execute，Brain 说 `candidate_closure` 时也必须走 policy engine；
+  - 035 仍未完成 release gate/validator 对所有 Brain intent 的统一 runtime 降级，因此下一步依旧是继续补齐 Brain-first runtime wiring，而不是扩写 control-plane 或 e2e。
+- 已完成第二轮对抗式复审，并继续收掉剩余 P1/P2：
+  - Hermes 复审已无 blocking/P1，只指出三个 P2：`decision_key` 未纳入 `brain_intent`、`candidate_closure / require_approval` 仍可能绕过 controlled uncertainty hard block、以及 Session event/decision store 之间仍有部分残余一致性风险；
+  - Anthropic Manager 复审额外指出两个 P1：`validator_verdict / release_gate_verdict` 尚未真正拦住 auto-execute，以及 candidate-closure approval 在没有 upstream `approval_id` 时仍可能复用旧已决记录、跳过新的人工复核。
+- 已按上述意见继续收口实现：
+  - `src/watchdog/services/policy/decisions.py` 的 `build_decision_key(...)` 现在把 `brain_intent` 纳入 canonical identity，避免 pre-fix legacy decision 与 Brain-annotated decision 复用同一 key；
+  - `src/watchdog/services/policy/engine.py` 已把 `candidate_closure / require_approval` 分支后移到 controlled uncertainty、action registration、explicit human gate 与 goal-contract readiness 之后，保证 Brain intent 不会覆盖 non-bypassable policy block；
+  - `src/watchdog/services/session_spine/orchestrator.py` 已新增 `_decision_allows_auto_execute(...)`，显式要求 `brain_intent` 为 `propose_execute`（兼容旧记录为 `None`）且 `validator_verdict.status == pass`、`release_gate_verdict.status == pass` 才允许命令创建/claim/执行；
+  - `src/watchdog/services/approvals/service.py` 的 approval identity seed 现在补入 `fact_snapshot_version` 与 `brain_intent`，避免 candidate-closure 在旧记录已 `approved/rejected` 后复用旧 envelope/approval；
+  - `tests/test_watchdog_policy_decisions.py`、`tests/test_watchdog_policy_engine.py`、`tests/test_watchdog_approval_loop.py` 与 `tests/test_watchdog_session_spine_runtime.py` 已补入对应红测，并同步修正旧格式 decision fixture。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_approval_loop.py tests/test_watchdog_session_spine_runtime.py -k 'brain_intent or candidate_closure_override or require_approval_override or resolved_candidate_closure_record or release_gate_or_validator_do_not_pass or stable_for_same_snapshot'` -> `8 passed, 53 deselected in 0.98s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `73 passed in 4.25s`
+- 当前判断再更新为：
+  - Brain-first runtime wiring 已从“可观测”推进到“可约束”：Brain identity、policy hard block、approval identity 与 release/validator gate 都开始在 runtime 上真实生效；
+  - 剩余未完成项仍集中在更完整的 release gate/validator 覆盖面与后续 control-plane/e2e 消费方，不在本次提交里扩面。

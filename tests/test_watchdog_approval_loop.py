@@ -224,6 +224,68 @@ def test_materialize_canonical_approval_refreshes_pending_record_for_newer_fact_
     )
 
 
+def test_materialize_canonical_approval_does_not_reuse_resolved_candidate_closure_record(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+    )
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    first_decision = _decision(action_ref="post_operator_guidance", approval_id=None).model_copy(
+        update={
+            "decision_key": (
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|candidate_closure|"
+                "post_operator_guidance|"
+            ),
+            "fact_snapshot_version": "fact-v7",
+            "idempotency_key": (
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|candidate_closure|"
+                "post_operator_guidance|"
+            ),
+            "evidence": {
+                "goal_contract_version": "goal-v1",
+                "requested_action_args": {
+                    "message": "Review completion candidate for repo-a",
+                    "reason_code": "candidate_closure",
+                    "stuck_level": 0,
+                },
+            },
+        }
+    )
+    first = materialize_canonical_approval(first_decision, approval_store=store)
+    store.update(
+        first.model_copy(
+            update={
+                "status": "approved",
+                "decided_at": "2026-04-07T00:01:00Z",
+                "decided_by": "operator",
+            }
+        )
+    )
+
+    second_decision = first_decision.model_copy(
+        update={
+            "decision_id": "decision:needs-human-v8",
+            "decision_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|candidate_closure|"
+                "post_operator_guidance|"
+            ),
+            "fact_snapshot_version": "fact-v8",
+            "idempotency_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|candidate_closure|"
+                "post_operator_guidance|"
+            ),
+        }
+    )
+    second = materialize_canonical_approval(second_decision, approval_store=store)
+
+    assert second.envelope_id != first.envelope_id
+    assert second.approval_id != first.approval_id
+    assert second.fact_snapshot_version == "fact-v8"
+
+
 def test_canonical_approval_freshness_rejects_expired_or_mismatched_scope() -> None:
     from watchdog.services.approvals.service import (
         build_canonical_approval_record,
