@@ -17,7 +17,10 @@ from watchdog.contracts.session_spine.models import WatchdogActionResult
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
 from watchdog.services.goal_contract.service import GoalContractService
-from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.policy.decisions import (
+    CanonicalDecisionRecord,
+    build_canonical_decision_record,
+)
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.session_spine.orchestrator import _parse_iso
 from watchdog.services.session_spine.service import build_approval_inbox_bundle, build_session_read_bundle
@@ -695,6 +698,132 @@ def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contr
     assert len(approval_events) == 1
     assert approval_events[0].related_ids["approval_id"] == approvals[0].approval_id
     assert approval_events[0].related_ids["decision_id"] == decisions[0].decision_id
+
+
+def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_session_events(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    def _decision_with_gate(*args, **kwargs) -> CanonicalDecisionRecord:
+        persisted_record = args[0]
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result="auto_execute_and_notify",
+            brain_intent="propose_execute",
+            risk_class="none",
+            action_ref="continue_session",
+            matched_policy_rules=["registered_action"],
+            decision_reason="registered action and complete evidence",
+            why_not_escalated="policy_allows_auto_execution",
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            extra_evidence={
+                "validator_verdict": {
+                    "status": "pass",
+                    "reason": "schema_and_risk_ok",
+                },
+                "release_gate_verdict": {
+                    "status": "pass",
+                    "decision_trace_ref": "trace:1",
+                    "approval_read_ref": "approval:event:1",
+                    "report_id": "report-1",
+                    "report_hash": "sha256:report",
+                    "input_hash": "sha256:input",
+                },
+            },
+        )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.evaluate_persisted_session_policy",
+        side_effect=_decision_with_gate,
+    ):
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+            app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+            )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    session_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        correlation_id=f"corr:decision:{decision.decision_id}",
+    )
+    assert session_events[0].payload["brain_intent"] == "propose_execute"
+    assert session_events[1].payload["validator_verdict"]["status"] == "pass"
+    assert session_events[1].payload["release_gate_verdict"]["decision_trace_ref"] == "trace:1"
+    assert session_events[1].payload["release_gate_verdict"]["approval_read_ref"] == "approval:event:1"
+
+
+def test_resident_orchestrator_fails_closed_when_decision_event_write_fails(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    original_record_event = app.state.session_service.record_event
+
+    def _failing_record_event(*args, **kwargs):
+        if kwargs.get("event_type") == "decision_validated":
+            raise RuntimeError("session event write failed")
+        return original_record_event(*args, **kwargs)
+
+    app.state.session_service.record_event = _failing_record_event
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        with pytest.raises(RuntimeError, match="session event write failed"):
+            app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+            )
+
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
 
 
 def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claimed(

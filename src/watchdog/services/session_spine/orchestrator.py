@@ -134,6 +134,9 @@ class ResidentOrchestrator:
         if self._session_service is None:
             return
         correlation_id = self._decision_correlation_id(decision)
+        decision_evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        validator_verdict = decision_evidence.get("validator_verdict")
+        release_gate_verdict = decision_evidence.get("release_gate_verdict")
         self._session_service.record_event(
             event_type="decision_proposed",
             project_id=decision.project_id,
@@ -143,6 +146,8 @@ class ResidentOrchestrator:
             payload={
                 "trigger": decision.trigger,
                 "action_ref": decision.action_ref,
+                "brain_intent": decision.brain_intent,
+                "runtime_disposition": decision.runtime_disposition,
                 "policy_version": decision.policy_version,
                 "fact_snapshot_version": decision.fact_snapshot_version,
             },
@@ -156,9 +161,13 @@ class ResidentOrchestrator:
             related_ids=self._decision_related_ids(decision),
             payload={
                 "decision_result": decision.decision_result,
+                "brain_intent": decision.brain_intent,
+                "runtime_disposition": decision.runtime_disposition,
                 "risk_class": decision.risk_class,
                 "decision_reason": decision.decision_reason,
                 "matched_policy_rules": list(decision.matched_policy_rules),
+                "validator_verdict": validator_verdict,
+                "release_gate_verdict": release_gate_verdict,
             },
         )
 

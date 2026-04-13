@@ -35,3 +35,15 @@
 - 当前判断：
   - `T352` 已完成第一批 contract 红测与最小 green，但还没覆盖 release verdict canonical event、approval freshness 旧 session/旧 snapshot 降级、以及替换旧 action-first 入口；
   - `T353` 已开始落最小 contract skeleton，但还未接入 `policy.engine` / `ResidentOrchestrator` 的真实 runtime wiring。
+- 已继续推进第二轮 red-green：
+  - 在 `tests/test_watchdog_session_spine_runtime.py` 新增 runtime 红测，锁定 `decision_proposed / decision_validated` 必须携带 `brain_intent`、`validator_verdict` 与 `release_gate_verdict`，且 `SessionService.record_event()` 失败时 orchestrator 必须 fail-closed，不能继续创建 command 或执行；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 的 `_record_decision_lifecycle()` 中补齐上述 payload 字段，把 release/validator verdict 真正写进 canonical Session decision events；
+  - 在 `tests/test_watchdog_approval_loop.py` 新增 approval freshness 红测，锁定 canonical approval 至少要校验 `session_id / project_id / requested_action / fact_snapshot_version / goal_contract_version / expires_at / status`；
+  - 已在 `src/watchdog/services/approvals/service.py` 中给 `CanonicalApprovalRecord` 补入 `goal_contract_version` 与 `expires_at`，并新增 `is_canonical_approval_fresh(...)` helper。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_release_gate_and_validator_verdict or fails_closed_when_decision_event_write_fails'` -> `2 passed, 24 deselected in 0.71s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py -k 'freshness or reuses_same_record or refreshes_pending_record'` -> `4 passed, 15 deselected in 0.81s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py -k 'freshness or reuses_same_record or refreshes_pending_record or brain or release_gate or decision or fails_closed_when_decision_event_write_fails or records_release_gate_and_validator_verdict or carries_brain_intent or brain_intent_adapter'` -> `25 passed, 37 deselected in 0.95s`
+- 当前判断更新为：
+  - release gate verdict 写回 canonical Session event 与 approval freshness contract 已开始落到真实代码，而不是只停留在 docs；
+  - 下一硬边界仍是替换旧 `_select_action_ref()` 的 action-first 入口，让 Brain 不再被 runtime 预选动作短路。

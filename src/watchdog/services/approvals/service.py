@@ -122,6 +122,7 @@ class CanonicalApprovalRecord(BaseModel):
     decision_options: list[str] = Field(default_factory=list)
     policy_version: str
     fact_snapshot_version: str
+    goal_contract_version: str | None = None
     idempotency_key: str
     project_id: str
     session_id: str
@@ -129,6 +130,7 @@ class CanonicalApprovalRecord(BaseModel):
     native_thread_id: str | None = None
     status: str
     created_at: str
+    expires_at: str | None = None
     decided_at: str | None = None
     decided_by: str | None = None
     operator_notes: list[str] = Field(default_factory=list)
@@ -479,6 +481,11 @@ def build_canonical_approval_record(
     if decision.decision_result != DECISION_REQUIRE_USER_DECISION:
         raise ValueError("canonical approval requires require_user_decision")
     approval_id, envelope_id, approval_token = build_canonical_approval_identifiers(decision)
+    goal_contract_version = None
+    if isinstance(decision.evidence, dict):
+        raw_goal_contract_version = decision.evidence.get("goal_contract_version")
+        if isinstance(raw_goal_contract_version, str) and raw_goal_contract_version:
+            goal_contract_version = raw_goal_contract_version
     return CanonicalApprovalRecord(
         approval_id=approval_id,
         envelope_id=envelope_id,
@@ -489,6 +496,7 @@ def build_canonical_approval_record(
         decision_options=["approve", "reject", "execute_action"],
         policy_version=decision.policy_version,
         fact_snapshot_version=decision.fact_snapshot_version,
+        goal_contract_version=goal_contract_version,
         idempotency_key=f"{decision.idempotency_key}|approval",
         project_id=decision.project_id,
         session_id=decision.session_id,
@@ -502,6 +510,36 @@ def build_canonical_approval_record(
         ],
         decision=decision,
     )
+
+
+def is_canonical_approval_fresh(
+    approval: CanonicalApprovalRecord,
+    *,
+    session_id: str,
+    project_id: str,
+    requested_action: str,
+    fact_snapshot_version: str,
+    goal_contract_version: str | None,
+    now: str,
+) -> bool:
+    if approval.status != "pending":
+        return False
+    if approval.session_id != session_id:
+        return False
+    if approval.project_id != project_id:
+        return False
+    if approval.requested_action != requested_action:
+        return False
+    if approval.fact_snapshot_version != fact_snapshot_version:
+        return False
+    if approval.goal_contract_version != goal_contract_version:
+        return False
+    if approval.expires_at:
+        expires_at = _parse_utc_timestamp(approval.expires_at)
+        current_time = _parse_utc_timestamp(now)
+        if expires_at is not None and current_time is not None and current_time >= expires_at:
+            return False
+    return True
 
 
 def materialize_canonical_approval(

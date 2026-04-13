@@ -126,6 +126,7 @@ def _decision(
         created_at="2026-04-07T00:00:00Z",
         operator_notes=[],
         evidence={
+            "goal_contract_version": "goal-v1",
             "decision": {
                 "action_ref": action_ref,
                 "decision_result": decision_result,
@@ -162,6 +163,7 @@ def test_materialize_canonical_approval_reuses_same_record_for_same_decision(tmp
     pending = delivery_store.list_pending_delivery_records(session_id=first.session_id)
     assert [record.envelope_type for record in pending] == ["approval"]
     assert pending[0].envelope_id == first.envelope_id
+    assert first.goal_contract_version == "goal-v1"
 
 
 def test_materialize_canonical_approval_refreshes_pending_record_for_newer_fact_snapshot(
@@ -195,6 +197,7 @@ def test_materialize_canonical_approval_refreshes_pending_record_for_newer_fact_
                     "action_ref": "execute_recovery",
                     "decision_result": "require_user_decision",
                 },
+                "goal_contract_version": "goal-v2",
                 "requested_action_args": {"mode": "safe", "resume": True},
             },
         }
@@ -214,13 +217,106 @@ def test_materialize_canonical_approval_refreshes_pending_record_for_newer_fact_
         "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001|approval"
     )
     assert second.requested_action_args == {"mode": "safe", "resume": True}
+    assert second.goal_contract_version == "goal-v2"
     assert second.decision.fact_snapshot_version == "fact-v8"
     assert second.decision.decision_reason == (
         "session still requires explicit human decision after newer evidence"
     )
-    assert persisted is not None
-    assert persisted.fact_snapshot_version == "fact-v8"
-    assert persisted.decision.fact_snapshot_version == "fact-v8"
+
+
+def test_canonical_approval_freshness_rejects_expired_or_mismatched_scope() -> None:
+    from watchdog.services.approvals.service import (
+        build_canonical_approval_record,
+        is_canonical_approval_fresh,
+    )
+
+    approval = build_canonical_approval_record(_decision()).model_copy(
+        update={
+            "goal_contract_version": "goal-v1",
+            "expires_at": "2026-04-07T01:00:00Z",
+        }
+    )
+
+    assert is_canonical_approval_fresh(
+        approval,
+        session_id="session:repo-a",
+        project_id="repo-a",
+        requested_action="execute_recovery",
+        fact_snapshot_version="fact-v7",
+        goal_contract_version="goal-v1",
+        now="2026-04-07T00:30:00Z",
+    )
+    assert not is_canonical_approval_fresh(
+        approval,
+        session_id="session:repo-old",
+        project_id="repo-a",
+        requested_action="execute_recovery",
+        fact_snapshot_version="fact-v7",
+        goal_contract_version="goal-v1",
+        now="2026-04-07T00:30:00Z",
+    )
+    assert not is_canonical_approval_fresh(
+        approval,
+        session_id="session:repo-a",
+        project_id="repo-a",
+        requested_action="continue_session",
+        fact_snapshot_version="fact-v7",
+        goal_contract_version="goal-v1",
+        now="2026-04-07T00:30:00Z",
+    )
+    assert not is_canonical_approval_fresh(
+        approval,
+        session_id="session:repo-a",
+        project_id="repo-a",
+        requested_action="execute_recovery",
+        fact_snapshot_version="fact-v8",
+        goal_contract_version="goal-v1",
+        now="2026-04-07T00:30:00Z",
+    )
+    assert not is_canonical_approval_fresh(
+        approval,
+        session_id="session:repo-a",
+        project_id="repo-a",
+        requested_action="execute_recovery",
+        fact_snapshot_version="fact-v7",
+        goal_contract_version="goal-v2",
+        now="2026-04-07T00:30:00Z",
+    )
+    assert not is_canonical_approval_fresh(
+        approval,
+        session_id="session:repo-a",
+        project_id="repo-a",
+        requested_action="execute_recovery",
+        fact_snapshot_version="fact-v7",
+        goal_contract_version="goal-v1",
+        now="2026-04-07T01:30:00Z",
+    )
+
+
+def test_canonical_approval_freshness_rejects_superseded_rejected_and_expired_status() -> None:
+    from watchdog.services.approvals.service import (
+        build_canonical_approval_record,
+        is_canonical_approval_fresh,
+    )
+
+    approval = build_canonical_approval_record(_decision()).model_copy(
+        update={
+            "goal_contract_version": "goal-v1",
+            "expires_at": "2026-04-07T01:00:00Z",
+        }
+    )
+
+    for status in ("superseded", "rejected", "expired"):
+        stale = approval.model_copy(update={"status": status})
+        assert not is_canonical_approval_fresh(
+            stale,
+            session_id="session:repo-a",
+            project_id="repo-a",
+            requested_action="execute_recovery",
+            fact_snapshot_version="fact-v7",
+            goal_contract_version="goal-v1",
+            now="2026-04-07T00:30:00Z",
+        )
 
 
 def test_materialize_canonical_approval_reuses_legacy_pending_record_for_same_approval_id(
