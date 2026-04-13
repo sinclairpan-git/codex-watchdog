@@ -175,6 +175,23 @@ def evaluate_persisted_session_policy(
             extra_evidence=extra_evidence,
         )
 
+    if brain_intent == "observe_only":
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_BLOCK_AND_ALERT,
+            brain_intent=brain_intent,
+            risk_class=RISK_CLASS_HARD_BLOCK,
+            action_ref=action_ref,
+            matched_policy_rules=["brain_observe_only"],
+            decision_reason="brain observed state without proposing execution",
+            why_not_escalated=None,
+            why_escalated="brain intent is observe_only",
+            uncertainty_reasons=[],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+
     return build_canonical_decision_record(
         persisted_record=persisted_record,
         decision_result=DECISION_AUTO_EXECUTE_AND_NOTIFY,

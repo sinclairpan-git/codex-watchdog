@@ -382,9 +382,15 @@ def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
             now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
         )
 
-    assert [outcome.action_ref for outcome in outcomes] == [None]
-    assert [outcome.decision_result for outcome in outcomes] == [None]
-    assert app.state.policy_decision_store.list_records() == []
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "observe_only"
+    outbox = app.state.delivery_outbox_store.list_records()
+    assert len(outbox) == 1
+    assert outbox[0].envelope_type == "notification"
+    assert app.state.canonical_approval_store.list_records() == []
     assert app.state.command_lease_store.list_events() == []
     steer_mock.assert_not_called()
 

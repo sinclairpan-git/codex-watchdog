@@ -326,8 +326,13 @@ class ResidentOrchestrator:
         )
 
     @staticmethod
-    def _action_ref_for_brain_intent(brain_intent: str) -> str | None:
-        if brain_intent in {"propose_execute", "require_approval", "suggest_only"}:
+    def _action_ref_for_brain_intent(
+        record: PersistedSessionRecord,
+        brain_intent: str,
+    ) -> str | None:
+        if brain_intent in {"propose_execute", "require_approval", "suggest_only", "observe_only"}:
+            if brain_intent == "observe_only" and not record.facts:
+                return None
             return "continue_session"
         if brain_intent == "propose_recovery":
             return "execute_recovery"
@@ -395,7 +400,7 @@ class ResidentOrchestrator:
         now: datetime,
     ) -> ResidentOrchestrationOutcome:
         brain_intent = self._evaluate_brain_intent(record)
-        action_ref = self._action_ref_for_brain_intent(brain_intent.intent)
+        action_ref = self._action_ref_for_brain_intent(record, brain_intent.intent)
         decision_result: str | None = None
 
         if (

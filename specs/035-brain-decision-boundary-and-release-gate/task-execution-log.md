@@ -120,3 +120,14 @@
 - 当前已通过的新增验证：
   - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `4 passed, 28 deselected in 1.19s`
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `39 passed in 8.10s`
+- 已继续推进 `observe_only` 的显式 runtime consume：
+  - 先把现有 `test_resident_orchestrator_does_not_execute_when_brain_observes_only(...)` 改成红测，要求它不再是静默 no-op，而是落成带审计痕迹的 `block_and_alert` notification；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k does_not_execute_when_brain_observes_only` -> `1 failed, 31 deselected in 0.75s`，失败点是 orchestrator 仍返回 `action_ref=None`；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 `observe_only` 映射成推荐 action `continue_session`，并在 `src/watchdog/services/policy/engine.py` 中新增 `brain_observe_only` 分支，把它物化为 `block_and_alert` canonical decision；
+  - 随后又发现一个真实回归：空事实集 session 会被错误地产生 observe-only decision。已继续把 `observe_only` 的 mapping 收窄为“有观察到的 facts 时才落 decision”，避免 phantom approval 场景被误写 notification。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'skips_phantom_approval_when_only_pending_flag_is_set or does_not_execute_when_brain_observes_only or cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `6 passed, 26 deselected in 0.63s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `39 passed in 2.49s`
+- 当前判断再更新为：
+  - 现在 `observe_only / suggest_only / require_approval / propose_recovery / propose_execute / candidate_closure` 都已拥有显式 runtime consume，不再存在只定义枚举但没有 canonical 运行时语义的 intent；
+  - 下一步更聚焦于给这些 intent 补齐 validator/release-gate trace/evidence 绑定，而不是继续扩 action mapping。
