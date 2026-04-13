@@ -1,0 +1,128 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T341
+  title: 冻结 034 formal docs 与 Memory Hub 受约束边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/034-memory-hub-codex-critical/spec.md`'
+  - '`specs/034-memory-hub-codex-critical/plan.md`'
+  - '`specs/034-memory-hub-codex-critical/tasks.md`'
+  - '`specs/034-memory-hub-codex-critical/task-execution-log.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T342
+  title: 写失败测试锁定 session replay、packet inputs 与安全门禁
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_memory_hub.py`'
+  - '`tests/test_watchdog_memory_packets.py`'
+  - '`tests/test_watchdog_memory_degradation.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T341
+- task_id: T343
+  title: 实现最小 Memory Hub Codex-critical 垂直切片
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/memory_hub/models.py`'
+  - '`src/watchdog/services/memory_hub/contracts.py`'
+  - '`src/watchdog/services/memory_hub/service.py`'
+  - '`src/watchdog/services/memory_hub/indexer.py`'
+  - '`src/watchdog/services/memory_hub/skills.py`'
+  - '`src/watchdog/services/memory_hub/packets.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/delivery/store.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T342
+- task_id: T344
+  title: 运行 Memory Hub / runtime / docs 相关验证
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`tests/test_watchdog_memory_hub.py`'
+  - '`tests/test_watchdog_memory_packets.py`'
+  - '`tests/test_watchdog_memory_degradation.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/test_long_running_autonomy_doc_contracts.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T343
+- task_id: T345
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/034-memory-hub-codex-critical/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/runtime.yaml`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T344
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T341
+  status: completed
+  started_at: '2026-04-13T16:25:00+08:00'
+  completed_at: '2026-04-13T16:39:19+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T342
+  status: pending
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T343
+  status: pending
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T344
+  status: pending
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T345
+  status: pending
+current_batch: 1

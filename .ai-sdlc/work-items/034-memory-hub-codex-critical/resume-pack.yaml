@@ -1,0 +1,61 @@
+current_stage: design
+current_batch: 1
+last_committed_task: T341
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/034-memory-hub-codex-critical/spec.md
+  plan_path: specs/034-memory-hub-codex-critical/plan.md
+  tasks_path: specs/034-memory-hub-codex-critical/tasks.md
+  active_files:
+  - '`docs/architecture/codex-long-running-autonomy-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/spec.md`'
+  - '`specs/032-goal-contract-persistence-and-governance/spec.md`'
+  - '`specs/033-recovery-transaction-lineage/spec.md`'
+  - '`specs/034-memory-hub-codex-critical/spec.md`'
+  - '`specs/034-memory-hub-codex-critical/plan.md`'
+  - '`specs/034-memory-hub-codex-critical/tasks.md`'
+  - '`specs/034-memory-hub-codex-critical/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/runtime.yaml`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/034-memory-hub-codex-critical/latest-summary.md`'
+  context_summary: '# Development Summary
+
+
+    Status: design_frozen
+
+    Total Tasks: 5
+
+    Completed Tasks: 1
+
+    Halted Tasks: 0
+
+    Total Batches: 5
+
+    Completed Batches: 1
+
+    Last Committed Task: T341
+
+
+    ## Notes
+
+    - `WI-034` 已完成 formal design v2 重写，Task 5 被正式收紧为 `Codex-critical` retrieval/provider facade。
+
+    - 当前设计明确规定：`Session Service + Goal Contract` 仍是唯一运行时真相源，`Memory Hub` 只输出 bounded retrieval 与 packet inputs。
+
+    - 已补入 session raw event replayability、JIT expansion、`security_verdict` 枚举与 override 规则、provider lifecycle、provider memory ops、brain/hands/sandbox 边界、canonical degrade event 与 context quality evaluation。
+
+    - 四类内容只保留为 repo 内部实现分区，不再表述为 Hermes 或 Anthropic 官方原生分类。
+
+    - 下一执行入口固定为 `Task 34.2`：先写 red tests 锁定 contract，再进入实现。'
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-13T18:02:00+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

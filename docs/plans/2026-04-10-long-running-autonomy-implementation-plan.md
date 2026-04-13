@@ -4,7 +4,7 @@
 
 **Goal:** 以最小迁移风险把当前 `watchdog + a-control-agent` 逐步收敛到 `Session Service -> Projection Cache -> Goal Contract -> Brain/Recovery -> Feishu` 的单控制面架构，同时把 `Memory Hub` 收敛成可独立开发的能力层，通过统一 contract 同时服务 Codex 长时自动开发与 `AI_AutoSDLC` 调用，并停止 `OpenClaw` 继续充当主链路。
 
-**Architecture:** 先建立新的事件真源与双写桥，再把现有 `session_spine`、审批视图和审计查询改成从事件投影读取，之后补齐 `Goal Contract`、恢复事务、`Brain + Provider certification + replay` 决策闭环和飞书控制面，并把 `Memory Hub` 做成“四层记忆 + 技能生命周期 + 统一 packet contract”的独立能力层。整个过程坚持 fail-closed、真源前置写入、低风险先迁移，不在第一阶段引入新的自动高危能力。
+**Architecture:** 先建立新的事件真源与双写桥，再把现有 `session_spine`、审批视图和审计查询改成从事件投影读取，之后补齐 `Goal Contract`、恢复事务、`Brain + Provider certification + replay` 决策闭环和飞书控制面，并把 `Memory Hub` 收敛成受 `Session Service + Goal Contract` 约束的 retrieval/provider 能力层，通过受控 packet inputs、session search、skills metadata 和安全降级同时服务 Codex 主路径与后续兼容入口。整个过程坚持 fail-closed、真源前置写入、低风险先迁移，不在第一阶段引入新的自动高危能力。
 
 **Tech Stack:** Python, FastAPI, Pydantic, JSON file stores, SQLite/FTS or equivalent local index for `Memory Hub`, pytest, existing `watchdog`/`a_control_agent` service layers
 
@@ -27,7 +27,7 @@
 - `src/watchdog/services/brain/`
   - 新建 packet builder、goal closure judge、decision validator、provider certification 与 replay harness。
 - `src/watchdog/services/memory_hub/`
-  - 新建独立 contract、四层记忆存储、基线扫描、增量索引、skill registry、retrieval packet materializer。
+  - 新建独立 contract、resident facade、session search archive、基线扫描、增量索引、skill registry、packet input retrieval facade。
 - `src/watchdog/api/`
   - 增加 Session query / Feishu control / Goal Contract 读取接口，逐步退役 OpenClaw 专属入口。
 - `tests/`
@@ -194,7 +194,7 @@
   - `git add src/watchdog/services/session_spine/recovery.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/session_spine/actions.py src/watchdog/services/approvals/service.py tests/test_watchdog_recovery_transaction.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py`
   - `git commit -m "feat: add recovery transactions and lineage"`
 
-### Task 5: 建独立 Memory Hub 能力层与四层记忆的 Codex-critical 切片
+### Task 5: 建独立 Memory Hub 能力层的 Codex-critical 切片（正式 work item：`specs/034-memory-hub-codex-critical/`）
 
 **Files:**
 - Create: `src/watchdog/services/memory_hub/models.py`
@@ -210,37 +210,38 @@
 - Create: `tests/test_watchdog_memory_packets.py`
 - Create: `tests/test_watchdog_memory_degradation.py`
 
-- [ ] **Step 1: 写失败测试，冻结独立 contract 与四层边界**
-  - 覆盖 `Session Service` 仍是运行时真源，`Memory Hub` 只提供 advisory memory / skills / packets。
-  - 覆盖 `Resident Prompt Memory` 预算受限，只允许编译稳定约束、关键项目事实和持久偏好。
-  - 覆盖 `Session Archive Memory` 只返回相关摘要，不返回整段原始 transcript 进入热路径。
-  - 覆盖 `Skill Memory` 默认只暴露名称、短描述和验证元数据，全文按需展开。
-  - 覆盖 `User Model Memory` 不得影响审批、权限、风险和完成判定。
-  - 覆盖 `User Model Memory`、`Periodic Nudge` 和自动 shared promotion 在一期允许只冻结 preview contract；缺省或部分实现不得阻塞 release gate。
-  - 覆盖技能跨项目共享前必须经过 `candidate -> verified -> shared` 推广流程。
-  - 覆盖 `AI_AutoSDLC` 的 stage-aware packet schema 只作为 preview compatibility contract；缺省实现不得阻塞一期 release gate。
-  - 覆盖 `Cursor` / 受控聊天入口只冻结 preview contract 与兼容边界，不作为一期 release blocker。
-  - 覆盖 `Memory Hub` 不可用时必须退化为 `Tier 1 + Tier 2`，并以 `Session Service` 事件显式记录降级事实。
-  - 覆盖 `memory_conflict_detected`、TTL 过期和 shared skill 技术栈不匹配时必须降级为参考信息，其中 conflict/degrade 事实必须能从 Session query 读回。
+- [ ] **Step 1: 写失败测试，冻结受约束的 retrieval/provider contract**
+  - 覆盖 `Session Service + Goal Contract` 仍是运行时真源，`Memory Hub` 只输出 advisory retrieval、skills metadata 与 packet inputs。
+  - 覆盖 `resident` 受硬预算约束，并且进入当前 turn 后保持 frozen，不被当轮 memory update 回改。
+  - 覆盖 resident write surface 具备 `add|replace|remove` 或等价语义，容量压力下必须显式 consolidate，而不是静默追加。
+  - 覆盖 `session search archive` 只返回摘要、引用与 expansion handles，不返回整段原始 transcript / log / blob 进入热路径。
+  - 覆盖 `skill registry` 默认只暴露名称、短描述、trust/security/update 元数据，全文按需展开。
+  - 覆盖 `Session Service` 提供事件切片读取能力，summary/packet input 不得替代 raw event replayability；compaction 后仍可通过 cursor/range/anchor 恢复关键 raw events。
+  - 覆盖 `security_verdict` 是注入前强制门禁，正式枚举至少包括 `pass|caution|warn|dangerous|quarantine`；其中 `dangerous` 不可 override、只能 quarantine，`caution|warn` 也只能在人工 override 留痕后降级为 reference-only。
+  - 覆盖 `Memory Hub` 不可用时必须退化为 `Session Service + runtime snapshot`，并以 `Session Service` 事件显式记录降级事实。
+  - 覆盖 `memory_conflict_detected`、TTL 过期、skill 技术栈不匹配与 security verdict 失败时必须降级为参考信息，其中 conflict/degrade 事实必须带 `reason_code` 与 `source_ref`，并能从 Session query 读回。
+  - 覆盖 provider lifecycle 只作为 compatibility adapter，provider memory ops 只允许 `search|store|manage` 类受控操作，不能接管 final packet policy。
+  - 覆盖 retrieval 质量指标：`key_fact_recall`、`irrelevant_summary_precision`、`token_budget_utilization`、`expansion_miss_rate`。
+  - 覆盖 `AI_AutoSDLC`、`Cursor/受控聊天`、`User Model`、`Periodic Nudge` 只冻结 disabled-by-default preview contract，不作为一期 release blocker。
 
 - [ ] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_packets.py tests/test_watchdog_memory_degradation.py -q`
-  - Expected: 因 `Memory Hub` contract、四层分工、跨项目 skill 作用域、packet 组装或降级逻辑尚未实现而失败。
+  - Expected: 因 `Memory Hub` contract、session replay/JIT expansion、安全门禁、packet input 组装或降级逻辑尚未实现而失败。
 
-- [ ] **Step 3: 实现第一期完整可用但有边界的垂直切片**
+- [ ] **Step 3: 实现第一期完整可用但受约束的垂直切片**
   - 建立 `Project Registrar`、`Workspace Baseline Scanner`、`Incremental Workspace Indexer`。
-  - 实现 `Resident Prompt Memory` 编译器，冻结预算、裁剪和 provenance 规则。
-  - 实现 `Session Archive Memory` 的索引、检索和相关性摘要。
-  - 实现 `Skill Memory` registry、生命周期状态机和跨项目 scope，但一期只要求 `project-local` 与 `verified shared` 的读取/匹配/安全降级，自动跨项目推广只冻结 preview contract。
-  - 冻结 `User Model Memory` 的 assistive-only schema 与调用边界；若实现预览存储，也不得进入一期 release gate。
-  - 冻结 `Periodic Nudge` 的候选事件 contract 与推广边界；若实现预览生成，也只允许产出候选，不允许直接覆盖 canonical resident memory。
-  - 实现统一 `ingest + packet contract`，其中 `watchdog/Codex` 为一期主路径；`AI_AutoSDLC`、`Cursor/受控聊天` 只保留 preview compatibility adapter 与 contract 占位。
+  - 实现 `resident memory facade`，冻结预算、裁剪和 provenance/security 规则。
+  - 实现 resident 的受控写语义与容量治理，禁止绕过 frozen packet block 的直连注入。
+  - 实现 `session search archive` 的索引、检索、摘要与 expansion handles。
+  - 实现 `skill registry facade` 与 trust/security/update 元数据，一期只要求 metadata、按需展开与安全降级，preview promotion 不进入正式主路径；skill body 继续由 source-of-truth 提供，Memory Hub 只持有 metadata/reference。
+  - 冻结 `User Model`、`Periodic Nudge`、`AI_AutoSDLC`、`Cursor/受控聊天` 的 preview schema 与调用边界；它们缺省 disabled，不进入一期 release gate。
+  - 实现统一 `ingest + packet input contract`，其中 `watchdog/Codex` 为一期主路径；final packet policy 仍由调用侧 harness 决定。
+  - provider lifecycle 只作为 compatibility adapter 落地，provider memory ops 限定在受控 memory record 范围内，不获得 shell/toolchain/credential 通道。
   - transcript、artifact、retrieval packet 只建索引和 blob 引用，不进入热路径真源表。
-  - 所有条目必须带 `project_id/session_id/task_id/source_runtime/source_kind/source_scope/source_ref/captured_at/content_hash/freshness_ttl/last_verified_at` provenance。
+  - 所有条目必须带 provenance；project/archive 条目强制 `project_id`，user/global 条目允许 project/task 为空，但必须显式标明 scope、source、timestamp、hash、freshness 与 security verdict。
   - `Memory Hub` 不可用或与 Session facts 冲突时，必须先写入 `memory_unavailable_degraded` / `memory_conflict_detected` 到 `Session Service`，再执行 packet 降级；Memory 本地日志不得替代 canonical event。
-  - 一期 release gate 只要求 `Codex` 主路径、resident/archive/skills packet 和安全降级闭环，不先做通用知识平台能力。
-  - `AI_AutoSDLC`、`User Model Memory`、`Periodic Nudge`、自动 shared promotion、`Cursor/受控聊天` 实时接入即使落地，也仅作为 preview，不阻塞一期发布。
-  - `Memory Hub` 不可用、冲突或 freshness 失效时，必须保证 Codex 仍可依靠 `Session Service + runtime snapshot` 接续。
+  - 一期 release gate 只要求 `Codex` 主路径、resident/search/skills packet inputs、安全门禁与降级闭环，不先做通用知识平台能力。
+  - `Memory Hub` 不可用、冲突、TTL 失效或 security verdict 不通过时，必须保证 Codex 仍可依靠 `Session Service + runtime snapshot` 接续。
 
 - [ ] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_packets.py tests/test_watchdog_memory_degradation.py tests/test_watchdog_session_spine_runtime.py -q`
@@ -393,8 +394,8 @@
 - [ ] 完成 Task 2 后，确认 `session_spine` / approval inbox / notification status / audit query 都优先读事件投影。
 - [ ] 完成 Task 3 后，确认 Goal Contract 成为显式持久化对象，不再只是 prompt 片段，当前有效 version 只来源于 `Session Service` 事件，`AI_AutoSDLC.stage/active_goal` 只能作为上下文与模板来源。
 - [ ] 完成 Task 4 后，确认 `remote compact` 一类问题走 recovery transaction，而不是重复旧会话重试。
-- [ ] 完成 Task 5 后，确认 `Memory Hub` 以独立 contract 对外提供 `resident/archive/skills/packet` 能力；`user-model/periodic-nudge` 如存在也仅为 assistive-only preview contract，且不覆盖 Session truth / Goal Contract。
-- [ ] 完成 Task 5 后，确认长期记忆写入遵循“基线建档 + 增量摄取 + provenance”，共享技能必须经过推广验证，`watchdog/Codex` 主路径已接入，`AI_AutoSDLC` 仅保留 preview compatibility contract，preview 入口不阻塞一期放行，且 `Memory Hub` 不可用或冲突时会写入 `memory_unavailable_degraded` / `memory_conflict_detected` canonical event 后再安全降级。
+- [ ] 完成 Task 5 后，确认 `Memory Hub` 以独立 contract 对外提供 `resident/session-search/skills/packet-inputs` 能力；`user-model/periodic-nudge` 如存在也仅为 assistive-only preview contract，且不覆盖 Session truth / Goal Contract。
+- [ ] 完成 Task 5 后，确认长期记忆写入遵循“基线建档 + 增量摄取 + provenance + security verdict”，`watchdog/Codex` 主路径已接入，`AI_AutoSDLC` 仅保留 disabled-by-default preview compatibility contract，preview 入口不阻塞一期放行，且 `Memory Hub` 不可用或冲突时会写入 `memory_unavailable_degraded` / `memory_conflict_detected` canonical event 后再安全降级。
 - [ ] 完成 Task 6 后，确认 `Brain` 具备 provider certification、replay、decision validation 和低风险自动决策闭环，且受明确量化 release gate、证据包和放行报告约束。
 - [ ] 完成 Task 6 后，确认 release gate 的样本冻结、人工标注、报告归档均有脚本化产物与责任人元数据，不能靠临时人工流程替代。
 - [ ] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，OpenClaw 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
