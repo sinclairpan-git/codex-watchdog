@@ -1,0 +1,134 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T371
+  title: 冻结 037 formal docs 与一期 e2e release blocker 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/037-autonomy-golden-path-and-release-gate-e2e/spec.md`'
+  - '`specs/037-autonomy-golden-path-and-release-gate-e2e/plan.md`'
+  - '`specs/037-autonomy-golden-path-and-release-gate-e2e/tasks.md`'
+  - '`specs/037-autonomy-golden-path-and-release-gate-e2e/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/runtime.yaml`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T372
+  title: 写失败测试锁定一期 golden path、midstate recovery 与 release gate e2e blocker
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/e2e/test_watchdog_autonomy_golden_path.py`'
+  - '`tests/e2e/test_watchdog_midstate_recovery.py`'
+  - '`tests/e2e/test_watchdog_release_gate_e2e.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: in_progress
+  depends_on:
+  - T371
+- task_id: T373
+  title: 补齐 golden path 所需的跨模块 glue 与恢复接续
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`src/watchdog/services/brain/release_gate_evidence.py`'
+  - '`src/watchdog/services/feishu_control/service.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T372
+- task_id: T374
+  title: 收口 release gate formal artifacts、阻断语义与 ops surfacing
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`src/watchdog/services/brain/release_gate_evidence.py`'
+  - '`tests/e2e/test_watchdog_release_gate_e2e.py`'
+  - '`tests/test_watchdog_ops.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T373
+- task_id: T375
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/037-autonomy-golden-path-and-release-gate-e2e/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/runtime.yaml`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T374
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T371
+  status: completed
+  started_at: '2026-04-14T03:00:00+08:00'
+  completed_at: '2026-04-14T03:18:00+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T372
+  status: in_progress
+  started_at: '2026-04-14T03:18:00+08:00'
+  completed_at: ''
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T373
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T374
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T375
+  status: pending
+  started_at: ''
+  completed_at: ''
+current_batch: 2

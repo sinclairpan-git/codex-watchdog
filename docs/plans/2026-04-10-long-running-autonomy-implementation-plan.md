@@ -363,6 +363,8 @@
 
 ### Task 8: 固化一期通关验收与端到端 release gate
 
+**Canonical execution work item:** `specs/037-autonomy-golden-path-and-release-gate-e2e/`
+
 **Files:**
 - Create: `tests/e2e/test_watchdog_autonomy_golden_path.py`
 - Create: `tests/e2e/test_watchdog_midstate_recovery.py`
