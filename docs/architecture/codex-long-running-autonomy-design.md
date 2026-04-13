@@ -92,7 +92,7 @@
 flowchart LR
     USER["用户"] <--> FEI["飞书自建机器人\nDM 主入口 / 群聊辅入口"]
     FEI <--> CMD["Command Gateway\n中文意图绑定 / ACL / 回放保护"]
-    CMD --> BRAIN["Brain\nPolicy Gate / Packet Builder / Goal Closure Judge /\nRecovery Planner / Decision Validator"]
+    CMD --> BRAIN["Brain\nPolicy Gate / Decision Input Builder /\nGoal Closure Judge / Recovery Planner /\nDecision Validator / Release Gate"]
     BRAIN <--> MODEL["外部模型 Provider\n默认: MiniMax-M2.7 API"]
     BRAIN --> SVC["Session Service\n唯一真源 / Append-only events"]
     SVC --> PROJ["Projection Cache\nsession_spine / task views / audit facade"]
@@ -282,30 +282,45 @@ flowchart LR
 
 ### 5.4 Brain
 
-`Brain` 是决策层，不是执行层。它至少拆成 5 个子能力：
+`Brain` 是决策层，不是执行层，也不是新的事实层或 prompt/runtime 中枢。它至少拆成 8 个子能力：
 
 - `Policy Gate`
   - 硬边界、风险等级、审批要求、恢复预算；
-- `Packet Builder`
-  - 从 Session、runtime snapshot、Memory Hub 组装模型输入；
+- `Decision Input Builder`
+  - 从 Session、runtime snapshot、Goal Contract 与 Memory Hub refs 生成 versioned `decision_packet_input`；
+  - 只输出 summary、retrieval refs、expansion handles、hashes 与 provenance，不拥有最终 prompt/messages 组装权；
 - `Goal Closure Judge`
   - 判断是子任务完成、候选完成，还是整个目标完成；
 - `Recovery Planner`
   - 判断是否需要 handoff、开新会话、恢复后继续；
 - `Decision Validator`
   - 校验模型输出 schema、风险边界、幂等性与执行资格。
+- `Provider Certification`
+  - 认证 inference provider 与 memory adapter contract，但不负责 provider 选择、切换或 lifecycle；
+- `Historical Replay`
+  - 同时支持冻结 packet replay 与基于 canonical events 的语义 replay；
+- `Release Gate`
+  - 只负责低风险自动决策资格校验，不是平台总闸门。
 
 第一期不允许只交付“Session/Memory/Feishu 外壳”而缺失决策闭环。  
 在架构层面，以下能力缺一不可，否则不得宣称进入可上线自治状态：
 
 - `Policy Gate`
-- `Packet Builder`
+- `Decision Input Builder`
 - `Goal Closure Judge`
 - `Recovery Planner`
 - `Decision Validator`
 - `Provider certification`
 - `historical packet replay`
 - `low-risk auto-decision`
+
+同时必须冻结以下硬边界：
+
+- `Brain` 的 packet、summary、report、trace 都是 derived artifacts，不得成为审批、完成态、恢复态或执行态真相；
+- `Brain` 只输出声明式 `DecisionIntent`，不得直接 claim lease、执行工具、写 session 终态或修改 approval state；
+- `Decision Input Builder` 不是 prompt builder，最终 prompt/messages/tool schema 仍由调用侧 harness 组装；
+- 风险带、审批要求与完成判定只由 `Policy rules + Session facts + Goal Contract` 决定，memory recall、skills、User Model 与 provider confidence 都不得降级风险或绕过审批；
+- `release_gate_report` 只约束 low-risk auto-decision；报告缺失、过期或哈希不一致时，一律自动降级到 `suggest-only` 或人工路径。
 
 ### 5.5 Memory Hub
 
@@ -322,7 +337,7 @@ flowchart LR
 它的第一阶段成功标准固定为：
 
 - 能支撑 Codex 因 `remote compact`、线程切换、跨会话 handoff 导致的长时开发连续性；
-- 能把项目事实、恢复案例、技能候选稳定提供给 Brain/Packet Builder；
+- 能把项目事实、恢复案例、技能候选稳定提供给 Brain/Decision Input Builder；
 - 能为 `AI_AutoSDLC` 保留兼容的 stage-aware packet schema，但不把该入口纳入一期放行门槛；
 - 四层记忆都只交付服务于“接续、自动决策、技能复用、解释性”的最小可用切片，不先做通用知识平台；
 - 如果某项功能不能提升“接续、自动决策、技能复用、解释性”这四件事，就不进入第一期。
@@ -808,7 +823,7 @@ flowchart LR
 - 即使 `Memory Hub` 不可用，也能依靠 `Session events + runtime snapshot` 完成接续；
 - `Memory Hub` 不可用时，必须以 `Session Service` 事件记录 `memory_unavailable_degraded`，并显式退化到 `Tier 1 + Tier 2` packet；
 - `Memory Hub` 派生字段默认只作为 advisory，不得覆盖最新 Session facts；
-- Packet Builder 必须记录每个字段的 provenance 与 freshness；
+- Decision Input Builder 必须记录每个字段的 provenance 与 freshness；
 - 发生冲突时优先级固定为：
   - `Session events > Goal Contract > runtime snapshot > resident memory > archive summary > skill memory > user model`
 - 若 `Memory Hub` 与 `Session` 冲突，系统必须以 `Session Service` 事件记录 `memory_conflict_detected` 并把 Memory 字段降级为参考信息；

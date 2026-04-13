@@ -253,9 +253,11 @@
 
 ### Task 6: 补齐 Brain / Provider certification / replay / 低风险自动决策闭环
 
+**Canonical execution work item:** `specs/035-brain-decision-boundary-and-release-gate/`
+
 **Files:**
 - Create: `src/watchdog/services/brain/models.py`
-- Create: `src/watchdog/services/brain/packets.py`
+- Create: `src/watchdog/services/brain/decision_input_builder.py`
 - Create: `src/watchdog/services/brain/service.py`
 - Create: `src/watchdog/services/brain/validator.py`
 - Create: `src/watchdog/services/brain/provider_certification.py`
@@ -277,33 +279,35 @@
 - Create: `tests/fixtures/release_gate_label_manifest.json`
 
 - [ ] **Step 1: 写失败测试，冻结决策闭环能力**
-  - 覆盖 `Policy Gate -> Packet Builder -> Goal Closure Judge -> Recovery Planner -> Decision Validator` 的最小顺序闭环。
+  - 覆盖 `Policy Gate -> Decision Input Builder -> Goal Closure Judge -> Recovery Planner -> Decision Validator` 的最小顺序闭环。
+  - 覆盖 `Brain` 只能产出声明式 `DecisionIntent`，不得直接执行工具、claim lease、写完成态或修改 approval state。
+  - 覆盖 `DecisionInputBuilder` 只生成 versioned `decision_packet_input`，不拥有最终 prompt/messages/tool schema 组装权。
   - 覆盖 provider 未通过 certification 时只能停留在 `observe-only` 或 `suggest-only`。
-  - 覆盖低风险自动决策必须同时满足 `Goal Contract` 完整、provider 合格、risk band 允许、packet freshness 合格。
-  - 覆盖历史 packet replay、provider 对比和决策漂移记录。
+  - 覆盖低风险自动决策必须同时满足 `Goal Contract` 完整、provider 合格、risk band 允许、decision input freshness 合格、当前有效 approval 存在且未过期。
+  - 覆盖历史 `packet_replay`、`session_semantic_replay`、provider 对比和决策漂移记录。
   - 覆盖 release gate 的量化门槛：样本规模、schema 成功率、安全失败率、漂移率、错误完成率和 shadow override 率。
   - 覆盖 release gate 证据生产闭环：`certification_packet_corpus`、`shadow_decision_ledger`、`release_gate_report` 三类产物缺一不可，没有有效报告时不得切入 `low-risk auto-decision`。
   - 覆盖 `memory degrade/conflict` 样本必须优先从 `Session Service` 的 canonical event 语料进入认证集，不能只靠 Memory Hub 内部夹具凑数。
   - 覆盖 `release_gate_report` 必须引用冻结窗口、`label_manifest`、`generated_by`、`approved_by` 与归档地址；缺任一字段不得视为可放行报告。
-  - 覆盖 provider/model/prompt/schema/risk-policy 任何一项变化都会使既有 `release_gate_report` 失效，必须重新认证。
+  - 覆盖 provider/model/prompt/schema/risk-policy/tool-schema/memory-adapter 任一变化都会使既有 `release_gate_report` 失效，必须重新认证。
 
 - [ ] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py -q`
   - Expected: 因 `Brain` 闭环、provider 准入、replay harness、release gate 证据包或量化放行报告尚未实现而失败。
 
 - [ ] **Step 3: 实现最小 Brain 决策闭环**
-  - 实现 `Packet Builder`、`Goal Closure Judge`、`Recovery Planner`、`Decision Validator` 的最小服务编排。
-  - 实现 provider certification、模式分级和结构化输出校验。
-  - 实现历史 packet replay 与 provider 对比入口，输出漂移和失败原因。
+  - 实现 `Decision Input Builder`、`Goal Closure Judge`、`Recovery Planner`、`Decision Validator` 的最小服务编排。
+  - 实现 provider certification、模式分级和结构化输出校验，并明确区分 inference provider certification 与 memory provider adapter certification。
+  - 实现历史 `packet_replay` 与 `session_semantic_replay`，输出漂移、缺口原因和失败分类。
   - 实现 `release_gate_evidence`，把历史 packet、人工标注和 shadow mode 候选决策冻结为 `certification_packet_corpus` 与 `shadow_decision_ledger`，并产出可追溯哈希。
   - 在证据构建时优先消费 `memory_unavailable_degraded`、`memory_conflict_detected` 的 Session event 语料，保证 memory 场景覆盖来自 canonical truth 而非旁路日志。
   - 实现固定脚本/运行规程，产出 `label_manifest`、冻结窗口、报告归档路径和责任人元数据；禁止靠人工拼接放行材料。
-  - 实现 release gate evaluator，基于证据包生成唯一有效的 `release_gate_report`；未达门槛、报告缺失、报告过期或输入哈希不一致时自动停留在 `observe-only/suggest-only`，门槛回归失败时自动降级。
-  - 仅在低风险前提满足时允许 `auto_execute`，否则退化为 `notify_only`、`need_human` 或 `await_human`。
+  - 实现 release gate evaluator，基于证据包生成唯一有效的 `release_gate_report`；未达门槛、报告缺失、报告过期、输入哈希不一致或当前 approval 不满足时自动停留在 `observe-only/suggest-only`，门槛回归失败时自动降级。
+  - 仅在低风险前提满足时允许 orchestrator 消费 `propose_execute` 进入执行面，否则退化为 `suggest_only`、`require_approval` 或 `reject`。
 
 - [ ] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py -q`
-  - Expected: 自治主链路具备可评估、可回放、可降级的低风险自动决策能力，并且 low-risk 模式受“量化门槛 + 证据包 + 放行报告”三重约束。
+  - Expected: 自治主链路具备可评估、可回放、可降级的低风险自动决策能力，并且 low-risk 模式受“量化门槛 + 证据包 + 放行报告 + runtime 校验”四重约束。
 
 - [ ] **Step 5: 提交**
   - `git add src/watchdog/services/brain scripts/generate_release_gate_report.py docs/operations/release-gate-runbook.md src/watchdog/services/policy/engine.py src/watchdog/services/session_spine/orchestrator.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/fixtures/release_gate_packets.jsonl tests/fixtures/release_gate_shadow_runs.jsonl tests/fixtures/release_gate_expected_report.json tests/fixtures/release_gate_label_manifest.json`
