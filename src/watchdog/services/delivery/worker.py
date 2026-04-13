@@ -184,6 +184,31 @@ class DeliveryWorker:
                 event_payload=receipt_payload,
             )
 
+    def _record_notification_requeued(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+        reason: str,
+        next_retry_at: str | None = None,
+        failure_code: str | None = None,
+    ) -> None:
+        requeue_payload = self._notification_payload_fields(record, payload)
+        requeue_payload["reason"] = reason
+        if next_retry_at is not None:
+            requeue_payload["next_retry_at"] = next_retry_at
+        if failure_code is not None:
+            requeue_payload["failure_code"] = failure_code
+        retry_point = next_retry_at or f"attempt:{record.delivery_attempt}"
+        self._record_notification_event(
+            event_type="notification_requeued",
+            record=record,
+            payload=payload,
+            correlation_id=f"corr:notification:{record.envelope_id}:requeue:{retry_point}",
+            causation_id=str(payload.get("event_id") or record.envelope_id),
+            event_payload=requeue_payload,
+        )
+
     def _next_ready_record(
         self,
         *,
@@ -306,7 +331,17 @@ class DeliveryWorker:
                 "updated_at": _iso_z(now),
             }
         )
-        return self._store.update_delivery_record(updated)
+        updated = self._store.update_delivery_record(updated)
+        notification_payload = self._notification_payload(record)
+        if notification_payload is not None:
+            self._record_notification_requeued(
+                record=updated,
+                payload=notification_payload,
+                reason="suppressed_local_manual_activity",
+                next_retry_at=next_retry_at,
+                failure_code="suppressed_local_manual_activity",
+            )
+        return updated
 
     def _stale_progress_summary(
         self,
@@ -437,6 +472,14 @@ class DeliveryWorker:
                     payload=notification_payload,
                     result=result,
                 )
+                if updated.delivery_status == "retrying":
+                    self._record_notification_requeued(
+                        record=updated,
+                        payload=notification_payload,
+                        reason="retryable_delivery_failure",
+                        next_retry_at=updated.next_retry_at,
+                        failure_code=result.failure_code,
+                    )
             return updated
         notes = list(record.operator_notes)
         notes.append(

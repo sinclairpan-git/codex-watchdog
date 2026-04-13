@@ -790,6 +790,53 @@ def test_delivery_worker_fails_closed_before_notification_side_effect_when_sessi
     assert persisted.delivery_attempt == 0
 
 
+def test_delivery_worker_records_notification_requeued_after_retryable_failure(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    (record,) = store.enqueue_envelopes(
+        [
+            _notification(
+                envelope_id="notification-envelope:retry-requeued",
+                correlation_id="progress-summary:repo-a:retry-requeued",
+                event_id="event:notification-retry-requeued",
+            )
+        ]
+    )
+    client = _OrderedClient(record.envelope_id)
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path),
+        session_service=service,
+    )
+
+    retried = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert retried is not None
+    assert retried.delivery_status == "retrying"
+    events = service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value=record.envelope_id,
+    )
+    assert [event.event_type for event in events] == [
+        "notification_announced",
+        "notification_delivery_failed",
+        "notification_requeued",
+    ]
+    assert events[1].payload["failure_code"] == "upstream_503"
+    assert events[2].payload["reason"] == "retryable_delivery_failure"
+    assert events[2].payload["next_retry_at"] == "2026-04-07T00:00:05Z"
+    assert events[2].payload["delivery_attempt"] == 1
+
+
 def test_delivery_worker_records_dead_letter_note_when_retry_budget_is_exhausted(
     tmp_path: Path,
 ) -> None:
@@ -967,6 +1014,7 @@ def test_delivery_worker_defers_non_critical_notifications_during_local_manual_a
 ) -> None:
     from datetime import datetime, timezone
 
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
     progress_summary = NotificationEnvelope(
         envelope_id="notification-envelope:quiet-progress",
@@ -1017,6 +1065,7 @@ def test_delivery_worker_defers_non_critical_notifications_during_local_manual_a
         session_spine_store=_SessionSpineStoreStub(
             last_local_manual_activity_at="2026-04-07T00:19:50Z"
         ),
+        session_service=service,
         settings=_settings(tmp_path),
     )
 
@@ -1043,6 +1092,24 @@ def test_delivery_worker_defers_non_critical_notifications_during_local_manual_a
     assert delivered.envelope_id == delivered_record.envelope_id
     assert delivered.delivery_status == "delivered"
     assert client.calls == [delivered_record.envelope_id]
+    suppressed_events = service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value=suppressed_record.envelope_id,
+    )
+    delivered_events = service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value=delivered_record.envelope_id,
+    )
+    assert [event.event_type for event in suppressed_events] == ["notification_requeued"]
+    assert suppressed_events[0].payload["reason"] == "suppressed_local_manual_activity"
+    assert suppressed_events[0].payload["next_retry_at"] == "2026-04-07T00:29:50Z"
+    assert [event.event_type for event in delivered_events] == [
+        "notification_announced",
+        "notification_delivery_succeeded",
+        "notification_receipt_recorded",
+    ]
 
 
 def test_delivery_worker_delivers_deferred_notification_after_local_manual_activity_quiet_window(
