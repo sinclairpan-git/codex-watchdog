@@ -606,6 +606,7 @@ def respond_to_canonical_approval(
         approval_result: WatchdogActionResult | None = None
         execution_result: WatchdogActionResult | None = None
         next_status = approval.status
+        response_id = f"approval-response:{_short_hash(response_key)}"
 
         if response_action == "reject":
             approval_result = _approval_action_result(
@@ -660,7 +661,7 @@ def respond_to_canonical_approval(
                 related_ids={
                     "approval_id": updated_approval.approval_id,
                     "decision_id": updated_approval.decision.decision_id,
-                    "response_id": f"approval-response:{_short_hash(response_key)}",
+                    "response_id": response_id,
                 },
                 payload={
                     "response_action": response_action,
@@ -668,6 +669,30 @@ def respond_to_canonical_approval(
                     "operator": operator,
                     "note": note,
                 },
+            )
+            override_payload = {
+                "response_action": response_action,
+                "approval_status": next_status,
+                "operator": operator,
+                "note": note,
+                "requested_action": updated_approval.requested_action,
+            }
+            if execution_result is not None:
+                override_payload["execution_status"] = execution_result.action_status
+                override_payload["execution_effect"] = execution_result.effect
+            session_service.record_event(
+                event_type="human_override_recorded",
+                project_id=updated_approval.project_id,
+                session_id=updated_approval.session_id,
+                correlation_id=f"corr:override:{response_id}",
+                causation_id=response_id,
+                related_ids={
+                    "approval_id": updated_approval.approval_id,
+                    "decision_id": updated_approval.decision.decision_id,
+                    "response_id": response_id,
+                    "envelope_id": updated_approval.envelope_id,
+                },
+                payload=override_payload,
             )
 
         operator_notes = [
@@ -679,7 +704,7 @@ def respond_to_canonical_approval(
                 f"execution={execution_result.action_status} effect={execution_result.effect}"
             )
         response = CanonicalApprovalResponseRecord(
-            response_id=f"approval-response:{_short_hash(response_key)}",
+            response_id=response_id,
             envelope_id=envelope_id,
             approval_id=updated_approval.approval_id,
             response_action=response_action,

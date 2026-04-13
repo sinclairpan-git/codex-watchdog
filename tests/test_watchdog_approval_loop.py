@@ -732,9 +732,14 @@ def test_respond_to_canonical_approval_records_session_event(
         session_id=approval.session_id,
         event_type=expected_event_type,
     )
+    override_events = session_service.list_events(
+        session_id=approval.session_id,
+        event_type="human_override_recorded",
+    )
 
     assert result.approval_status == expected_status
     assert len(events) == 1
+    assert len(override_events) == 1
     assert events[0].correlation_id == f"corr:approval:{approval.approval_id}"
     assert events[0].related_ids == {
         "approval_id": approval.approval_id,
@@ -742,6 +747,20 @@ def test_respond_to_canonical_approval_records_session_event(
         "response_id": result.response_id,
     }
     assert events[0].payload["response_action"] == response_action
+    assert override_events[0].related_ids == {
+        "approval_id": approval.approval_id,
+        "decision_id": approval.decision.decision_id,
+        "response_id": result.response_id,
+        "envelope_id": approval.envelope_id,
+    }
+    assert override_events[0].payload["response_action"] == response_action
+    assert override_events[0].payload["approval_status"] == expected_status
+    assert override_events[0].payload["operator"] == "alice"
+    assert override_events[0].payload["note"] == "looks safe"
+    assert override_events[0].payload["requested_action"] == approval.requested_action
+    if response_action == "approve":
+        assert override_events[0].payload["execution_status"] == "completed"
+        assert override_events[0].payload["execution_effect"] == "handoff_triggered"
 
 
 def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: Path) -> None:
@@ -777,6 +796,13 @@ def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: 
     assert second.status_code == 200
     assert first.json()["success"] is True
     assert first.json()["data"] == second.json()["data"]
+    override_events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="human_override_recorded",
+    )
+    assert len(override_events) == 1
+    assert override_events[0].payload["response_action"] == "approve"
+    assert override_events[0].payload["operator"] == "carol"
 
 
 def test_concurrent_approval_responses_execute_side_effects_once(tmp_path: Path) -> None:
