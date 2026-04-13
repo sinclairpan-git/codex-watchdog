@@ -20,3 +20,19 @@
   这些模块现在被正式列为 036 的实现边界，避免后续红测/实现阶段再临时改 scope。
 - Hermes Agent 专家终审：无 blocking/P1，确认 Feishu 主控制面、Session truth 与 OpenClaw compatibility-only 边界表述一致。
 - Anthropic Manager 专家终审：无 blocking/P1，确认 delivery ownership 已补齐，work item 可直接进入 `T362` 红测。
+
+### Phase 2 / 3：Feishu control red -> green
+
+- 新增 `tests/test_watchdog_feishu_control.py`：
+  - 高风险 approval 仅允许 `dm`；
+  - Feishu response 必须先写 `notification_receipt_recorded`，再进入 `approval_approved` / `human_override_recorded`；
+  - 过期窗口写 `interaction_window_expired`；
+  - superseded context 写 `interaction_context_superseded` 并拒绝旧上下文。
+- 新增 `tests/test_watchdog_notification_delivery.py`：
+  - interaction metadata 必须进入 `notification_announced` / `notification_delivery_succeeded` / `notification_requeued` 等 canonical events。
+- 新增 `src/watchdog/services/feishu_control/service.py` 与 `src/watchdog/api/feishu_control.py`，并在 `main.py` 注册 `/api/v1/watchdog/feishu/control`。
+- `delivery/envelopes.py`、`delivery/worker.py`、`session_service/models.py` 与 `session_spine/projection.py` 已补 interaction metadata 与新事件类型。
+- 本地验证：
+  - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py` -> `11 passed in 1.04s`
+  - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 1.59s`
+- 实现后再次尝试 Hermes / Anthropic 实现切片对抗评审，但 reviewer agent 未在时限内返回有效 blocking/P1 结论；当前以本地全量相关回归为主验证，并将下一轮 review 留在后续兼容层收口时一并执行。

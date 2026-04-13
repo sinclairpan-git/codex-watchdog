@@ -1,11 +1,11 @@
-current_stage: red_test
-current_batch: 2
-current_task: T362
-last_committed_task: T361
+current_stage: compatibility_wiring
+current_batch: 4
+current_task: T364
+last_committed_task: T363
 current_branch: codex/wi-036-feishu-control-plane
 ai_decisions_count: 0
 execution_mode: auto
 started_at: '2026-04-14T00:20:00+08:00'
-last_updated: '2026-04-14T00:36:00+08:00'
+last_updated: '2026-04-14T01:20:00+08:00'
 debug_rounds: {}
 consecutive_halts: 0

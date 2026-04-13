@@ -63,6 +63,16 @@ _SESSION_SERVICE_FACT_SPECS: dict[str, dict[str, str]] = {
         "severity": "info",
         "summary": "notification receipt recorded",
     },
+    "interaction_context_superseded": {
+        "fact_kind": "advisory",
+        "severity": "warning",
+        "summary": "interaction context superseded",
+    },
+    "interaction_window_expired": {
+        "fact_kind": "risk",
+        "severity": "warning",
+        "summary": "interaction window expired",
+    },
 }
 
 
@@ -145,6 +155,12 @@ def _session_event_detail(event: SessionEventRecord) -> str:
             f"delivery_status={delivery_status or 'unknown'} "
             f"receipt_id={receipt_id or 'unknown'}"
         )
+    if event_type == "interaction_context_superseded":
+        active_context = str(payload.get("active_interaction_context_id") or "").strip()
+        return f"active_interaction_context_id={active_context or 'unknown'}"
+    if event_type == "interaction_window_expired":
+        expired_at = str(payload.get("expired_at") or "").strip()
+        return f"expired_at={expired_at or 'unknown'}"
     return event.event_type
 
 

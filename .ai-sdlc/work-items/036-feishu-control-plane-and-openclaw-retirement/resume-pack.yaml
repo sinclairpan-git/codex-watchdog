@@ -1,6 +1,6 @@
-current_stage: red_test
-current_batch: 2
-last_committed_task: T361
+current_stage: compatibility_wiring
+current_batch: 4
+last_committed_task: T363
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -34,12 +34,15 @@ working_set_snapshot:
       - `src/watchdog/services/session_spine/projection.py`
       它们负责 notification truth / requeue / supersede / stale audit 的状态与读侧投影。
     - formal docs 已通过 Hermes Agent 专家与 Anthropic Manager 专家的最终 blocking/P1 复核。
-    - 最新验证：`uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py` -> `3 passed in 0.04s`
-    - 当前下一执行入口是 `T362`：写失败测试冻结 Feishu control、notification midstate 与 OpenClaw compatibility contract。
+    - `T362` / `T363` 已完成：Feishu 主 control route、receipt-first event ordering、expired/superseded interaction audit 与 notification interaction metadata 均已落地并过回归。
+    - 最新验证：
+      - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py` -> `11 passed in 1.04s`
+      - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 1.59s`
+    - 当前下一执行入口是 `T364`：把 `openclaw_bootstrap.py`、`openclaw_callbacks.py` 与 `OpenClawAdapter` 本体进一步收口到 compatibility-only 语义。
 current_branch: codex/wi-036-feishu-control-plane
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T00:36:00+08:00'
+timestamp: '2026-04-14T01:20:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

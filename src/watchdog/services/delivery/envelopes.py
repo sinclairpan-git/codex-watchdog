@@ -177,6 +177,11 @@ class EnvelopeBase(BaseModel):
     idempotency_key: str
     audit_ref: str
     created_at: str
+    interaction_context_id: str | None = None
+    interaction_family_id: str | None = None
+    actor_id: str | None = None
+    channel_kind: str | None = None
+    action_window_expires_at: str | None = None
 
 
 class DecisionEnvelope(EnvelopeBase):

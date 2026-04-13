@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.approvals.service import (
+    ApprovalResponseStore,
+    CanonicalApprovalRecord,
+    CanonicalApprovalStore,
+    CanonicalApprovalResponseRecord,
+    respond_to_canonical_approval,
+)
+from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
+from watchdog.services.session_service.service import SessionService
+from watchdog.settings import Settings
+from watchdog.storage.action_receipts import ActionReceiptStore
+
+
+def _parse_timestamp(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+class FeishuControlError(ValueError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class FeishuControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: str = Field(min_length=1)
+    interaction_context_id: str = Field(min_length=1)
+    interaction_family_id: str = Field(min_length=1)
+    actor_id: str = Field(min_length=1)
+    channel_kind: str = Field(min_length=1)
+    occurred_at: str = Field(min_length=1)
+    action_window_expires_at: str = Field(min_length=1)
+    envelope_id: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    decision_id: str = Field(min_length=1)
+    response_action: str = Field(min_length=1)
+    response_token: str = Field(min_length=1)
+    client_request_id: str = Field(min_length=1)
+    note: str = ""
+
+
+class FeishuControlService:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        client: AControlAgentClient,
+        receipt_store: ActionReceiptStore,
+        approval_store: CanonicalApprovalStore,
+        response_store: ApprovalResponseStore,
+        delivery_outbox_store: DeliveryOutboxStore,
+        session_service: SessionService,
+    ) -> None:
+        self._settings = settings
+        self._client = client
+        self._receipt_store = receipt_store
+        self._approval_store = approval_store
+        self._response_store = response_store
+        self._delivery_outbox_store = delivery_outbox_store
+        self._session_service = session_service
+
+    def handle_approval_response(
+        self,
+        request: FeishuControlRequest,
+    ) -> CanonicalApprovalResponseRecord:
+        if request.event_type != "approval_response":
+            raise FeishuControlError("event_type must be approval_response")
+
+        approval = self._approval_store.get(request.envelope_id)
+        if approval is None:
+            raise KeyError(f"unknown approval envelope: {request.envelope_id}")
+        self._validate_approval_contract(approval, request)
+        self._assert_dm_channel(request)
+        self._assert_not_expired(approval, request)
+        self._assert_not_superseded(approval, request)
+        self._record_receipt(approval, request)
+
+        return respond_to_canonical_approval(
+            envelope_id=request.envelope_id,
+            response_action=request.response_action,
+            client_request_id=request.client_request_id,
+            operator=request.actor_id,
+            note=request.note,
+            approval_store=self._approval_store,
+            response_store=self._response_store,
+            settings=self._settings,
+            client=self._client,
+            receipt_store=self._receipt_store,
+            delivery_outbox_store=self._delivery_outbox_store,
+            session_service=self._session_service,
+        )
+
+    def _validate_approval_contract(
+        self,
+        approval: CanonicalApprovalRecord,
+        request: FeishuControlRequest,
+    ) -> None:
+        if request.approval_id != approval.approval_id:
+            raise FeishuControlError("approval_id does not match envelope_id")
+        if request.decision_id != approval.decision.decision_id:
+            raise FeishuControlError("decision_id does not match envelope_id")
+        if request.response_token != approval.approval_token:
+            raise FeishuControlError("response_token does not match envelope_id")
+
+    @staticmethod
+    def _assert_dm_channel(request: FeishuControlRequest) -> None:
+        if request.channel_kind.strip().lower() != "dm":
+            raise FeishuControlError("high-risk approval responses require dm channel")
+
+    def _assert_not_expired(
+        self,
+        approval: CanonicalApprovalRecord,
+        request: FeishuControlRequest,
+    ) -> None:
+        occurred_at = _parse_timestamp(request.occurred_at)
+        expires_at = _parse_timestamp(request.action_window_expires_at)
+        if occurred_at < expires_at:
+            return
+        self._session_service.record_event(
+            event_type="interaction_window_expired",
+            project_id=approval.project_id,
+            session_id=approval.session_id,
+            correlation_id=f"corr:interaction:{request.interaction_context_id}:expired",
+            causation_id=request.client_request_id,
+            related_ids={
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "envelope_id": approval.envelope_id,
+                "interaction_context_id": request.interaction_context_id,
+                "interaction_family_id": request.interaction_family_id,
+                "actor_id": request.actor_id,
+            },
+            occurred_at=request.occurred_at,
+            payload={
+                "channel_kind": request.channel_kind,
+                "expired_at": request.action_window_expires_at,
+                "received_at": request.occurred_at,
+            },
+        )
+        raise FeishuControlError("interaction window expired")
+
+    def _assert_not_superseded(
+        self,
+        approval: CanonicalApprovalRecord,
+        request: FeishuControlRequest,
+    ) -> None:
+        active = self._active_context_for_family(request.interaction_family_id)
+        active_context_id = None if active is None else active.envelope_payload.get("interaction_context_id")
+        if active is None or active_context_id == request.interaction_context_id:
+            return
+        self._session_service.record_event(
+            event_type="interaction_context_superseded",
+            project_id=approval.project_id,
+            session_id=approval.session_id,
+            correlation_id=f"corr:interaction:{request.interaction_family_id}:superseded",
+            causation_id=request.client_request_id,
+            related_ids={
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "envelope_id": approval.envelope_id,
+                "interaction_context_id": request.interaction_context_id,
+                "interaction_family_id": request.interaction_family_id,
+                "actor_id": request.actor_id,
+            },
+            occurred_at=request.occurred_at,
+            payload={
+                "active_interaction_context_id": str(active_context_id or ""),
+                "active_envelope_id": active.envelope_id,
+                "channel_kind": request.channel_kind,
+            },
+        )
+        raise FeishuControlError("interaction context has been superseded")
+
+    def _record_receipt(
+        self,
+        approval: CanonicalApprovalRecord,
+        request: FeishuControlRequest,
+    ) -> None:
+        self._session_service.record_event(
+            event_type="notification_receipt_recorded",
+            project_id=approval.project_id,
+            session_id=approval.session_id,
+            correlation_id=(
+                f"corr:notification:{approval.envelope_id}:receipt:{request.client_request_id}"
+            ),
+            causation_id=request.client_request_id,
+            related_ids={
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "envelope_id": approval.envelope_id,
+                "receipt_id": f"feishu-receipt:{request.client_request_id}",
+                "interaction_context_id": request.interaction_context_id,
+                "interaction_family_id": request.interaction_family_id,
+                "actor_id": request.actor_id,
+            },
+            occurred_at=request.occurred_at,
+            payload={
+                "channel_kind": request.channel_kind,
+                "receipt_id": f"feishu-receipt:{request.client_request_id}",
+                "received_at": request.occurred_at,
+                "delivery_status": "user_replied",
+                "response_action": request.response_action,
+            },
+        )
+
+    def _active_context_for_family(
+        self,
+        interaction_family_id: str,
+    ) -> DeliveryOutboxRecord | None:
+        candidates: list[DeliveryOutboxRecord] = []
+        for record in self._delivery_outbox_store.list_records():
+            payload = record.envelope_payload
+            if payload.get("interaction_family_id") != interaction_family_id:
+                continue
+            if not payload.get("interaction_context_id"):
+                continue
+            if record.delivery_status in {"superseded", "delivery_failed"}:
+                continue
+            candidates.append(record)
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda record: (
+                record.updated_at or record.created_at,
+                record.outbox_seq,
+            ),
+        )

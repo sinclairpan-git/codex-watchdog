@@ -290,3 +290,14 @@ def test_reference_runtime_prefers_compatibility_fields_when_rendering_decision_
         "summary": "compat decision summary",
         "decision_result": "auto_execute_and_notify",
     }
+
+
+def test_app_exposes_feishu_primary_control_route_alongside_openclaw_compatibility_routes(
+    tmp_path: Path,
+) -> None:
+    app = create_app(settings=_settings(tmp_path), a_client=_RejectOnlyAClient())
+
+    paths = {route.path for route in app.routes}
+
+    assert "/api/v1/watchdog/feishu/control" in paths
+    assert "/api/v1/watchdog/openclaw/responses" in paths

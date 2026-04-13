@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import events_proxy as events_proxy_routes
+from watchdog.api import feishu_control as feishu_control_routes
 from watchdog.api import metrics as metrics_routes
 from watchdog.api import openclaw_bootstrap as openclaw_bootstrap_routes
 from watchdog.api import openclaw_responses as openclaw_response_routes
@@ -278,6 +279,7 @@ def create_app(
     )
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(events_proxy_routes.router, prefix="/api/v1")
+    app.include_router(feishu_control_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
     app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
     app.include_router(openclaw_bootstrap_routes.router, prefix="/api/v1")

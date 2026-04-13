@@ -64,6 +64,10 @@ class DeliveryWorker:
         notification_kind = payload.get("notification_kind")
         if isinstance(notification_kind, str) and notification_kind:
             related_ids["notification_kind"] = notification_kind
+        for field in ("interaction_context_id", "interaction_family_id", "actor_id"):
+            value = payload.get(field)
+            if isinstance(value, str) and value:
+                related_ids[field] = value
         if extra:
             related_ids.update(extra)
         return related_ids
@@ -88,6 +92,11 @@ class DeliveryWorker:
             "occurred_at",
             "decision_result",
             "action_name",
+            "interaction_context_id",
+            "interaction_family_id",
+            "actor_id",
+            "channel_kind",
+            "action_window_expires_at",
         ):
             value = payload.get(field)
             if value is not None:
