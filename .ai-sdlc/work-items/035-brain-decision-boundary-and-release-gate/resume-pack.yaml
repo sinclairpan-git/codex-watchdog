@@ -74,11 +74,15 @@ working_set_snapshot:
 
     - 旧的 ungated decision projection 现在会在 runtime tick 上被升级成带 gate evidence 的当前 decision，避免 legacy projection 长期绕开新的 gate。
 
-    - 下一步应继续补齐正式 `release_gate_report` artifact/runbook/fixtures、replay/provider certification 的可验证逻辑，以及 review 里剩余的 second-truth 边角，而不是再补新的 Brain intent 枚举。'
+    - 已新增 `scripts/generate_release_gate_report.py`、`docs/operations/release-gate-runbook.md` 和 `tests/fixtures/release_gate_*`，把 deterministic report/fixture/runbook 先冻结到 repo 内。
+
+    - `ReleaseGateEvaluator` 现在在显式提供 `ReleaseGateReport` 时会校验报告过期、输入哈希漂移以及 provider/schema/runtime contract 漂移，不再只是无条件透传。
+
+    - 当前仍未完成的主缺口有两块：一是把正式 artifact report 接回 resident runtime 默认放行路径；二是把 `replay.py / provider_certification.py` 从 schema 骨架推进到真正的 drift/incomplete 校验逻辑。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T20:45:00+08:00'
+timestamp: '2026-04-13T20:27:37+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

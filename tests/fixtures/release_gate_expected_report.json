@@ -1,0 +1,23 @@
+{
+  "report_id": "report:c3c6d99a8eada00a",
+  "sample_window": "2026-04-01..2026-04-07",
+  "shadow_window": "2026-04-08..2026-04-09",
+  "label_manifest": "tests/fixtures/release_gate_label_manifest.json",
+  "generated_by": "codex",
+  "report_approved_by": "operator-a",
+  "artifact_ref": "tests/fixtures/release_gate_expected_report.json",
+  "expires_at": "2026-05-01T00:00:00Z",
+  "provider": "provider-a",
+  "model": "model-a",
+  "prompt_schema_ref": "prompt:v1",
+  "output_schema_ref": "schema:v1",
+  "risk_policy_version": "risk:v1",
+  "decision_input_builder_version": "dib:v1",
+  "policy_engine_version": "policy:v1",
+  "tool_schema_hash": "tool:abc",
+  "memory_provider_adapter_hash": "memory:abc",
+  "input_hash": "sha256:input-fixture",
+  "shadow_decision_count": 2,
+  "certification_packet_count": 2,
+  "report_hash": "sha256:6c48aa0c8299a8f0b7651eb71599abd908b5aa5fa68549d0ca102feb90757417"
+}

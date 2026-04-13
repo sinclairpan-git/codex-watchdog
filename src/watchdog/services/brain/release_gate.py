@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -54,6 +55,9 @@ class ReleaseGateEvaluator:
         validator_verdict: DecisionValidationVerdict,
         approval_read: ApprovalReadSnapshot | None = None,
         verdict: ReleaseGateVerdict | None = None,
+        report: ReleaseGateReport | None = None,
+        runtime_contract: dict[str, str] | None = None,
+        now: str | None = None,
     ) -> ReleaseGateVerdict:
         if verdict is not None:
             return verdict
@@ -82,12 +86,32 @@ class ReleaseGateEvaluator:
                 report_hash="sha256:validator_gated",
                 input_hash=input_hash,
             )
+        if report is not None:
+            degrade_reason = self._degrade_reason_for_report(
+                report=report,
+                trace=trace,
+                runtime_contract=runtime_contract or {},
+                input_hash=input_hash,
+                now=now,
+            )
+            if degrade_reason is not None:
+                return ReleaseGateVerdict(
+                    status="degraded",
+                    decision_trace_ref=trace.trace_id,
+                    approval_read_ref=approval_read_ref,
+                    degrade_reason=degrade_reason,
+                    report_id=report.report_id,
+                    report_hash=report.report_hash,
+                    input_hash=input_hash,
+                )
         return ReleaseGateVerdict(
             status="pass",
             decision_trace_ref=trace.trace_id,
             approval_read_ref=approval_read_ref,
-            report_id="report:resident_default",
-            report_hash="sha256:resident_default",
+            report_id=report.report_id if report is not None else "report:resident_default",
+            report_hash=(
+                report.report_hash if report is not None else "sha256:resident_default"
+            ),
             input_hash=input_hash,
         )
 
@@ -96,3 +120,53 @@ class ReleaseGateEvaluator:
         payload = trace.model_dump(mode="json")
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return f"sha256:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()}"
+
+    def _degrade_reason_for_report(
+        self,
+        *,
+        report: ReleaseGateReport,
+        trace: DecisionTrace,
+        runtime_contract: dict[str, str],
+        input_hash: str,
+        now: str | None,
+    ) -> str | None:
+        current_time = self._parse_time(now)
+        expires_at = self._parse_time(report.expires_at)
+        if current_time is not None and expires_at is not None and current_time >= expires_at:
+            return "report_expired"
+        if report.input_hash != input_hash:
+            return "input_hash_mismatch"
+        field_pairs = {
+            "provider": trace.provider,
+            "model": trace.model,
+            "prompt_schema_ref": trace.prompt_schema_ref,
+            "output_schema_ref": trace.output_schema_ref,
+            "risk_policy_version": runtime_contract.get("risk_policy_version"),
+            "decision_input_builder_version": runtime_contract.get(
+                "decision_input_builder_version"
+            ),
+            "policy_engine_version": runtime_contract.get("policy_engine_version"),
+            "tool_schema_hash": runtime_contract.get("tool_schema_hash"),
+            "memory_provider_adapter_hash": runtime_contract.get(
+                "memory_provider_adapter_hash"
+            ),
+        }
+        for field_name, expected in field_pairs.items():
+            if expected is None:
+                continue
+            if str(getattr(report, field_name)) != str(expected):
+                return f"{field_name}_mismatch"
+        return None
+
+    @staticmethod
+    def _parse_time(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        normalized = value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)

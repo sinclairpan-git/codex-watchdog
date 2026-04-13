@@ -150,3 +150,18 @@
   - `propose_execute` 的 runtime gate 已从“缺 verdict 也放行”收紧成“默认绑定 verdict，缺 verdict 就 fail-closed”，并且降级结果现在会落成 canonical decision，而不是只是在 orchestrator 里静默跳过执行；
   - `DecisionTrace` 已开始进入真实 runtime decision/event 链路，但 release-gate 仍然只是最小 evaluator，还没有正式接入冻结 artifact、脚本化 report 生成、replay 输入完整性与 provider certification drift matrix；
   - 下一步应继续补齐真正的 release-gate artifact/runbook/fixtures、把 replay/provider certification 从 schema 骨架推进到可验证逻辑，并继续收掉 review 提到的 second-truth 剩余边角，而不是回去扩 control-plane 或 e2e。
+- 已继续推进 release-gate artifact/runbook/fixtures，并把 evaluator 从 pass-through 推到最小可校验：
+  - 先补红测锁三个未落点：`scripts/generate_release_gate_report.py` 必须能从冻结 fixture 产出 deterministic `release_gate_report`；`tests/fixtures/release_gate_*` 必须真实存在；`docs/operations/release-gate-runbook.md` 必须明确 `label_manifest / generated_by / report_approved_by / artifact_ref` 与“禁止人工拼接”纪律；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py -k generate_release_gate_report_script_produces_expected_fixture` -> `1 failed`；`uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'fixtures_are_checked_in or runbook_documents_scripted_artifacts_and_manual_splicing_ban'` -> `2 failed`，失败点分别是脚本/fixtures/runbook 都尚未落库；
+  - 已新增 `scripts/generate_release_gate_report.py`、`docs/operations/release-gate-runbook.md`、`tests/fixtures/release_gate_packets.jsonl`、`tests/fixtures/release_gate_shadow_runs.jsonl`、`tests/fixtures/release_gate_label_manifest.json`、`tests/fixtures/release_gate_expected_report.json`，把 release-gate evidence 生产闭环先冻结成 deterministic repo artifact；
+  - 随后继续补 evaluator 红测：要求 `ReleaseGateEvaluator` 在报告有效时返回 `pass`，在报告过期时降级为 `report_expired`，在输入哈希漂移时降级为 `input_hash_mismatch`；初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py -k 'accepts_current_matching_report or degrades_expired_report or degrades_on_input_hash_drift'` -> `3 failed`，失败点是 evaluator 还不接受 `report/runtime_contract/now`；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 中补入最小 report 校验面：当显式提供 `ReleaseGateReport` 时，开始校验 `expires_at`、`input_hash`、`provider/model/prompt/output schema` 与 runtime contract 的版本字段；不匹配时返回带 `degrade_reason` 的 canonical verdict，而不是无条件透传。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k generate_release_gate_report_script_produces_expected_fixture` -> `1 passed, 3 deselected in 0.16s`
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'fixtures_are_checked_in or runbook_documents_scripted_artifacts_and_manual_splicing_ban'` -> `2 passed, 2 deselected in 0.02s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'accepts_current_matching_report or degrades_expired_report or degrades_on_input_hash_drift'` -> `3 passed, 4 deselected in 0.24s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `14 passed in 0.28s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `74 passed in 3.76s`
+- 当前判断再更新为：
+  - release gate 不再只有 schema 占位；repo 内已经具备最小的 deterministic report 生成脚本、冻结 fixture 与 runbook，evaluator 也开始真正校验 report 过期和漂移；
+  - 但 `replay.py` 与 `provider_certification.py` 仍主要停留在 schema 层，正式 `release_gate_report` 也还没有接回 runtime 默认路径；下一步应该继续把 replay/provider-certification 变成可验证逻辑，并把 runtime 改为优先消费正式 artifact report，而不是停留在 resident-default report。

@@ -29,6 +29,10 @@ Last Committed Task: T351
   - `policy.engine` 现在会对 `brain_intent=propose_execute` 执行 fail-closed：缺 runtime gate evidence 或 verdict 非 `pass` 时，不能再继续 `auto_execute_and_notify`；
   - `decision_validated` canonical event 现在会携带完整 `decision_trace`，默认 auto-continue 也会带上 `report_id / report_hash / input_hash / decision_trace_ref / approval_read_ref`；
   - 旧的 ungated decision projection 现在会在 runtime tick 上被升级成带 gate evidence 的当前 decision，避免 legacy projection 长期绕开新 gate。
+- 最新切片又补齐了 release-gate 的正式 artifact 骨架：
+  - 已新增 `scripts/generate_release_gate_report.py`、`docs/operations/release-gate-runbook.md` 和 `tests/fixtures/release_gate_*`，把 deterministic `release_gate_report`、冻结窗口、`label_manifest`、`generated_by`、`report_approved_by` 与 `artifact_ref` 先固化进 repo；
+  - `ReleaseGateEvaluator` 现在在显式提供 `ReleaseGateReport` 时会校验报告过期、输入哈希漂移以及 provider/schema/runtime contract 漂移，不再只是无条件回显 verdict；
+  - 当前还没把正式 artifact report 接回 resident runtime 默认放行路径，`replay.py` 和 `provider_certification.py` 也还没有从 schema 骨架推进到可验证逻辑。
 - 最新验证结果：
   - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 passed in 0.16s`
   - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `17 passed in 0.15s`
@@ -51,4 +55,9 @@ Last Committed Task: T351
   - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or fails_closed_when_auto_execute_decision_lacks_gate_evidence'` -> `2 passed, 31 deselected in 1.01s`
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `41 passed in 3.55s`
   - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `38 passed in 1.09s`
-- 下一执行入口已收敛到真正的 release-gate artifact/runtime contract：继续补齐脚本化 `release_gate_report`/fixtures/runbook、replay/provider-certification 的可验证逻辑，以及仍未完全清零的 second-truth 风险，而不是再补新的 Brain intent 枚举。
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k generate_release_gate_report_script_produces_expected_fixture` -> `1 passed, 3 deselected in 0.16s`
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'fixtures_are_checked_in or runbook_documents_scripted_artifacts_and_manual_splicing_ban'` -> `2 passed, 2 deselected in 0.02s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'accepts_current_matching_report or degrades_expired_report or degrades_on_input_hash_drift'` -> `3 passed, 4 deselected in 0.24s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `14 passed in 0.28s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `74 passed in 3.76s`
+- 下一执行入口已收敛到两块：一是把正式 `release_gate_report` artifact 接回 runtime 默认路径，二是把 `replay.py / provider_certification.py` 从 schema 骨架推进到真正的 drift/incomplete 校验逻辑。
