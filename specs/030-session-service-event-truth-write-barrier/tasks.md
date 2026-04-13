@@ -110,7 +110,7 @@
 ### Task 30.5 冻结命令租约、重排队与恢复位点
 
 - **任务编号**：T305
-- **状态**：进行中（2026-04-12 runtime expiry/requeue gating）
+- **状态**：已完成（2026-04-13 live lease renewal）
 - **依赖**：T304
 - **文件**：
   - `src/watchdog/services/session_spine/command_leases.py`
@@ -128,16 +128,16 @@
 - **当前实现备注**：
   1. 已新增 `src/watchdog/services/session_spine/command_leases.py` 与 `tests/test_watchdog_command_leases.py`，把 `command_claimed -> command_lease_renewed -> command_claim_expired -> command_requeued` canonical 事件链先冻结为可持久化、可回放的 JSON store；
   2. 事件与当前命令状态都会稳定保留 `worker_id`、`lease_expires_at`，并通过 `claim_seq` 拒绝同一 worker 在旧租约代际上的晚到结果；
-  3. `create_app -> ResidentOrchestrator` 已接入该租约存储：orchestrator tick 会先执行过期租约的 `command_claim_expired -> command_requeued`，仅 `None | requeued` 状态允许重新 `claim` 并执行；`claimed / executed / failed` 状态都会阻止重复 auto-execute，动作结束后补记 `command_executed | command_failed`；
-  4. `tests/test_watchdog_session_spine_runtime.py` 已锁定三条热路径：已有有效 claim 时跳过重复执行、过期 claim 先回队后重领执行、cached control-link-error receipt 不会再次触发同一命令；
-  5. 但 live lease renewal 与原计划中的 `SessionLineageRecord / RecoveryTransactionRecord` 仍未补齐，因此本任务仍不能按“已完成”回填。
+  3. `create_app -> ResidentOrchestrator` 已接入该租约存储：orchestrator tick 会先执行过期租约的 `command_claim_expired -> command_requeued`，对 `resident_orchestrator` 自己仍持有的有效 claim 会写入 `command_lease_renewed` 延长租约，仅 `None | requeued` 状态允许重新 `claim` 并执行；`claimed / executed / failed` 状态都会阻止重复 auto-execute，动作结束后补记 `command_executed | command_failed`；
+  4. `tests/test_watchdog_session_spine_runtime.py` 与 `tests/test_watchdog_command_leases.py` 已锁定四条热路径：已有有效跨 worker claim 时跳过重复执行、resident orchestrator 的有效 claim 会 live renew、过期 claim 先回队后重领执行、同一 claim 的多次续租都会稳定镜像进 `SessionService` 而不发生幂等冲突；
+  5. `SessionLineageRecord / RecoveryTransactionRecord`、对应 writer 与 recovery 回归已在 `session_service` / `recovery_execution` 路径落地，因此本任务的剩余缺口已收敛完成。
 
 ## Batch 6
 
 ### Task 30.6 完成 030 整体验证并为下一 work item 交接
 
 - **任务编号**：T306
-- **状态**：进行中（2026-04-12 校准）
+- **状态**：进行中（2026-04-13 验证收口，受 `ai-sdlc` 缺失阻塞）
 - **依赖**：T305
 - **文件**：
   - `tests/test_watchdog_session_service.py`
@@ -160,9 +160,10 @@
 - **当前实现备注**：
   1. 已实际通过：`tests/test_watchdog_delivery_http.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py tests/test_openclaw_contracts.py`，共 120 个用例；
   2. 另已通过：`uv run pytest -q tests/test_watchdog_command_leases.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_action_execution.py tests/test_watchdog_delivery_store.py tests/test_watchdog_policy_engine.py tests/test_long_running_autonomy_doc_contracts.py`，共 35 个用例；本轮还补充锁定了 command lease runtime gating；
-  3. 本轮另已通过：`uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`，共 57 个用例，并补齐 approval timeout 到 `approval_expired` 的真实事实源；
-  4. `uv run ai-sdlc verify constraints` 当前无法执行，原因是本地环境缺少 `ai-sdlc` 可执行入口；
-  5. 在 command lease 的 live renewal 位点与独立 `session_service` 模块未补齐前，030 仍不应宣告完成，也不应切到下一个 projection work item。
+  3. 2026-04-13 已通过：`uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`，共 59 个用例，并补齐 approval timeout 到 `approval_expired` 的真实事实源；
+  4. 2026-04-13 已通过：`uv run pytest -q tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_approval_loop.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`，共 62 个用例；本轮同时补齐了 resident orchestrator live lease renewal 与重复续租镜像的幂等键隔离；
+  5. `uv run ai-sdlc verify constraints` 当前无法执行，原因是本地环境缺少 `ai-sdlc` 可执行入口；
+  6. 在仓库内 tests / specs / execution log 维度，030 的写面与命令租约写真源已收敛，下一 work item 应只继续 `session_spine` projection 替换，不再回头补 030 的写真源。
 
 ## 预期结果
 

@@ -761,6 +761,87 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
     assert state.claim_seq == 1
 
 
+def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_command(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        resident_orchestrator_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    decision = app.state.policy_decision_store.put(
+        evaluate_persisted_session_policy(
+            record,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+        )
+    )
+    command_id = f"command:{decision.decision_id}"
+    app.state.command_lease_store.claim_command(
+        command_id=command_id,
+        session_id=decision.session_id,
+        worker_id="resident_orchestrator",
+        claimed_at="2026-04-07T00:00:00Z",
+        lease_expires_at="2026-04-07T00:30:00Z",
+    )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision"
+    ) as execute_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 10, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    execute_mock.assert_not_called()
+    events = app.state.command_lease_store.list_events(command_id=command_id)
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_lease_renewed",
+    ]
+    assert [event.claim_seq for event in events] == [1, 1]
+    state = app.state.command_lease_store.get_command(command_id)
+    assert state is not None
+    assert state.status == "claimed"
+    assert state.worker_id == "resident_orchestrator"
+    assert state.claim_seq == 1
+    assert state.lease_expires_at == "2026-04-07T01:10:00Z"
+    session_events = [
+        event
+        for event in app.state.session_service.list_events(session_id=decision.session_id)
+        if event.related_ids.get("command_id") == command_id and event.event_type != "command_created"
+    ]
+    assert [event.event_type for event in session_events] == [
+        "command_claimed",
+        "command_lease_renewed",
+    ]
+    assert [event.related_ids["claim_seq"] for event in session_events] == ["1", "1"]
+    assert session_events[-1].payload["lease_expires_at"] == "2026-04-07T01:10:00Z"
+
+
 def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command(
     tmp_path: Path,
 ) -> None:

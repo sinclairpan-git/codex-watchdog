@@ -217,3 +217,61 @@ def test_command_lease_store_mirrors_lifecycle_events_into_session_service(
     assert events[0].correlation_id == "corr:command:command:repo-a:4:claim:1"
     assert events[2].payload["reason"] == "lease_timeout"
     assert events[-1].payload["worker_id"] == "worker:d"
+
+
+def test_command_lease_store_mirrors_multiple_renewals_into_session_service(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    first_claim = store.claim_command(
+        command_id="command:repo-a:5",
+        session_id="session:repo-a",
+        worker_id="worker:e",
+        claimed_at="2026-04-12T04:00:00Z",
+        lease_expires_at="2026-04-12T04:05:00Z",
+    )
+    store.renew_lease(
+        command_id="command:repo-a:5",
+        worker_id="worker:e",
+        claim_seq=first_claim.claim_seq,
+        renewed_at="2026-04-12T04:02:00Z",
+        lease_expires_at="2026-04-12T04:07:00Z",
+    )
+    store.renew_lease(
+        command_id="command:repo-a:5",
+        worker_id="worker:e",
+        claim_seq=first_claim.claim_seq,
+        renewed_at="2026-04-12T04:04:00Z",
+        lease_expires_at="2026-04-12T04:09:00Z",
+    )
+
+    events = [
+        event
+        for event in session_service.list_events(
+            session_id="session:repo-a",
+            related_id_key="command_id",
+            related_id_value="command:repo-a:5",
+        )
+        if event.event_type != "command_created"
+    ]
+
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_lease_renewed",
+        "command_lease_renewed",
+    ]
+    assert [event.related_ids["claim_seq"] for event in events] == ["1", "1", "1"]
+    assert [event.payload["lease_expires_at"] for event in events] == [
+        "2026-04-12T04:05:00Z",
+        "2026-04-12T04:07:00Z",
+        "2026-04-12T04:09:00Z",
+    ]
+    assert events[1].correlation_id != events[2].correlation_id

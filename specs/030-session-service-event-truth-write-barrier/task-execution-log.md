@@ -64,4 +64,18 @@
   - `approval_requested -> approval_approved | approval_rejected | approval_expired` 已全部由 Session events 驱动，且 `approval_expired` 已接上真实 timeout fact source；
   - 启动期 reconcile 已成为当前实现中的 approval expiry runtime source，后续若引入更细粒度后台 tick，只需复用同一 helper，不需要再改 event contract；
   - 因此 `T304` 可以回填为已完成，当前下一执行入口重新收敛到 `T305` 的 live lease renewal 与最终 `T306` 验证收口。
+- 已把 `T305` 的 live lease renewal 与重复续租镜像缺口补齐：
+  - `src/watchdog/services/session_spine/orchestrator.py` 现在会在 `resident_orchestrator` 仍持有有效 `claimed` 命令时写入 `command_lease_renewed` 并延长 `lease_expires_at`，同时继续阻止同一命令的重复 auto-execute；
+  - `src/watchdog/services/session_spine/command_leases.py` 现已为可重复出现的 `command_lease_renewed` 事件使用带 `lease_expires_at` 的独立 session correlation，避免同一 `claim_seq` 上多次续租在 `SessionService` 里触发幂等冲突；
+  - 新增回归覆盖 `resident_orchestrator` 的 active-claim live renew 与同一 claim 的多次续租镜像，红绿过程分别验证了“原先不会续租”和“第二次续租会撞 `SessionService` idempotency key”两个缺口。
+- 已补充并通过的回归：
+  - `uv run pytest -q tests/test_watchdog_command_leases.py -k multiple_renewals`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k renews_its_active_claim`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`
+  - `uv run pytest -q tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_approval_loop.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
+- 当前对 `T305/T306` 的判断更新为：
+  - `T305` 现可回填为已完成：canonical command lease 事件链、runtime expiry/requeue gating、resident orchestrator live renewal、以及重复续租的 session event 镜像都已稳定落地；
+  - `SessionLineageRecord / RecoveryTransactionRecord` 与 recovery writer / 回归已在仓库现状中满足 030 对后续 replay / recovery work item 的接入前置；
+  - `T306` 的仓库内验证面已收敛到最终状态，当前唯一未消除的缺口是本地环境缺少 `ai-sdlc` 可执行入口，因此 formal constraints 仍只能继续按 specs/tasks/log 人工回填；
+  - 下一 work item 应只继续 `session_spine` projection 替换，不再回头补 030 的写真源。
 - `uv run ai-sdlc verify constraints` 仍无法执行，报错为缺少 `ai-sdlc` 可执行入口（`Failed to spawn: ai-sdlc`），因此 formal constraints 只能继续按仓库内 specs/tasks/log 进行人工回填。

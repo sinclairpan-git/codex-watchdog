@@ -141,6 +141,11 @@ class CommandLeaseStore:
 
     @staticmethod
     def _session_correlation_id(event: CommandLeaseEvent) -> str:
+        if event.event_type == "command_lease_renewed" and event.lease_expires_at:
+            return (
+                f"corr:command:{event.command_id}:claim:{event.claim_seq}:"
+                f"renew:{event.lease_expires_at}"
+            )
         return f"corr:command:{event.command_id}:claim:{event.claim_seq}"
 
     def _mirror_event_to_session_service(self, event: CommandLeaseEvent) -> None:

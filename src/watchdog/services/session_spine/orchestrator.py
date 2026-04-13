@@ -209,6 +209,17 @@ class ResidentOrchestrator:
                 claim_seq=claim.claim_seq,
                 should_execute=True,
             )
+        if current.status == "claimed" and current.worker_id == "resident_orchestrator":
+            self._command_lease_store.renew_lease(
+                command_id=command_id,
+                worker_id="resident_orchestrator",
+                claim_seq=current.claim_seq,
+                renewed_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                    "+00:00",
+                    "Z",
+                ),
+                lease_expires_at=self._lease_expires_at(now=now),
+            )
         return AutoExecuteCommandPlan(
             command_id=command_id,
             claim_seq=None,
