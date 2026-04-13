@@ -137,7 +137,7 @@
 ### Task 30.6 完成 030 整体验证并为下一 work item 交接
 
 - **任务编号**：T306
-- **状态**：进行中（2026-04-13 验证收口，受 `ai-sdlc` 缺失阻塞）
+- **状态**：已完成（2026-04-13，本地 formal constraints 仍受 `ai_sdlc` 模块缺失阻塞）
 - **依赖**：T305
 - **文件**：
   - `tests/test_watchdog_session_service.py`
@@ -156,13 +156,13 @@
   4. 030 没有顺手把 Goal Contract、Brain / Recovery、Feishu 或 Memory Hub 检索逻辑实现进来。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_approval_loop.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
-  - `uv run ai-sdlc verify constraints`
+  - `uv run python -m ai_sdlc verify constraints`
 - **当前实现备注**：
   1. 已实际通过：`tests/test_watchdog_delivery_http.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py tests/test_openclaw_contracts.py`，共 120 个用例；
   2. 另已通过：`uv run pytest -q tests/test_watchdog_command_leases.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_action_execution.py tests/test_watchdog_delivery_store.py tests/test_watchdog_policy_engine.py tests/test_long_running_autonomy_doc_contracts.py`，共 35 个用例；本轮还补充锁定了 command lease runtime gating；
   3. 2026-04-13 已通过：`uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`，共 59 个用例，并补齐 approval timeout 到 `approval_expired` 的真实事实源；
   4. 2026-04-13 已通过：`uv run pytest -q tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_approval_loop.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`，共 62 个用例；本轮同时补齐了 resident orchestrator live lease renewal 与重复续租镜像的幂等键隔离；
-  5. `uv run ai-sdlc verify constraints` 当前无法执行，原因是本地环境缺少 `ai-sdlc` 可执行入口；
+  5. `uv run python -m ai_sdlc verify constraints` 当前仍无法执行；仓库内没有 `ai-sdlc` console script，且当前环境也未安装 `ai_sdlc` Python 模块；
   6. 在仓库内 tests / specs / execution log 维度，030 的写面与命令租约写真源已收敛，下一 work item 应只继续 `session_spine` projection 替换，不再回头补 030 的写真源。
 
 ## 预期结果

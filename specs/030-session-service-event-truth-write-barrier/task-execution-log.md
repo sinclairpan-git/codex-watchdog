@@ -23,7 +23,7 @@
   - 原计划中的独立 `src/watchdog/services/session_service/` 落点尚未建立；
   - command lease 的 store / expiry requeue / duplicate-execution gating 已接入 `resident_orchestrator`，但 live lease renewal 与跨 worker 协调位点仍未补齐；
   - `memory_unavailable_degraded`、`memory_conflict_detected` 与 `stage_goal_conflict_detected` 仍主要停留在 docs contract / schema 约束，未形成独立 runtime writer；
-  - `uv run ai-sdlc verify constraints` 因缺少 `ai-sdlc` 可执行入口而无法在本地验证。
+  - `uv run python -m ai_sdlc verify constraints` 因当前环境缺少 `ai_sdlc` Python 模块而无法在本地验证；仓库内同时不存在 `ai-sdlc` console script。
 - 已补上最小 `command lease` 存储切片：
   - 新增 `src/watchdog/services/session_spine/command_leases.py`，使用与 delivery outbox 一致的文件锁 + 原子替换模式，落盘 `command_claimed / command_lease_renewed / command_claim_expired / command_requeued / command_executed / command_failed`；
   - 新增 `tests/test_watchdog_command_leases.py`，锁定 canonical 事件顺序、`worker_id / lease_expires_at` 冻结，以及同一 worker 在旧 `claim_seq` 上的晚到结果会被拒绝；
@@ -78,4 +78,6 @@
   - `SessionLineageRecord / RecoveryTransactionRecord` 与 recovery writer / 回归已在仓库现状中满足 030 对后续 replay / recovery work item 的接入前置；
   - `T306` 的仓库内验证面已收敛到最终状态，当前唯一未消除的缺口是本地环境缺少 `ai-sdlc` 可执行入口，因此 formal constraints 仍只能继续按 specs/tasks/log 人工回填；
   - 下一 work item 应只继续 `session_spine` projection 替换，不再回头补 030 的写真源。
-- `uv run ai-sdlc verify constraints` 仍无法执行，报错为缺少 `ai-sdlc` 可执行入口（`Failed to spawn: ai-sdlc`），因此 formal constraints 只能继续按仓库内 specs/tasks/log 进行人工回填。
+- 已复核 030 文档中的 formal constraints 调用口径：仓库 README 与既有 spec 约定的正确命令是 `uv run python -m ai_sdlc verify constraints`，不是 `uv run ai-sdlc verify constraints`。
+- `uv run python -m ai_sdlc verify constraints` 仍无法执行，当前报错为 `No module named ai_sdlc`；根因是本地环境既没有 `ai-sdlc` console script，也没有安装 `ai_sdlc` 模块，因此 formal constraints 继续按仓库内 specs/tasks/log 人工回填。
+- 因此，按仓库内代码、测试、formal docs 与 handoff 口径，`T306` 已可回填为完成；环境层面的剩余缺口只影响自动化 constraints 校验，不再阻塞 030 的代码边界关闭。

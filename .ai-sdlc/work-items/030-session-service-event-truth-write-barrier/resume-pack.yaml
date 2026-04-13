@@ -1,0 +1,60 @@
+current_stage: verify
+current_batch: 6
+last_committed_task: T306
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/030-session-service-event-truth-write-barrier/spec.md
+  plan_path: specs/030-session-service-event-truth-write-barrier/plan.md
+  tasks_path: specs/030-session-service-event-truth-write-barrier/tasks.md
+  active_files:
+  - '`docs/architecture/codex-long-running-autonomy-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/plan.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/tasks.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/runtime.yaml`'
+  - '`.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/working-set.yaml`'
+  - '`.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/latest-summary.md`'
+  context_summary: '# Development Summary
+
+
+    Status: active
+
+    Total Tasks: 6
+
+    Completed Tasks: 6
+
+    Halted Tasks: 0
+
+    Total Batches: 6
+
+    Completed Batches: 6
+
+    Last Committed Task: T306
+
+
+    ## Notes
+
+    - `WI-030` 已收口到最终 repo 状态：`T301` 到 `T306` 全部完成。
+
+    - 030 的 canonical 写面、pre-command write barrier、审批/通知/人工接管事件、approval timeout fact source、以及 command lease claim/renew/expire/requeue/executed/failed 链路均已落地。
+
+    - 已通过 62 个相关 pytest 用例，formal docs 与 handoff 已同步到最终状态。
+
+    - formal constraints 的正确调用口径已校正为 `uv run python -m ai_sdlc verify constraints`；当前环境仍因缺少 `ai_sdlc` 模块失败。
+
+    - 下一 work item 应只继续 `session_spine` projection 替换，不再回头补 030 的 canonical 写真源。
+
+    - 未改写 `.ai-sdlc/state/checkpoint.yml`，避免覆盖仓库当前全局 pipeline 状态。'
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-13T13:27:59+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''
