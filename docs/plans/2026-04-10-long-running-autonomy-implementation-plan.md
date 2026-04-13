@@ -315,6 +315,8 @@
 
 ### Task 7: 迁移到 Feishu 主控制面并退役 OpenClaw 主链路
 
+**Canonical execution work item:** `specs/036-feishu-control-plane-and-openclaw-retirement/`
+
 **Files:**
 - Create: `src/watchdog/services/feishu_control/service.py`
 - Create: `src/watchdog/api/feishu_control.py`
@@ -322,6 +324,10 @@
 - Modify: `src/watchdog/api/openclaw_bootstrap.py`
 - Modify: `src/watchdog/api/openclaw_callbacks.py`
 - Modify: `src/watchdog/services/adapters/openclaw/adapter.py`
+- Modify: `src/watchdog/services/delivery/store.py`
+- Modify: `src/watchdog/services/delivery/worker.py`
+- Modify: `src/watchdog/services/session_service/models.py`
+- Modify: `src/watchdog/services/session_spine/projection.py`
 - Test: `tests/test_watchdog_feishu_control.py`
 - Test: `tests/test_openclaw_contracts.py`
 - Create: `tests/test_watchdog_notification_delivery.py`
@@ -341,6 +347,7 @@
 - [ ] **Step 3: 实现最小控制面切换**
   - 新增 Feishu command gateway 与 ACL。
   - 把审批确认、通知回执、人工覆盖统一映射为 `Session Service` 事件与 projection 更新。
+  - 把通知送达成功、发送失败、重试排队、上下文 supersede、窗口过期与 stale/audit 的状态面明确收口到 `delivery/store.py`、`delivery/worker.py` 与 `session_service/models.py` / `session_spine/projection.py`，避免 handler 自行分叉记状态。
   - 为通知投递增加送达成功、发送失败、重试排队、上下文 supersede 与窗口过期的真相事件，并在需要时生成新的交互上下文。
   - 为同一交互族冻结单活跃上下文规则与 notification attempt 幂等键，晚到送达/回复只能进入审计。
   - `main.py` 中把新控制面注册为主入口。
@@ -351,7 +358,7 @@
   - Expected: 主控制面切到 Feishu，通知/审批的中间态故障可恢复，补发后的旧上下文不会双生效，OpenClaw 只剩兼容读写接口。
 
 - [ ] **Step 5: 提交**
-  - `git add src/watchdog/services/feishu_control src/watchdog/api/feishu_control.py src/watchdog/main.py src/watchdog/api/openclaw_bootstrap.py src/watchdog/api/openclaw_callbacks.py src/watchdog/services/adapters/openclaw/adapter.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_ops.py`
+  - `git add src/watchdog/services/feishu_control src/watchdog/api/feishu_control.py src/watchdog/main.py src/watchdog/api/openclaw_bootstrap.py src/watchdog/api/openclaw_callbacks.py src/watchdog/services/adapters/openclaw/adapter.py src/watchdog/services/delivery/store.py src/watchdog/services/delivery/worker.py src/watchdog/services/session_service/models.py src/watchdog/services/session_spine/projection.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_ops.py`
   - `git commit -m "feat: switch primary control plane to feishu"`
 
 ### Task 8: 固化一期通关验收与端到端 release gate

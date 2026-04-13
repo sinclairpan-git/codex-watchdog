@@ -1,0 +1,45 @@
+current_stage: red_test
+current_batch: 2
+last_committed_task: T361
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/036-feishu-control-plane-and-openclaw-retirement/spec.md
+  plan_path: specs/036-feishu-control-plane-and-openclaw-retirement/plan.md
+  tasks_path: specs/036-feishu-control-plane-and-openclaw-retirement/tasks.md
+  active_files:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/036-feishu-control-plane-and-openclaw-retirement/spec.md`'
+  - '`specs/036-feishu-control-plane-and-openclaw-retirement/plan.md`'
+  - '`specs/036-feishu-control-plane-and-openclaw-retirement/tasks.md`'
+  - '`specs/036-feishu-control-plane-and-openclaw-retirement/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/runtime.yaml`'
+  - '`.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-036` 已启动，当前处于 formal docs / spec freeze 阶段。
+    - 目标边界已经收紧为：
+      - `Feishu` 成为唯一主控制面；
+      - `OpenClaw` 退为 compatibility-only surface；
+      - 审批确认、通知回执、人工 override、窗口 supersede/expired 统一走 `Session Service` canonical events；
+      - `interaction_family_id` 单活跃，旧上下文晚到消息只进审计。
+    - Anthropic Manager 对抗评审补充了 delivery ownership 要求，当前已把以下模块正式纳入 036 边界：
+      - `src/watchdog/services/delivery/store.py`
+      - `src/watchdog/services/delivery/worker.py`
+      - `src/watchdog/services/session_service/models.py`
+      - `src/watchdog/services/session_spine/projection.py`
+      它们负责 notification truth / requeue / supersede / stale audit 的状态与读侧投影。
+    - formal docs 已通过 Hermes Agent 专家与 Anthropic Manager 专家的最终 blocking/P1 复核。
+    - 最新验证：`uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py` -> `3 passed in 0.04s`
+    - 当前下一执行入口是 `T362`：写失败测试冻结 Feishu control、notification midstate 与 OpenClaw compatibility contract。
+current_branch: codex/wi-036-feishu-control-plane
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T00:36:00+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''
