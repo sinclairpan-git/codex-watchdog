@@ -282,6 +282,13 @@ class PolicyDecisionStore:
             self._write(data)
         return record
 
+    def update(self, record: CanonicalDecisionRecord) -> CanonicalDecisionRecord:
+        with self._lock:
+            data = self._read()
+            data[record.decision_key] = record.model_dump(mode="json")
+            self._write(data)
+        return record
+
     def list_records(self) -> list[CanonicalDecisionRecord]:
         with self._lock:
             data = self._read()

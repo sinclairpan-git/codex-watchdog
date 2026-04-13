@@ -183,6 +183,18 @@ def test_policy_engine_allows_auto_execution_when_goal_contract_is_ready() -> No
             mode="autonomous_ready",
             missing_fields=[],
         ),
+        validator_verdict={
+            "status": "pass",
+            "reason": "schema_and_risk_ok",
+        },
+        release_gate_verdict={
+            "status": "pass",
+            "decision_trace_ref": "trace:1",
+            "approval_read_ref": "approval:none",
+            "report_id": "report-1",
+            "report_hash": "sha256:report",
+            "input_hash": "sha256:input",
+        },
     )
 
     assert decision.decision_result == "auto_execute_and_notify"
@@ -191,3 +203,22 @@ def test_policy_engine_allows_auto_execution_when_goal_contract_is_ready() -> No
         "mode": "autonomous_ready",
         "missing_fields": [],
     }
+
+
+def test_policy_engine_fails_closed_when_propose_execute_lacks_runtime_gate_evidence() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="propose_execute",
+        goal_contract_readiness=GoalContractReadiness(
+            mode="autonomous_ready",
+            missing_fields=[],
+        ),
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "runtime_gate_missing" in decision.matched_policy_rules

@@ -29,6 +29,8 @@ def evaluate_persisted_session_policy(
     action_ref: str,
     trigger: str,
     brain_intent: str | None = None,
+    validator_verdict: dict[str, Any] | None = None,
+    release_gate_verdict: dict[str, Any] | None = None,
     policy_version: str = POLICY_VERSION,
     goal_contract_readiness: GoalContractReadiness | None = None,
 ) -> CanonicalDecisionRecord:
@@ -36,7 +38,11 @@ def evaluate_persisted_session_policy(
     uncertainty_reasons = [
         fact_code for fact_code in fact_codes if fact_code in CONTROLLED_UNCERTAINTY_REASONS
     ]
-    extra_evidence = _goal_contract_evidence(goal_contract_readiness)
+    extra_evidence = _goal_contract_evidence(
+        goal_contract_readiness,
+        validator_verdict=validator_verdict,
+        release_gate_verdict=release_gate_verdict,
+    )
 
     if any(fact_code in HUMAN_GATE_FACT_CODES for fact_code in fact_codes):
         return build_canonical_decision_record(
@@ -192,6 +198,19 @@ def evaluate_persisted_session_policy(
             extra_evidence=extra_evidence,
         )
 
+    runtime_gate_override = _runtime_gate_override(
+        persisted_record=persisted_record,
+        action_ref=action_ref,
+        trigger=trigger,
+        brain_intent=brain_intent,
+        policy_version=policy_version,
+        validator_verdict=validator_verdict,
+        release_gate_verdict=release_gate_verdict,
+        extra_evidence=extra_evidence,
+    )
+    if runtime_gate_override is not None:
+        return runtime_gate_override
+
     return build_canonical_decision_record(
         persisted_record=persisted_record,
         decision_result=DECISION_AUTO_EXECUTE_AND_NOTIFY,
@@ -211,7 +230,93 @@ def evaluate_persisted_session_policy(
 
 def _goal_contract_evidence(
     readiness: GoalContractReadiness | None,
+    *,
+    validator_verdict: dict[str, Any] | None = None,
+    release_gate_verdict: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    evidence: dict[str, Any] = {}
     if readiness is None:
+        if validator_verdict is not None:
+            evidence["validator_verdict"] = dict(validator_verdict)
+        if release_gate_verdict is not None:
+            evidence["release_gate_verdict"] = dict(release_gate_verdict)
+        return evidence or None
+    evidence["goal_contract_readiness"] = readiness.model_dump(mode="json")
+    if validator_verdict is not None:
+        evidence["validator_verdict"] = dict(validator_verdict)
+    if release_gate_verdict is not None:
+        evidence["release_gate_verdict"] = dict(release_gate_verdict)
+    return evidence
+
+
+def _runtime_gate_override(
+    *,
+    persisted_record: PersistedSessionRecord,
+    action_ref: str,
+    trigger: str,
+    brain_intent: str | None,
+    policy_version: str,
+    validator_verdict: dict[str, Any] | None,
+    release_gate_verdict: dict[str, Any] | None,
+    extra_evidence: dict[str, Any] | None,
+) -> CanonicalDecisionRecord | None:
+    if brain_intent != "propose_execute":
         return None
-    return {"goal_contract_readiness": readiness.model_dump(mode="json")}
+    if not _verdict_is_pass(validator_verdict):
+        matched_rule = (
+            "runtime_gate_missing" if validator_verdict is None else "validator_gate_degraded"
+        )
+        degrade_reason = _verdict_reason(validator_verdict, fallback="validator_missing")
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_BLOCK_AND_ALERT,
+            brain_intent=brain_intent,
+            risk_class=RISK_CLASS_HARD_BLOCK,
+            action_ref=action_ref,
+            matched_policy_rules=[matched_rule],
+            decision_reason="validator gate blocks autonomous execution",
+            why_not_escalated=None,
+            why_escalated=f"validator verdict is not pass: {degrade_reason}",
+            uncertainty_reasons=[degrade_reason],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+    if not _verdict_is_pass(release_gate_verdict):
+        matched_rule = (
+            "runtime_gate_missing" if release_gate_verdict is None else "release_gate_degraded"
+        )
+        degrade_reason = _verdict_reason(release_gate_verdict, fallback="release_gate_missing")
+        decision_result = DECISION_REQUIRE_USER_DECISION if degrade_reason == "approval_stale" else DECISION_BLOCK_AND_ALERT
+        risk_class = RISK_CLASS_HUMAN_GATE if degrade_reason == "approval_stale" else RISK_CLASS_HARD_BLOCK
+        decision_reason = (
+            "release gate requires fresh approval before autonomous execution"
+            if degrade_reason == "approval_stale"
+            else "release gate blocks autonomous execution"
+        )
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=decision_result,
+            brain_intent=brain_intent,
+            risk_class=risk_class,
+            action_ref=action_ref,
+            matched_policy_rules=[matched_rule],
+            decision_reason=decision_reason,
+            why_not_escalated=None,
+            why_escalated=f"release gate verdict is not pass: {degrade_reason}",
+            uncertainty_reasons=[degrade_reason],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
+    return None
+
+
+def _verdict_is_pass(verdict: dict[str, Any] | None) -> bool:
+    return isinstance(verdict, dict) and verdict.get("status") == "pass"
+
+
+def _verdict_reason(verdict: dict[str, Any] | None, *, fallback: str) -> str:
+    if not isinstance(verdict, dict):
+        return fallback
+    return str(verdict.get("degrade_reason") or verdict.get("reason") or fallback)

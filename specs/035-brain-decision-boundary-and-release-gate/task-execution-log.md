@@ -131,3 +131,22 @@
 - 当前判断再更新为：
   - 现在 `observe_only / suggest_only / require_approval / propose_recovery / propose_execute / candidate_closure` 都已拥有显式 runtime consume，不再存在只定义枚举但没有 canonical 运行时语义的 intent；
   - 下一步更聚焦于给这些 intent 补齐 validator/release-gate trace/evidence 绑定，而不是继续扩 action mapping。
+- 已继续推进 validator/release-gate trace/evidence 绑定，并按两路对抗式复审先收掉当前最高优先级的 fail-open：
+  - Hermes Agent 专家与 Anthropic Manager 专家都指出同一个 blocking/P1：`propose_execute` 在缺失 `validator_verdict / release_gate_verdict` 时仍会沿 `auto_execute_and_notify` 热路径创建/claim/执行 command，且默认路径没有把 `DecisionTrace`、report/input hash、approval read ref 绑定到 canonical decision event；
+  - 先补红测锁住两个缺口：`tests/test_watchdog_policy_engine.py` 要求 `propose_execute` 缺 runtime gate evidence 时必须 fail-closed；`tests/test_watchdog_session_spine_runtime.py` 要求默认 auto-continue 必须带上 `decision_trace / validator_verdict / release_gate_verdict`，且缺失 evidence 时不能再执行；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_policy_engine.py -k 'fails_closed_when_propose_execute_lacks_runtime_gate_evidence or allows_auto_execution_when_goal_contract_is_ready'` -> `2 failed`；`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or fails_closed_when_auto_execute_decision_lacks_gate_evidence'` -> `2 failed`。
+- 已按上述红测把 runtime gate 改成显式绑定而不是隐式放行：
+  - `src/watchdog/services/brain/validator.py` 不再只是 pass-through，而是显式区分 `propose_execute` 与 non-executing intent，并对 `memory_conflict / memory_unavailable / goal_contract_not_ready` 给出 `degraded` verdict；
+  - `src/watchdog/services/brain/release_gate.py` 已开始基于 `DecisionTrace + DecisionValidationVerdict` 生成最小 `ReleaseGateVerdict`，把 `decision_trace_ref / approval_read_ref / report_id / report_hash / input_hash` 物化出来；non-executing intent 现在会显式得到 `not_applicable`，而不是完全没有 verdict；
+  - `src/watchdog/services/policy/engine.py` 现在显式接收 `validator_verdict / release_gate_verdict`，并对 `brain_intent=propose_execute` 执行 fail-closed：缺 verdict 或非 `pass` 时不再继续 `auto_execute_and_notify`，而是物化成 canonical `block_and_alert` / `require_user_decision`；
+  - `src/watchdog/services/session_spine/orchestrator.py` 现在会在 policy 之前先生成 `DecisionTrace`、validator verdict 与 release-gate verdict，再把这些 evidence 传给 policy；`decision_validated` event 也会携带完整 `decision_trace`，不再只有 `brain_intent`；
+  - 同时把旧的 ungated `PolicyDecisionStore` projection 视为可升级对象：若当前 runtime 重新计算出了带 gate evidence 的 decision，会先写 canonical Session decision events，再用带 evidence 的记录覆盖旧 projection，避免 legacy projection 长期绕开新的 gate。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py -k 'fails_closed_when_propose_execute_lacks_runtime_gate_evidence or allows_auto_execution_when_goal_contract_is_ready'` -> `2 passed, 6 deselected in 0.23s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or fails_closed_when_auto_execute_decision_lacks_gate_evidence'` -> `2 passed, 31 deselected in 1.01s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `41 passed in 3.55s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `38 passed in 1.09s`
+- 当前判断再更新为：
+  - `propose_execute` 的 runtime gate 已从“缺 verdict 也放行”收紧成“默认绑定 verdict，缺 verdict 就 fail-closed”，并且降级结果现在会落成 canonical decision，而不是只是在 orchestrator 里静默跳过执行；
+  - `DecisionTrace` 已开始进入真实 runtime decision/event 链路，但 release-gate 仍然只是最小 evaluator，还没有正式接入冻结 artifact、脚本化 report 生成、replay 输入完整性与 provider certification drift matrix；
+  - 下一步应继续补齐真正的 release-gate artifact/runbook/fixtures、把 replay/provider certification 从 schema 骨架推进到可验证逻辑，并继续收掉 review 提到的 second-truth 剩余边角，而不是回去扩 control-plane 或 e2e。

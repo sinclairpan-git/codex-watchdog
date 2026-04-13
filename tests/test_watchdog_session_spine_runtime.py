@@ -123,6 +123,23 @@ class RecoveringResidentAClient(FakeResidentAClient):
         }
 
 
+def _runtime_gate_pass_kwargs() -> dict[str, dict[str, object]]:
+    return {
+        "validator_verdict": {
+            "status": "pass",
+            "reason": "schema_and_risk_ok",
+        },
+        "release_gate_verdict": {
+            "status": "pass",
+            "decision_trace_ref": "trace:seed",
+            "approval_read_ref": "approval:none",
+            "report_id": "report-seed",
+            "report_hash": "sha256:report-seed",
+            "input_hash": "sha256:input-seed",
+        },
+    }
+
+
 class RecordingDeliveryClient:
     def __init__(self) -> None:
         self.records: list[dict[str, object]] = []
@@ -891,6 +908,12 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
     assert session_events[0].payload["brain_intent"] == "propose_execute"
     assert session_events[1].payload["decision_result"] == "auto_execute_and_notify"
     assert session_events[1].payload["brain_intent"] == "propose_execute"
+    assert session_events[1].payload["decision_trace"]["trace_id"].startswith("trace:")
+    assert session_events[1].payload["validator_verdict"]["status"] == "pass"
+    assert session_events[1].payload["release_gate_verdict"]["status"] == "pass"
+    assert session_events[1].payload["release_gate_verdict"]["decision_trace_ref"] == (
+        session_events[1].payload["decision_trace"]["trace_id"]
+    )
     assert session_events[2].related_ids["command_id"] == command_id
 
 
@@ -1116,6 +1139,50 @@ def test_resident_orchestrator_does_not_execute_when_release_gate_or_validator_d
     steer_mock.assert_not_called()
 
 
+def test_resident_orchestrator_fails_closed_when_auto_execute_decision_lacks_gate_evidence(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_evidence_for_intent",
+        return_value={"brain_rationale": "missing_runtime_gate"},
+    ):
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            outcomes = app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+            )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
 def test_resident_orchestrator_fails_closed_when_decision_event_write_fails(
     tmp_path: Path,
 ) -> None:
@@ -1199,6 +1266,7 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
             action_ref="continue_session",
             trigger="resident_orchestrator",
             brain_intent="propose_execute",
+            **_runtime_gate_pass_kwargs(),
         )
     )
     command_id = f"command:{decision.decision_id}"
@@ -1265,6 +1333,7 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
             action_ref="continue_session",
             trigger="resident_orchestrator",
             brain_intent="propose_execute",
+            **_runtime_gate_pass_kwargs(),
         )
     )
     command_id = f"command:{decision.decision_id}"
@@ -1346,6 +1415,7 @@ def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command
             action_ref="continue_session",
             trigger="resident_orchestrator",
             brain_intent="propose_execute",
+            **_runtime_gate_pass_kwargs(),
         )
     )
     command_id = f"command:{decision.decision_id}"

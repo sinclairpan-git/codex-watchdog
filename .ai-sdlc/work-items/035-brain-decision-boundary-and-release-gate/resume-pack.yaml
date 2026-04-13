@@ -1,5 +1,5 @@
 current_stage: execute
-current_batch: 2
+current_batch: 4
 last_committed_task: T351
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
@@ -68,11 +68,17 @@ working_set_snapshot:
 
     - `observe_only` 现在在有 facts 时会落成 `block_and_alert` notification，没有 facts 时仍保持 no-op，避免 phantom session 被平白写出 decision。
 
-    - 下一步应继续补齐各 Brain intent 的 validator/release-gate trace 绑定与一致性验证，而不是再补枚举级 runtime consume。'
+    - 最新切片已把 `propose_execute` 的 runtime gate 改成 fail-closed：默认会绑定 `decision_trace / validator_verdict / release_gate_verdict`，缺 evidence 时不会再继续 auto-execute。
+
+    - `policy.engine` 现在会正式消费 `validator_verdict / release_gate_verdict`；`decision_validated` canonical event 也会带完整 `decision_trace`，不再只有 `brain_intent`。
+
+    - 旧的 ungated decision projection 现在会在 runtime tick 上被升级成带 gate evidence 的当前 decision，避免 legacy projection 长期绕开新的 gate。
+
+    - 下一步应继续补齐正式 `release_gate_report` artifact/runbook/fixtures、replay/provider certification 的可验证逻辑，以及 review 里剩余的 second-truth 边角，而不是再补新的 Brain intent 枚举。'
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T20:37:00+08:00'
+timestamp: '2026-04-13T20:45:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

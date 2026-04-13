@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
+from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
+from watchdog.services.brain.release_gate import ReleaseGateEvaluator
 from watchdog.services.brain.service import BrainDecisionService
+from watchdog.services.brain.validator import DecisionValidator
 from watchdog.services.actions.executor import (
     build_watchdog_action_from_decision,
     execute_canonical_decision,
@@ -47,6 +52,8 @@ def _parse_iso(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed
+
+
 def _decision_facts(decision) -> list[FactRecord]:
     facts = decision.evidence.get("facts")
     if not isinstance(facts, list):
@@ -84,6 +91,8 @@ class ResidentOrchestrator:
         state_store: ResidentOrchestrationStateStore,
         session_service: SessionService | None = None,
         brain_service: BrainDecisionService | None = None,
+        decision_validator: DecisionValidator | None = None,
+        release_gate_evaluator: ReleaseGateEvaluator | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
@@ -96,6 +105,8 @@ class ResidentOrchestrator:
         self._state_store = state_store
         self._session_service = session_service
         self._brain_service = brain_service or BrainDecisionService()
+        self._decision_validator = decision_validator or DecisionValidator()
+        self._release_gate_evaluator = release_gate_evaluator or ReleaseGateEvaluator()
 
     @staticmethod
     def _command_id_for_decision(decision) -> str:
@@ -123,6 +134,7 @@ class ResidentOrchestrator:
             return
         correlation_id = self._decision_correlation_id(decision)
         decision_evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        decision_trace = decision_evidence.get("decision_trace")
         validator_verdict = decision_evidence.get("validator_verdict")
         release_gate_verdict = decision_evidence.get("release_gate_verdict")
         self._session_service.record_event(
@@ -138,6 +150,9 @@ class ResidentOrchestrator:
                 "runtime_disposition": decision.runtime_disposition,
                 "policy_version": decision.policy_version,
                 "fact_snapshot_version": decision.fact_snapshot_version,
+                "decision_trace_ref": (
+                    decision_trace.get("trace_id") if isinstance(decision_trace, dict) else None
+                ),
             },
         )
         self._session_service.record_event(
@@ -154,6 +169,7 @@ class ResidentOrchestrator:
                 "risk_class": decision.risk_class,
                 "decision_reason": decision.decision_reason,
                 "matched_policy_rules": list(decision.matched_policy_rules),
+                "decision_trace": decision_trace,
                 "validator_verdict": validator_verdict,
                 "release_gate_verdict": release_gate_verdict,
             },
@@ -320,6 +336,18 @@ class ResidentOrchestrator:
             session_id=record.thread_id,
         )
 
+    def _goal_contract_version_for_record(self, record: PersistedSessionRecord) -> str:
+        if self._session_service is None:
+            return "goal-contract:unknown"
+        service = GoalContractService(self._session_service)
+        contract = service.get_current_contract(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+        )
+        if contract is None:
+            return "goal-contract:unknown"
+        return contract.version
+
     def _evaluate_brain_intent(self, record: PersistedSessionRecord):
         return self._brain_service.evaluate_session(
             record=record,
@@ -356,8 +384,37 @@ class ResidentOrchestrator:
         record: PersistedSessionRecord,
         *,
         brain_intent,
+        action_ref: str,
+        goal_contract_readiness: GoalContractReadiness | None,
     ) -> dict[str, object]:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
+        decision_trace = self._decision_trace_for_intent(
+            record,
+            brain_intent=brain_intent.intent,
+            action_ref=action_ref,
+            goal_contract_version=self._goal_contract_version_for_record(record),
+        )
+        validator_verdict = self._decision_validator.validate(
+            brain_intent=brain_intent.intent,
+            goal_contract_readiness=goal_contract_readiness,
+            memory_conflict_detected=self._session_has_event(
+                session_id=record.thread_id,
+                event_type="memory_conflict_detected",
+            ),
+            memory_unavailable=self._session_has_event(
+                session_id=record.thread_id,
+                event_type="memory_unavailable_degraded",
+            ),
+        )
+        release_gate_verdict = self._release_gate_evaluator.evaluate(
+            brain_intent=brain_intent.intent,
+            trace=decision_trace,
+            validator_verdict=validator_verdict,
+            approval_read=self._approval_read_snapshot_for_session(record),
+        )
+        evidence["decision_trace"] = decision_trace.model_dump(mode="json")
+        evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
+        evidence["release_gate_verdict"] = release_gate_verdict.model_dump(mode="json")
         if brain_intent.intent == "candidate_closure":
             evidence["requested_action_args"] = self._candidate_closure_action_args(record)
         return evidence
@@ -365,6 +422,11 @@ class ResidentOrchestrator:
     def _record_and_store_decision(self, decision):
         existing = self._decision_store.get(decision.decision_key)
         if existing is not None:
+            if not self._decision_has_runtime_gate(existing):
+                self._record_decision_lifecycle(decision)
+                return self._decision_store.update(decision)
+            if not self._has_canonical_decision_events(existing):
+                self._record_decision_lifecycle(existing)
             return existing
         self._record_decision_lifecycle(decision)
         return self._decision_store.put(decision)
@@ -375,12 +437,120 @@ class ResidentOrchestrator:
             return False
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         validator_verdict = evidence.get("validator_verdict")
-        if isinstance(validator_verdict, dict) and validator_verdict.get("status") != "pass":
+        if not isinstance(validator_verdict, dict) or validator_verdict.get("status") != "pass":
             return False
         release_gate_verdict = evidence.get("release_gate_verdict")
-        if isinstance(release_gate_verdict, dict) and release_gate_verdict.get("status") != "pass":
+        if not isinstance(release_gate_verdict, dict) or release_gate_verdict.get("status") != "pass":
             return False
         return True
+
+    def _has_canonical_decision_events(self, decision) -> bool:
+        if self._session_service is None:
+            return True
+        events = self._session_service.list_events(
+            session_id=decision.session_id,
+            correlation_id=self._decision_correlation_id(decision),
+        )
+        event_types = {event.event_type for event in events}
+        return {"decision_proposed", "decision_validated"}.issubset(event_types)
+
+    @staticmethod
+    def _decision_has_runtime_gate(decision) -> bool:
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        return isinstance(evidence.get("validator_verdict"), dict) and isinstance(
+            evidence.get("release_gate_verdict"), dict
+        )
+
+    def _session_has_event(self, *, session_id: str, event_type: str) -> bool:
+        if self._session_service is None:
+            return False
+        events = self._session_service.list_events(
+            session_id=session_id,
+            event_type=event_type,
+        )
+        return bool(events)
+
+    def _approval_read_snapshot_for_session(
+        self,
+        record: PersistedSessionRecord,
+    ) -> ApprovalReadSnapshot | None:
+        approvals = sorted(
+            (
+                approval
+                for approval in self._approval_store.list_records()
+                if approval.session_id == record.thread_id
+                and approval.project_id == record.project_id
+                and approval.status == "pending"
+            ),
+            key=lambda approval: approval.created_at,
+        )
+        if not approvals:
+            return None
+        approval = approvals[-1]
+        approval_events = self._session_service.list_events(
+            session_id=record.thread_id,
+            event_type="approval_requested",
+        ) if self._session_service is not None else []
+        matching_event = next(
+            (
+                event
+                for event in reversed(approval_events)
+                if event.related_ids.get("approval_id") == approval.approval_id
+            ),
+            None,
+        )
+        return ApprovalReadSnapshot(
+            approval_event_id=matching_event.event_id if matching_event is not None else approval.approval_id,
+            approval_id=approval.approval_id,
+            status=approval.status,
+            requested_action=approval.requested_action,
+            session_id=approval.session_id,
+            project_id=approval.project_id,
+            fact_snapshot_version=approval.fact_snapshot_version,
+            goal_contract_version=approval.goal_contract_version or "goal-contract:unknown",
+            expires_at=approval.expires_at or "approval:no-expiry",
+            decided_by=approval.decided_by,
+            log_seq=matching_event.log_seq if matching_event is not None else None,
+        )
+
+    def _decision_trace_for_intent(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        brain_intent: str,
+        action_ref: str,
+        goal_contract_version: str,
+    ) -> DecisionTrace:
+        event_cursor = None
+        if self._session_service is not None:
+            session_events = self._session_service.list_events(session_id=record.thread_id)
+            if session_events:
+                last_log_seq = max((event.log_seq or 0) for event in session_events)
+                event_cursor = f"log_seq:{last_log_seq}"
+        payload = {
+            "project_id": record.project_id,
+            "session_id": record.thread_id,
+            "fact_snapshot_version": record.fact_snapshot_version,
+            "brain_intent": brain_intent,
+            "action_ref": action_ref,
+            "goal_contract_version": goal_contract_version,
+            "session_event_cursor": event_cursor,
+        }
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        trace_id = f"trace:{hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:16]}"
+        return DecisionTrace(
+            trace_id=trace_id,
+            session_event_cursor=event_cursor,
+            goal_contract_version=goal_contract_version,
+            policy_ruleset_hash=f"sha256:{hashlib.sha256(b'policy-v1').hexdigest()[:16]}",
+            memory_packet_input_ids=[],
+            memory_packet_input_hashes=[],
+            provider="resident_orchestrator",
+            model="rule-based-brain",
+            prompt_schema_ref="prompt:none",
+            output_schema_ref="schema:decision-trace-v1",
+            approval_read=self._approval_read_snapshot_for_session(record),
+        )
 
     def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
@@ -402,6 +572,7 @@ class ResidentOrchestrator:
         brain_intent = self._evaluate_brain_intent(record)
         action_ref = self._action_ref_for_brain_intent(record, brain_intent.intent)
         decision_result: str | None = None
+        goal_contract_readiness = self._goal_contract_readiness_for_record(record)
 
         if (
             brain_intent.intent == "propose_execute"
@@ -414,18 +585,34 @@ class ResidentOrchestrator:
             action_ref = None
 
         if action_ref is not None:
+            intent_evidence = self._decision_evidence_for_intent(
+                record,
+                brain_intent=brain_intent,
+                action_ref=action_ref,
+                goal_contract_readiness=goal_contract_readiness,
+            )
             decision = evaluate_persisted_session_policy(
                 record,
                 action_ref=action_ref,
                 trigger="resident_orchestrator",
                 brain_intent=brain_intent.intent,
-                goal_contract_readiness=self._goal_contract_readiness_for_record(record),
+                validator_verdict=(
+                    intent_evidence.get("validator_verdict")
+                    if isinstance(intent_evidence.get("validator_verdict"), dict)
+                    else None
+                ),
+                release_gate_verdict=(
+                    intent_evidence.get("release_gate_verdict")
+                    if isinstance(intent_evidence.get("release_gate_verdict"), dict)
+                    else None
+                ),
+                goal_contract_readiness=goal_contract_readiness,
             )
             decision = decision.model_copy(
                 update={
                     "evidence": {
+                        **intent_evidence,
                         **decision.evidence,
-                        **self._decision_evidence_for_intent(record, brain_intent=brain_intent),
                     }
                 }
             )

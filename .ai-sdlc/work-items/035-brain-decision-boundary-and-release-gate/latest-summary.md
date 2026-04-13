@@ -24,6 +24,11 @@ Last Committed Task: T351
 - 最新增量切片又补齐了剩余 Brain intent 的 runtime consume：`require_approval`、`propose_recovery`、`suggest_only` 现在都能落成显式 canonical decision/result，其中 `suggest_only` 会走 `block_and_alert` notification，而不是被 runtime 静默吞掉。
 - 该切片的复审问题也已收口：auto-continue cooldown 现在只压 `propose_execute`，不会再把复用 `continue_session` 作为推荐 action 的 `require_approval / suggest_only` 静默吞掉。
 - `observe_only` 也已从静默 no-op 收紧成显式 runtime consume：有 facts 时会落 `brain_observe_only -> block_and_alert` notification，没有 facts 时仍保持 no-op，避免 phantom session 被平白写出 decision。
+- 最新切片已开始把 validator/release-gate trace 绑定落到真实 runtime：
+  - `DecisionValidator` 不再只是 pass-through，`ReleaseGateEvaluator` 也不再要求测试手工伪造 verdict；orchestrator 会先生成 `decision_trace / validator_verdict / release_gate_verdict`，再交给 policy；
+  - `policy.engine` 现在会对 `brain_intent=propose_execute` 执行 fail-closed：缺 runtime gate evidence 或 verdict 非 `pass` 时，不能再继续 `auto_execute_and_notify`；
+  - `decision_validated` canonical event 现在会携带完整 `decision_trace`，默认 auto-continue 也会带上 `report_id / report_hash / input_hash / decision_trace_ref / approval_read_ref`；
+  - 旧的 ungated decision projection 现在会在 runtime tick 上被升级成带 gate evidence 的当前 decision，避免 legacy projection 长期绕开新 gate。
 - 最新验证结果：
   - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 passed in 0.16s`
   - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `17 passed in 0.15s`
@@ -42,4 +47,8 @@ Last Committed Task: T351
   - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `4 passed, 28 deselected in 1.19s`
   - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'skips_phantom_approval_when_only_pending_flag_is_set or does_not_execute_when_brain_observes_only or cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `6 passed, 26 deselected in 0.63s`
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `39 passed in 2.49s`
-- 下一执行入口已收敛到 Brain intent 的 evidence/trace 一致性：继续补齐 `observe_only` 与各 intent 的 validator/release-gate trace 绑定，而不是再补枚举级 runtime consume。
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py -k 'fails_closed_when_propose_execute_lacks_runtime_gate_evidence or allows_auto_execution_when_goal_contract_is_ready'` -> `2 passed, 6 deselected in 0.23s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or fails_closed_when_auto_execute_decision_lacks_gate_evidence'` -> `2 passed, 31 deselected in 1.01s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `41 passed in 3.55s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `38 passed in 1.09s`
+- 下一执行入口已收敛到真正的 release-gate artifact/runtime contract：继续补齐脚本化 `release_gate_report`/fixtures/runbook、replay/provider-certification 的可验证逻辑，以及仍未完全清零的 second-truth 风险，而不是再补新的 Brain intent 枚举。
