@@ -214,3 +214,14 @@
 - 当前判断再更新为：
   - `report_load_failed`、`report_expired`、validator/release-gate 降级现在已经不只停留在 canonical decision evidence，至少会通过现有 ops summary 链路暴露成 `runtime_gate_degraded` 告警；
   - 下一步可以继续评估是否要把具体 `degrade_reason` 做成更细粒度的 ops/read-side breakdown，或把共享 runtime contract 上提到更明确的 runtime/config surface，而不是继续扩新的控制流。
+- 已继续推进 ops/read-side 分辨率，先把 runtime gate 告警从总桶拆到具体 `degrade_reason`：
+  - 先在 `tests/test_watchdog_ops.py` 把上一版 `runtime_gate_degraded` 用例改成红测，要求 `report_load_failed` 直接落成 `runtime_gate_report_load_failed`；同时新增一条红测，要求 `report_expired` 与 `approval_stale` 被分别统计，而不是继续汇总成单一 alert；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_ops.py -k 'runtime_gate_degradation_alert or breaks_runtime_gate_alerts_down_by_degrade_reason'` -> `2 failed in 0.77s`，失败点是 ops summary 仍只输出 `runtime_gate_degraded` 总桶；
+  - 已在 `src/watchdog/api/ops.py` 中把 runtime gate 统计改为按 canonical decision 的 `uncertainty_reasons` 分桶，同时继续用 `matched_policy_rules` 作为“这是否属于 runtime gate 降级”的准入条件，避免从 verdict payload 再造第四套判断逻辑；
+  - 现在具体降级会直接暴露成 `runtime_gate_report_load_failed`、`runtime_gate_report_expired`、`runtime_gate_approval_stale` 等 alert code，healthz/ops/metrics 也会随 `build_ops_summary(...)` 自动继承这些细粒度标签。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k 'runtime_gate_degradation_alert or breaks_runtime_gate_alerts_down_by_degrade_reason'` -> `2 passed, 7 deselected in 0.66s`
+  - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `63 passed in 3.92s`
+- 当前判断再更新为：
+  - runtime gate 降级现在已经能在 ops/read-side 直接按 `degrade_reason` 粒度观察，而不是只有一个需要再翻 evidence 的总桶；
+  - 下一步更适合继续把共享 runtime contract 从 helper 提到更明确的 runtime/config surface，或者给 ops summary 增加更稳定的 reason taxonomy，而不是继续扩新的控制流。

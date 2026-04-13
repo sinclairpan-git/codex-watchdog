@@ -11,11 +11,11 @@ working_set_snapshot:
   active_files:
   - '`src/watchdog/api/ops.py`'
   - '`src/watchdog/services/policy/engine.py`'
-  - '`src/watchdog/services/brain/provider_certification.py`'
   - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/brain/provider_certification.py`'
   - '`tests/test_watchdog_ops.py`'
-  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`tests/test_watchdog_release_gate.py`'
   - '`tests/test_watchdog_release_gate_evidence.py`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
@@ -25,23 +25,23 @@ working_set_snapshot:
   context_summary: |
     # Development Summary
 
-    - `WI-035` 当前仍在执行 `T354`：目标已经推进到把 runtime gate 的降级结果暴露到现有 ops/read-side surface，而不只是停在 canonical decision evidence。
+    - `WI-035` 当前仍在执行 `T354`：当前主线已经从“让 runtime gate 可观测”推进到“让 ops/read-side 直接看到具体 degrade reason”。
     - resident runtime 默认放行路径已经正式消费 `release_gate_report` artifact，不再一律回退到 `report:resident_default`。
     - provider certification / replay / release-gate runtime 也已经共用同一套 settings-driven runtime contract builder。
-    - 最新切片继续收掉 ops 可观测性的最后一层缺口：
-      - `src/watchdog/api/ops.py` 新增 `runtime_gate_degraded` alert；
-      - 该 alert 统一从 canonical decision 的 `matched_policy_rules` 读取 `runtime_gate_missing / release_gate_degraded / validator_gate_degraded`；
-      - `/healthz`、`/api/v1/watchdog/ops/alerts` 与 metrics 会自动继承这条 surface，因为都复用 `build_ops_summary(...)`。
+    - 最新切片继续提升 ops/read-side 分辨率：
+      - `src/watchdog/api/ops.py` 现在按 canonical decision 的 `uncertainty_reasons` 分桶 runtime gate 降级；
+      - 同时继续用 `matched_policy_rules` 作为 runtime gate 告警准入条件，避免从 verdict payload 再造一套旁路逻辑；
+      - 最终会直接暴露 `runtime_gate_report_load_failed`、`runtime_gate_report_expired`、`runtime_gate_approval_stale` 这类 alert code，healthz/ops/metrics 自动继承。
     - 当前已完成验证：
-      - `uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 passed, 7 deselected in 0.69s`
-      - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `62 passed in 4.13s`
+      - `uv run pytest -q tests/test_watchdog_ops.py -k 'runtime_gate_degradation_alert or breaks_runtime_gate_alerts_down_by_degrade_reason'` -> `2 passed, 7 deselected in 0.66s`
+      - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `63 passed in 3.92s`
     - 下一步优先评估两件事：
-      - 是否把具体 `degrade_reason` 继续细分成 ops/read-side breakdown，而不是只有统一的 `runtime_gate_degraded`；
-      - 是否把共享 runtime contract 再上提到更明确的 runtime/config surface，而不是停在 helper 级别。
+      - 是否把共享 runtime contract 再上提到更明确的 runtime/config surface，而不是停在 helper 级别；
+      - 是否给 runtime gate reason 建更稳定的 taxonomy，避免后续 reason 命名漂移直接映射到 ops label。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T21:49:54+08:00'
+timestamp: '2026-04-13T22:06:16+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

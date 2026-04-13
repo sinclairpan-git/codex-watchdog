@@ -30,6 +30,8 @@ _RUNTIME_GATE_ALERT_RULES = {
     "validator_gate_degraded",
 }
 
+_RUNTIME_GATE_REASON_FALLBACK = "unknown"
+
 
 def _fact_snapshot_order(value: str) -> tuple[int, str]:
     match = re.fullmatch(r"fact-v(\d+)", value)
@@ -95,6 +97,24 @@ def _latest_approval_records(
     return list(latest_by_session.values())
 
 
+def _runtime_gate_reason_counts(decisions) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in decisions:
+        if not any(rule in _RUNTIME_GATE_ALERT_RULES for rule in record.matched_policy_rules):
+            continue
+        reasons = record.uncertainty_reasons or []
+        reason = next(
+            (
+                str(item).strip()
+                for item in reasons
+                if str(item).strip()
+            ),
+            _RUNTIME_GATE_REASON_FALLBACK,
+        )
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
 def build_ops_summary(
     *,
     data_dir: Path,
@@ -142,11 +162,7 @@ def build_ops_summary(
     mapping_incomplete = sum(
         1 for record in decisions if "mapping_incomplete" in record.uncertainty_reasons
     )
-    runtime_gate_degraded = sum(
-        1
-        for record in decisions
-        if any(rule in _RUNTIME_GATE_ALERT_RULES for rule in record.matched_policy_rules)
-    )
+    runtime_gate_reason_counts = _runtime_gate_reason_counts(decisions)
     recovery_failed = sum(
         1
         for _, result in receipt_items
@@ -191,13 +207,13 @@ def build_ops_summary(
                 summary="mapping gaps are blocking or degrading decision quality",
             )
         )
-    if runtime_gate_degraded:
+    for reason, count in sorted(runtime_gate_reason_counts.items()):
         alerts.append(
             OpsAlert(
-                alert_code="runtime_gate_degraded",
+                alert_code=f"runtime_gate_{reason}",
                 severity="warning",
-                count=runtime_gate_degraded,
-                summary="runtime gate degradations are forcing autonomy fallback",
+                count=count,
+                summary=f"runtime gate degradation: {reason}",
             )
         )
     if recovery_failed:
