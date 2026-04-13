@@ -225,3 +225,15 @@
 - 当前判断再更新为：
   - runtime gate 降级现在已经能在 ops/read-side 直接按 `degrade_reason` 粒度观察，而不是只有一个需要再翻 evidence 的总桶；
   - 下一步更适合继续把共享 runtime contract 从 helper 提到更明确的 runtime/config surface，或者给 ops summary 增加更稳定的 reason taxonomy，而不是继续扩新的控制流。
+- 已继续推进 shared runtime contract surface，先收掉 contract builder 仍停在局部 helper 的缺口：
+  - 先在 `tests/test_watchdog_provider_certification.py` 把 `build_runtime_contract` 的 red test 改到 `Settings` 层，要求 runtime contract 能直接从 `Settings.build_runtime_contract(...)` 产出；同时新增一条 red test，要求 provider helper 退化成对 settings surface 的兼容委托；
+  - 在 `tests/test_watchdog_decision_replay.py` 也把 replay 用例改成直接调用 `Settings.build_runtime_contract(...)`，要求 replay/runtime contract 的主入口不再依赖 provider helper；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'settings_build_runtime_contract_reads_versions_from_settings or provider_certification_helper_delegates_to_settings_runtime_contract or packet_replay_accepts_settings_built_runtime_contract'` -> `3 failed in 0.23s`，失败点是 `Settings` 还没有显式 `build_runtime_contract(...)` surface；
+  - 已在 `src/watchdog/settings.py` 新增 `Settings.build_runtime_contract(...)`，把 provider/model/prompt/output 与 settings 中的 risk/policy/tool/memory-adapter 字段统一收口到配置对象本身；
+  - 已在 `src/watchdog/services/brain/provider_certification.py` 把旧 helper 改成对 `Settings.build_runtime_contract(...)` 的兼容委托；`src/watchdog/services/session_spine/orchestrator.py` 也已直接走 `self._settings.build_runtime_contract(...)`，不再依赖 helper 间接构建 release-gate runtime contract。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'settings_build_runtime_contract_reads_versions_from_settings or provider_certification_helper_delegates_to_settings_runtime_contract or packet_replay_accepts_settings_built_runtime_contract'` -> `3 passed, 9 deselected in 0.10s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_ops.py` -> `67 passed in 3.78s`
+- 当前判断再更新为：
+  - shared runtime contract 现在已经有了显式的 runtime/config surface，provider helper 只剩兼容委托，后续不再需要靠局部 helper 才能维持 contract 一致；
+  - 下一步更适合给 runtime gate reason 建稳定 taxonomy，或继续收口 release-gate/provider/replay 对这份 config surface 的文档与 fixture 约束，而不是继续扩新的控制流。

@@ -105,9 +105,7 @@ def test_provider_compatibility_evaluator_reports_runtime_drift_fields() -> None
     ]
 
 
-def test_build_runtime_contract_reads_versions_from_settings() -> None:
-    module = importlib.import_module("watchdog.services.brain.provider_certification")
-
+def test_settings_build_runtime_contract_reads_versions_from_settings() -> None:
     settings = Settings(
         release_gate_risk_policy_version="risk:v2",
         release_gate_decision_input_builder_version="dib:v2",
@@ -116,8 +114,7 @@ def test_build_runtime_contract_reads_versions_from_settings() -> None:
         release_gate_memory_provider_adapter_hash="memory:def",
     )
 
-    contract = module.build_runtime_contract(
-        settings=settings,
+    contract = settings.build_runtime_contract(
         provider="provider-a",
         model="model-a",
         prompt_schema_ref="prompt:v1",
@@ -135,3 +132,27 @@ def test_build_runtime_contract_reads_versions_from_settings() -> None:
         "policy_engine_version": "policy:v2",
         "memory_provider_adapter_hash": "memory:def",
     }
+
+
+def test_provider_certification_helper_delegates_to_settings_runtime_contract() -> None:
+    module = importlib.import_module("watchdog.services.brain.provider_certification")
+    settings = Settings(
+        release_gate_risk_policy_version="risk:v2",
+        release_gate_decision_input_builder_version="dib:v2",
+        release_gate_policy_engine_version="policy:v2",
+        release_gate_tool_schema_hash="tool:def",
+        release_gate_memory_provider_adapter_hash="memory:def",
+    )
+
+    assert module.build_runtime_contract(
+        settings=settings,
+        provider="provider-a",
+        model="model-a",
+        prompt_schema_ref="prompt:v1",
+        output_schema_ref="schema:v1",
+    ) == settings.build_runtime_contract(
+        provider="provider-a",
+        model="model-a",
+        prompt_schema_ref="prompt:v1",
+        output_schema_ref="schema:v1",
+    )

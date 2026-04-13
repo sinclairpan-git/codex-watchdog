@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
-from watchdog.services.brain.provider_certification import build_runtime_contract
 from watchdog.services.brain.release_gate import (
     ReleaseGateEvaluator,
     ReleaseGateReport,
@@ -388,8 +387,7 @@ class ResidentOrchestrator:
         }
 
     def _release_gate_runtime_contract(self, *, trace: DecisionTrace) -> dict[str, str]:
-        return build_runtime_contract(
-            settings=self._settings,
+        return self._settings.build_runtime_contract(
             provider=trace.provider,
             model=trace.model,
             prompt_schema_ref=trace.prompt_schema_ref,

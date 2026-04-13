@@ -82,7 +82,6 @@ def test_session_semantic_replay_marks_missing_required_events_as_incomplete() -
 
 def test_packet_replay_accepts_settings_built_runtime_contract() -> None:
     replay_module = importlib.import_module("watchdog.services.brain.replay")
-    certification_module = importlib.import_module("watchdog.services.brain.provider_certification")
 
     settings = Settings(
         release_gate_risk_policy_version="risk:v2",
@@ -91,8 +90,7 @@ def test_packet_replay_accepts_settings_built_runtime_contract() -> None:
         release_gate_tool_schema_hash="tool:def",
         release_gate_memory_provider_adapter_hash="memory:def",
     )
-    runtime_contract = certification_module.build_runtime_contract(
-        settings=settings,
+    runtime_contract = settings.build_runtime_contract(
         provider="provider-a",
         model="model-a",
         prompt_schema_ref="prompt:v1",

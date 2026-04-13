@@ -70,17 +70,10 @@ def build_runtime_contract(
     output_schema_ref: str,
     memory_provider_adapter_hash: str | None = None,
 ) -> dict[str, str]:
-    return {
-        "provider": provider,
-        "model": model,
-        "prompt_schema_ref": prompt_schema_ref,
-        "output_schema_ref": output_schema_ref,
-        "tool_schema_hash": settings.release_gate_tool_schema_hash,
-        "risk_policy_version": settings.release_gate_risk_policy_version,
-        "decision_input_builder_version": settings.release_gate_decision_input_builder_version,
-        "policy_engine_version": settings.release_gate_policy_engine_version,
-        "memory_provider_adapter_hash": (
-            memory_provider_adapter_hash
-            or settings.release_gate_memory_provider_adapter_hash
-        ),
-    }
+    return settings.build_runtime_contract(
+        provider=provider,
+        model=model,
+        prompt_schema_ref=prompt_schema_ref,
+        output_schema_ref=output_schema_ref,
+        memory_provider_adapter_hash=memory_provider_adapter_hash,
+    )

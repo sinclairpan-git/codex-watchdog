@@ -9,13 +9,14 @@ working_set_snapshot:
   plan_path: specs/035-brain-decision-boundary-and-release-gate/plan.md
   tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
   active_files:
-  - '`src/watchdog/api/ops.py`'
-  - '`src/watchdog/services/policy/engine.py`'
-  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/settings.py`'
   - '`src/watchdog/services/brain/provider_certification.py`'
-  - '`tests/test_watchdog_ops.py`'
-  - '`tests/test_watchdog_policy_engine.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`tests/test_watchdog_provider_certification.py`'
+  - '`tests/test_watchdog_decision_replay.py`'
   - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/test_watchdog_ops.py`'
   - '`tests/test_watchdog_release_gate.py`'
   - '`tests/test_watchdog_release_gate_evidence.py`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
@@ -25,23 +26,23 @@ working_set_snapshot:
   context_summary: |
     # Development Summary
 
-    - `WI-035` 当前仍在执行 `T354`：当前主线已经从“让 runtime gate 可观测”推进到“让 ops/read-side 直接看到具体 degrade reason”。
+    - `WI-035` 当前仍在执行 `T354`：当前主线已经从“让 ops/read-side 看见具体 degrade reason”推进到“让 shared runtime contract 拥有显式 config surface”。
     - resident runtime 默认放行路径已经正式消费 `release_gate_report` artifact，不再一律回退到 `report:resident_default`。
-    - provider certification / replay / release-gate runtime 也已经共用同一套 settings-driven runtime contract builder。
-    - 最新切片继续提升 ops/read-side 分辨率：
-      - `src/watchdog/api/ops.py` 现在按 canonical decision 的 `uncertainty_reasons` 分桶 runtime gate 降级；
-      - 同时继续用 `matched_policy_rules` 作为 runtime gate 告警准入条件，避免从 verdict payload 再造一套旁路逻辑；
-      - 最终会直接暴露 `runtime_gate_report_load_failed`、`runtime_gate_report_expired`、`runtime_gate_approval_stale` 这类 alert code，healthz/ops/metrics 自动继承。
+    - runtime gate 降级已进入现有 ops/read-side surface，并且 alert 已经按 `degrade_reason` 分桶。
+    - 最新切片继续收掉 shared runtime contract 仍停在局部 helper 的缺口：
+      - `Settings.build_runtime_contract(...)` 已成为新的显式 runtime/config surface；
+      - `provider_certification.py` 中的旧 helper 已退化成兼容委托；
+      - `ResidentOrchestrator` 也已直接走 `self._settings.build_runtime_contract(...)`，不再依赖 helper 间接构建 release-gate runtime contract。
     - 当前已完成验证：
-      - `uv run pytest -q tests/test_watchdog_ops.py -k 'runtime_gate_degradation_alert or breaks_runtime_gate_alerts_down_by_degrade_reason'` -> `2 passed, 7 deselected in 0.66s`
-      - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `63 passed in 3.92s`
+      - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'settings_build_runtime_contract_reads_versions_from_settings or provider_certification_helper_delegates_to_settings_runtime_contract or packet_replay_accepts_settings_built_runtime_contract'` -> `3 passed, 9 deselected in 0.10s`
+      - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_ops.py` -> `67 passed in 3.78s`
     - 下一步优先评估两件事：
-      - 是否把共享 runtime contract 再上提到更明确的 runtime/config surface，而不是停在 helper 级别；
-      - 是否给 runtime gate reason 建更稳定的 taxonomy，避免后续 reason 命名漂移直接映射到 ops label。
+      - 是否给 runtime gate reason 建稳定 taxonomy，避免 reason 命名直接外溢到 ops label；
+      - 是否把 shared runtime contract 的来源纪律进一步固化到 docs/fixtures/runbook，而不是只靠代码约束。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T22:06:16+08:00'
+timestamp: '2026-04-13T22:22:12+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''
