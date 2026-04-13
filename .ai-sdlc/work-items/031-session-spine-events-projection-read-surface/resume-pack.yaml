@@ -1,0 +1,59 @@
+current_stage: execute
+current_batch: 2
+last_committed_task: T311
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/031-session-spine-events-projection-read-surface/spec.md
+  plan_path: specs/031-session-spine-events-projection-read-surface/plan.md
+  tasks_path: specs/031-session-spine-events-projection-read-surface/tasks.md
+  active_files:
+  - '`docs/architecture/codex-long-running-autonomy-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/024-resident-supervision-session-spine-persistence/spec.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/plan.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/tasks.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/runtime.yaml`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/latest-summary.md`'
+  context_summary: '# Development Summary
+
+
+    Status: active
+
+    Total Tasks: 5
+
+    Completed Tasks: 1
+
+    Halted Tasks: 0
+
+    Total Batches: 5
+
+    Completed Batches: 1
+
+    Last Committed Task: T311
+
+
+    ## Notes
+
+    - 已把长时运行自治总实施计划中的 `Task 2` 正式拆成 `WI-031`。
+
+    - 031 的边界固定为“`session_spine` 读面切到 Session events projection”，并明确 approval inbox 与 audit query 一并切换。
+
+    - 024 的 persisted spine 在 031 中只保留 compatibility fallback，不再继续充当默认真相来源。
+
+    - 当前尚未进入产品实现；下一执行入口固定为 `T312`。
+
+    - 未改写 `.ai-sdlc/state/checkpoint.yml`，避免覆盖仓库当前全局 pipeline 状态。'
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-13T13:31:05+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

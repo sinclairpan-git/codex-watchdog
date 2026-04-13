@@ -1,0 +1,129 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T311
+  title: 冻结 031 formal docs 与读面切换边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/plan.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/tasks.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/task-execution-log.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T312
+  title: 写失败测试锁定 projection 来源优先级
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_session_spine_projection.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/test_watchdog_ops.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T311
+- task_id: T313
+  title: 实现 Session events projection reader 与 compatibility fallback
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/session_spine/store.py`'
+  - '`src/watchdog/services/session_spine/projection.py`'
+  - '`src/watchdog/services/session_spine/service.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T312
+- task_id: T314
+  title: 重接 stable API、approval inbox 与 audit query
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/api/session_spine_queries.py`'
+  - '`src/watchdog/services/audit/service.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/test_watchdog_ops.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T313
+- task_id: T315
+  title: 完成 031 验证并交接下一 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`tests/test_watchdog_session_spine_projection.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`specs/031-session-spine-events-projection-read-surface/task-execution-log.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T314
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T311
+  status: completed
+  started_at: '2026-04-13T13:31:05+08:00'
+  completed_at: '2026-04-13T13:31:05+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T312
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T313
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T314
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T315
+  status: pending
+  started_at: ''
+  completed_at: ''
+current_batch: 2
