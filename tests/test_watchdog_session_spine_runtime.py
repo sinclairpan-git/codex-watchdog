@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 from watchdog.main import _run_delivery_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
-from watchdog.services.brain.models import DecisionIntent
+from watchdog.services.brain.models import DecisionIntent, DecisionTrace
+from watchdog.services.brain.release_gate import ReleaseGateEvaluator
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
 from watchdog.services.goal_contract.service import GoalContractService
@@ -138,6 +139,53 @@ def _runtime_gate_pass_kwargs() -> dict[str, dict[str, object]]:
             "input_hash": "sha256:input-seed",
         },
     }
+
+
+def _release_gate_trace() -> DecisionTrace:
+    return DecisionTrace(
+        trace_id="trace:runtime-report",
+        session_event_cursor="cursor:42",
+        goal_contract_version="goal:v1",
+        policy_ruleset_hash="sha256:policy-rules",
+        memory_packet_input_ids=["packet:1"],
+        memory_packet_input_hashes=["sha256:packet-1"],
+        provider="provider-a",
+        model="model-a",
+        prompt_schema_ref="prompt:v1",
+        output_schema_ref="schema:v1",
+    )
+
+
+def _write_release_gate_report(
+    path: Path,
+    *,
+    trace: DecisionTrace,
+    expires_at: str,
+) -> dict[str, object]:
+    evaluator = ReleaseGateEvaluator()
+    report = {
+        "report_id": "report:runtime-qualified",
+        "report_hash": "sha256:runtime-qualified",
+        "sample_window": "2026-04-01/2026-04-05",
+        "shadow_window": "2026-04-06/2026-04-07",
+        "label_manifest": "manifest:runtime-qualified",
+        "generated_by": "tests/runtime",
+        "report_approved_by": "qa/runtime",
+        "artifact_ref": "artifact://release-gate/runtime-qualified.json",
+        "expires_at": expires_at,
+        "provider": trace.provider,
+        "model": trace.model,
+        "prompt_schema_ref": trace.prompt_schema_ref,
+        "output_schema_ref": trace.output_schema_ref,
+        "risk_policy_version": "risk:v1",
+        "decision_input_builder_version": "dib:v1",
+        "policy_engine_version": "policy:v1",
+        "tool_schema_hash": "tool:abc",
+        "memory_provider_adapter_hash": "memory:abc",
+        "input_hash": evaluator._input_hash_for_trace(trace),
+    }
+    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
 
 
 class RecordingDeliveryClient:
@@ -1179,6 +1227,139 @@ def test_resident_orchestrator_fails_closed_when_auto_execute_decision_lacks_gat
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_uses_configured_release_gate_report_for_auto_execute(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "release-gate-report.json"
+    trace = _release_gate_trace()
+    report = _write_release_gate_report(
+        report_path,
+        trace=trace,
+        expires_at="2026-04-20T00:00:00Z",
+    )
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        release_gate_report_path=str(report_path),
+        release_gate_risk_policy_version="risk:v1",
+        release_gate_decision_input_builder_version="dib:v1",
+        release_gate_policy_engine_version="policy:v1",
+        release_gate_tool_schema_hash="tool:abc",
+        release_gate_memory_provider_adapter_hash="memory:abc",
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_trace_for_intent",
+        return_value=trace,
+    ):
+        with patch(
+            "watchdog.services.session_spine.actions.post_steer",
+            return_value={
+                "accepted": True,
+                "action_ref": "continue_session",
+                "reply_code": "ok",
+            },
+        ):
+            outcomes = app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 15, 0, 0, 0, tzinfo=UTC)
+            )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    release_gate_verdict = decisions[0].evidence["release_gate_verdict"]
+    assert release_gate_verdict["status"] == "pass"
+    assert release_gate_verdict["report_id"] == report["report_id"]
+    assert release_gate_verdict["report_hash"] == report["report_hash"]
+    assert release_gate_verdict["input_hash"] == report["input_hash"]
+    assert app.state.command_lease_store.list_events() != []
+
+
+def test_resident_orchestrator_degrades_when_configured_release_gate_report_is_expired(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "release-gate-report.json"
+    trace = _release_gate_trace()
+    report = _write_release_gate_report(
+        report_path,
+        trace=trace,
+        expires_at="2026-04-10T00:00:00Z",
+    )
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        release_gate_report_path=str(report_path),
+        release_gate_risk_policy_version="risk:v1",
+        release_gate_decision_input_builder_version="dib:v1",
+        release_gate_policy_engine_version="policy:v1",
+        release_gate_tool_schema_hash="tool:abc",
+        release_gate_memory_provider_adapter_hash="memory:abc",
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_trace_for_intent",
+        return_value=trace,
+    ):
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            outcomes = app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 15, 0, 0, 0, tzinfo=UTC)
+            )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    release_gate_verdict = decisions[0].evidence["release_gate_verdict"]
+    assert release_gate_verdict["status"] == "degraded"
+    assert release_gate_verdict["degrade_reason"] == "report_expired"
+    assert release_gate_verdict["report_id"] == report["report_id"]
     assert app.state.command_lease_store.list_events() == []
     steer_mock.assert_not_called()
 

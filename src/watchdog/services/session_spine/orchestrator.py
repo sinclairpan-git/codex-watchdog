@@ -4,11 +4,18 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from pydantic import ValidationError
 
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
-from watchdog.services.brain.release_gate import ReleaseGateEvaluator
+from watchdog.services.brain.release_gate import (
+    ReleaseGateEvaluator,
+    ReleaseGateReport,
+    ReleaseGateVerdict,
+)
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.brain.validator import DecisionValidator
 from watchdog.services.actions.executor import (
@@ -379,6 +386,52 @@ class ResidentOrchestrator:
             "stuck_level": 0,
         }
 
+    def _release_gate_runtime_contract(self) -> dict[str, str]:
+        return {
+            "risk_policy_version": self._settings.release_gate_risk_policy_version,
+            "decision_input_builder_version": (
+                self._settings.release_gate_decision_input_builder_version
+            ),
+            "policy_engine_version": self._settings.release_gate_policy_engine_version,
+            "tool_schema_hash": self._settings.release_gate_tool_schema_hash,
+            "memory_provider_adapter_hash": (
+                self._settings.release_gate_memory_provider_adapter_hash
+            ),
+        }
+
+    def _load_release_gate_report(self) -> ReleaseGateReport | None:
+        report_path = self._settings.release_gate_report_path
+        if not report_path:
+            return None
+        payload = json.loads(Path(report_path).read_text(encoding="utf-8"))
+        return ReleaseGateReport.model_validate(payload)
+
+    @staticmethod
+    def _release_gate_now(now: datetime) -> str:
+        return now.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _report_load_failure_verdict(
+        *,
+        trace: DecisionTrace,
+        approval_read: ApprovalReadSnapshot | None,
+        input_hash: str,
+    ) -> ReleaseGateVerdict:
+        approval_read_ref = (
+            f"approval:event:{approval_read.approval_event_id}"
+            if approval_read is not None
+            else "approval:none"
+        )
+        return ReleaseGateVerdict(
+            status="degraded",
+            decision_trace_ref=trace.trace_id,
+            approval_read_ref=approval_read_ref,
+            degrade_reason="report_load_failed",
+            report_id="report:load_failed",
+            report_hash="sha256:load_failed",
+            input_hash=input_hash,
+        )
+
     def _decision_evidence_for_intent(
         self,
         record: PersistedSessionRecord,
@@ -386,6 +439,7 @@ class ResidentOrchestrator:
         brain_intent,
         action_ref: str,
         goal_contract_readiness: GoalContractReadiness | None,
+        now: datetime,
     ) -> dict[str, object]:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
         decision_trace = self._decision_trace_for_intent(
@@ -406,11 +460,27 @@ class ResidentOrchestrator:
                 event_type="memory_unavailable_degraded",
             ),
         )
+        approval_read = self._approval_read_snapshot_for_session(record)
+        report = None
+        verdict = None
+        if self._settings.release_gate_report_path:
+            try:
+                report = self._load_release_gate_report()
+            except (OSError, json.JSONDecodeError, ValidationError):
+                verdict = self._report_load_failure_verdict(
+                    trace=decision_trace,
+                    approval_read=approval_read,
+                    input_hash=self._release_gate_evaluator._input_hash_for_trace(decision_trace),
+                )
         release_gate_verdict = self._release_gate_evaluator.evaluate(
             brain_intent=brain_intent.intent,
             trace=decision_trace,
             validator_verdict=validator_verdict,
-            approval_read=self._approval_read_snapshot_for_session(record),
+            approval_read=approval_read,
+            verdict=verdict,
+            report=report,
+            runtime_contract=self._release_gate_runtime_contract(),
+            now=self._release_gate_now(now),
         )
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
@@ -590,6 +660,7 @@ class ResidentOrchestrator:
                 brain_intent=brain_intent,
                 action_ref=action_ref,
                 goal_contract_readiness=goal_contract_readiness,
+                now=now,
             )
             decision = evaluate_persisted_session_policy(
                 record,

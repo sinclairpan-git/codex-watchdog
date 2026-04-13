@@ -179,3 +179,15 @@
 - 当前判断再更新为：
   - release gate artifact、replay、provider certification 现在都已经不是纯 schema 占位，至少开始对缺输入、过期、输入哈希漂移和 runtime contract 漂移给出显式结果；
   - 但 runtime 默认放行路径仍优先使用 resident-default report，而不是 repo 内冻结的正式 `release_gate_report` artifact；下一步应继续把 artifact report 接回 orchestrator/release gate 默认链路，并让 runtime 真正消费而不是只在单元测试里校验。
+- 已继续推进 resident runtime 对正式 artifact report 的消费闭环，先收掉默认放行路径仍停在 `resident_default` 的缺口：
+  - 先在 `tests/test_watchdog_session_spine_runtime.py` 补两条红测：一条要求配置 `release_gate_report_path` 后，默认 auto-continue 必须把正式 `report_id/report_hash/input_hash` 绑定进 canonical decision evidence；另一条要求 report 过期时 runtime 必须从 `auto_execute_and_notify` 降级为 `block_and_alert`，且不得 claim/执行 command；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'uses_configured_release_gate_report_for_auto_execute or degrades_when_configured_release_gate_report_is_expired'` -> `2 failed in 0.92s`，失败点是 `Settings` 还没有 formal report/runtime contract 配置入口；
+  - 已在 `src/watchdog/settings.py` 新增 `release_gate_report_path` 及 `risk/policy/tool/memory-adapter` 版本字段，让 resident runtime 有正式的 runtime contract 来源，而不是在 orchestrator 里硬编码；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 接入 formal `ReleaseGateReport` 加载、runtime contract 透传与 `now` 参与校验；当设置了 report path 且 report 过期、漂移或加载失败时，release gate 会显式降级，默认 auto-execute 热路径不再回退到 `report:resident_default`；
+  - 同时补了配置了 report 但读取失败时的 fail-closed：runtime 会物化 `report_load_failed` verdict，而不是静默忽略配置继续放行。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'uses_configured_release_gate_report_for_auto_execute or degrades_when_configured_release_gate_report_is_expired'` -> `2 passed, 33 deselected in 0.84s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `54 passed in 3.74s`
+- 当前判断再次更新为：
+  - resident runtime 的默认放行路径现在已经能正式消费冻结的 `release_gate_report` artifact，而不是一律回退到 `resident_default`；
+  - 下一步应继续把 provider certification / replay 的 runtime contract 来源收得更严，并评估是否要把 `report_load_failed` 等降级原因进一步暴露到 ops/read models，而不是继续扩新的行为分支。

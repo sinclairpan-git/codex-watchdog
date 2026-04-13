@@ -30,3 +30,9 @@ class Settings(BaseSettings):
     ops_blocked_too_long_seconds: float = 900.0
     ops_approval_pending_too_long_seconds: float = 900.0
     ops_delivery_failed_alert_window_seconds: float = 900.0
+    release_gate_report_path: str | None = None
+    release_gate_risk_policy_version: str = "risk:v1"
+    release_gate_decision_input_builder_version: str = "dib:v1"
+    release_gate_policy_engine_version: str = "policy:v1"
+    release_gate_tool_schema_hash: str = "tool:abc"
+    release_gate_memory_provider_adapter_hash: str = "memory:abc"

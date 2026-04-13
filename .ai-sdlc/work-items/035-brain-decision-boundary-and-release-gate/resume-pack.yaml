@@ -9,84 +9,37 @@ working_set_snapshot:
   plan_path: specs/035-brain-decision-boundary-and-release-gate/plan.md
   tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
   active_files:
-  - '`docs/architecture/codex-long-running-autonomy-design.md`'
-  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
-  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
-  - '`specs/031-session-spine-events-projection-read-surface/spec.md`'
-  - '`specs/032-goal-contract-persistence-and-governance/spec.md`'
-  - '`specs/033-recovery-transaction-lineage/spec.md`'
-  - '`specs/034-memory-hub-codex-critical/spec.md`'
-  - '`specs/035-brain-decision-boundary-and-release-gate/spec.md`'
-  - '`specs/035-brain-decision-boundary-and-release-gate/plan.md`'
-  - '`specs/035-brain-decision-boundary-and-release-gate/tasks.md`'
+  - '`src/watchdog/settings.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_release_gate.py`'
+  - '`tests/test_watchdog_release_gate_evidence.py`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md`'
-  context_summary: '# Development Summary
+  context_summary: |
+    # Development Summary
 
-
-    Status: active
-
-    Total Tasks: 5
-
-    Completed Tasks: 1
-
-    Halted Tasks: 0
-
-    Total Batches: 5
-
-    Completed Batches: 1
-
-    Last Committed Task: T351
-
-
-    ## Notes
-
-    - `WI-035` 已从总实施计划的 `Task 6` 正式拆出，当前 formal docs 与执行元数据已落地；虽然代码实现已触及 runtime wiring，但 formal batch 仍按依赖链回挂在 `T352/T353` 未完成状态。
-
-    - 当前实现断点来自仓库现状：`policy.engine` 仍直接生成 `CanonicalDecisionRecord`，`ResidentOrchestrator` 仍直接根据 `decision_result` 进入 approval / auto execute。
-
-    - 034 已交付 `Memory Hub` 的 bounded retrieval / packet input / fallback contract，035 只消费这些 contract，不回头修改 final packet policy。
-
-    - 035 的核心实现目标是收敛出 `DecisionIntent + DecisionTrace + provider certification + replay + runtime-enforced release gate`，而不是引入新的 runtime truth。
-
-    - 对抗式文档评审后，已额外冻结 `brain_intent -> runtime disposition` adapter、替换旧 action-first 入口、`action approval` 与 `report_approved_by` 分离、以及 release gate verdict/degrade 必须先写 canonical Session decision event。
-
-    - 当前代码已让 done session 经由 `BrainDecisionService.evaluate_session(...)` 进入 `candidate_closure -> require_user_decision`，不再被旧 `_select_action_ref()` 直接短路。
-
-    - `policy.engine` 也已开始显式消费 `brain_intent`，所以 `continue_session` 的 canonical decision/session events 现在会携带 `brain_intent=propose_execute`。
-
-    - 对抗式代码评审已完成并收口 P1/P2：Brain intent 直接来自 persisted facts，`observe_only` 不再误触发 auto-continue，`candidate_closure`/`require_approval` 已回到 policy engine，decision projection 也改成 Session events 成功后再写 store。
-
-    - `decision_key` 已纳入 `brain_intent`，candidate-closure approval identity 已纳入 `fact_snapshot_version` 与 `brain_intent`，而 auto-execute 现在还会硬校验 validator/release-gate verdict 为 `pass`。
-
-    - `require_approval / propose_recovery / suggest_only` 现在也都有显式 runtime consume；其中 `suggest_only` 会落成 `block_and_alert` notification，而不是被 orchestrator 吞掉。
-
-    - auto-continue cooldown 现在只压 `propose_execute`，不会再把复用 `continue_session` 的 `require_approval / suggest_only` 一起吞掉。
-
-    - `observe_only` 现在在有 facts 时会落成 `block_and_alert` notification，没有 facts 时仍保持 no-op，避免 phantom session 被平白写出 decision。
-
-    - 最新切片已把 `propose_execute` 的 runtime gate 改成 fail-closed：默认会绑定 `decision_trace / validator_verdict / release_gate_verdict`，缺 evidence 时不会再继续 auto-execute。
-
-    - `policy.engine` 现在会正式消费 `validator_verdict / release_gate_verdict`；`decision_validated` canonical event 也会带完整 `decision_trace`，不再只有 `brain_intent`。
-
-    - 旧的 ungated decision projection 现在会在 runtime tick 上被升级成带 gate evidence 的当前 decision，避免 legacy projection 长期绕开新的 gate。
-
-    - 已新增 `scripts/generate_release_gate_report.py`、`docs/operations/release-gate-runbook.md` 和 `tests/fixtures/release_gate_*`，把 deterministic report/fixture/runbook 先冻结到 repo 内。
-
-    - `ReleaseGateEvaluator` 现在在显式提供 `ReleaseGateReport` 时会校验报告过期、输入哈希漂移以及 provider/schema/runtime contract 漂移，不再只是无条件透传。
-
-    - `DecisionReplayService` 现在已经会对缺 packet input、缺 required events 和 runtime contract 漂移给出显式 `replay_incomplete / missing_context / *_mismatch` 结果，不再默认成功回放。
-
-    - `ProviderCompatibilityEvaluator.compare(...)` 也已经落地，`ProviderCompatibilityMatrix` 开始真正用于比对 provider/model/schema/tool/risk/policy/memory-adapter 漂移。
-
-    - 当前仍未完成的主缺口收敛为：把正式 artifact report 接回 resident runtime 默认放行路径，让 runtime 真正优先消费 repo 内冻结的 `release_gate_report`，而不是继续依赖 resident-default report。'
+    - `WI-035` 当前仍在执行 `T354`：目标是把 release gate evidence/runtime consume 真正收紧到 canonical runtime，而不是保留 resident-default 或 schema-only 占位。
+    - 最新切片已把 resident runtime 默认放行路径接回正式 `release_gate_report` artifact：
+      - `Settings` 新增 `release_gate_report_path` 与 runtime contract 版本字段；
+      - `ResidentOrchestrator` 会加载 formal `ReleaseGateReport`、透传 runtime contract，并把 `now` 传给 `ReleaseGateEvaluator` 做 expiry/drift 校验；
+      - 配置了 formal report 后，auto-continue 决策会绑定正式 `report_id/report_hash/input_hash`，不再默认回退到 `report:resident_default`。
+    - 最新切片还补了一个 fail-closed：如果设置了 formal report path，但 artifact 读取失败、JSON 非法或 schema 校验失败，runtime 会写出 `report_load_failed` verdict，并阻断 `propose_execute`。
+    - 新增测试已锁住这两个点：
+      - formal report 可驱动默认 auto-continue；
+      - expired report 会把 `auto_execute_and_notify` 降级成 `block_and_alert`，且不会 claim/执行 command。
+    - 当前已完成验证：
+      - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'uses_configured_release_gate_report_for_auto_execute or degrades_when_configured_release_gate_report_is_expired'` -> `2 passed, 33 deselected in 0.84s`
+      - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `54 passed in 3.74s`
+    - 下一步优先继续收口 runtime contract 的第二真相问题：把 provider certification / replay 所需版本来源与 runtime settings 对齐，并评估是否把 `report_load_failed`、runtime drift 等降级原因继续暴露到 ops/read-side surface。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T20:43:04+08:00'
+timestamp: '2026-04-13T21:07:53+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''
