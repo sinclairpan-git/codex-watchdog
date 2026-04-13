@@ -279,7 +279,9 @@ def test_create_app_recovery_execution_records_canonical_truth_once(
         "started",
         "packet_frozen",
         "child_created",
+        "lineage_pending",
         "lineage_committed",
+        "parent_cooling",
         "completed",
     ]
 

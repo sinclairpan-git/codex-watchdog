@@ -237,7 +237,9 @@ def test_session_service_records_recovery_truth_in_canonical_order(
         "started",
         "packet_frozen",
         "child_created",
+        "lineage_pending",
         "lineage_committed",
+        "parent_cooling",
         "completed",
     ]
 

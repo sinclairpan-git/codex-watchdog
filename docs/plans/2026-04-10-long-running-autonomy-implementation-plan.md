@@ -163,6 +163,8 @@
 
 ### Task 4: 把恢复流程改成 Recovery Transaction + lineage
 
+**Canonical execution work item:** `specs/033-recovery-transaction-lineage/`
+
 **Files:**
 - Modify: `src/watchdog/services/session_spine/recovery.py`
 - Modify: `src/watchdog/services/session_spine/orchestrator.py`

@@ -1,0 +1,70 @@
+current_stage: verify
+current_batch: 5
+last_committed_task: T335
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/033-recovery-transaction-lineage/spec.md
+  plan_path: specs/033-recovery-transaction-lineage/plan.md
+  tasks_path: specs/033-recovery-transaction-lineage/tasks.md
+  active_files:
+  - '`docs/architecture/codex-long-running-autonomy-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/032-goal-contract-persistence-and-governance/spec.md`'
+  - '`specs/033-recovery-transaction-lineage/spec.md`'
+  - '`specs/033-recovery-transaction-lineage/plan.md`'
+  - '`specs/033-recovery-transaction-lineage/tasks.md`'
+  - '`specs/033-recovery-transaction-lineage/task-execution-log.md`'
+  - '`src/watchdog/services/session_service/models.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`src/watchdog/services/session_spine/recovery.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/session_spine/actions.py`'
+  - '`src/watchdog/services/approvals/service.py`'
+  - '`tests/test_watchdog_session_service.py`'
+  - '`tests/test_watchdog_recovery_transaction.py`'
+  - '`tests/test_watchdog_recovery_execution.py`'
+  - '`tests/test_watchdog_action_execution.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/test_watchdog_delivery_worker.py`'
+  - '`.ai-sdlc/work-items/033-recovery-transaction-lineage/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/033-recovery-transaction-lineage/runtime.yaml`'
+  - '`.ai-sdlc/work-items/033-recovery-transaction-lineage/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/033-recovery-transaction-lineage/latest-summary.md`'
+  context_summary: '# Development Summary
+
+
+    Status: completed
+
+    Total Tasks: 5
+
+    Completed Tasks: 5
+
+    Halted Tasks: 0
+
+    Total Batches: 5
+
+    Completed Batches: 5
+
+    Last Committed Task: T335
+
+
+    ## Notes
+
+    - `WI-033` 已完成，Task 4 已正式收敛为 Recovery Transaction + lineage work item。
+
+    - `SessionService.record_recovery_execution()` 已补齐 `lineage_pending` 与 `parent_cooling` 的 canonical recovery status。
+
+    - 同一 `recovery_key` 的非终态事务现在会被 fail-closed 拦截，避免重复创建 child session。
+
+    - recovery/runtime/delivery 相关验证已通过，结果为 `61 passed in 3.43s`；文档契约验证为 `3 passed in 0.03s`。
+
+    - 后续 work item 应直接消费 recovery truth、lineage 与 Goal Contract facade，不能回退到 `AI_AutoSDLC.stage / active_goal` 文本驱动。'
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-13T16:07:38+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

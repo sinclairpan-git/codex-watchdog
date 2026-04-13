@@ -13,6 +13,12 @@ from watchdog.services.session_service.models import (
 )
 from watchdog.services.session_service.store import SessionServiceStore
 
+_TERMINAL_RECOVERY_TRANSACTION_STATUSES = {
+    "completed",
+    "failed_retryable",
+    "failed_manual",
+}
+
 
 def _utcnow() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -224,6 +230,11 @@ class SessionService:
             else None
         )
         recovery_key = "|".join((parent_session_id, recovery_reason, failure_signature))
+        self._assert_no_conflicting_active_recovery_transaction(
+            parent_session_id=parent_session_id,
+            recovery_key=recovery_key,
+            recovery_transaction_id=recovery_transaction_id,
+        )
         started_at = _utcnow()
 
         self._append_event(
@@ -333,6 +344,27 @@ class SessionService:
                 lineage_id=None,
                 metadata=dict(resume),
             )
+            lineage_pending_at = _utcnow()
+            self._append_recovery_status(
+                recovery_transaction_id=recovery_transaction_id,
+                recovery_key=recovery_key,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                child_session_id=child_session_id,
+                source_packet_id=source_packet_id,
+                recovery_reason=recovery_reason,
+                failure_family=failure_family,
+                failure_signature=failure_signature,
+                status="lineage_pending",
+                started_at=started_at,
+                updated_at=lineage_pending_at,
+                correlation_id=correlation_id,
+                lineage_id=lineage_id,
+                metadata={
+                    "goal_contract_version": goal_contract_version,
+                },
+            )
+            lineage_committed_at = _utcnow()
             self._store.append_lineage(
                 SessionLineageRecord(
                     lineage_id=lineage_id,
@@ -344,7 +376,7 @@ class SessionService:
                     recovery_reason=recovery_reason,
                     goal_contract_version=goal_contract_version,
                     recovery_transaction_id=recovery_transaction_id,
-                    committed_at=child_created_at,
+                    committed_at=lineage_committed_at,
                     causation_id=recovery_transaction_id,
                     correlation_id=correlation_id,
                     idempotency_key=f"idem:lineage:{lineage_id}",
@@ -357,7 +389,7 @@ class SessionService:
                 event_type="lineage_committed",
                 project_id=project_id,
                 session_id=child_session_id,
-                occurred_at=child_created_at,
+                occurred_at=lineage_committed_at,
                 causation_id=recovery_transaction_id,
                 correlation_id=correlation_id,
                 related_ids={
@@ -382,7 +414,7 @@ class SessionService:
                 failure_signature=failure_signature,
                 status="lineage_committed",
                 started_at=started_at,
-                updated_at=child_created_at,
+                updated_at=lineage_committed_at,
                 correlation_id=correlation_id,
                 lineage_id=lineage_id,
                 metadata={
@@ -403,6 +435,25 @@ class SessionService:
                     "lineage_id": lineage_id,
                 },
                 payload={
+                    "status": "cooled",
+                },
+            )
+            self._append_recovery_status(
+                recovery_transaction_id=recovery_transaction_id,
+                recovery_key=recovery_key,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                child_session_id=child_session_id,
+                source_packet_id=source_packet_id,
+                recovery_reason=recovery_reason,
+                failure_family=failure_family,
+                failure_signature=failure_signature,
+                status="parent_cooling",
+                started_at=started_at,
+                updated_at=parent_cooled_at,
+                correlation_id=correlation_id,
+                lineage_id=lineage_id,
+                metadata={
                     "status": "cooled",
                 },
             )
@@ -544,6 +595,29 @@ class SessionService:
                 related_ids=related_ids,
                 payload=payload,
             )
+        )
+
+    def _assert_no_conflicting_active_recovery_transaction(
+        self,
+        *,
+        parent_session_id: str,
+        recovery_key: str,
+        recovery_transaction_id: str,
+    ) -> None:
+        records = self._store.list_recovery_transactions(parent_session_id=parent_session_id)
+        matching_records = [
+            record for record in records if record.recovery_key == recovery_key
+        ]
+        if not matching_records:
+            return
+        latest = max(matching_records, key=lambda record: record.log_seq or 0)
+        if latest.recovery_transaction_id == recovery_transaction_id:
+            return
+        if latest.status in _TERMINAL_RECOVERY_TRANSACTION_STATUSES:
+            return
+        raise ValueError(
+            "active recovery transaction already exists for recovery_key "
+            f"{recovery_key}: {latest.recovery_transaction_id}"
         )
 
     def _append_recovery_status(
