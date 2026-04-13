@@ -203,3 +203,14 @@
 - 当前判断再更新为：
   - provider certification / replay / release-gate runtime 现在至少共用同一套 settings-driven contract builder，减少了 drift matrix 只在局部测试里成立的风险；
   - 下一步可以继续评估是否要把这份共享 contract 明确挂到更高层 runtime/config surface，或把 `report_load_failed` / runtime drift 的降级原因进一步暴露到 ops/read-side，而不是继续扩新的 gate 分支。
+- 已继续推进 ops/read-side surfacing，先收掉 runtime gate 降级只停在 canonical decision evidence 的缺口：
+  - 先在 `tests/test_watchdog_ops.py` 补红测，要求 `matched_policy_rules` 命中 `runtime_gate_missing / release_gate_degraded / validator_gate_degraded` 的 decision 能在 `build_ops_summary(...)` 中落成独立 alert，而不是只写在 decision evidence 里没人看见；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 failed in 0.86s`，失败点是 ops summary 当前完全不统计 runtime gate 降级；
+  - 已在 `src/watchdog/api/ops.py` 新增 `_RUNTIME_GATE_ALERT_RULES` 与 `runtime_gate_degraded` alert 统计，统一从 canonical decision 的 `matched_policy_rules` 读取，避免再从 verdict payload 临时解析第三套规则；
+  - 由于 `/healthz`、`/api/v1/watchdog/ops/alerts` 与 metrics 都复用 `build_ops_summary(...)`，这一步生效后 runtime gate 降级会自动进入现有 health/ops/metrics surface，而不需要额外新接口。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 passed, 7 deselected in 0.69s`
+  - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `62 passed in 4.13s`
+- 当前判断再更新为：
+  - `report_load_failed`、`report_expired`、validator/release-gate 降级现在已经不只停留在 canonical decision evidence，至少会通过现有 ops summary 链路暴露成 `runtime_gate_degraded` 告警；
+  - 下一步可以继续评估是否要把具体 `degrade_reason` 做成更细粒度的 ops/read-side breakdown，或把共享 runtime contract 上提到更明确的 runtime/config surface，而不是继续扩新的控制流。

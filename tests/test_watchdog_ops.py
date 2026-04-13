@@ -501,3 +501,59 @@ def test_build_ops_summary_counts_only_latest_pending_approval_per_session(tmp_p
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["approval_pending_too_long"]
     assert summary.alerts[0].count == 1
+
+
+def test_build_ops_summary_surfaces_runtime_gate_degradation_alert(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:runtime-gate-1",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="release gate blocks autonomous execution",
+            matched_policy_rules=["release_gate_degraded"],
+            why_not_escalated=None,
+            why_escalated="release gate verdict is not pass: report_load_failed",
+            uncertainty_reasons=["report_load_failed"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "degraded",
+                    "degrade_reason": "report_load_failed",
+                    "report_id": "report:load_failed",
+                    "report_hash": "sha256:load_failed",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:1",
+                    "approval_read_ref": "approval:none",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 1
+    assert [item.alert_code for item in summary.alerts] == ["runtime_gate_degraded"]
+    assert summary.alerts[0].count == 1

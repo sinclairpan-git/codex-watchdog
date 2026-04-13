@@ -9,15 +9,15 @@ working_set_snapshot:
   plan_path: specs/035-brain-decision-boundary-and-release-gate/plan.md
   tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
   active_files:
-  - '`src/watchdog/settings.py`'
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/services/policy/engine.py`'
   - '`src/watchdog/services/brain/provider_certification.py`'
-  - '`src/watchdog/services/brain/replay.py`'
   - '`src/watchdog/services/session_spine/orchestrator.py`'
-  - '`tests/test_watchdog_provider_certification.py`'
-  - '`tests/test_watchdog_decision_replay.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
   - '`tests/test_watchdog_release_gate.py`'
   - '`tests/test_watchdog_release_gate_evidence.py`'
-  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
@@ -25,22 +25,23 @@ working_set_snapshot:
   context_summary: |
     # Development Summary
 
-    - `WI-035` 当前仍在执行 `T354`：目标是把 release gate evidence/runtime consume 真正收紧到 canonical runtime，而不是在不同模块里维护平行 contract。
+    - `WI-035` 当前仍在执行 `T354`：目标已经推进到把 runtime gate 的降级结果暴露到现有 ops/read-side surface，而不只是停在 canonical decision evidence。
     - resident runtime 默认放行路径已经正式消费 `release_gate_report` artifact，不再一律回退到 `report:resident_default`。
-    - 最新切片继续收掉 provider certification / replay 的第二真相：
-      - `provider_certification.py` 新增共享 `build_runtime_contract(...)`，把 provider/model/prompt/output 与 `Settings` 中的 risk/policy/tool/memory-adapter 版本字段统一到一处；
-      - `ResidentOrchestrator` 的 release-gate runtime contract 已改成走同一 helper，不再单独手拼版本字段；
-      - replay/provider certification 的新测试也开始直接消费这份 settings-driven contract，而不是手写裸 dict。
+    - provider certification / replay / release-gate runtime 也已经共用同一套 settings-driven runtime contract builder。
+    - 最新切片继续收掉 ops 可观测性的最后一层缺口：
+      - `src/watchdog/api/ops.py` 新增 `runtime_gate_degraded` alert；
+      - 该 alert 统一从 canonical decision 的 `matched_policy_rules` 读取 `runtime_gate_missing / release_gate_degraded / validator_gate_degraded`；
+      - `/healthz`、`/api/v1/watchdog/ops/alerts` 与 metrics 会自动继承这条 surface，因为都复用 `build_ops_summary(...)`。
     - 当前已完成验证：
-      - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `2 passed, 9 deselected in 0.17s`
-      - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `57 passed in 3.93s`
+      - `uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 passed, 7 deselected in 0.69s`
+      - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `62 passed in 4.13s`
     - 下一步优先评估两件事：
-      - 是否把共享 runtime contract 再上提到更统一的 config/runtime surface，而不是只作为 helper 存在；
-      - 是否把 `report_load_failed`、runtime drift 等降级原因继续暴露到 ops/read-side surface，而不是只留在 canonical decision evidence。
+      - 是否把具体 `degrade_reason` 继续细分成 ops/read-side breakdown，而不是只有统一的 `runtime_gate_degraded`；
+      - 是否把共享 runtime contract 再上提到更明确的 runtime/config surface，而不是停在 helper 级别。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T21:33:56+08:00'
+timestamp: '2026-04-13T21:49:54+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

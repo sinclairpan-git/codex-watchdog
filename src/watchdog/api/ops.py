@@ -24,6 +24,12 @@ _NON_ALERTING_DELIVERY_FAILURE_CODES = {
     "stale_auto_execute_notification",
 }
 
+_RUNTIME_GATE_ALERT_RULES = {
+    "runtime_gate_missing",
+    "release_gate_degraded",
+    "validator_gate_degraded",
+}
+
 
 def _fact_snapshot_order(value: str) -> tuple[int, str]:
     match = re.fullmatch(r"fact-v(\d+)", value)
@@ -136,6 +142,11 @@ def build_ops_summary(
     mapping_incomplete = sum(
         1 for record in decisions if "mapping_incomplete" in record.uncertainty_reasons
     )
+    runtime_gate_degraded = sum(
+        1
+        for record in decisions
+        if any(rule in _RUNTIME_GATE_ALERT_RULES for rule in record.matched_policy_rules)
+    )
     recovery_failed = sum(
         1
         for _, result in receipt_items
@@ -178,6 +189,15 @@ def build_ops_summary(
                 severity="warning",
                 count=mapping_incomplete,
                 summary="mapping gaps are blocking or degrading decision quality",
+            )
+        )
+    if runtime_gate_degraded:
+        alerts.append(
+            OpsAlert(
+                alert_code="runtime_gate_degraded",
+                severity="warning",
+                count=runtime_gate_degraded,
+                summary="runtime gate degradations are forcing autonomy fallback",
             )
         )
     if recovery_failed:

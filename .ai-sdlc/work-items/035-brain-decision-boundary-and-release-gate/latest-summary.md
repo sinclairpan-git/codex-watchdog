@@ -9,23 +9,21 @@ Completed Batches: 1
 Last Committed Task: T351
 
 ## Notes
-- `WI-035` 仍在执行 `T354`，主目标没变：把 Brain/release-gate/replay/provider drift 的资格判断全部绑回 canonical runtime，而不是在不同模块里维护平行 contract。
-- 上一切片已经把 resident runtime 默认放行路径接回正式 `release_gate_report` artifact；本切片继续收掉 provider certification / replay 仍在手写 runtime contract 的第二真相。
-- `src/watchdog/services/brain/provider_certification.py` 现在新增共享 `build_runtime_contract(...)`：
-  - provider/model/prompt/output 由调用方显式提供；
-  - `risk_policy_version / decision_input_builder_version / policy_engine_version / tool_schema_hash / memory_provider_adapter_hash` 统一来自 `Settings`；
-  - provider certification、replay 和 release-gate runtime 可以共用同一份 settings-driven contract。
-- `src/watchdog/services/session_spine/orchestrator.py` 已改成通过同一 helper 构建 release-gate runtime contract，不再单独手拼版本字段。
-- 本切片新增了两条 red-green：
-  - provider certification 能直接从 `Settings` 构建完整 runtime contract；
-  - replay 能直接消费这份 settings-driven contract，并在 frozen/current 一致时保持无 drift。
-- 这一步之后，035 剩余的高优先级缺口继续收敛到两处：
-  - 是否把共享 runtime contract 显式上提到更统一的 config/runtime surface，而不是只作为 helper 存在；
-  - 是否把 `report_load_failed`、runtime drift 等降级原因继续暴露到 ops/read-side surface，而不是只留在 canonical decision evidence。
+- `WI-035` 仍在执行 `T354`，当前主线已经从“把 runtime gate 接到 canonical decision”推进到“把 gate 降级结果暴露到现有 ops/read-side surface”。
+- 前两步已经完成：
+  - resident runtime 默认放行路径正式消费 `release_gate_report` artifact；
+  - provider certification / replay / release-gate runtime 已共用同一套 settings-driven runtime contract builder。
+- 本切片继续把 `report_load_failed`、`report_expired`、validator/release-gate 降级从“只写在 decision evidence”推进到 ops/read-side：
+  - `src/watchdog/api/ops.py` 新增 `runtime_gate_degraded` alert；
+  - 该 alert 统一从 canonical decision 的 `matched_policy_rules` 读取 `runtime_gate_missing / release_gate_degraded / validator_gate_degraded`，不再额外解析 verdict payload；
+  - `/healthz`、`/api/v1/watchdog/ops/alerts` 和 metrics 都会自动继承这条新 surface，因为它们复用同一份 `build_ops_summary(...)`。
+- 这一步之后，035 的剩余高优先级缺口进一步收敛：
+  - 是否把具体 `degrade_reason` 继续细分为更明确的 ops/read-side breakdown，而不是只有统一的 `runtime_gate_degraded`；
+  - 是否把共享 runtime contract 再上提到更明确的 runtime/config surface，而不是停留在 helper 级别。
 
 ## Latest Verification
-- `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `2 passed, 9 deselected in 0.17s`
-- `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `57 passed in 3.93s`
+- `uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 passed, 7 deselected in 0.69s`
+- `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `62 passed in 4.13s`
 
 ## Next Slice
-- 继续沿 `T354` 收口更高层 runtime/config surface，优先评估是否把共享 runtime contract 与 drift/degrade 原因暴露到 ops/read-side，而不是继续扩新的判断分支。
+- 继续沿 `T354` 收口 ops/read-side 的分辨率，优先评估是否把具体 `degrade_reason` 做成 breakdown，而不是继续扩新的 gate 控制流。
