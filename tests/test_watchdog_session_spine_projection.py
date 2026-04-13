@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from watchdog.services.session_service.models import SessionEventRecord
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
     build_approval_projections,
+    build_session_service_fact_records,
     build_session_projection,
     build_task_progress_view,
     stable_thread_id_for_project,
@@ -191,3 +193,153 @@ def test_projection_facts_fallback_observed_at_when_approval_timestamps_are_miss
         "2026-04-06T00:00:00Z",
         "2026-04-06T00:00:00Z",
     ]
+
+
+def test_projection_falls_back_to_canonical_approval_fields() -> None:
+    approvals = [
+        {
+            "approval_id": "appr_001",
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "risk_class": "human_gate",
+            "requested_action": "execute_recovery",
+            "summary": "manual approval required",
+            "status": "pending",
+            "created_at": "2026-04-05T05:21:00Z",
+        }
+    ]
+
+    projected = build_approval_projections(
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        approvals=approvals,
+    )
+
+    assert projected[0].risk_level == "human_gate"
+    assert projected[0].command == "execute_recovery"
+    assert projected[0].reason == "manual approval required"
+    assert projected[0].requested_at == "2026-04-05T05:21:00Z"
+
+
+def test_projection_builds_current_memory_anomaly_facts_from_session_service_events() -> None:
+    events = [
+        SessionEventRecord(
+            event_id="evt-memory-1",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            event_type="memory_unavailable_degraded",
+            occurred_at="2026-04-12T01:00:00Z",
+            causation_id="memory-hub:offline",
+            correlation_id="corr:memory-unavailable:1",
+            idempotency_key="idem:memory-unavailable:1",
+            related_ids={"memory_scope": "project"},
+            payload={
+                "fallback_mode": "reference_only",
+                "degradation_reason": "memory_hub_unreachable",
+            },
+            log_seq=1,
+        ),
+        SessionEventRecord(
+            event_id="evt-memory-2",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            event_type="memory_conflict_detected",
+            occurred_at="2026-04-12T01:01:00Z",
+            causation_id="memory-sync:conflict",
+            correlation_id="corr:memory-conflict:1",
+            idempotency_key="idem:memory-conflict:1",
+            related_ids={
+                "memory_scope": "project",
+                "goal_contract_version": "goal-v9",
+            },
+            payload={
+                "conflict_reason": "goal_contract_version_mismatch",
+                "resolution": "reference_only",
+            },
+            log_seq=2,
+        ),
+    ]
+
+    facts = build_session_service_fact_records(project_id="repo-a", events=events)
+
+    assert [fact.fact_code for fact in facts] == [
+        "memory_unavailable_degraded",
+        "memory_conflict_detected",
+    ]
+    assert facts[0].related_ids == {"memory_scope": "project"}
+    assert facts[1].related_ids == {
+        "memory_scope": "project",
+        "goal_contract_version": "goal-v9",
+    }
+
+
+def test_projection_builds_human_override_and_notification_facts_from_session_service_events() -> None:
+    events = [
+        SessionEventRecord(
+            event_id="evt-override-1",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            event_type="human_override_recorded",
+            occurred_at="2026-04-12T01:02:00Z",
+            causation_id="approval-response:test",
+            correlation_id="corr:override:approval-response:test",
+            idempotency_key="idem:override:1",
+            related_ids={
+                "approval_id": "approval:test",
+                "decision_id": "decision:test",
+                "response_id": "approval-response:test",
+                "envelope_id": "approval-envelope:test",
+            },
+            payload={
+                "response_action": "approve",
+                "approval_status": "approved",
+                "operator": "operator-1",
+                "note": "looks safe",
+                "requested_action": "execute_recovery",
+                "execution_status": "completed",
+                "execution_effect": "handoff_triggered",
+            },
+            log_seq=1,
+        ),
+        SessionEventRecord(
+            event_id="evt-notification-1",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            event_type="notification_receipt_recorded",
+            occurred_at="2026-04-12T01:03:00Z",
+            causation_id="notification-envelope:test",
+            correlation_id="corr:notification:notification-envelope:test:receipt:receipt:test",
+            idempotency_key="idem:notification-receipt:1",
+            related_ids={
+                "envelope_id": "notification-envelope:test",
+                "notification_kind": "approval_result",
+                "receipt_id": "receipt:test",
+            },
+            payload={
+                "delivery_status": "delivered",
+                "delivery_attempt": 1,
+                "receipt_id": "receipt:test",
+                "received_at": "2026-04-12T01:03:30Z",
+            },
+            log_seq=2,
+        ),
+    ]
+
+    facts = build_session_service_fact_records(project_id="repo-a", events=events)
+
+    assert [fact.fact_code for fact in facts] == [
+        "human_override_recorded",
+        "notification_receipt_recorded",
+    ]
+    assert facts[0].related_ids == {
+        "approval_id": "approval:test",
+        "decision_id": "decision:test",
+        "response_id": "approval-response:test",
+        "envelope_id": "approval-envelope:test",
+    }
+    assert facts[1].related_ids == {
+        "envelope_id": "notification-envelope:test",
+        "notification_kind": "approval_result",
+        "receipt_id": "receipt:test",
+    }

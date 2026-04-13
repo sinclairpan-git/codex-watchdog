@@ -25,7 +25,7 @@
 ## Task 31.2 写失败测试锁定 projection 来源优先级
 
 - **任务编号**：T312
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：用失败测试锁定 Session events 必须成为 stable read surface 的默认来源。
 - **文件**：
   - `tests/test_watchdog_session_spine_projection.py`
@@ -39,11 +39,12 @@
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_api.py`
   - `uv run pytest -q tests/test_watchdog_ops.py -k session`
+- **完成情况**：已补齐红灯测试，锁定 Session events 对 persisted spine 的读优先级，以及 approval inbox / memory anomaly / human override / notification status 的统一投影来源。
 
 ## Task 31.3 实现 Session events projection reader 与 compatibility fallback
 
 - **任务编号**：T313
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：在 `session_spine` 服务层实现 events-first 的 projection reader，并把 persisted spine 收窄为 fallback。
 - **文件**：
   - `src/watchdog/services/session_spine/store.py`
@@ -57,16 +58,18 @@
   3. compatibility fallback 只在事件缺口时触发。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_spine_projection.py`
+- **完成情况**：`session / progress / facts` 已优先由 Session events 物化，persisted spine 仅在 session events 缺口时作为 compatibility fallback。
 
 ## Task 31.4 重接 stable API、approval inbox 与 audit query
 
 - **任务编号**：T314
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：让 stable session queries、approval inbox 与 audit path 统一走 Session query facade。
 - **文件**：
   - `src/watchdog/api/session_spine_queries.py`
   - `src/watchdog/services/audit/service.py`
   - `tests/test_watchdog_session_spine_api.py`
+  - `tests/test_watchdog_audit.py`
   - `tests/test_watchdog_ops.py`
 - **可并行**：否
 - **验收标准**：
@@ -75,15 +78,18 @@
   3. audit query 不再优先读 persisted spine / legacy approvals。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_ops.py`
+  - `uv run pytest -q tests/test_watchdog_audit.py`
+- **完成情况**：stable API contract 保持不变，approval inbox 与 audit query 已收敛到同一 Session query / Session event 读口径。
 
 ## Task 31.5 完成 031 验证并交接下一 work item
 
 - **任务编号**：T315
-- **状态**：未开始
+- **状态**：已完成（2026-04-13）
 - **目标**：跑完整体验证并写清 handoff，使后续 work item 可直接消费 Session projection。
 - **文件**：
   - `tests/test_watchdog_session_spine_projection.py`
   - `tests/test_watchdog_session_spine_api.py`
+  - `tests/test_watchdog_audit.py`
   - `tests/test_watchdog_ops.py`
   - `specs/031-session-spine-events-projection-read-surface/task-execution-log.md`
 - **可并行**：否
@@ -93,6 +99,8 @@
   3. handoff 明确后续 Goal Contract / Recovery 只消费 Session projection，不再重改读面主路径。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_ops.py`
+  - `uv run pytest -q tests/test_watchdog_audit.py`
+- **完成情况**：031 所需验证已全部通过，handoff 已明确后续 Goal Contract / Recovery 仅消费 Session projection，不再回切 persisted spine 主读路径。
 
 ## 整体验收
 

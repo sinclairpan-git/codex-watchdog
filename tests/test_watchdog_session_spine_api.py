@@ -8,8 +8,10 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.settings import Settings
+from watchdog.services.approvals.service import materialize_canonical_approval
+from watchdog.services.delivery.envelopes import build_envelopes_for_decision
 from watchdog.services.delivery.store import DeliveryOutboxStore
-from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
     build_approval_projections,
@@ -184,6 +186,62 @@ class BrokenAClient:
             }
         )
         raise RuntimeError("a-side temporarily unavailable")
+
+
+def _decision_record(
+    *,
+    project_id: str = "repo-a",
+    session_id: str = "session:repo-a",
+    fact_snapshot_version: str = "fact-v7",
+) -> CanonicalDecisionRecord:
+    return CanonicalDecisionRecord(
+        decision_id=f"decision:{project_id}:{fact_snapshot_version}:require_user_decision",
+        decision_key=(
+            f"{session_id}|{fact_snapshot_version}|policy-v1|require_user_decision|execute_recovery|"
+        ),
+        session_id=session_id,
+        project_id=project_id,
+        thread_id=session_id,
+        native_thread_id=f"native:{project_id}",
+        approval_id=None,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="manual approval required",
+        matched_policy_rules=["registered_action"],
+        why_not_escalated=None,
+        why_escalated="manual decision required",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version=fact_snapshot_version,
+        idempotency_key=(
+            f"{session_id}|{fact_snapshot_version}|policy-v1|require_user_decision|execute_recovery|"
+        ),
+        created_at="2026-04-07T00:00:00Z",
+        operator_notes=[],
+        evidence={
+            "facts": [
+                {
+                    "fact_id": "fact-1",
+                    "fact_code": "recovery_available",
+                    "fact_kind": "signal",
+                    "severity": "info",
+                    "summary": "recovery available",
+                    "detail": "recovery available",
+                    "source": "watchdog",
+                    "observed_at": "2026-04-07T00:00:00Z",
+                    "related_ids": {},
+                }
+            ],
+            "matched_policy_rules": ["registered_action"],
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": None,
+            },
+        },
+    )
 
 
 def _seed_persisted_session_spine(
@@ -378,6 +436,263 @@ def test_session_route_exposes_persisted_snapshot_freshness_semantics(tmp_path) 
     assert data["snapshot"]["session_seq"] == 7
     assert data["snapshot"]["fact_snapshot_version"] == "fact-v7"
     assert data["snapshot"]["last_refreshed_at"] == "2000-01-01T00:00:00Z"
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+def test_session_route_prefers_session_service_projection_over_persisted_spine(tmp_path) -> None:
+    _seed_persisted_session_spine(tmp_path)
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v11"),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    app.state.session_service.record_event(
+        event_type="approval_approved",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id=f"corr:approval:{approval.approval_id}",
+        causation_id=approval.decision.decision_id,
+        related_ids={
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
+            "response_id": "approval-response:test",
+        },
+        payload={
+            "response_action": "approve",
+            "approval_status": "approved",
+            "operator": "operator-1",
+            "note": "approved via projected truth",
+        },
+        occurred_at="2026-04-12T01:02:00Z",
+    )
+    app.state.session_service.record_memory_conflict_detected(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        memory_scope="project",
+        conflict_reason="goal_contract_version_mismatch",
+        resolution="reference_only",
+        causation_id="memory-sync:conflict",
+        occurred_at="2026-04-12T01:03:00Z",
+        related_ids={"goal_contract_version": "goal-v9"},
+    )
+    c = TestClient(app)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+    inbox_response = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert facts_response.status_code == 200
+    assert inbox_response.status_code == 200
+
+    session_data = session_response.json()["data"]
+    facts_data = facts_response.json()["data"]
+    inbox_data = inbox_response.json()["data"]
+
+    assert session_data["snapshot"]["read_source"] == "session_events_projection"
+    assert session_data["session"]["native_thread_id"] == "thr_native_1"
+    assert session_data["session"]["session_state"] == "active"
+    assert [fact["fact_code"] for fact in facts_data["facts"]] == ["memory_conflict_detected"]
+    assert inbox_data["approvals"] == []
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+def test_session_route_projects_human_override_and_notification_status_from_session_events(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path)
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v11"),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    app.state.session_service.record_event(
+        event_type="approval_approved",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id=f"corr:approval:{approval.approval_id}",
+        causation_id=approval.decision.decision_id,
+        related_ids={
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
+            "response_id": "approval-response:test",
+        },
+        payload={
+            "response_action": "approve",
+            "approval_status": "approved",
+            "operator": "operator-1",
+            "note": "approved via projected truth",
+        },
+        occurred_at="2026-04-12T01:02:00Z",
+    )
+    app.state.session_service.record_event(
+        event_type="human_override_recorded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:override:approval-response:test",
+        causation_id="approval-response:test",
+        related_ids={
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
+            "response_id": "approval-response:test",
+            "envelope_id": approval.envelope_id,
+        },
+        payload={
+            "response_action": "approve",
+            "approval_status": "approved",
+            "operator": "operator-1",
+            "note": "looks safe",
+            "requested_action": approval.requested_action,
+            "execution_status": "completed",
+            "execution_effect": "handoff_triggered",
+        },
+        occurred_at="2026-04-12T01:03:00Z",
+    )
+    app.state.session_service.record_event(
+        event_type="notification_receipt_recorded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id=f"corr:notification:{approval.envelope_id}:receipt:receipt:test",
+        causation_id=approval.envelope_id,
+        related_ids={
+            "envelope_id": approval.envelope_id,
+            "notification_kind": "approval_result",
+            "receipt_id": "receipt:test",
+        },
+        payload={
+            "delivery_status": "delivered",
+            "delivery_attempt": 1,
+            "receipt_id": "receipt:test",
+            "received_at": "2026-04-12T01:03:30Z",
+        },
+        occurred_at="2026-04-12T01:04:00Z",
+    )
+    c = TestClient(app)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert facts_response.status_code == 200
+
+    session_data = session_response.json()["data"]
+    facts_data = facts_response.json()["data"]
+
+    assert session_data["snapshot"]["read_source"] == "session_events_projection"
+    assert [fact["fact_code"] for fact in facts_data["facts"]] == [
+        "human_override_recorded",
+        "notification_receipt_recorded",
+    ]
+    assert session_data["facts"] == facts_data["facts"]
+    assert facts_data["facts"][0]["related_ids"]["approval_id"] == approval.approval_id
+    assert facts_data["facts"][1]["related_ids"]["receipt_id"] == "receipt:test"
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+def test_persisted_session_overlay_exposes_canonical_approval_across_stable_read_surfaces(
+    tmp_path,
+) -> None:
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "waiting for bridge recovery",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=session,
+        progress=progress,
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-05T05:25:00Z",
+    )
+    decision = evaluate_session_policy_from_persisted_spine(
+        "repo-a",
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        store=app.state.session_spine_store,
+    )
+    approval = materialize_canonical_approval(
+        decision,
+        approval_store=app.state.canonical_approval_store,
+    )
+
+    c = TestClient(app)
+
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+    inbox_resp = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+    directory_resp = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert session_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    assert inbox_resp.status_code == 200
+    assert directory_resp.status_code == 200
+
+    session_data = session_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+    inbox_data = inbox_resp.json()["data"]
+    directory_data = directory_resp.json()["data"]
+
+    assert session_data["session"]["pending_approval_count"] == 1
+    assert session_data["session"]["session_state"] == "awaiting_approval"
+    assert "approve_approval" in session_data["session"]["available_intents"]
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == [approval.approval_id]
+    assert approvals_data["approvals"][0]["command"] == "execute_recovery"
+    assert [item["approval_id"] for item in inbox_data["approvals"]] == [approval.approval_id]
+    assert directory_data["sessions"][0]["pending_approval_count"] == 1
     assert a_client.get_envelope_calls == []
     assert a_client.list_approvals_calls == []
 

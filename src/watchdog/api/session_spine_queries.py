@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import ValidationError
 
@@ -7,6 +9,7 @@ from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.models import ActionReceiptQuery
 from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_service import SessionService
 from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.replies import (
     build_approval_inbox_reply,
@@ -48,6 +51,14 @@ def get_session_spine_store(request: Request) -> SessionSpineStore:
     return request.app.state.session_spine_store
 
 
+def get_canonical_approval_store(request: Request) -> Any:
+    return request.app.state.canonical_approval_store
+
+
+def get_session_service(request: Request) -> SessionService:
+    return request.app.state.session_service
+
+
 def _get_session_spine_freshness_window_seconds(request: Request) -> float:
     return float(
         getattr(
@@ -78,12 +89,20 @@ def get_approval_inbox(
     request: Request,
     project_id: str | None = None,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
     try:
-        bundle = build_approval_inbox_bundle(client, project_id, store=store)
+        bundle = build_approval_inbox_bundle(
+            client,
+            project_id,
+            session_service=session_service,
+            store=store,
+            approval_store=approval_store,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_approval_inbox_reply(bundle).model_dump(mode="json"))
@@ -101,12 +120,19 @@ def get_approval_inbox(
 def list_sessions(
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
     try:
-        bundle = build_session_directory_bundle(client, store=store)
+        bundle = build_session_directory_bundle(
+            client,
+            session_service=session_service,
+            store=store,
+            approval_store=approval_store,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_session_directory_reply(bundle).model_dump(mode="json"))
@@ -124,7 +150,9 @@ def get_session_by_native_thread(
     native_thread_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -133,7 +161,9 @@ def get_session_by_native_thread(
         bundle = build_session_read_bundle_by_native_thread(
             client,
             native_thread_id,
+            session_service=session_service,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -159,7 +189,9 @@ def get_session(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -168,7 +200,9 @@ def get_session(
         bundle = build_session_read_bundle(
             client,
             project_id,
+            session_service=session_service,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -188,7 +222,9 @@ def get_progress(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -197,7 +233,9 @@ def get_progress(
         bundle = build_session_read_bundle(
             client,
             project_id,
+            session_service=session_service,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -218,7 +256,9 @@ def get_session_facts(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -227,7 +267,9 @@ def get_session_facts(
         bundle = build_session_read_bundle(
             client,
             project_id,
+            session_service=session_service,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -276,6 +318,7 @@ def get_pending_approvals(
     request: Request,
     client: AControlAgentClient = Depends(get_client),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -285,6 +328,7 @@ def get_pending_approvals(
             client,
             project_id,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -327,6 +371,7 @@ def get_stuck_explanation(
     request: Request,
     client: AControlAgentClient = Depends(get_client),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -336,6 +381,7 @@ def get_stuck_explanation(
             client,
             project_id,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -356,6 +402,7 @@ def get_blocker_explanation(
     request: Request,
     client: AControlAgentClient = Depends(get_client),
     store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -365,6 +412,7 @@ def get_blocker_explanation(
             client,
             project_id,
             store=store,
+            approval_store=approval_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:

@@ -13,6 +13,7 @@ from watchdog.services.approvals.service import (
 )
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
+from watchdog.services.session_service import SessionEventRecord, SessionServiceStore
 from watchdog.storage.action_receipts import ActionReceiptStore
 
 
@@ -46,6 +47,7 @@ class CanonicalAuditView(BaseModel):
     approvals: list[CanonicalApprovalRecord] = Field(default_factory=list)
     responses: list[CanonicalApprovalResponseRecord] = Field(default_factory=list)
     deliveries: list[DeliveryOutboxRecord] = Field(default_factory=list)
+    session_events: list[SessionEventRecord] = Field(default_factory=list)
     action_receipts: list[ActionReceiptEntry] = Field(default_factory=list)
 
 
@@ -75,6 +77,13 @@ def _load_deliveries(data_dir: Path) -> list[DeliveryOutboxRecord]:
     return DeliveryOutboxStore(data_dir / "delivery_outbox.json").list_records()
 
 
+def _load_session_events(data_dir: Path) -> list[SessionEventRecord]:
+    path = data_dir / "session_service.json"
+    if not path.exists():
+        return []
+    return SessionServiceStore(path).list_events()
+
+
 def _load_receipts(data_dir: Path) -> list[ActionReceiptEntry]:
     return [
         ActionReceiptEntry(receipt_key=receipt_key, result=result)
@@ -82,11 +91,21 @@ def _load_receipts(data_dir: Path) -> list[ActionReceiptEntry]:
     ]
 
 
+def _session_event_sort_key(record: SessionEventRecord) -> tuple[str, int, str, str]:
+    return (
+        "0" if record.log_seq is not None else "1",
+        record.log_seq or 0,
+        record.occurred_at,
+        record.event_id,
+    )
+
+
 def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> CanonicalAuditView:
     decisions = _load_decisions(data_dir)
     approvals = _load_approvals(data_dir)
     responses = _load_responses(data_dir)
     deliveries = _load_deliveries(data_dir)
+    session_events = _load_session_events(data_dir)
     receipts = _load_receipts(data_dir)
 
     decision_map = {record.decision_id: record for record in decisions}
@@ -98,6 +117,7 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
     matched_approval_ids: set[str] = set()
     matched_response_ids: set[str] = set()
     matched_envelope_ids: set[str] = set()
+    matched_event_ids: set[str] = set()
     matched_receipt_keys: set[str] = set()
     session_scope: set[str] = set()
     idempotency_scope: set[str] = set()
@@ -137,9 +157,29 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
         elif record.correlation_id in approval_map:
             add_approval(approval_map[record.correlation_id])
 
+    def add_session_event(record: SessionEventRecord) -> None:
+        matched_event_ids.add(record.event_id)
+        session_scope.add(record.session_id)
+        decision_id = str(record.related_ids.get("decision_id") or "")
+        approval_id = str(record.related_ids.get("approval_id") or "")
+        envelope_id = str(record.related_ids.get("envelope_id") or "")
+        response_id = str(record.related_ids.get("response_id") or "")
+        if decision_id and decision_id in decision_map:
+            add_decision(decision_map[decision_id])
+        elif decision_id:
+            matched_decision_ids.add(decision_id)
+        if approval_id:
+            matched_approval_ids.add(approval_id)
+        if envelope_id:
+            matched_envelope_ids.add(envelope_id)
+        if response_id and response_id in response_map:
+            add_response(response_map[response_id])
+
     if not query.has_filters():
         for record in decisions:
             add_decision(record)
+        for record in session_events:
+            add_session_event(record)
     if query.session_id:
         session_scope.add(query.session_id)
         for record in decisions:
@@ -151,10 +191,21 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
         for record in deliveries:
             if record.session_id == query.session_id:
                 add_delivery(record)
+        for record in session_events:
+            if record.session_id == query.session_id:
+                add_session_event(record)
     if query.decision_id and query.decision_id in decision_map:
         add_decision(decision_map[query.decision_id])
+    if query.decision_id:
+        for record in session_events:
+            if str(record.related_ids.get("decision_id") or "") == query.decision_id:
+                add_session_event(record)
     if query.approval_id and query.approval_id in approval_map:
         add_approval(approval_map[query.approval_id])
+    if query.approval_id:
+        for record in session_events:
+            if str(record.related_ids.get("approval_id") or "") == query.approval_id:
+                add_session_event(record)
     if query.envelope_id:
         if query.envelope_id in approval_by_envelope:
             add_approval(approval_by_envelope[query.envelope_id])
@@ -164,10 +215,16 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
         for record in responses:
             if record.envelope_id == query.envelope_id:
                 add_response(record)
+        for record in session_events:
+            if str(record.related_ids.get("envelope_id") or "") == query.envelope_id:
+                add_session_event(record)
     if query.receipt_id:
         for record in deliveries:
             if record.receipt_id == query.receipt_id:
                 add_delivery(record)
+        for record in session_events:
+            if str(record.related_ids.get("receipt_id") or "") == query.receipt_id:
+                add_session_event(record)
 
     changed = True
     while changed:
@@ -177,6 +234,7 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
             len(matched_approval_ids),
             len(matched_response_ids),
             len(matched_envelope_ids),
+            len(matched_event_ids),
             len(matched_receipt_keys),
             len(session_scope),
             len(idempotency_scope),
@@ -205,6 +263,17 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
             ):
                 add_delivery(record)
 
+        for record in session_events:
+            if (
+                record.event_id in matched_event_ids
+                or record.session_id in session_scope
+                or str(record.related_ids.get("decision_id") or "") in matched_decision_ids
+                or str(record.related_ids.get("approval_id") or "") in matched_approval_ids
+                or str(record.related_ids.get("envelope_id") or "") in matched_envelope_ids
+                or (query.receipt_id and str(record.related_ids.get("receipt_id") or "") == query.receipt_id)
+            ):
+                add_session_event(record)
+
         for entry in receipts:
             result = entry.result
             if result.approval_id and result.approval_id in matched_approval_ids:
@@ -218,6 +287,7 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
             len(matched_approval_ids),
             len(matched_response_ids),
             len(matched_envelope_ids),
+            len(matched_event_ids),
             len(matched_receipt_keys),
             len(session_scope),
             len(idempotency_scope),
@@ -244,6 +314,10 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
         ],
         key=_delivery_sort_key,
     )
+    matched_session_events = sorted(
+        [record for record in session_events if record.event_id in matched_event_ids],
+        key=_session_event_sort_key,
+    )
     matched_receipts = sorted(
         [entry for entry in receipts if entry.receipt_key in matched_receipt_keys],
         key=lambda entry: (_receipt_observed_at(entry), entry.receipt_key),
@@ -254,5 +328,6 @@ def query_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canonic
         approvals=matched_approvals,
         responses=matched_responses,
         deliveries=matched_deliveries,
+        session_events=matched_session_events,
         action_receipts=matched_receipts,
     )

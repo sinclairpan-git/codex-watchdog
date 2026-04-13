@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -20,19 +20,26 @@ from watchdog.services.policy.decisions import (
 )
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_service.models import SessionEventRecord
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
     build_approval_inbox_projections,
     build_approval_projections,
     build_session_projection,
+    build_session_service_fact_records,
     build_task_progress_view,
     build_workspace_activity_view,
+    stable_thread_id_for_project,
 )
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 from watchdog.services.session_spine.approval_visibility import (
     is_actionable_approval,
     is_deferred_policy_auto_approval,
 )
+
+if TYPE_CHECKING:
+    from watchdog.services.approvals.service import CanonicalApprovalStore
 
 
 CONTROL_LINK_ERROR = {
@@ -44,8 +51,38 @@ PERSISTED_SESSION_SPINE_REQUIRED_ERROR = {
     "message": "缺少 canonical persisted session spine；请先刷新 resident session spine。",
 }
 PERSISTED_SPINE_READ_SOURCE = "persisted_spine"
+SESSION_EVENTS_PROJECTION_READ_SOURCE = "session_events_projection"
 LIVE_QUERY_FALLBACK_READ_SOURCE = "live_query_fallback"
 DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS = 60.0
+SESSION_EVENT_APPROVAL_TYPES = frozenset(
+    {
+        "approval_requested",
+        "approval_approved",
+        "approval_rejected",
+        "approval_expired",
+    }
+)
+SESSION_EVENT_FACT_TYPES = frozenset(
+    {
+        "memory_unavailable_degraded",
+        "memory_conflict_detected",
+        "human_override_recorded",
+        "notification_announced",
+        "notification_delivery_succeeded",
+        "notification_delivery_failed",
+        "notification_requeued",
+        "notification_receipt_recorded",
+    }
+)
+SESSION_EVENT_PROJECTION_TYPES = SESSION_EVENT_APPROVAL_TYPES | SESSION_EVENT_FACT_TYPES
+
+
+def _approval_sort_key(approval: ApprovalProjection) -> tuple[bool, str, str]:
+    return (
+        approval.requested_at == "",
+        approval.requested_at,
+        approval.approval_id,
+    )
 
 
 class SessionSpineUpstreamError(RuntimeError):
@@ -144,6 +181,236 @@ def _build_snapshot_read_semantics_for_live_query() -> SnapshotReadSemantics:
     )
 
 
+def _build_snapshot_read_semantics_for_session_events(
+    last_observed_at: str | None = None,
+) -> SnapshotReadSemantics:
+    return SnapshotReadSemantics(
+        read_source=SESSION_EVENTS_PROJECTION_READ_SOURCE,
+        is_persisted=False,
+        is_fresh=True,
+        is_stale=False,
+        last_refreshed_at=last_observed_at,
+    )
+
+
+def _session_event_sort_key(event: SessionEventRecord) -> tuple[str, int, str, str]:
+    return (
+        "0" if event.log_seq is not None else "1",
+        event.log_seq or 0,
+        event.occurred_at,
+        event.event_id,
+    )
+
+
+def _list_project_session_events(
+    session_service: SessionService,
+    project_id: str,
+) -> list[SessionEventRecord]:
+    return sorted(
+        session_service.list_events(session_id=stable_thread_id_for_project(project_id)),
+        key=_session_event_sort_key,
+    )
+
+
+def _group_project_session_events(
+    session_service: SessionService,
+    *,
+    relevant_types: set[str] | frozenset[str],
+) -> dict[str, list[SessionEventRecord]]:
+    grouped: dict[str, list[SessionEventRecord]] = {}
+    for event in sorted(session_service.list_events(), key=_session_event_sort_key):
+        if event.event_type not in relevant_types:
+            continue
+        if event.session_id != stable_thread_id_for_project(event.project_id):
+            continue
+        grouped.setdefault(event.project_id, []).append(event)
+    return grouped
+
+
+def _has_relevant_session_projection_events(events: list[SessionEventRecord]) -> bool:
+    return any(event.event_type in SESSION_EVENT_PROJECTION_TYPES for event in events)
+
+
+def _has_relevant_approval_projection_events(events: list[SessionEventRecord]) -> bool:
+    return any(event.event_type in SESSION_EVENT_APPROVAL_TYPES for event in events)
+
+
+def _build_approval_rows_from_session_events(
+    events: list[SessionEventRecord],
+) -> list[dict[str, Any]]:
+    approvals_by_id: dict[str, dict[str, Any]] = {}
+    for event in sorted(events, key=_session_event_sort_key):
+        if event.event_type not in SESSION_EVENT_APPROVAL_TYPES:
+            continue
+        approval_id = str(event.related_ids.get("approval_id") or "")
+        if not approval_id:
+            continue
+        if event.event_type == "approval_requested":
+            requested_action = str(event.payload.get("requested_action") or "").strip()
+            approvals_by_id[approval_id] = {
+                "approval_id": approval_id,
+                "project_id": event.project_id,
+                "thread_id": stable_thread_id_for_project(event.project_id),
+                "native_thread_id": (
+                    str(
+                        event.payload.get("native_thread_id")
+                        or event.related_ids.get("native_thread_id")
+                        or ""
+                    ).strip()
+                    or None
+                ),
+                "command": requested_action,
+                "requested_action": requested_action,
+                "reason": str(event.payload.get("reason") or event.payload.get("note") or ""),
+                "alternative": str(event.payload.get("alternative") or ""),
+                "status": "pending",
+                "requested_at": event.occurred_at,
+                "created_at": event.occurred_at,
+                "risk_level": (
+                    str(event.payload.get("risk_level") or event.payload.get("risk_class") or "")
+                    or None
+                ),
+            }
+            continue
+        approvals_by_id.pop(approval_id, None)
+    return sorted(
+        approvals_by_id.values(),
+        key=lambda row: (
+            str(row.get("requested_at") or row.get("created_at") or "") == "",
+            str(row.get("requested_at") or row.get("created_at") or ""),
+            str(row.get("approval_id") or ""),
+        ),
+    )
+
+
+def _latest_event_timestamp(events: list[SessionEventRecord]) -> str | None:
+    if not events:
+        return None
+    return sorted(events, key=_session_event_sort_key)[-1].occurred_at
+
+
+def _merge_fact_records(
+    *collections: list[FactRecord],
+) -> list[FactRecord]:
+    merged: list[FactRecord] = []
+    seen_codes: set[str] = set()
+    for collection in collections:
+        for fact in collection:
+            if fact.fact_code in seen_codes:
+                continue
+            merged.append(fact)
+            seen_codes.add(fact.fact_code)
+    return merged
+
+
+def _build_event_projection_task(
+    *,
+    project_id: str,
+    approvals: list[dict[str, Any]],
+    events: list[SessionEventRecord],
+    persisted_record: PersistedSessionRecord | None = None,
+    task: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    native_thread_id = str(
+        (task or {}).get("thread_id")
+        or (persisted_record.native_thread_id if persisted_record is not None else "")
+        or ""
+    ).strip()
+    activity_phase = str(
+        (task or {}).get("phase")
+        or (
+            persisted_record.progress.activity_phase
+            if persisted_record is not None
+            else "unknown"
+        )
+        or "unknown"
+    )
+    files_touched = list(
+        (task or {}).get("files_touched")
+        or (
+            list(persisted_record.progress.files_touched)
+            if persisted_record is not None
+            else []
+        )
+    )
+    last_progress_at = (
+        _latest_event_timestamp(events)
+        or str((task or {}).get("last_progress_at") or "").strip()
+        or (
+            persisted_record.progress.last_progress_at
+            if persisted_record is not None
+            else None
+        )
+    )
+    summary = "waiting for approval" if approvals else "session active"
+    return {
+        "project_id": project_id,
+        "thread_id": native_thread_id,
+        "status": "waiting_human" if approvals else "running",
+        "phase": activity_phase,
+        "pending_approval": bool(approvals),
+        "last_summary": summary,
+        "files_touched": files_touched,
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": last_progress_at,
+    }
+
+
+def _build_session_read_bundle_from_session_events(
+    *,
+    project_id: str,
+    events: list[SessionEventRecord],
+    persisted_record: PersistedSessionRecord | None = None,
+    task: dict[str, Any] | None = None,
+) -> SessionReadBundle:
+    approvals = _build_approval_rows_from_session_events(events)
+    projected_task = _build_event_projection_task(
+        project_id=project_id,
+        approvals=approvals,
+        events=events,
+        persisted_record=persisted_record,
+        task=task,
+    )
+    approval_facts = build_fact_records(
+        project_id=project_id,
+        task=projected_task,
+        approvals=approvals,
+    )
+    event_facts = build_session_service_fact_records(
+        project_id=project_id,
+        events=events,
+    )
+    facts = _merge_fact_records(approval_facts, event_facts)
+    native_thread_id = str(projected_task.get("thread_id") or "") or None
+    return SessionReadBundle(
+        project_id=project_id,
+        task=projected_task,
+        approvals=approvals,
+        facts=facts,
+        session=build_session_projection(
+            project_id=project_id,
+            task=projected_task,
+            approvals=approvals,
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id=project_id,
+            task=projected_task,
+            facts=facts,
+        ),
+        approval_queue=build_approval_projections(
+            project_id=project_id,
+            native_thread_id=native_thread_id,
+            approvals=approvals,
+        ),
+        snapshot=_build_snapshot_read_semantics_for_session_events(
+            _latest_event_timestamp(events),
+        ),
+    )
+
+
 def _load_task_or_raise(
     client: AControlAgentClient,
     project_id: str,
@@ -208,8 +475,8 @@ def _load_approvals_or_raise(
     return sorted(
         rows_by_id.values(),
         key=lambda row: (
-            str(row.get("requested_at") or "") == "",
-            str(row.get("requested_at") or ""),
+            str(row.get("requested_at") or row.get("created_at") or "") == "",
+            str(row.get("requested_at") or row.get("created_at") or ""),
             str(row.get("approval_id") or ""),
         ),
     )
@@ -312,11 +579,143 @@ def _build_session_read_bundle(
     )
 
 
+def _approval_projection_to_row(approval: ApprovalProjection) -> dict[str, Any]:
+    return {
+        "approval_id": approval.approval_id,
+        "project_id": approval.project_id,
+        "native_thread_id": approval.native_thread_id,
+        "command": approval.command,
+        "reason": approval.reason,
+        "alternative": approval.alternative,
+        "status": approval.status,
+        "requested_at": approval.requested_at,
+        "decided_at": approval.decided_at,
+        "decided_by": approval.decided_by,
+        "risk_level": approval.risk_level,
+    }
+
+
+def _canonical_approval_to_row(approval: Any) -> dict[str, Any]:
+    return {
+        "approval_id": approval.approval_id,
+        "project_id": approval.project_id,
+        "thread_id": approval.thread_id,
+        "native_thread_id": approval.native_thread_id,
+        "command": approval.requested_action,
+        "requested_action": approval.requested_action,
+        "status": approval.status,
+        "requested_at": approval.created_at,
+        "created_at": approval.created_at,
+        "decided_at": approval.decided_at,
+        "decided_by": approval.decided_by,
+        "decision": approval.decision.model_dump(mode="json"),
+    }
+
+
+def _list_actionable_canonical_approval_rows(
+    approval_store: CanonicalApprovalStore | None,
+    *,
+    project_id: str | None = None,
+) -> list[dict[str, Any]]:
+    if approval_store is None:
+        return []
+    rows = [
+        _canonical_approval_to_row(record)
+        for record in approval_store.list_records()
+        if project_id is None or record.project_id == project_id
+    ]
+    actionable = [row for row in rows if is_actionable_approval(row)]
+    return sorted(
+        actionable,
+        key=lambda row: (
+            str(row.get("requested_at") or row.get("created_at") or "") == "",
+            str(row.get("requested_at") or row.get("created_at") or ""),
+            str(row.get("approval_id") or ""),
+        ),
+    )
+
+
+def _merge_approval_rows(
+    persisted_approvals: list[ApprovalProjection],
+    canonical_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for approval in persisted_approvals:
+        row = _approval_projection_to_row(approval)
+        approval_id = str(row.get("approval_id") or "")
+        if approval_id:
+            rows_by_id[approval_id] = row
+    for row in canonical_rows:
+        approval_id = str(row.get("approval_id") or "")
+        if approval_id and approval_id not in rows_by_id:
+            rows_by_id[approval_id] = dict(row)
+    return sorted(
+        rows_by_id.values(),
+        key=lambda row: (
+            str(row.get("requested_at") or row.get("created_at") or "") == "",
+            str(row.get("requested_at") or row.get("created_at") or ""),
+            str(row.get("approval_id") or ""),
+        ),
+    )
+
+
+def _task_from_persisted_record(
+    record: PersistedSessionRecord,
+    *,
+    approvals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    fact_codes = {fact.fact_code for fact in record.facts}
+    status = "completed"
+    if approvals:
+        status = "waiting_human"
+    elif record.session.session_state == "blocked":
+        status = "running"
+    return {
+        "project_id": record.project_id,
+        "thread_id": record.native_thread_id,
+        "status": status,
+        "phase": record.progress.activity_phase,
+        "pending_approval": bool(approvals),
+        "last_summary": record.progress.summary or record.session.headline,
+        "files_touched": list(record.progress.files_touched),
+        "context_pressure": record.progress.context_pressure,
+        "stuck_level": record.progress.stuck_level,
+        "failure_count": 3 if "repeat_failure" in fact_codes else 0,
+        "last_progress_at": record.progress.last_progress_at,
+    }
+
+
 def _build_session_read_bundle_from_persisted_record(
     record: PersistedSessionRecord,
     *,
+    approval_store: CanonicalApprovalStore | None = None,
     freshness_window_seconds: float,
 ) -> SessionReadBundle:
+    canonical_approvals = _list_actionable_canonical_approval_rows(
+        approval_store,
+        project_id=record.project_id,
+    )
+    if canonical_approvals:
+        approvals = _merge_approval_rows(record.approval_queue, canonical_approvals)
+        synthesized_task = _task_from_persisted_record(record, approvals=approvals)
+        bundle = _build_session_read_bundle(
+            project_id=record.project_id,
+            task=synthesized_task,
+            approvals=approvals,
+        )
+        return SessionReadBundle(
+            project_id=bundle.project_id,
+            task=bundle.task,
+            approvals=bundle.approvals,
+            facts=bundle.facts,
+            session=bundle.session,
+            progress=bundle.progress,
+            approval_queue=bundle.approval_queue,
+            snapshot=_build_snapshot_read_semantics_from_persisted_record(
+                record,
+                freshness_window_seconds=freshness_window_seconds,
+            ),
+        )
     return SessionReadBundle(
         project_id=record.project_id,
         task=None,
@@ -370,14 +769,25 @@ def build_session_read_bundle(
     client: AControlAgentClient,
     project_id: str,
     *,
+    session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
     freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
+    persisted_record = store.get(project_id) if store is not None else None
+    if session_service is not None:
+        session_events = _list_project_session_events(session_service, project_id)
+        if _has_relevant_session_projection_events(session_events):
+            return _build_session_read_bundle_from_session_events(
+                project_id=project_id,
+                events=session_events,
+                persisted_record=persisted_record,
+            )
     if store is not None:
-        record = store.get(project_id)
-        if record is not None:
+        if persisted_record is not None:
             return _build_session_read_bundle_from_persisted_record(
-                record,
+                persisted_record,
+                approval_store=approval_store,
                 freshness_window_seconds=freshness_window_seconds,
             )
     task = _load_task_or_raise(client, project_id)
@@ -403,14 +813,25 @@ def build_session_read_bundle_by_native_thread(
     client: AControlAgentClient,
     native_thread_id: str,
     *,
+    session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
     freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
+    persisted_record = store.get_by_native_thread(native_thread_id) if store is not None else None
+    if session_service is not None and persisted_record is not None:
+        session_events = _list_project_session_events(session_service, persisted_record.project_id)
+        if _has_relevant_session_projection_events(session_events):
+            return _build_session_read_bundle_from_session_events(
+                project_id=persisted_record.project_id,
+                events=session_events,
+                persisted_record=persisted_record,
+            )
     if store is not None:
-        record = store.get_by_native_thread(native_thread_id)
-        if record is not None:
+        if persisted_record is not None:
             return _build_session_read_bundle_from_persisted_record(
-                record,
+                persisted_record,
+                approval_store=approval_store,
                 freshness_window_seconds=freshness_window_seconds,
             )
     task = _load_task_by_native_thread_or_raise(client, native_thread_id)
@@ -419,6 +840,14 @@ def build_session_read_bundle_by_native_thread(
         raise SessionSpineUpstreamError(
             {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
         )
+    if session_service is not None:
+        session_events = _list_project_session_events(session_service, project_id)
+        if _has_relevant_session_projection_events(session_events):
+            return _build_session_read_bundle_from_session_events(
+                project_id=project_id,
+                events=session_events,
+                task=task,
+            )
     approvals = _load_approvals_or_raise(client, project_id)
     bundle = _build_session_read_bundle(
         project_id=project_id,
@@ -473,20 +902,88 @@ def build_approval_inbox_bundle(
     client: AControlAgentClient,
     project_id: str | None = None,
     *,
+    session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
 ) -> ApprovalInboxReadBundle:
+    if session_service is not None:
+        if project_id is not None:
+            session_events = _list_project_session_events(session_service, project_id)
+            if _has_relevant_approval_projection_events(session_events):
+                approvals = _build_approval_rows_from_session_events(session_events)
+                return ApprovalInboxReadBundle(
+                    project_id=project_id,
+                    approvals=approvals,
+                    approval_inbox=build_approval_inbox_projections(approvals=approvals),
+                )
+        else:
+            grouped_events = _group_project_session_events(
+                session_service,
+                relevant_types=SESSION_EVENT_APPROVAL_TYPES,
+            )
+            if grouped_events:
+                event_project_ids = set(grouped_events)
+                event_approvals: list[dict[str, Any]] = []
+                for events in grouped_events.values():
+                    event_approvals.extend(_build_approval_rows_from_session_events(events))
+
+                canonical_rows = [
+                    row
+                    for row in _list_actionable_canonical_approval_rows(approval_store)
+                    if str(row.get("project_id") or "") not in event_project_ids
+                ]
+                persisted: list[ApprovalProjection] = []
+                if store is not None:
+                    persisted = sorted(
+                        [
+                            approval
+                            for record in store.list_records()
+                            for approval in record.approval_queue
+                            if approval.project_id not in event_project_ids
+                        ],
+                        key=_approval_sort_key,
+                    )
+                fallback_rows = _merge_approval_rows(persisted, canonical_rows)
+                merged_rows = sorted(
+                    [*event_approvals, *fallback_rows],
+                    key=lambda row: (
+                        str(row.get("requested_at") or row.get("created_at") or "") == "",
+                        str(row.get("requested_at") or row.get("created_at") or ""),
+                        str(row.get("approval_id") or ""),
+                    ),
+                )
+                return ApprovalInboxReadBundle(
+                    project_id=None,
+                    approvals=merged_rows,
+                    approval_inbox=build_approval_inbox_projections(approvals=merged_rows),
+                )
+    canonical_rows = _list_actionable_canonical_approval_rows(
+        approval_store,
+        project_id=project_id,
+    )
     if store is not None:
-        persisted = [
+        persisted = sorted(
+            [
             approval
             for record in store.list_records()
             for approval in record.approval_queue
             if project_id is None or approval.project_id == project_id
-        ]
-        if persisted:
+            ],
+            key=_approval_sort_key,
+        )
+        if persisted or canonical_rows:
+            merged = list(persisted)
+            existing_ids = {approval.approval_id for approval in merged}
+            merged.extend(
+                projection
+                for projection in build_approval_inbox_projections(approvals=canonical_rows)
+                if projection.approval_id not in existing_ids
+            )
+            merged.sort(key=_approval_sort_key)
             return ApprovalInboxReadBundle(
                 project_id=project_id,
-                approvals=[approval.model_dump(mode="json") for approval in persisted],
-                approval_inbox=persisted,
+                approvals=[approval.model_dump(mode="json") for approval in merged],
+                approval_inbox=merged,
             )
     approvals = _load_approvals_or_raise(client, project_id)
     return ApprovalInboxReadBundle(
@@ -499,15 +996,59 @@ def build_approval_inbox_bundle(
 def build_session_directory_bundle(
     client: AControlAgentClient,
     *,
+    session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
 ) -> SessionDirectoryReadBundle:
+    persisted_records = store.list_records() if store is not None else []
+    persisted_by_project = {record.project_id: record for record in persisted_records}
+    if session_service is not None:
+        grouped_events = _group_project_session_events(
+            session_service,
+            relevant_types=SESSION_EVENT_PROJECTION_TYPES,
+        )
+        if grouped_events:
+            sessions: list[SessionProjection] = []
+            ordered_project_ids = list(dict.fromkeys([*grouped_events.keys(), *persisted_by_project.keys()]))
+            for current_project_id in ordered_project_ids:
+                if current_project_id in grouped_events:
+                    sessions.append(
+                        _build_session_read_bundle_from_session_events(
+                            project_id=current_project_id,
+                            events=grouped_events[current_project_id],
+                            persisted_record=persisted_by_project.get(current_project_id),
+                        ).session
+                    )
+                    continue
+                record = persisted_by_project.get(current_project_id)
+                if record is None:
+                    continue
+                sessions.append(
+                    _build_session_read_bundle_from_persisted_record(
+                        record,
+                        approval_store=approval_store,
+                        freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
+                    ).session
+                )
+            if sessions:
+                return SessionDirectoryReadBundle(
+                    tasks=[],
+                    approvals=[],
+                    sessions=sessions,
+                )
     if store is not None:
-        persisted = store.list_records()
-        if persisted:
+        if persisted_records:
             return SessionDirectoryReadBundle(
                 tasks=[],
                 approvals=[],
-                sessions=[record.session for record in persisted],
+                sessions=[
+                    _build_session_read_bundle_from_persisted_record(
+                        record,
+                        approval_store=approval_store,
+                        freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
+                    ).session
+                    for record in persisted_records
+                ],
             )
     tasks = _load_tasks_or_raise(client)
     approvals = _load_approvals_or_raise(client)
