@@ -1,6 +1,6 @@
-current_stage: compatibility_wiring
-current_batch: 4
-last_committed_task: T363
+current_stage: verify
+current_batch: 5
+last_committed_task: T365
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -40,12 +40,16 @@ working_set_snapshot:
       - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 1.59s`
       - `uv run pytest -q tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py` -> `12 passed in 1.59s`
       - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `78 passed in 1.36s`
-    - `T364` 当前已补到：legacy OpenClaw bootstrap requeue 会镜像 interaction metadata 回 canonical event，callback/adapter 代码内已显式标注 compatibility-only 语义。
-    - 当前下一执行入口是 `T364`：把 `openclaw_bootstrap.py`、`openclaw_callbacks.py` 与 `OpenClawAdapter` 本体进一步收口到 compatibility-only 语义。
+    - `T364` 已完成：legacy OpenClaw bootstrap requeue 会镜像 interaction metadata 回 canonical event，OpenClaw response API 也改为 compatibility receipt-first，callback/adapter 代码内已显式标注 compatibility-only 语义。
+    - 额外验证：
+      - `uv run pytest -q tests/test_openclaw_contracts.py tests/test_watchdog_approval_loop.py` -> `26 passed in 1.04s`
+      - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `79 passed in 1.46s`
+    - 实现期对抗 reviewer 多次在时限内未返回 blocking/P1 结论，本轮按“连续执行不阻断”约束记录超时并以本地 79 相关回归为收口依据。
+    - 当前下一执行入口应切到 Task 8 / 新 work item，开始 e2e golden path 与 release gate 通关。
 current_branch: codex/wi-036-feishu-control-plane
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T01:20:00+08:00'
+timestamp: '2026-04-14T02:12:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

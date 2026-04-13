@@ -206,6 +206,51 @@ def test_openclaw_response_api_requires_full_contract_and_validates_token(
     assert accepted.json()["data"]["approval_status"] == "rejected"
 
 
+def test_openclaw_response_api_records_compatibility_receipt_before_override_events(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=_RejectOnlyAClient())
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/openclaw/responses",
+            json={
+                "envelope_id": approval.envelope_id,
+                "envelope_type": "approval",
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "response_action": "reject",
+                "response_token": approval.approval_token,
+                "user_ref": "user:compat-alice",
+                "channel_ref": "openclaw:compat:dm",
+                "client_request_id": "req-compat-receipt",
+                "operator": "openclaw",
+                "note": "compat response",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    events = app.state.session_service.list_events(session_id=approval.session_id)
+    assert [event.event_type for event in events] == [
+        "approval_requested",
+        "notification_receipt_recorded",
+        "approval_rejected",
+        "human_override_recorded",
+    ]
+    assert events[1].related_ids["actor_id"] == "user:compat-alice"
+    assert events[1].payload["channel_ref"] == "openclaw:compat:dm"
+    assert events[1].payload["channel_kind"] == "compatibility_openclaw"
+
+
 def test_reference_runtime_maps_approval_envelope_and_posts_structured_response() -> None:
     runtime_module = _load_runtime_module()
     captured: list[httpx.Request] = []

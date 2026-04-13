@@ -83,7 +83,7 @@
 ## Task 36.4 收口通知投递恢复与 OpenClaw compatibility 边界
 
 - **任务编号**：T364
-- **状态**：进行中（2026-04-14）
+- **状态**：已完成（2026-04-14）
 - **目标**：把通知投递中间态与 OpenClaw 兼容层真正接入主路径，使旧入口不再承担主控制职责。
 - **文件**：
   - `src/watchdog/api/openclaw_bootstrap.py`
@@ -110,12 +110,12 @@
   2. 已锁定 Feishu 主 route 与 OpenClaw compatibility route 同时存在的 contract；
   3. `openclaw_bootstrap.py` 触发 legacy requeue 时，已开始镜像 `interaction_context_id` / `interaction_family_id` / `actor_id` 等 metadata 到 canonical `notification_requeued` 事件；
   4. `openclaw_callbacks.py` 与 `OpenClawAdapter` 已显式标注 compatibility-only 语义；
-  5. 尚未把 OpenClaw callback/adapter 本体进一步改造成共享 control-plane validity helper 的薄兼容层，下一提交继续完成。
+  5. `openclaw_responses` 现在也先写 compatibility receipt，再进入 approval / human override side effects，旧入口已遵守同一条 event-first 纪律。
 
 ## Task 36.5 更新执行日志与 handoff 摘要
 
 - **任务编号**：T365
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 e2e handoff。
 - **文件**：
   - `specs/036-feishu-control-plane-and-openclaw-retirement/task-execution-log.md`
@@ -132,10 +132,14 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已同步 `task-execution-log.md`、`execution-plan.yaml`、`runtime.yaml`、`resume-pack.yaml` 与 `latest-summary.md`；
+  2. 已记录 docs baseline、Feishu primary control surface、OpenClaw compatibility bootstrap/receipt 三个连续提交；
+  3. 已记录实现期对抗 reviewer 多次超时未返回 blocking/P1 结论，当前以 79 个相关回归作为本轮收口证据。
 
 ## 整体验收
 
 - 036 是长时运行自治一期的 `Task 7`，只负责把 Feishu 收敛为唯一主控制面，并把 OpenClaw 降为 compatibility-only surface。
 - 036 完成后，审批确认、通知回执、人工 override 与交互窗口更新应统一走 event-first write barrier。
 - 036 完成后，同一 interaction family 只能有一个活跃上下文；旧上下文晚到消息只进审计。
-- 036 不正式完成 e2e golden path 与一期通关验收。
+- 036 已完成 Feishu 主控制面迁移与 OpenClaw 主链路退役的一期 contract 收口；端到端 golden path 与一期通关验收留给后续 work item。

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 
 from watchdog.api.openclaw_callbacks import OpenClawResponseRequest
+from watchdog.api.openclaw_callbacks import utc_now_iso
 from watchdog.api.deps import require_token
 from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
@@ -54,6 +55,36 @@ def _validation_message(exc: ValidationError) -> str:
     if not fields:
         return "invalid openclaw response contract"
     return f"missing or invalid fields: {', '.join(fields)}"
+
+
+def _record_compatibility_receipt(
+    request: OpenClawResponseRequest,
+    *,
+    approval,
+    session_service,
+) -> None:
+    session_service.record_event(
+        event_type="notification_receipt_recorded",
+        project_id=approval.project_id,
+        session_id=approval.session_id,
+        correlation_id=f"corr:notification:{approval.envelope_id}:receipt:{request.client_request_id}",
+        causation_id=request.client_request_id,
+        related_ids={
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
+            "envelope_id": approval.envelope_id,
+            "receipt_id": f"openclaw-receipt:{request.client_request_id}",
+            "actor_id": request.user_ref,
+        },
+        payload={
+            "channel_kind": "compatibility_openclaw",
+            "channel_ref": request.channel_ref,
+            "receipt_id": f"openclaw-receipt:{request.client_request_id}",
+            "received_at": utc_now_iso(),
+            "delivery_status": "user_replied",
+            "operator": request.operator.strip() or "openclaw",
+        },
+    )
 
 
 @router.post(
@@ -128,6 +159,11 @@ def post_openclaw_response(
             },
         )
     operator = contract.operator.strip() or "openclaw"
+    _record_compatibility_receipt(
+        contract,
+        approval=approval,
+        session_service=request.app.state.session_service,
+    )
     try:
         result = respond_to_canonical_approval(
             envelope_id=contract.envelope_id,

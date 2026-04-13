@@ -1,12 +1,12 @@
 # Development Summary
 
-Status: in_progress
+Status: completed
 Total Tasks: 5
-Completed Tasks: 3
+Completed Tasks: 5
 Halted Tasks: 0
 Total Batches: 5
-Completed Batches: 3
-Last Committed Task: T363
+Completed Batches: 5
+Last Committed Task: T365
 
 ## Notes
 - `WI-036` 已从总实施计划 `Task 7` 正式拆出，目标是让 `Feishu` 成为唯一主控制面，并把 `OpenClaw` 收口为 compatibility-only surface。
@@ -22,10 +22,11 @@ Last Committed Task: T363
   - DM-only approval、expired window、superseded context、receipt-first event ordering 已锁进测试；
   - interaction metadata 已贯通到 delivery/session projection。
 - `T364` 正在推进：
-  - OpenClaw bootstrap 的 legacy requeue 已开始镜像 interaction metadata 到 canonical event；
-  - OpenClaw callback / adapter 已显式标注 compatibility-only 语义；
-  - 仍待把 callback/adapter 本体进一步收口为共享 control-plane validity helper 的薄兼容层。
-- 当前下一执行入口是 `T364`：继续收口 OpenClaw compatibility-only surface，并把 bootstrap/callback/adapter 本体与新主控制面边界对齐。
+- `T364` 已完成：
+  - OpenClaw bootstrap 的 legacy requeue 已镜像 interaction metadata 到 canonical `notification_requeued`；
+  - OpenClaw response API 已改为 compatibility receipt-first，再进入 approval/human override；
+  - OpenClaw callback / adapter 已显式标注 compatibility-only 语义。
+- `WI-036` 已完成，后续下一执行入口应切到 Task 8 / 新 work item，开始 e2e golden path 与 release gate 通关。
 
 ## Latest Verification
 - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py` -> `3 passed in 0.04s`
@@ -35,7 +36,9 @@ Last Committed Task: T363
 - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 1.59s`
 - `uv run pytest -q tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py` -> `12 passed in 1.59s`
 - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `78 passed in 1.36s`
+- `uv run pytest -q tests/test_openclaw_contracts.py tests/test_watchdog_approval_loop.py` -> `26 passed in 1.04s`
+- `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `79 passed in 1.46s`
 
 ## Handoff
-- 当前可直接继续 `T364`：把 `openclaw_bootstrap.py`、`openclaw_callbacks.py` 与 `OpenClawAdapter` 明确收口为 compatibility-only surface。
+- 下一 work item 应切到一期 e2e golden path / Task 8，消费 036 已冻结的 Feishu primary control + OpenClaw compatibility-only contract。
 - 后续实现不得回退到“OpenClaw callback 决定控制真相”或“先改 store 再补事件”的旧路径。

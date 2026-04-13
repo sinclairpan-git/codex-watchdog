@@ -41,6 +41,11 @@
 
 - `openclaw_bootstrap.py` 的 legacy requeue path 已补 interaction metadata 镜像，保证兼容层触发的 `notification_requeued` 仍能带回 `interaction_context_id` / `interaction_family_id` / `actor_id`。
 - `openclaw_callbacks.py` 与 `OpenClawAdapter` 已显式标注 compatibility-only 语义，避免后续继续把它们当主控制面入口扩张。
+- `openclaw_responses.py` 现已改为 compatibility receipt-first：先写 `notification_receipt_recorded`，再进入 canonical approval / human override side effects。
 - 新增/扩展验证：
   - `uv run pytest -q tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py` -> `12 passed in 1.59s`
   - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `78 passed in 1.36s`
+- 继续补上 OpenClaw compatibility receipt-first 后，本地验证更新为：
+  - `uv run pytest -q tests/test_openclaw_contracts.py tests/test_watchdog_approval_loop.py` -> `26 passed in 1.04s`
+  - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `79 passed in 1.46s`
+- 再次尝试实现期 Hermes / Anthropic 对抗 review，reviewer agent 仍在时限内未返回有效 blocking/P1 结论；按“连续执行不阻断”约束，本轮以本地 79 测试通过作为收口依据，并把 reviewer 超时明确留档。
