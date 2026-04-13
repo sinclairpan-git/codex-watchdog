@@ -107,3 +107,31 @@ def test_goal_contract_incomplete_contract_stays_observe_only(tmp_path) -> None:
         "explicit_deliverables",
         "completion_signals",
     ]
+
+
+def test_goal_contract_bootstrap_without_explicit_evidence_stays_observe_only(tmp_path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    service = GoalContractService(session_service)
+
+    service.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续当前任务",
+        task_prompt="保持推进",
+        last_user_instruction="继续",
+        phase="implementation",
+        last_summary="继续推进",
+    )
+
+    readiness = service.evaluate_readiness(
+        project_id="repo-a",
+        session_id="session:repo-a",
+    )
+
+    assert readiness.mode == "observe_only"
+    assert readiness.missing_fields == [
+        "explicit_deliverables",
+        "completion_signals",
+    ]

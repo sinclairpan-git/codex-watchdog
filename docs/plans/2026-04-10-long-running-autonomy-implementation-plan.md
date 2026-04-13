@@ -119,6 +119,8 @@
 
 ### Task 3: 引入 Goal Contract 一等持久化对象
 
+**Canonical execution work item:** `specs/032-goal-contract-persistence-and-governance/`
+
 **Files:**
 - Modify: `src/watchdog/services/session_service/models.py`
 - Modify: `src/watchdog/services/session_service/service.py`

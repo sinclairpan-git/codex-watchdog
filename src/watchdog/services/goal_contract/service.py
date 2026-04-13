@@ -61,19 +61,9 @@ class GoalContractService:
             project_id=project_id,
             session_id=session_id,
             original_goal=self._pick_first_nonempty(task_prompt, task_title, last_user_instruction, last_summary),
-            explicit_deliverables=self._normalize_list(
-                explicit_deliverables,
-                fallback=[task_title] if explicit_deliverables is None and task_title.strip() else [],
-            ),
+            explicit_deliverables=self._normalize_list(explicit_deliverables),
             non_goals=self._normalize_list(non_goals),
-            completion_signals=self._normalize_list(
-                completion_signals,
-                fallback=[
-                    "Goal contract deliverables explicitly verified."
-                ]
-                if completion_signals is None
-                else [],
-            ),
+            completion_signals=self._normalize_list(completion_signals),
             inference_boundary=_normalize_text(inference_boundary) or _DEFAULT_INFERENCE_BOUNDARY,
             current_phase_goal=self._pick_first_nonempty(
                 current_phase_goal,

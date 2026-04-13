@@ -1,0 +1,68 @@
+current_stage: execute
+current_batch: 3
+last_committed_task: T321
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/032-goal-contract-persistence-and-governance/spec.md
+  plan_path: specs/032-goal-contract-persistence-and-governance/plan.md
+  tasks_path: specs/032-goal-contract-persistence-and-governance/tasks.md
+  active_files:
+  - '`docs/architecture/codex-long-running-autonomy-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/spec.md`'
+  - '`specs/032-goal-contract-persistence-and-governance/spec.md`'
+  - '`specs/032-goal-contract-persistence-and-governance/plan.md`'
+  - '`specs/032-goal-contract-persistence-and-governance/tasks.md`'
+  - '`specs/032-goal-contract-persistence-and-governance/task-execution-log.md`'
+  - '`src/watchdog/services/goal_contract/service.py`'
+  - '`tests/test_watchdog_goal_contract.py`'
+  - '`tests/test_watchdog_goal_contract_stage_boundary.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`.ai-sdlc/work-items/032-goal-contract-persistence-and-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/032-goal-contract-persistence-and-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/032-goal-contract-persistence-and-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/032-goal-contract-persistence-and-governance/latest-summary.md`'
+  context_summary: '# Development Summary
+
+
+    Status: active
+
+    Total Tasks: 5
+
+    Completed Tasks: 2
+
+    Halted Tasks: 0
+
+    Total Batches: 5
+
+    Completed Batches: 2
+
+    Last Committed Task: T321
+
+
+    ## Notes
+
+    - 已把长时运行自治总实施计划中的 `Task 3` 正式拆成 `WI-032`。
+
+    - 032 的边界固定为“Goal Contract 持久化与治理”，并明确 stage conflict、child adoption 与 policy / orchestrator 消费口径一并纳入。
+
+    - Goal Contract 只能由 Session events replay 得出，不允许演化成新的 snapshot truth。
+
+    - `T322` 已完成：新增 red test 锁定“缺失显式 deliverables / completion signals 时只能保持 observe-only”，并修正 `bootstrap_contract()` 的隐式兜底行为。
+
+    - 已验证 `tests/test_watchdog_goal_contract.py`、`tests/test_watchdog_goal_contract_stage_boundary.py` 以及 goal-contract 相关 policy/runtime 路径。
+
+    - 下一执行入口切换为 `T323`。
+
+    - 未改写 `.ai-sdlc/state/checkpoint.yml`，避免覆盖仓库当前全局 pipeline 状态。'
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-13T14:46:29+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''
