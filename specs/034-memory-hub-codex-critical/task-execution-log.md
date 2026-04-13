@@ -23,4 +23,16 @@
   5. degrade/conflict 事件必须带 `reason_code` 和 `source_ref`；
   6. replayability 验收必须覆盖 compaction 之后的语义级恢复，summary/packet input 不能成为唯一恢复来源；
   7. 需要最小 context quality evaluation 指标，用于后续 release evidence，而不是让 retrieval 质量停留在主观判断。
-- 当前尚未开始实现代码；下一步入口固定为 `Task 34.2`，先写 red tests 锁定 contract。
+- 随后已完成 `Task 34.2` 的红测锁定：
+  - 新增 `tests/test_watchdog_memory_hub.py`、`tests/test_watchdog_memory_packets.py`、`tests/test_watchdog_memory_degradation.py`；
+  - 首轮红测暴露 `SessionService.get_events(...)` 缺失、canonical degrade event 缺少 `reason_code/source_ref/security_verdict`，以及 `memory_hub` 模块骨架不存在。
+- 已完成 `Task 34.3` 的最小垂直切片实现：
+  - 新增 `src/watchdog/services/memory_hub/indexer.py` 与 `src/watchdog/services/memory_hub/skills.py`；
+  - 扩展 `src/watchdog/services/memory_hub/service.py` 为受约束 facade，补入 archive search、skill metadata、preview contracts、packet inputs 与 provider ops；
+  - 扩展 `src/watchdog/services/session_service/service.py`，补齐 replay event slicing 与 canonical degrade/conflict event payload。
+- 实现过程中出现一次结构性回归：`_infer_memory_reason_code` 被插入到 `SessionService` 类体中间，导致 `_append_event` 等后续方法脱离类定义；已通过移动 helper 到类定义前修复。
+- 已完成 `Task 34.4` 相关验证：
+  - `uv run pytest -q tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_packets.py tests/test_watchdog_memory_degradation.py`
+  - `uv run pytest -q tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_packets.py tests/test_watchdog_memory_degradation.py tests/test_watchdog_session_service.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
+  - 最新结果：`47 passed in 2.94s`
+- 当前进入 `Task 34.5` 收尾，状态为：本地实现与验证已完成，等待把 memory hub 垂直切片与元数据更新一起提交。

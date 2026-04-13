@@ -33,7 +33,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T341
 - task_id: T343
@@ -56,7 +56,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T342
 - task_id: T344
@@ -75,7 +75,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T343
 - task_id: T345
@@ -94,7 +94,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T344
 batches:
@@ -109,20 +109,28 @@ batches:
   phase: 2
   tasks:
   - T342
-  status: pending
+  status: completed
+  started_at: '2026-04-13T16:40:00+08:00'
+  completed_at: '2026-04-13T16:57:00+08:00'
 - batch_id: 3
   phase: 3
   tasks:
   - T343
-  status: pending
+  status: completed
+  started_at: '2026-04-13T16:57:00+08:00'
+  completed_at: '2026-04-13T17:02:00+08:00'
 - batch_id: 4
   phase: 4
   tasks:
   - T344
-  status: pending
+  status: completed
+  started_at: '2026-04-13T17:02:00+08:00'
+  completed_at: '2026-04-13T17:03:00+08:00'
 - batch_id: 5
   phase: 5
   tasks:
   - T345
-  status: pending
-current_batch: 1
+  status: completed
+  started_at: '2026-04-13T17:03:00+08:00'
+  completed_at: '2026-04-13T17:03:39+08:00'
+current_batch: 5

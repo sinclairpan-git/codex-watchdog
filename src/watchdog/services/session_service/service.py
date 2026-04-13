@@ -33,6 +33,21 @@ def _stable_id(prefix: str, *parts: object) -> str:
     return f"{prefix}:{_stable_digest(*parts)}"
 
 
+def _infer_memory_reason_code(reason: str) -> str:
+    normalized = reason.strip().lower()
+    if normalized in {"memory_hub_unreachable", "provider_timeout", "provider_unavailable"}:
+        return "outage"
+    if normalized in {"security_verdict_failed", "prompt_injection_detected"}:
+        return "security_blocked"
+    if normalized in {"ttl_expired", "stale_entry"}:
+        return "ttl_expired"
+    if normalized in {"skill_incompatible", "tech_stack_mismatch"}:
+        return "skill_incompatible"
+    if normalized in {"resident_goal_contract_mismatch", "goal_contract_version_mismatch"}:
+        return "conflict"
+    return "outage"
+
+
 @dataclass(frozen=True, slots=True)
 class RecordedRecoveryExecution:
     recovery_transaction_id: str
@@ -53,6 +68,35 @@ class SessionService:
 
     def list_events(self, **filters: Any) -> list[SessionEventRecord]:
         return self._store.list_events(**filters)
+
+    def get_events(
+        self,
+        *,
+        session_id: str,
+        after_log_seq: int | None = None,
+        before_log_seq: int | None = None,
+        limit: int | None = None,
+        anchor_event_id: str | None = None,
+    ) -> list[SessionEventRecord]:
+        records = self._store.list_events(session_id=session_id)
+        if anchor_event_id is not None:
+            anchor = next(
+                (record for record in records if record.event_id == anchor_event_id),
+                None,
+            )
+            if anchor is None:
+                return []
+            anchor_seq = anchor.log_seq or 0
+            if after_log_seq is None or after_log_seq < anchor_seq - 1:
+                after_log_seq = max(anchor_seq - 1, 0)
+        if after_log_seq is not None:
+            records = [record for record in records if (record.log_seq or 0) > after_log_seq]
+        if before_log_seq is not None:
+            records = [record for record in records if (record.log_seq or 0) <= before_log_seq]
+        records = sorted(records, key=lambda record: record.log_seq or 0)
+        if limit is not None:
+            records = records[:limit]
+        return records
 
     def list_lineage(self, **filters: Any) -> list[SessionLineageRecord]:
         return self._store.list_lineage(**filters)
@@ -91,12 +135,31 @@ class SessionService:
         memory_scope: str,
         fallback_mode: str,
         degradation_reason: str,
+        reason_code: str | None = None,
+        source_ref: str | None = None,
+        security_verdict: str | None = None,
+        override_mode: str | None = None,
         causation_id: str | None = None,
         related_ids: dict[str, str] | None = None,
         occurred_at: str | None = None,
     ) -> SessionEventRecord:
         event_related_ids = {"memory_scope": memory_scope}
         event_related_ids.update(dict(related_ids or {}))
+        if source_ref:
+            event_related_ids["source_ref"] = source_ref
+        normalized_reason_code = reason_code or _infer_memory_reason_code(degradation_reason)
+        normalized_security_verdict = security_verdict
+        if normalized_reason_code == "security_blocked" and normalized_security_verdict is None:
+            normalized_security_verdict = "dangerous"
+        payload = {
+            "fallback_mode": fallback_mode,
+            "degradation_reason": degradation_reason,
+            "reason_code": normalized_reason_code,
+        }
+        if normalized_security_verdict is not None:
+            payload["security_verdict"] = normalized_security_verdict
+        if override_mode is not None:
+            payload["override_mode"] = override_mode
         return self.record_event(
             event_type="memory_unavailable_degraded",
             project_id=project_id,
@@ -111,10 +174,7 @@ class SessionService:
             causation_id=causation_id,
             related_ids=event_related_ids,
             occurred_at=occurred_at,
-            payload={
-                "fallback_mode": fallback_mode,
-                "degradation_reason": degradation_reason,
-            },
+            payload=payload,
         )
 
     def record_memory_conflict_detected(
@@ -125,12 +185,16 @@ class SessionService:
         memory_scope: str,
         conflict_reason: str,
         resolution: str,
+        reason_code: str = "conflict",
+        source_ref: str | None = None,
         causation_id: str | None = None,
         related_ids: dict[str, str] | None = None,
         occurred_at: str | None = None,
     ) -> SessionEventRecord:
         event_related_ids = {"memory_scope": memory_scope}
         event_related_ids.update(dict(related_ids or {}))
+        if source_ref:
+            event_related_ids["source_ref"] = source_ref
         return self.record_event(
             event_type="memory_conflict_detected",
             project_id=project_id,
@@ -149,6 +213,7 @@ class SessionService:
             payload={
                 "conflict_reason": conflict_reason,
                 "resolution": resolution,
+                "reason_code": reason_code,
             },
         )
 
@@ -183,7 +248,6 @@ class SessionService:
                 "expiration_reason": expiration_reason,
             },
         )
-
     def record_recovery_execution(
         self,
         *,

@@ -297,6 +297,7 @@ def test_session_service_records_memory_anomaly_events_with_stable_writers(
     assert first.payload == {
         "fallback_mode": "reference_only",
         "degradation_reason": "memory_hub_unreachable",
+        "reason_code": "outage",
     }
 
     assert conflict.event_type == "memory_conflict_detected"
@@ -308,6 +309,7 @@ def test_session_service_records_memory_anomaly_events_with_stable_writers(
     assert conflict.payload == {
         "conflict_reason": "goal_contract_version_mismatch",
         "resolution": "reference_only",
+        "reason_code": "conflict",
     }
     assert [event.event_type for event in events] == [
         "memory_unavailable_degraded",
