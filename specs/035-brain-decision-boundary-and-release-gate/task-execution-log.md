@@ -191,3 +191,15 @@
 - 当前判断再次更新为：
   - resident runtime 的默认放行路径现在已经能正式消费冻结的 `release_gate_report` artifact，而不是一律回退到 `resident_default`；
   - 下一步应继续把 provider certification / replay 的 runtime contract 来源收得更严，并评估是否要把 `report_load_failed` 等降级原因进一步暴露到 ops/read models，而不是继续扩新的行为分支。
+- 已继续推进 runtime contract source 对齐，先收掉 provider certification / replay 仍各自手写裸 dict 的第二真相：
+  - 先在 `tests/test_watchdog_provider_certification.py` 补红测，要求 provider compatibility 所依赖的 runtime contract 能直接从 `Settings` 构建，而不是在测试或调用方手拼 `risk/policy/tool/memory-adapter` 字段；
+  - 同时在 `tests/test_watchdog_decision_replay.py` 补红测，要求 `DecisionReplayService.packet_replay(...)` 能直接消费同一份 settings-driven runtime contract，并在 frozen/current 一致时保持无 drift；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `1 failed in 0.22s`，失败点是 `provider_certification` 还没有共享 `build_runtime_contract(...)` helper；
+  - 已在 `src/watchdog/services/brain/provider_certification.py` 新增共享 `build_runtime_contract(...)`，把 provider/model/prompt/output 与 `Settings` 中的 `risk_policy_version / decision_input_builder_version / policy_engine_version / tool_schema_hash / memory_provider_adapter_hash` 统一收口到同一 builder；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 把 release-gate runtime contract 接线切到同一 helper，避免 release gate、provider certification 与 replay 再各自维护一份版本来源。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `2 passed, 9 deselected in 0.17s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `57 passed in 3.93s`
+- 当前判断再更新为：
+  - provider certification / replay / release-gate runtime 现在至少共用同一套 settings-driven contract builder，减少了 drift matrix 只在局部测试里成立的风险；
+  - 下一步可以继续评估是否要把这份共享 contract 明确挂到更高层 runtime/config surface，或把 `report_load_failed` / runtime drift 的降级原因进一步暴露到 ops/read-side，而不是继续扩新的 gate 分支。

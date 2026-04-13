@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 
+from watchdog.settings import Settings
+
 
 def test_provider_certification_module_exports_inference_and_memory_adapter_types() -> None:
     module = importlib.import_module("watchdog.services.brain.provider_certification")
@@ -101,3 +103,35 @@ def test_provider_compatibility_evaluator_reports_runtime_drift_fields() -> None
         "policy_engine_version",
         "memory_provider_adapter_hash",
     ]
+
+
+def test_build_runtime_contract_reads_versions_from_settings() -> None:
+    module = importlib.import_module("watchdog.services.brain.provider_certification")
+
+    settings = Settings(
+        release_gate_risk_policy_version="risk:v2",
+        release_gate_decision_input_builder_version="dib:v2",
+        release_gate_policy_engine_version="policy:v2",
+        release_gate_tool_schema_hash="tool:def",
+        release_gate_memory_provider_adapter_hash="memory:def",
+    )
+
+    contract = module.build_runtime_contract(
+        settings=settings,
+        provider="provider-a",
+        model="model-a",
+        prompt_schema_ref="prompt:v1",
+        output_schema_ref="schema:v1",
+    )
+
+    assert contract == {
+        "provider": "provider-a",
+        "model": "model-a",
+        "prompt_schema_ref": "prompt:v1",
+        "output_schema_ref": "schema:v1",
+        "tool_schema_hash": "tool:def",
+        "risk_policy_version": "risk:v2",
+        "decision_input_builder_version": "dib:v2",
+        "policy_engine_version": "policy:v2",
+        "memory_provider_adapter_hash": "memory:def",
+    }

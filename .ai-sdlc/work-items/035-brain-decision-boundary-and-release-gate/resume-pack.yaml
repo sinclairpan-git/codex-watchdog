@@ -10,12 +10,14 @@ working_set_snapshot:
   tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
   active_files:
   - '`src/watchdog/settings.py`'
+  - '`src/watchdog/services/brain/provider_certification.py`'
+  - '`src/watchdog/services/brain/replay.py`'
   - '`src/watchdog/services/session_spine/orchestrator.py`'
-  - '`src/watchdog/services/brain/release_gate.py`'
-  - '`tests/test_watchdog_session_spine_runtime.py`'
-  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_provider_certification.py`'
+  - '`tests/test_watchdog_decision_replay.py`'
   - '`tests/test_watchdog_release_gate.py`'
   - '`tests/test_watchdog_release_gate_evidence.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
   - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
@@ -23,23 +25,22 @@ working_set_snapshot:
   context_summary: |
     # Development Summary
 
-    - `WI-035` 当前仍在执行 `T354`：目标是把 release gate evidence/runtime consume 真正收紧到 canonical runtime，而不是保留 resident-default 或 schema-only 占位。
-    - 最新切片已把 resident runtime 默认放行路径接回正式 `release_gate_report` artifact：
-      - `Settings` 新增 `release_gate_report_path` 与 runtime contract 版本字段；
-      - `ResidentOrchestrator` 会加载 formal `ReleaseGateReport`、透传 runtime contract，并把 `now` 传给 `ReleaseGateEvaluator` 做 expiry/drift 校验；
-      - 配置了 formal report 后，auto-continue 决策会绑定正式 `report_id/report_hash/input_hash`，不再默认回退到 `report:resident_default`。
-    - 最新切片还补了一个 fail-closed：如果设置了 formal report path，但 artifact 读取失败、JSON 非法或 schema 校验失败，runtime 会写出 `report_load_failed` verdict，并阻断 `propose_execute`。
-    - 新增测试已锁住这两个点：
-      - formal report 可驱动默认 auto-continue；
-      - expired report 会把 `auto_execute_and_notify` 降级成 `block_and_alert`，且不会 claim/执行 command。
+    - `WI-035` 当前仍在执行 `T354`：目标是把 release gate evidence/runtime consume 真正收紧到 canonical runtime，而不是在不同模块里维护平行 contract。
+    - resident runtime 默认放行路径已经正式消费 `release_gate_report` artifact，不再一律回退到 `report:resident_default`。
+    - 最新切片继续收掉 provider certification / replay 的第二真相：
+      - `provider_certification.py` 新增共享 `build_runtime_contract(...)`，把 provider/model/prompt/output 与 `Settings` 中的 risk/policy/tool/memory-adapter 版本字段统一到一处；
+      - `ResidentOrchestrator` 的 release-gate runtime contract 已改成走同一 helper，不再单独手拼版本字段；
+      - replay/provider certification 的新测试也开始直接消费这份 settings-driven contract，而不是手写裸 dict。
     - 当前已完成验证：
-      - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'uses_configured_release_gate_report_for_auto_execute or degrades_when_configured_release_gate_report_is_expired'` -> `2 passed, 33 deselected in 0.84s`
-      - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `54 passed in 3.74s`
-    - 下一步优先继续收口 runtime contract 的第二真相问题：把 provider certification / replay 所需版本来源与 runtime settings 对齐，并评估是否把 `report_load_failed`、runtime drift 等降级原因继续暴露到 ops/read-side surface。
+      - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `2 passed, 9 deselected in 0.17s`
+      - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `57 passed in 3.93s`
+    - 下一步优先评估两件事：
+      - 是否把共享 runtime contract 再上提到更统一的 config/runtime surface，而不是只作为 helper 存在；
+      - 是否把 `report_load_failed`、runtime drift 等降级原因继续暴露到 ops/read-side surface，而不是只留在 canonical decision evidence。
 current_branch: main
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-13T21:07:53+08:00'
+timestamp: '2026-04-13T21:33:56+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

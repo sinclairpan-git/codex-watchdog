@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 
+from watchdog.settings import Settings
+
 
 def test_replay_module_exports_packet_and_session_semantic_replay() -> None:
     module = importlib.import_module("watchdog.services.brain.replay")
@@ -76,3 +78,33 @@ def test_session_semantic_replay_marks_missing_required_events_as_incomplete() -
     assert result.drift_detected is False
     assert result.missing_context == ["evt:2"]
     assert "missing_required_events" in result.failure_reasons
+
+
+def test_packet_replay_accepts_settings_built_runtime_contract() -> None:
+    replay_module = importlib.import_module("watchdog.services.brain.replay")
+    certification_module = importlib.import_module("watchdog.services.brain.provider_certification")
+
+    settings = Settings(
+        release_gate_risk_policy_version="risk:v2",
+        release_gate_decision_input_builder_version="dib:v2",
+        release_gate_policy_engine_version="policy:v2",
+        release_gate_tool_schema_hash="tool:def",
+        release_gate_memory_provider_adapter_hash="memory:def",
+    )
+    runtime_contract = certification_module.build_runtime_contract(
+        settings=settings,
+        provider="provider-a",
+        model="model-a",
+        prompt_schema_ref="prompt:v1",
+        output_schema_ref="schema:v1",
+    )
+
+    result = replay_module.DecisionReplayService().packet_replay(
+        packet_input={"packet_id": "packet:1"},
+        frozen_contract=runtime_contract,
+        current_contract=runtime_contract,
+    )
+
+    assert result.replay_incomplete is False
+    assert result.drift_detected is False
+    assert result.failure_reasons == []

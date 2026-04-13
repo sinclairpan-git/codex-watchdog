@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from watchdog.settings import Settings
+
 
 class _ProviderCertificationModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -57,3 +59,28 @@ class ProviderCompatibilityEvaluator:
             if actual != expected:
                 mismatches.append(field_name)
         return mismatches
+
+
+def build_runtime_contract(
+    *,
+    settings: Settings,
+    provider: str,
+    model: str,
+    prompt_schema_ref: str,
+    output_schema_ref: str,
+    memory_provider_adapter_hash: str | None = None,
+) -> dict[str, str]:
+    return {
+        "provider": provider,
+        "model": model,
+        "prompt_schema_ref": prompt_schema_ref,
+        "output_schema_ref": output_schema_ref,
+        "tool_schema_hash": settings.release_gate_tool_schema_hash,
+        "risk_policy_version": settings.release_gate_risk_policy_version,
+        "decision_input_builder_version": settings.release_gate_decision_input_builder_version,
+        "policy_engine_version": settings.release_gate_policy_engine_version,
+        "memory_provider_adapter_hash": (
+            memory_provider_adapter_hash
+            or settings.release_gate_memory_provider_adapter_hash
+        ),
+    }

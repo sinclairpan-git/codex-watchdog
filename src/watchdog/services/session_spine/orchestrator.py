@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
+from watchdog.services.brain.provider_certification import build_runtime_contract
 from watchdog.services.brain.release_gate import (
     ReleaseGateEvaluator,
     ReleaseGateReport,
@@ -386,18 +387,14 @@ class ResidentOrchestrator:
             "stuck_level": 0,
         }
 
-    def _release_gate_runtime_contract(self) -> dict[str, str]:
-        return {
-            "risk_policy_version": self._settings.release_gate_risk_policy_version,
-            "decision_input_builder_version": (
-                self._settings.release_gate_decision_input_builder_version
-            ),
-            "policy_engine_version": self._settings.release_gate_policy_engine_version,
-            "tool_schema_hash": self._settings.release_gate_tool_schema_hash,
-            "memory_provider_adapter_hash": (
-                self._settings.release_gate_memory_provider_adapter_hash
-            ),
-        }
+    def _release_gate_runtime_contract(self, *, trace: DecisionTrace) -> dict[str, str]:
+        return build_runtime_contract(
+            settings=self._settings,
+            provider=trace.provider,
+            model=trace.model,
+            prompt_schema_ref=trace.prompt_schema_ref,
+            output_schema_ref=trace.output_schema_ref,
+        )
 
     def _load_release_gate_report(self) -> ReleaseGateReport | None:
         report_path = self._settings.release_gate_report_path
@@ -479,7 +476,7 @@ class ResidentOrchestrator:
             approval_read=approval_read,
             verdict=verdict,
             report=report,
-            runtime_contract=self._release_gate_runtime_contract(),
+            runtime_contract=self._release_gate_runtime_contract(trace=decision_trace),
             now=self._release_gate_now(now),
         )
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
