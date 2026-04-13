@@ -36,3 +36,11 @@
   - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py` -> `11 passed in 1.04s`
   - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 1.59s`
 - 实现后再次尝试 Hermes / Anthropic 实现切片对抗评审，但 reviewer agent 未在时限内返回有效 blocking/P1 结论；当前以本地全量相关回归为主验证，并将下一轮 review 留在后续兼容层收口时一并执行。
+
+### Phase 4：OpenClaw compatibility bootstrap metadata
+
+- `openclaw_bootstrap.py` 的 legacy requeue path 已补 interaction metadata 镜像，保证兼容层触发的 `notification_requeued` 仍能带回 `interaction_context_id` / `interaction_family_id` / `actor_id`。
+- `openclaw_callbacks.py` 与 `OpenClawAdapter` 已显式标注 compatibility-only 语义，避免后续继续把它们当主控制面入口扩张。
+- 新增/扩展验证：
+  - `uv run pytest -q tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py` -> `12 passed in 1.59s`
+  - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `78 passed in 1.36s`

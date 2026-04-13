@@ -15,7 +15,7 @@ from watchdog.services.delivery.openclaw_webhook_store import OpenClawWebhookEnd
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.session_service import SessionService
 
-router = APIRouter(prefix="/watchdog", tags=["openclaw-bootstrap"])
+router = APIRouter(prefix="/watchdog", tags=["openclaw-compatibility"])
 
 
 def get_openclaw_webhook_store(request: Request) -> OpenClawWebhookEndpointStore:
@@ -71,6 +71,11 @@ def _record_notification_requeued(
         "occurred_at",
         "decision_result",
         "action_name",
+        "interaction_context_id",
+        "interaction_family_id",
+        "actor_id",
+        "channel_kind",
+        "action_window_expires_at",
     ):
         value = payload.get(field)
         if value is not None:
@@ -95,6 +100,23 @@ def _record_notification_requeued(
                 and payload.get("notification_kind")
                 else {}
             ),
+            **(
+                {"interaction_context_id": payload["interaction_context_id"]}
+                if isinstance(payload.get("interaction_context_id"), str)
+                and payload.get("interaction_context_id")
+                else {}
+            ),
+            **(
+                {"interaction_family_id": payload["interaction_family_id"]}
+                if isinstance(payload.get("interaction_family_id"), str)
+                and payload.get("interaction_family_id")
+                else {}
+            ),
+            **(
+                {"actor_id": payload["actor_id"]}
+                if isinstance(payload.get("actor_id"), str) and payload.get("actor_id")
+                else {}
+            ),
         },
         payload=mirrored,
     )
@@ -102,10 +124,11 @@ def _record_notification_requeued(
 
 @router.post(
     "/bootstrap/openclaw-webhook",
-    summary="Persist latest public OpenClaw webhook endpoint",
+    summary="Persist latest compatibility OpenClaw webhook endpoint",
     description=(
-        "Bootstrap surface for B-host endpoint changes. Persists the latest "
-        "OpenClaw public webhook root so envelope delivery can resolve it dynamically."
+        "Compatibility-only bootstrap surface for migration-period OpenClaw endpoint changes. "
+        "Persists the latest OpenClaw public webhook root so legacy delivery can resolve it "
+        "without reclaiming the primary control-plane role."
     ),
 )
 def post_openclaw_webhook_bootstrap(

@@ -21,6 +21,10 @@ Last Committed Task: T363
   - Feishu 主 control route 已落地；
   - DM-only approval、expired window、superseded context、receipt-first event ordering 已锁进测试；
   - interaction metadata 已贯通到 delivery/session projection。
+- `T364` 正在推进：
+  - OpenClaw bootstrap 的 legacy requeue 已开始镜像 interaction metadata 到 canonical event；
+  - OpenClaw callback / adapter 已显式标注 compatibility-only 语义；
+  - 仍待把 callback/adapter 本体进一步收口为共享 control-plane validity helper 的薄兼容层。
 - 当前下一执行入口是 `T364`：继续收口 OpenClaw compatibility-only surface，并把 bootstrap/callback/adapter 本体与新主控制面边界对齐。
 
 ## Latest Verification
@@ -29,6 +33,8 @@ Last Committed Task: T363
 - Anthropic Manager 专家对抗评审（delivery ownership 修订后）-> `No blocking/P1 issues found.`
 - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py` -> `11 passed in 1.04s`
 - `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 1.59s`
+- `uv run pytest -q tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py` -> `12 passed in 1.59s`
+- `uv run pytest -q tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_watchdog_openclaw_bootstrap.py tests/test_openclaw_contracts.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_projection.py tests/test_long_running_autonomy_doc_contracts.py` -> `78 passed in 1.36s`
 
 ## Handoff
 - 当前可直接继续 `T364`：把 `openclaw_bootstrap.py`、`openclaw_callbacks.py` 与 `OpenClawAdapter` 明确收口为 compatibility-only surface。

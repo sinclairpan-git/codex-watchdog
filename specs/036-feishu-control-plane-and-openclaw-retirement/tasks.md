@@ -108,7 +108,9 @@
 - **当前进展**：
   1. 已把 interaction metadata 贯通到 `delivery/envelopes.py`、`delivery/worker.py` 与 `session_spine/projection.py`；
   2. 已锁定 Feishu 主 route 与 OpenClaw compatibility route 同时存在的 contract；
-  3. 尚未把 `openclaw_bootstrap.py`、`openclaw_callbacks.py` 与 `OpenClawAdapter` 本体进一步标注/收口到 compatibility-only 语义，下一提交继续完成。
+  3. `openclaw_bootstrap.py` 触发 legacy requeue 时，已开始镜像 `interaction_context_id` / `interaction_family_id` / `actor_id` 等 metadata 到 canonical `notification_requeued` 事件；
+  4. `openclaw_callbacks.py` 与 `OpenClawAdapter` 已显式标注 compatibility-only 语义；
+  5. 尚未把 OpenClaw callback/adapter 本体进一步改造成共享 control-plane validity helper 的薄兼容层，下一提交继续完成。
 
 ## Task 36.5 更新执行日志与 handoff 摘要
 

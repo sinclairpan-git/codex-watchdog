@@ -48,6 +48,8 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 
 
 class OpenClawAdapter:
+    """Compatibility-only OpenClaw adapter preserved alongside the primary Feishu control plane."""
+
     def __init__(
         self,
         *,

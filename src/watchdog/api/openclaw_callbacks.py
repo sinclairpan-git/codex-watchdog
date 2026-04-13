@@ -10,6 +10,8 @@ def utc_now_iso() -> str:
 
 
 class OpenClawWebhookReceipt(BaseModel):
+    """Compatibility receipt contract for legacy OpenClaw delivery hosts."""
+
     accepted: bool = True
     envelope_id: str
     receipt_id: str
@@ -17,6 +19,8 @@ class OpenClawWebhookReceipt(BaseModel):
 
 
 class OpenClawResponseRequest(BaseModel):
+    """Compatibility-only response contract preserved during Feishu control-plane migration."""
+
     envelope_id: str
     envelope_type: str
     approval_id: str
@@ -31,6 +35,8 @@ class OpenClawResponseRequest(BaseModel):
 
 
 class OpenClawWebhookBootstrapRequest(BaseModel):
+    """Compatibility-only webhook bootstrap contract for legacy OpenClaw hosts."""
+
     event_type: str
     openclaw_webhook_base_url: str
     changed_at: str
@@ -38,6 +44,8 @@ class OpenClawWebhookBootstrapRequest(BaseModel):
 
 
 class OpenClawWebhookBootstrapReceipt(BaseModel):
+    """Compatibility receipt for persisted legacy OpenClaw webhook state."""
+
     accepted: bool = True
     openclaw_webhook_base_url: str
     updated_at: str

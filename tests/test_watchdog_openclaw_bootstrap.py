@@ -101,6 +101,14 @@ def test_bootstrap_openclaw_webhook_records_notification_requeue_event(tmp_path:
                 "failure_code": "transport_error",
                 "next_retry_at": None,
                 "operator_notes": ["delivery_dead_letter failure_code=transport_error attempts=3"],
+                "envelope_payload": {
+                    **notification_record.envelope_payload,
+                    "interaction_context_id": "ctx-bootstrap-1",
+                    "interaction_family_id": "family-bootstrap-1",
+                    "actor_id": "user:bootstrap",
+                    "channel_kind": "dm",
+                    "action_window_expires_at": "2026-04-07T00:30:00Z",
+                },
             }
         )
     )
@@ -139,3 +147,9 @@ def test_bootstrap_openclaw_webhook_records_notification_requeue_event(tmp_path:
     assert events[0].payload["failure_code"] == "transport_error"
     assert events[0].payload["delivery_status"] == "pending"
     assert events[0].payload["delivery_attempt"] == 3
+    assert events[0].related_ids["interaction_context_id"] == "ctx-bootstrap-1"
+    assert events[0].related_ids["interaction_family_id"] == "family-bootstrap-1"
+    assert events[0].related_ids["actor_id"] == "user:bootstrap"
+    assert events[0].payload["interaction_context_id"] == "ctx-bootstrap-1"
+    assert events[0].payload["interaction_family_id"] == "family-bootstrap-1"
+    assert events[0].payload["actor_id"] == "user:bootstrap"
