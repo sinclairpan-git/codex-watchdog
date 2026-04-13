@@ -35,4 +35,5 @@
   - `uv run pytest -q tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_packets.py tests/test_watchdog_memory_degradation.py`
   - `uv run pytest -q tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_packets.py tests/test_watchdog_memory_degradation.py tests/test_watchdog_session_service.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
   - 最新结果：`47 passed in 2.94s`
-- 当前进入 `Task 34.5` 收尾，状态为：本地实现与验证已完成，等待把 memory hub 垂直切片与元数据更新一起提交。
+- 已于 `2026-04-13T17:05:30+08:00` 提交 memory hub 垂直切片，commit 为 `29675b3 feat: add memory hub codex-critical slice`。
+- 已同步把总实施计划中 `Task 5` 的两条验收勾选改为完成，并将 handoff 下一入口固定为 `Task 6` 的 Brain / provider certification / release gate work item。

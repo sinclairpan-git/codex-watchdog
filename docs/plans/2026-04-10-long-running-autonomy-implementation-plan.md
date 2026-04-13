@@ -394,8 +394,8 @@
 - [ ] 完成 Task 2 后，确认 `session_spine` / approval inbox / notification status / audit query 都优先读事件投影。
 - [ ] 完成 Task 3 后，确认 Goal Contract 成为显式持久化对象，不再只是 prompt 片段，当前有效 version 只来源于 `Session Service` 事件，`AI_AutoSDLC.stage/active_goal` 只能作为上下文与模板来源。
 - [ ] 完成 Task 4 后，确认 `remote compact` 一类问题走 recovery transaction，而不是重复旧会话重试。
-- [ ] 完成 Task 5 后，确认 `Memory Hub` 以独立 contract 对外提供 `resident/session-search/skills/packet-inputs` 能力；`user-model/periodic-nudge` 如存在也仅为 assistive-only preview contract，且不覆盖 Session truth / Goal Contract。
-- [ ] 完成 Task 5 后，确认长期记忆写入遵循“基线建档 + 增量摄取 + provenance + security verdict”，`watchdog/Codex` 主路径已接入，`AI_AutoSDLC` 仅保留 disabled-by-default preview compatibility contract，preview 入口不阻塞一期放行，且 `Memory Hub` 不可用或冲突时会写入 `memory_unavailable_degraded` / `memory_conflict_detected` canonical event 后再安全降级。
+- [x] 完成 Task 5 后，确认 `Memory Hub` 以独立 contract 对外提供 `resident/session-search/skills/packet-inputs` 能力；`user-model/periodic-nudge` 如存在也仅为 assistive-only preview contract，且不覆盖 Session truth / Goal Contract。
+- [x] 完成 Task 5 后，确认长期记忆写入遵循“基线建档 + 增量摄取 + provenance + security verdict”，`watchdog/Codex` 主路径已接入，`AI_AutoSDLC` 仅保留 disabled-by-default preview compatibility contract，preview 入口不阻塞一期放行，且 `Memory Hub` 不可用或冲突时会写入 `memory_unavailable_degraded` / `memory_conflict_detected` canonical event 后再安全降级。
 - [ ] 完成 Task 6 后，确认 `Brain` 具备 provider certification、replay、decision validation 和低风险自动决策闭环，且受明确量化 release gate、证据包和放行报告约束。
 - [ ] 完成 Task 6 后，确认 release gate 的样本冻结、人工标注、报告归档均有脚本化产物与责任人元数据，不能靠临时人工流程替代。
 - [ ] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，OpenClaw 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
