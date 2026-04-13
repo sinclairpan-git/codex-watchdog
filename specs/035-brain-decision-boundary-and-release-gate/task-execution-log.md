@@ -237,3 +237,14 @@
 - 当前判断再更新为：
   - shared runtime contract 现在已经有了显式的 runtime/config surface，provider helper 只剩兼容委托，后续不再需要靠局部 helper 才能维持 contract 一致；
   - 下一步更适合给 runtime gate reason 建稳定 taxonomy，或继续收口 release-gate/provider/replay 对这份 config surface 的文档与 fixture 约束，而不是继续扩新的控制流。
+- 已继续推进 runtime gate reason taxonomy，先收掉 `degrade_reason` 直接外溢成 ops label 的缺口：
+  - 先在 `tests/test_watchdog_ops.py` 补红测，要求 `policy_engine_version_mismatch / tool_schema_hash_mismatch` 这类动态字段级原因归并为稳定的 `runtime_gate_contract_mismatch`，而 `memory_conflict / goal_contract_not_ready` 这类 validator 侧原因归并为 `runtime_gate_validator_degraded`；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_ops.py -k 'breaks_runtime_gate_alerts_down_by_degrade_reason or normalizes_runtime_gate_reason_taxonomy or runtime_gate_degradation_alert'` -> `1 failed, 2 passed in 0.70s`，失败点是 ops summary 仍把每个 reason 直接映射成 alert code；
+  - 已在 `src/watchdog/api/ops.py` 增加稳定 taxonomy：`report_load_failed / report_expired / approval_stale / input_hash_mismatch` 继续保留为独立桶，validator 侧原因统一归并为 `validator_degraded`，其余 `*_mismatch` 统一归并为 `contract_mismatch`；
+  - 现在 ops/read-side 暴露的 runtime gate label 数量被约束在受治理的稳定集合内，不会因为新增某个 contract 字段名就平白扩一个新的 metrics label。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k 'breaks_runtime_gate_alerts_down_by_degrade_reason or normalizes_runtime_gate_reason_taxonomy or runtime_gate_degradation_alert'` -> `3 passed, 7 deselected in 0.45s`
+  - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `76 passed in 3.86s`
+- 当前判断再更新为：
+  - runtime gate reason 现在已经被约束到稳定 taxonomy，ops label 不再直接跟随内部 reason 字符串膨胀；
+  - 下一步更适合把这套 taxonomy 与 shared runtime contract 一起补进 docs/fixtures/runbook，形成正式治理面，而不是继续扩新的控制流。

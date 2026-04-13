@@ -616,3 +616,81 @@ def test_build_ops_summary_breaks_runtime_gate_alerts_down_by_degrade_reason(
         "runtime_gate_approval_stale": 1,
         "runtime_gate_report_expired": 2,
     }
+
+
+def test_build_ops_summary_normalizes_runtime_gate_reason_taxonomy(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    def _runtime_gate_decision(*, decision_id: str, reason: str) -> CanonicalDecisionRecord:
+        return CanonicalDecisionRecord(
+            decision_id=decision_id,
+            decision_key=(
+                f"session:{decision_id}|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            session_id=f"session:{decision_id}",
+            project_id=f"repo:{decision_id}",
+            thread_id=f"session:{decision_id}",
+            native_thread_id=f"thr_native:{decision_id}",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="runtime gate blocks autonomous execution",
+            matched_policy_rules=["release_gate_degraded"],
+            why_not_escalated=None,
+            why_escalated=f"release gate verdict is not pass: {reason}",
+            uncertainty_reasons=[reason],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                f"session:{decision_id}|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+
+    decision_store.put(
+        _runtime_gate_decision(
+            decision_id="decision:contract-1",
+            reason="policy_engine_version_mismatch",
+        )
+    )
+    decision_store.put(
+        _runtime_gate_decision(
+            decision_id="decision:contract-2",
+            reason="tool_schema_hash_mismatch",
+        )
+    )
+    decision_store.put(
+        _runtime_gate_decision(
+            decision_id="decision:validator-1",
+            reason="memory_conflict",
+        )
+    )
+    decision_store.put(
+        _runtime_gate_decision(
+            decision_id="decision:validator-2",
+            reason="goal_contract_not_ready",
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 2
+    assert [item.alert_code for item in summary.alerts] == [
+        "runtime_gate_contract_mismatch",
+        "runtime_gate_validator_degraded",
+    ]
+    counts = {item.alert_code: item.count for item in summary.alerts}
+    assert counts == {
+        "runtime_gate_contract_mismatch": 2,
+        "runtime_gate_validator_degraded": 2,
+    }

@@ -31,6 +31,19 @@ _RUNTIME_GATE_ALERT_RULES = {
 }
 
 _RUNTIME_GATE_REASON_FALLBACK = "unknown"
+_RUNTIME_GATE_PASSTHROUGH_REASONS = {
+    "approval_stale",
+    "report_expired",
+    "report_load_failed",
+    "input_hash_mismatch",
+}
+_RUNTIME_GATE_VALIDATOR_REASONS = {
+    "memory_conflict",
+    "memory_unavailable",
+    "goal_contract_not_ready",
+    "validator_missing",
+    "validator_blocked",
+}
 
 
 def _fact_snapshot_order(value: str) -> tuple[int, str]:
@@ -111,8 +124,22 @@ def _runtime_gate_reason_counts(decisions) -> dict[str, int]:
             ),
             _RUNTIME_GATE_REASON_FALLBACK,
         )
-        counts[reason] = counts.get(reason, 0) + 1
+        normalized = _normalize_runtime_gate_reason(reason)
+        counts[normalized] = counts.get(normalized, 0) + 1
     return counts
+
+
+def _normalize_runtime_gate_reason(reason: str) -> str:
+    normalized = str(reason).strip()
+    if not normalized:
+        return _RUNTIME_GATE_REASON_FALLBACK
+    if normalized in _RUNTIME_GATE_PASSTHROUGH_REASONS:
+        return normalized
+    if normalized in _RUNTIME_GATE_VALIDATOR_REASONS:
+        return "validator_degraded"
+    if normalized.endswith("_mismatch"):
+        return "contract_mismatch"
+    return _RUNTIME_GATE_REASON_FALLBACK
 
 
 def build_ops_summary(
