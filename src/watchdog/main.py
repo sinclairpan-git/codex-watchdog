@@ -31,7 +31,9 @@ from watchdog.services.delivery.openclaw_webhook_store import (
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.session_service import SessionService, SessionServiceStore
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
+from watchdog.services.session_spine.command_leases import CommandLeaseStore
 from watchdog.services.session_spine.orchestrator import ResidentOrchestrator
 from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.store import SessionSpineStore
@@ -52,6 +54,39 @@ def _run_background_step(step_name: str, fn, /, *args, **kwargs):
 
 async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
     return await asyncio.to_thread(_run_background_step, step_name, fn, *args, **kwargs)
+
+
+def _reconcile_stale_pending_approvals(app: FastAPI) -> int:
+    reconciled = app.state.canonical_approval_store.reconcile_pending_records_against_decisions(
+        app.state.policy_decision_store.list_records(),
+        decided_by="policy-startup-reconcile",
+    )
+    deduped = app.state.canonical_approval_store.reconcile_duplicate_pending_records_by_approval_id(
+        decided_by="policy-startup-approval-id-reconcile",
+    )
+    superseded = [*reconciled, *deduped]
+    if superseded:
+        updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        app.state.delivery_outbox_store.supersede_records(
+            envelope_reasons={
+                record.envelope_id: next(
+                    (
+                        note
+                        for note in reversed(record.operator_notes)
+                        if note.startswith("approval_superseded_by_")
+                    ),
+                    "approval_superseded_by_reconcile",
+                )
+                for record in superseded
+            },
+            updated_at=updated_at,
+        )
+        logger.info(
+            "watchdog startup superseded %s stale approvals and %s duplicate approvals",
+            len(reconciled),
+            len(deduped),
+        )
+    return len(superseded)
 
 
 def _drain_delivery_outbox(app: FastAPI, *, now: datetime | None = None) -> None:
@@ -129,6 +164,11 @@ def create_app(
         delivery_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
             await _run_background_step_async(
+                "canonical_approval_store.reconcile_pending_records_against_decisions",
+                _reconcile_stale_pending_approvals,
+                app,
+            )
+            await _run_background_step_async(
                 "session_spine_runtime.refresh_all",
                 app.state.session_spine_runtime.refresh_all,
             )
@@ -137,12 +177,6 @@ def create_app(
             await _run_background_step_async(
                 "resident_orchestrator.orchestrate_all",
                 app.state.resident_orchestrator.orchestrate_all,
-                now=now,
-            )
-            await _run_background_step_async(
-                "delivery_drain_outbox",
-                _drain_delivery_outbox,
-                app,
                 now=now,
             )
             resident_orchestrator_task = asyncio.create_task(_run_resident_orchestrator_loop(app))
@@ -190,6 +224,13 @@ def create_app(
     app.state.session_spine_store = SessionSpineStore(
         Path(settings.data_dir) / "session_spine.json"
     )
+    app.state.session_service = SessionService(
+        SessionServiceStore(Path(settings.data_dir) / "session_service.json")
+    )
+    app.state.command_lease_store = CommandLeaseStore(
+        Path(settings.data_dir) / "command_leases.json",
+        session_service=app.state.session_service,
+    )
     app.state.openclaw_webhook_endpoint_store = OpenClawWebhookEndpointStore(
         openclaw_webhook_endpoint_state_path(settings)
     )
@@ -202,6 +243,7 @@ def create_app(
         delivery_client=app.state.delivery_client,
         settings=settings,
         session_spine_store=app.state.session_spine_store,
+        session_service=app.state.session_service,
     )
     app.state.session_spine_runtime = SessionSpineRuntime(
         client=app.state.a_client,
@@ -218,7 +260,9 @@ def create_app(
         approval_store=app.state.canonical_approval_store,
         action_receipt_store=app.state.action_receipt_store,
         delivery_outbox_store=app.state.delivery_outbox_store,
+        command_lease_store=app.state.command_lease_store,
         state_store=app.state.resident_orchestration_state_store,
+        session_service=app.state.session_service,
     )
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(events_proxy_routes.router, prefix="/api/v1")

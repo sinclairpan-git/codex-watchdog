@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
@@ -16,6 +16,8 @@ from watchdog.services.delivery.envelopes import (
     progress_summary_fingerprint,
 )
 from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.goal_contract.models import GoalContractReadiness
+from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.policy.rules import (
@@ -23,7 +25,9 @@ from watchdog.services.policy.rules import (
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
 )
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
+from watchdog.services.session_spine.command_leases import CommandLeaseStore
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 from watchdog.services.a_client.client import AControlAgentClient
@@ -72,6 +76,13 @@ class ResidentOrchestrationOutcome:
     emitted_progress_summary: bool
 
 
+@dataclass(frozen=True, slots=True)
+class AutoExecuteCommandPlan:
+    command_id: str
+    claim_seq: int | None
+    should_execute: bool
+
+
 class ResidentOrchestrator:
     def __init__(
         self,
@@ -83,7 +94,9 @@ class ResidentOrchestrator:
         approval_store: CanonicalApprovalStore,
         action_receipt_store: ActionReceiptStore,
         delivery_outbox_store: DeliveryOutboxStore,
+        command_lease_store: CommandLeaseStore,
         state_store: ResidentOrchestrationStateStore,
+        session_service: SessionService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
@@ -92,7 +105,140 @@ class ResidentOrchestrator:
         self._approval_store = approval_store
         self._action_receipt_store = action_receipt_store
         self._delivery_outbox_store = delivery_outbox_store
+        self._command_lease_store = command_lease_store
         self._state_store = state_store
+        self._session_service = session_service
+
+    @staticmethod
+    def _command_id_for_decision(decision) -> str:
+        return f"command:{decision.decision_id}"
+
+    @staticmethod
+    def _decision_correlation_id(decision) -> str:
+        return f"corr:decision:{decision.decision_id}"
+
+    @staticmethod
+    def _decision_related_ids(decision, **extra: str | None) -> dict[str, str]:
+        related_ids = {
+            "decision_id": decision.decision_id,
+            "action_ref": decision.action_ref,
+        }
+        if decision.approval_id:
+            related_ids["approval_id"] = decision.approval_id
+        for key, value in extra.items():
+            if value:
+                related_ids[key] = value
+        return related_ids
+
+    def _record_decision_lifecycle(self, decision) -> None:
+        if self._session_service is None:
+            return
+        correlation_id = self._decision_correlation_id(decision)
+        self._session_service.record_event(
+            event_type="decision_proposed",
+            project_id=decision.project_id,
+            session_id=decision.session_id,
+            correlation_id=correlation_id,
+            related_ids=self._decision_related_ids(decision),
+            payload={
+                "trigger": decision.trigger,
+                "action_ref": decision.action_ref,
+                "policy_version": decision.policy_version,
+                "fact_snapshot_version": decision.fact_snapshot_version,
+            },
+        )
+        self._session_service.record_event(
+            event_type="decision_validated",
+            project_id=decision.project_id,
+            session_id=decision.session_id,
+            correlation_id=correlation_id,
+            causation_id=decision.decision_id,
+            related_ids=self._decision_related_ids(decision),
+            payload={
+                "decision_result": decision.decision_result,
+                "risk_class": decision.risk_class,
+                "decision_reason": decision.decision_reason,
+                "matched_policy_rules": list(decision.matched_policy_rules),
+            },
+        )
+
+    def _record_command_created(self, decision, *, command_id: str) -> None:
+        if self._session_service is None:
+            return
+        self._session_service.record_event(
+            event_type="command_created",
+            project_id=decision.project_id,
+            session_id=decision.session_id,
+            correlation_id=self._decision_correlation_id(decision),
+            causation_id=decision.decision_id,
+            related_ids=self._decision_related_ids(decision, command_id=command_id),
+            payload={
+                "command_id": command_id,
+                "action_ref": decision.action_ref,
+                "decision_result": decision.decision_result,
+            },
+        )
+
+    def _lease_expires_at(self, *, now: datetime) -> str:
+        expiry = now + timedelta(
+            seconds=max(float(self._settings.resident_orchestrator_interval_seconds), 30.0)
+        )
+        return expiry.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def _plan_auto_execute_command(
+        self,
+        decision,
+        *,
+        now: datetime,
+    ) -> AutoExecuteCommandPlan:
+        command_id = self._command_id_for_decision(decision)
+        current = self._command_lease_store.get_command(command_id)
+        if current is None or current.status == "requeued":
+            claim = self._command_lease_store.claim_command(
+                command_id=command_id,
+                session_id=decision.session_id,
+                worker_id="resident_orchestrator",
+                claimed_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                    "+00:00",
+                    "Z",
+                ),
+                lease_expires_at=self._lease_expires_at(now=now),
+            )
+            return AutoExecuteCommandPlan(
+                command_id=command_id,
+                claim_seq=claim.claim_seq,
+                should_execute=True,
+            )
+        return AutoExecuteCommandPlan(
+            command_id=command_id,
+            claim_seq=None,
+            should_execute=False,
+        )
+
+    def _record_command_terminal_result(
+        self,
+        *,
+        command_id: str,
+        claim_seq: int | None,
+        action_status: ActionStatus,
+        now: datetime,
+    ) -> None:
+        if claim_seq is None:
+            return
+        self._command_lease_store.record_terminal_result(
+            command_id=command_id,
+            worker_id="resident_orchestrator",
+            claim_seq=claim_seq,
+            result_type=(
+                "command_executed"
+                if action_status == ActionStatus.COMPLETED
+                else "command_failed"
+            ),
+            occurred_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                "+00:00",
+                "Z",
+            ),
+        )
 
     def _cache_auto_continue_control_link_error(
         self,
@@ -148,8 +294,30 @@ class ResidentOrchestrator:
             last_auto_continue_at=created_at,
         )
 
+    def _goal_contract_readiness_for_record(
+        self,
+        record: PersistedSessionRecord,
+    ) -> GoalContractReadiness | None:
+        if self._session_service is None:
+            return None
+        service = GoalContractService(self._session_service)
+        contract = service.get_current_contract(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+        )
+        if contract is None:
+            return None
+        return service.evaluate_readiness(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+        )
+
     def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
+        self._command_lease_store.expire_and_requeue_expired(
+            now=current.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            reason="resident_orchestrator_tick",
+        )
         return [
             self._orchestrate_record(record, now=current)
             for record in self._session_spine_store.list_records()
@@ -176,34 +344,81 @@ class ResidentOrchestrator:
                     record,
                     action_ref=action_ref,
                     trigger="resident_orchestrator",
+                    goal_contract_readiness=self._goal_contract_readiness_for_record(record),
                 )
             )
+            self._record_decision_lifecycle(decision)
             decision_result = decision.decision_result
-            if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
-                try:
-                    result = execute_canonical_decision(
-                        decision,
-                        settings=self._settings,
-                        client=self._client,
-                        receipt_store=self._action_receipt_store,
+            if decision.decision_result != DECISION_REQUIRE_USER_DECISION:
+                supersede_reason = (
+                    "approval_superseded_by_decision "
+                    f"decision_id={decision.decision_id} "
+                    f"result={decision.decision_result} "
+                    f"action={decision.action_ref} "
+                    f"snapshot={decision.fact_snapshot_version}"
+                )
+                superseded = self._approval_store.supersede_pending_records(
+                    session_id=decision.session_id,
+                    project_id=decision.project_id,
+                    fact_snapshot_version=decision.fact_snapshot_version,
+                    reason=supersede_reason,
+                )
+                if superseded:
+                    updated_at = now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                        "+00:00",
+                        "Z",
                     )
-                    if (
-                        decision.action_ref == "continue_session"
-                        and result.action_status == ActionStatus.COMPLETED
-                    ):
-                        self._record_auto_continue(record.project_id, now=now)
-                    if result.action_status == ActionStatus.COMPLETED:
-                        self._delivery_outbox_store.enqueue_envelopes(
-                            build_envelopes_for_decision(decision)
+                    self._delivery_outbox_store.supersede_records(
+                        envelope_reasons={
+                            approval.envelope_id: supersede_reason for approval in superseded
+                        },
+                        updated_at=updated_at,
+            )
+            if decision.decision_result == DECISION_AUTO_EXECUTE_AND_NOTIFY:
+                self._record_command_created(
+                    decision,
+                    command_id=self._command_id_for_decision(decision),
+                )
+                command_plan = self._plan_auto_execute_command(decision, now=now)
+                if command_plan.should_execute:
+                    try:
+                        result = execute_canonical_decision(
+                            decision,
+                            settings=self._settings,
+                            client=self._client,
+                            receipt_store=self._action_receipt_store,
+                            session_service=self._session_service,
                         )
-                except SessionSpineUpstreamError as exc:
-                    if not self._cache_auto_continue_control_link_error(decision, exc):
-                        raise
+                        self._record_command_terminal_result(
+                            command_id=command_plan.command_id,
+                            claim_seq=command_plan.claim_seq,
+                            action_status=result.action_status,
+                            now=now,
+                        )
+                        if (
+                            decision.action_ref == "continue_session"
+                            and result.action_status == ActionStatus.COMPLETED
+                        ):
+                            self._record_auto_continue(record.project_id, now=now)
+                        if result.action_status == ActionStatus.COMPLETED:
+                            self._delivery_outbox_store.enqueue_envelopes(
+                                build_envelopes_for_decision(decision)
+                            )
+                    except SessionSpineUpstreamError as exc:
+                        self._record_command_terminal_result(
+                            command_id=command_plan.command_id,
+                            claim_seq=command_plan.claim_seq,
+                            action_status=ActionStatus.ERROR,
+                            now=now,
+                        )
+                        if not self._cache_auto_continue_control_link_error(decision, exc):
+                            raise
             elif decision.decision_result == DECISION_REQUIRE_USER_DECISION:
                 materialize_canonical_approval(
                     decision,
                     approval_store=self._approval_store,
                     delivery_outbox_store=self._delivery_outbox_store,
+                    session_service=self._session_service,
                 )
             elif decision.decision_result == DECISION_BLOCK_AND_ALERT:
                 self._delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(decision))

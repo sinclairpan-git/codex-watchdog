@@ -14,8 +14,13 @@ from fastapi.testclient import TestClient
 from watchdog.main import _run_delivery_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
+from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.goal_contract.service import GoalContractService
+from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.session_spine.orchestrator import _parse_iso
+from watchdog.services.session_spine.service import build_approval_inbox_bundle, build_session_read_bundle
 from watchdog.settings import Settings
 
 
@@ -413,7 +418,7 @@ def test_background_runtime_persists_last_local_manual_activity_from_a_side_task
     )
 
 
-def test_background_runtime_orchestrates_context_critical_session_into_auto_recovery(
+def test_background_runtime_routes_context_critical_session_to_approval_request(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -448,14 +453,516 @@ def test_background_runtime_orchestrates_context_critical_session_into_auto_reco
     with TestClient(app):
         time.sleep(0.05)
 
-    assert a_client.handoff_calls == [("repo-a", "context_critical")]
-    assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert a_client.handoff_calls == []
+    assert a_client.resume_calls == []
     assert any(
-        record.get("notification_kind") == "decision_result"
-        and record.get("decision_result") == "auto_execute_and_notify"
-        and record.get("action_name") == "execute_recovery"
+        record.get("envelope_type") == "approval"
+        and record.get("requested_action") == "execute_recovery"
+        and record.get("risk_level") == "L2"
         for record in delivery_client.records
     )
+
+
+def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_auto_continue(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        progress_summary_max_age_seconds=0.0,
+    )
+    a_client = CyclingResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "context exhausted",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "progress resumed after recovery window",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 2,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:25:00Z",
+            },
+        ]
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    app.state.session_spine_runtime.refresh_all()
+    first = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+    first_approvals = app.state.canonical_approval_store.list_records()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.session_spine_runtime.refresh_all()
+        second = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC)
+        )
+
+    approvals = app.state.canonical_approval_store.list_records()
+    session_bundle = build_session_read_bundle(
+        a_client,
+        "repo-a",
+        store=app.state.session_spine_store,
+        approval_store=app.state.canonical_approval_store,
+    )
+    inbox_bundle = build_approval_inbox_bundle(
+        a_client,
+        project_id="repo-a",
+        store=app.state.session_spine_store,
+        approval_store=app.state.canonical_approval_store,
+    )
+
+    assert [outcome.action_ref for outcome in first] == ["execute_recovery"]
+    assert [outcome.decision_result for outcome in first] == ["require_user_decision"]
+    assert len(first_approvals) == 1
+    assert first_approvals[0].status == "pending"
+    assert [outcome.action_ref for outcome in second] == ["continue_session"]
+    assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
+    assert steer_mock.call_count == 1
+    assert len(approvals) == 1
+    assert approvals[0].requested_action == "execute_recovery"
+    assert approvals[0].status == "superseded"
+    assert approvals[0].decided_by == "policy-supersede"
+    assert any(
+        note.startswith("approval_superseded_by_decision ")
+        for note in approvals[0].operator_notes
+    )
+    assert session_bundle.session.session_state == "blocked"
+    assert session_bundle.session.pending_approval_count == 0
+    assert session_bundle.approvals == []
+    assert inbox_bundle.approvals == []
+    approval_delivery = app.state.delivery_outbox_store.get_delivery_record(first_approvals[0].envelope_id)
+    assert approval_delivery is not None
+    assert approval_delivery.delivery_status == "superseded"
+    assert any(
+        note.startswith("delivery_superseded reason=approval_superseded_by_decision ")
+        for note in approval_delivery.operator_notes
+    )
+    assert [fact.fact_code for fact in session_bundle.facts] == [
+        "stuck_no_progress",
+        "recovery_available",
+    ]
+
+
+def test_resident_orchestrator_records_command_lease_for_auto_continue(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    command_id = f"command:{decision.decision_id}"
+    events = app.state.command_lease_store.list_events(command_id=command_id)
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_executed",
+    ]
+    state = app.state.command_lease_store.get_command(command_id)
+    assert state is not None
+    assert state.status == "executed"
+    assert state.claim_seq == 1
+    assert state.worker_id == "resident_orchestrator"
+    session_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        correlation_id=f"corr:decision:{decision.decision_id}",
+    )
+    assert [event.event_type for event in session_events] == [
+        "decision_proposed",
+        "decision_validated",
+        "command_created",
+    ]
+    assert session_events[0].related_ids["decision_id"] == decision.decision_id
+    assert session_events[1].payload["decision_result"] == "auto_execute_and_notify"
+    assert session_events[2].related_ids["command_id"] == command_id
+
+
+def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contract(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="Implement watchdog read-side goal contract",
+        task_prompt="Implement watchdog read-side goal contract",
+        last_user_instruction="Implement watchdog read-side goal contract",
+        phase="editing_source",
+        last_summary="still stuck",
+        explicit_deliverables=[],
+        completion_signals=[],
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    steer_mock.assert_not_called()
+
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert "goal_contract_readiness_gate" in decisions[0].matched_policy_rules
+    assert decisions[0].evidence["goal_contract_readiness"] == {
+        "mode": "observe_only",
+        "missing_fields": ["explicit_deliverables", "completion_signals"],
+    }
+
+    approvals = app.state.canonical_approval_store.list_records()
+    assert len(approvals) == 1
+    assert approvals[0].requested_action == "continue_session"
+    approval_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="approval_requested",
+    )
+    assert len(approval_events) == 1
+    assert approval_events[0].related_ids["approval_id"] == approvals[0].approval_id
+    assert approval_events[0].related_ids["decision_id"] == decisions[0].decision_id
+
+
+def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claimed(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    decision = app.state.policy_decision_store.put(
+        evaluate_persisted_session_policy(
+            record,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+        )
+    )
+    command_id = f"command:{decision.decision_id}"
+    app.state.command_lease_store.claim_command(
+        command_id=command_id,
+        session_id=decision.session_id,
+        worker_id="worker:other",
+        claimed_at="2026-04-07T00:00:00Z",
+        lease_expires_at="2026-04-07T00:05:00Z",
+    )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision"
+    ) as execute_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    execute_mock.assert_not_called()
+    events = app.state.command_lease_store.list_events(command_id=command_id)
+    assert [event.event_type for event in events] == ["command_claimed"]
+    state = app.state.command_lease_store.get_command(command_id)
+    assert state is not None
+    assert state.status == "claimed"
+    assert state.worker_id == "worker:other"
+    assert state.claim_seq == 1
+
+
+def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    decision = app.state.policy_decision_store.put(
+        evaluate_persisted_session_policy(
+            record,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+        )
+    )
+    command_id = f"command:{decision.decision_id}"
+    app.state.command_lease_store.claim_command(
+        command_id=command_id,
+        session_id=decision.session_id,
+        worker_id="worker:other",
+        claimed_at="2026-04-07T00:00:00Z",
+        lease_expires_at="2026-04-07T00:00:30Z",
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    assert steer_mock.call_count == 1
+    events = app.state.command_lease_store.list_events(command_id=command_id)
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_claim_expired",
+        "command_requeued",
+        "command_claimed",
+        "command_executed",
+    ]
+    assert [event.claim_seq for event in events] == [1, 1, 1, 2, 2]
+    state = app.state.command_lease_store.get_command(command_id)
+    assert state is not None
+    assert state.status == "executed"
+    assert state.claim_seq == 2
+    assert state.worker_id == "resident_orchestrator"
+    session_events = [
+        event
+        for event in app.state.session_service.list_events(session_id=decision.session_id)
+        if event.related_ids.get("command_id") == command_id and event.event_type != "command_created"
+    ]
+    assert [event.event_type for event in session_events] == [
+        "command_claimed",
+        "command_claim_expired",
+        "command_requeued",
+        "command_claimed",
+        "command_executed",
+    ]
+    assert [event.related_ids["claim_seq"] for event in session_events] == [
+        "1",
+        "1",
+        "1",
+        "2",
+        "2",
+    ]
+
+
+def test_startup_reconciles_stale_pending_canonical_approval_against_later_auto_decision(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+        progress_summary_max_age_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    stale_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id=None,
+        action_ref="execute_recovery",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="manual approval required",
+        matched_policy_rules=["recovery_human_gate"],
+        why_not_escalated=None,
+        why_escalated="manual decision required",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|",
+        created_at="2026-04-07T00:00:00Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": None,
+            }
+        },
+    )
+    approval = materialize_canonical_approval(
+        stale_decision,
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.policy_decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:fact-v2:auto_execute_and_notify",
+            decision_key=(
+                "session:repo-a|fact-v2|policy-v1|auto_execute_and_notify|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="native:repo-a",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            decision_result="auto_execute_and_notify",
+            risk_class="none",
+            decision_reason="registered action and complete evidence",
+            matched_policy_rules=["registered_action"],
+            why_not_escalated="policy_allows_auto_execution",
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v2",
+            idempotency_key=(
+                "session:repo-a|fact-v2|policy-v1|auto_execute_and_notify|continue_session|"
+            ),
+            created_at="2026-04-07T00:05:00Z",
+            operator_notes=[],
+            evidence={
+                "decision": {
+                    "decision_result": "auto_execute_and_notify",
+                    "action_ref": "continue_session",
+                    "approval_id": None,
+                }
+            },
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    persisted = app.state.canonical_approval_store.get(approval.envelope_id)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["approvals"] == []
+    assert persisted is not None
+    assert persisted.status == "superseded"
+    assert persisted.decided_by == "policy-startup-reconcile"
 
 
 def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decision(
@@ -513,6 +1020,26 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
     assert [fact.fact_code for fact in receipts[0].facts] == [
         "stuck_no_progress",
         "recovery_available",
+    ]
+    decision = app.state.policy_decision_store.list_records()[0]
+    command_id = f"command:{decision.decision_id}"
+    command_events = app.state.command_lease_store.list_events(command_id=command_id)
+    assert [event.event_type for event in command_events] == [
+        "command_claimed",
+        "command_failed",
+    ]
+    command_state = app.state.command_lease_store.get_command(command_id)
+    assert command_state is not None
+    assert command_state.status == "failed"
+    assert command_state.worker_id == "resident_orchestrator"
+    session_events = [
+        event
+        for event in app.state.session_service.list_events(session_id=decision.session_id)
+        if event.related_ids.get("command_id") == command_id and event.event_type != "command_created"
+    ]
+    assert [event.event_type for event in session_events] == [
+        "command_claimed",
+        "command_failed",
     ]
     assert app.state.delivery_outbox_store.list_records() == []
 
@@ -706,7 +1233,7 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_error_receip
     assert [outcome.decision_result for outcome in first] == ["auto_execute_and_notify"]
     assert [outcome.action_ref for outcome in second] == ["continue_session"]
     assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
-    assert execute_mock.call_count == 2
+    assert execute_mock.call_count == 1
     assert app.state.resident_orchestration_state_store.get_auto_continue_checkpoint("repo-a") is None
     assert app.state.delivery_outbox_store.list_records() == []
 
@@ -982,6 +1509,57 @@ async def test_startup_drain_runs_outside_event_loop(
         await ticker
         assert time.perf_counter() - started < 0.03
         await startup_task
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_does_not_wait_for_full_delivery_drain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+
+    def blocking_drain(_app, *, now=None) -> None:
+        _ = (_app, now)
+        time.sleep(0.2)
+
+    monkeypatch.setattr("watchdog.main._drain_delivery_outbox", blocking_drain)
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+
+    try:
+        await asyncio.wait_for(startup_task, timeout=0.05)
     finally:
         if startup_task.done() and not startup_task.cancelled():
             await lifespan.__aexit__(None, None, None)

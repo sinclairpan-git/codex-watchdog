@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.actions.executor import execute_registered_action_for_decision
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.policy.rules import DECISION_REQUIRE_USER_DECISION
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -29,6 +31,26 @@ def _short_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+def _fact_snapshot_order(value: str) -> tuple[int, str]:
+    match = re.fullmatch(r"fact-v(\d+)", value)
+    if match is None:
+        return (2**31 - 1, value)
+    return (int(match.group(1)), value)
+
+
+def _timestamp_order(value: str | None) -> tuple[int, str]:
+    if not value:
+        return (0, "")
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return (0, str(value))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (1, parsed.astimezone(timezone.utc).isoformat())
+
+
 def _requested_action_args(decision: CanonicalDecisionRecord) -> dict[str, Any]:
     evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
     requested_action_args = evidence.get("requested_action_args")
@@ -40,6 +62,35 @@ def _requested_action_args(decision: CanonicalDecisionRecord) -> dict[str, Any]:
         if isinstance(action_arguments, dict):
             return dict(action_arguments)
     return {}
+
+
+def requested_action_args_from_decision(decision: CanonicalDecisionRecord) -> dict[str, Any]:
+    return _requested_action_args(decision)
+
+
+def _approval_identity_seed(decision: CanonicalDecisionRecord) -> str:
+    if decision.approval_id:
+        return f"approval_id|{decision.approval_id}"
+    return "|".join(
+        [
+            decision.session_id,
+            decision.project_id,
+            decision.policy_version,
+            decision.decision_result,
+            decision.action_ref,
+        ]
+    )
+
+
+def build_canonical_approval_identifiers(
+    decision: CanonicalDecisionRecord,
+) -> tuple[str, str, str]:
+    seed = _approval_identity_seed(decision)
+    digest = _short_hash(seed)
+    approval_id = decision.approval_id or f"approval:{digest}"
+    envelope_id = f"approval-envelope:{_short_hash(f'{seed}|approval')}"
+    approval_token = f"approval-token:{digest}"
+    return approval_id, envelope_id, approval_token
 
 
 class CanonicalApprovalRecord(BaseModel):
@@ -112,9 +163,11 @@ class CanonicalApprovalStore(_JsonModelStore):
     def put(self, record: CanonicalApprovalRecord) -> CanonicalApprovalRecord:
         with self._lock:
             data = self._read()
-            existing = data.get(record.envelope_id)
-            if isinstance(existing, dict):
-                return CanonicalApprovalRecord.model_validate(existing)
+            existing_record = self._find_existing_record_for_put(data, record)
+            if existing_record is not None:
+                if not self._should_refresh_pending_record(existing_record, record):
+                    return existing_record
+                record = self._refresh_pending_record(existing_record, record)
             data[record.envelope_id] = record.model_dump(mode="json")
             self._write(data)
         return record
@@ -130,6 +183,225 @@ class CanonicalApprovalStore(_JsonModelStore):
         with self._lock:
             data = self._read()
         return [CanonicalApprovalRecord.model_validate(row) for row in data.values()]
+
+    def supersede_pending_records(
+        self,
+        *,
+        session_id: str,
+        fact_snapshot_version: str,
+        reason: str,
+        project_id: str | None = None,
+        decided_by: str = "policy-supersede",
+    ) -> list[CanonicalApprovalRecord]:
+        threshold = _fact_snapshot_order(fact_snapshot_version)
+        updated_records: list[CanonicalApprovalRecord] = []
+        with self._lock:
+            data = self._read()
+            changed = False
+            for envelope_id, row in data.items():
+                if not isinstance(row, dict):
+                    continue
+                record = CanonicalApprovalRecord.model_validate(row)
+                if record.status != "pending":
+                    continue
+                if record.session_id != session_id:
+                    continue
+                if project_id is not None and record.project_id != project_id:
+                    continue
+                if _fact_snapshot_order(record.fact_snapshot_version) > threshold:
+                    continue
+                notes = list(record.operator_notes)
+                notes.append(reason)
+                updated = record.model_copy(
+                    update={
+                        "status": "superseded",
+                        "decided_at": _utc_now_iso(),
+                        "decided_by": decided_by,
+                        "operator_notes": notes,
+                    }
+                )
+                data[envelope_id] = updated.model_dump(mode="json")
+                updated_records.append(updated)
+                changed = True
+            if changed:
+                self._write(data)
+        return updated_records
+
+    def reconcile_pending_records_against_decisions(
+        self,
+        decisions: list[CanonicalDecisionRecord],
+        *,
+        decided_by: str = "policy-reconcile",
+    ) -> list[CanonicalApprovalRecord]:
+        latest_superseding_decisions: dict[tuple[str, str], CanonicalDecisionRecord] = {}
+        for decision in decisions:
+            if decision.decision_result == DECISION_REQUIRE_USER_DECISION:
+                continue
+            key = (decision.session_id, decision.project_id)
+            existing = latest_superseding_decisions.get(key)
+            if existing is not None and (
+                _fact_snapshot_order(existing.fact_snapshot_version)
+                >= _fact_snapshot_order(decision.fact_snapshot_version)
+            ):
+                continue
+            latest_superseding_decisions[key] = decision
+        if not latest_superseding_decisions:
+            return []
+
+        updated_records: list[CanonicalApprovalRecord] = []
+        with self._lock:
+            data = self._read()
+            changed = False
+            for envelope_id, row in data.items():
+                if not isinstance(row, dict):
+                    continue
+                record = CanonicalApprovalRecord.model_validate(row)
+                if record.status != "pending":
+                    continue
+                decision = latest_superseding_decisions.get((record.session_id, record.project_id))
+                if decision is None:
+                    continue
+                if (
+                    _fact_snapshot_order(record.fact_snapshot_version)
+                    > _fact_snapshot_order(decision.fact_snapshot_version)
+                ):
+                    continue
+                notes = list(record.operator_notes)
+                notes.append(
+                    "approval_superseded_by_historical_decision "
+                    f"decision_id={decision.decision_id} "
+                    f"result={decision.decision_result} "
+                    f"action={decision.action_ref} "
+                    f"snapshot={decision.fact_snapshot_version}"
+                )
+                updated = record.model_copy(
+                    update={
+                        "status": "superseded",
+                        "decided_at": _utc_now_iso(),
+                        "decided_by": decided_by,
+                        "operator_notes": notes,
+                    }
+                )
+                data[envelope_id] = updated.model_dump(mode="json")
+                updated_records.append(updated)
+                changed = True
+            if changed:
+                self._write(data)
+        return updated_records
+
+    def reconcile_duplicate_pending_records_by_approval_id(
+        self,
+        *,
+        decided_by: str = "policy-approval-id-reconcile",
+    ) -> list[CanonicalApprovalRecord]:
+        updated_records: list[CanonicalApprovalRecord] = []
+        with self._lock:
+            data = self._read()
+            pending_by_approval_id: dict[str, list[CanonicalApprovalRecord]] = {}
+            for row in data.values():
+                if not isinstance(row, dict):
+                    continue
+                record = CanonicalApprovalRecord.model_validate(row)
+                if record.status != "pending":
+                    continue
+                pending_by_approval_id.setdefault(record.approval_id, []).append(record)
+
+            changed = False
+            for records in pending_by_approval_id.values():
+                if len(records) < 2:
+                    continue
+                ordered = sorted(records, key=self._pending_record_order)
+                kept = ordered[-1]
+                for duplicate in ordered[:-1]:
+                    notes = list(duplicate.operator_notes)
+                    notes.append(
+                        "approval_superseded_by_duplicate_approval_id "
+                        f"approval_id={duplicate.approval_id} "
+                        f"kept_envelope_id={kept.envelope_id} "
+                        f"kept_snapshot={kept.fact_snapshot_version}"
+                    )
+                    updated = duplicate.model_copy(
+                        update={
+                            "status": "superseded",
+                            "decided_at": _utc_now_iso(),
+                            "decided_by": decided_by,
+                            "operator_notes": notes,
+                        }
+                    )
+                    data[duplicate.envelope_id] = updated.model_dump(mode="json")
+                    updated_records.append(updated)
+                    changed = True
+            if changed:
+                self._write(data)
+        return updated_records
+
+    @staticmethod
+    def _should_refresh_pending_record(
+        existing: CanonicalApprovalRecord,
+        incoming: CanonicalApprovalRecord,
+    ) -> bool:
+        if existing.status != "pending" or incoming.status != "pending":
+            return False
+        existing_snapshot = _fact_snapshot_order(existing.fact_snapshot_version)
+        incoming_snapshot = _fact_snapshot_order(incoming.fact_snapshot_version)
+        if incoming_snapshot < existing_snapshot:
+            return False
+        if incoming_snapshot > existing_snapshot:
+            return True
+        return incoming.model_dump(mode="json") != existing.model_dump(mode="json")
+
+    @staticmethod
+    def _refresh_pending_record(
+        existing: CanonicalApprovalRecord,
+        incoming: CanonicalApprovalRecord,
+    ) -> CanonicalApprovalRecord:
+        notes = list(existing.operator_notes)
+        notes.extend(incoming.operator_notes)
+        notes.append(
+            "approval_refreshed "
+            f"previous_snapshot={existing.fact_snapshot_version} "
+            f"new_snapshot={incoming.fact_snapshot_version}"
+        )
+        return incoming.model_copy(
+            update={
+                "approval_id": existing.approval_id,
+                "envelope_id": existing.envelope_id,
+                "approval_token": existing.approval_token,
+                "created_at": existing.created_at,
+                "operator_notes": notes,
+            }
+        )
+
+    @staticmethod
+    def _pending_record_order(record: CanonicalApprovalRecord) -> tuple[tuple[int, str], tuple[int, str], str]:
+        return (
+            _fact_snapshot_order(record.fact_snapshot_version),
+            _timestamp_order(record.created_at),
+            record.envelope_id,
+        )
+
+    @classmethod
+    def _find_existing_record_for_put(
+        cls,
+        data: dict[str, dict[str, Any]],
+        incoming: CanonicalApprovalRecord,
+    ) -> CanonicalApprovalRecord | None:
+        existing = data.get(incoming.envelope_id)
+        if isinstance(existing, dict):
+            return CanonicalApprovalRecord.model_validate(existing)
+        pending_matches: list[CanonicalApprovalRecord] = []
+        for row in data.values():
+            if not isinstance(row, dict):
+                continue
+            record = CanonicalApprovalRecord.model_validate(row)
+            if record.approval_id != incoming.approval_id:
+                continue
+            if record.status != "pending":
+                continue
+            pending_matches.append(record)
+        if not pending_matches:
+            return None
+        return max(pending_matches, key=cls._pending_record_order)
 
 
 class ApprovalResponseStore(_JsonModelStore):
@@ -187,16 +459,13 @@ def build_canonical_approval_record(
 ) -> CanonicalApprovalRecord:
     if decision.decision_result != DECISION_REQUIRE_USER_DECISION:
         raise ValueError("canonical approval requires require_user_decision")
-    digest = _short_hash(decision.decision_key)
-    approval_id = decision.approval_id or f"approval:{digest}"
-    envelope_id = f"approval-envelope:{_short_hash(f'{decision.decision_key}|approval')}"
-    approval_token = f"approval-token:{digest}"
+    approval_id, envelope_id, approval_token = build_canonical_approval_identifiers(decision)
     return CanonicalApprovalRecord(
         approval_id=approval_id,
         envelope_id=envelope_id,
         approval_kind="canonical_user_decision",
         requested_action=decision.action_ref,
-        requested_action_args=_requested_action_args(decision),
+        requested_action_args=requested_action_args_from_decision(decision),
         approval_token=approval_token,
         decision_options=["approve", "reject", "execute_action"],
         policy_version=decision.policy_version,
@@ -221,12 +490,31 @@ def materialize_canonical_approval(
     *,
     approval_store: CanonicalApprovalStore,
     delivery_outbox_store: object | None = None,
+    session_service: SessionService | None = None,
 ) -> CanonicalApprovalRecord:
     record = approval_store.put(build_canonical_approval_record(decision))
+    if session_service is not None:
+        session_service.record_event(
+            event_type="approval_requested",
+            project_id=record.project_id,
+            session_id=record.session_id,
+            correlation_id=f"corr:approval:{record.approval_id}",
+            causation_id=record.decision.decision_id,
+            related_ids={
+                "approval_id": record.approval_id,
+                "decision_id": record.decision.decision_id,
+            },
+            payload={
+                "requested_action": record.requested_action,
+                "decision_options": list(record.decision_options),
+                "fact_snapshot_version": record.fact_snapshot_version,
+                "policy_version": record.policy_version,
+            },
+        )
     if delivery_outbox_store is not None:
-        from watchdog.services.delivery.envelopes import build_envelopes_for_decision
+        from watchdog.services.delivery.envelopes import build_approval_envelope_for_record
 
-        delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(record.decision))
+        delivery_outbox_store.enqueue_envelopes([build_approval_envelope_for_record(record)])
     return record
 
 
@@ -239,6 +527,7 @@ def _approval_action_result(
     settings: Settings,
     client: AControlAgentClient,
     receipt_store: ActionReceiptStore,
+    session_service: SessionService | None = None,
 ) -> WatchdogActionResult:
     if response_action not in {"approve", "reject"}:
         raise ValueError("response_action must be approve or reject")
@@ -258,6 +547,7 @@ def _approval_action_result(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
     )
 
 
@@ -293,6 +583,7 @@ def respond_to_canonical_approval(
     client: AControlAgentClient,
     receipt_store: ActionReceiptStore,
     delivery_outbox_store: object | None = None,
+    session_service: SessionService | None = None,
 ) -> CanonicalApprovalResponseRecord:
     if response_action not in {"approve", "reject", "execute_action"}:
         raise ValueError("response_action must be approve, reject, or execute_action")
@@ -305,6 +596,8 @@ def respond_to_canonical_approval(
         approval = approval_store.get(envelope_id)
         if approval is None:
             raise KeyError(f"unknown approval envelope: {envelope_id}")
+        if approval.status == "superseded":
+            raise ValueError("superseded approval cannot be approved, rejected, or executed")
         if approval.status == "rejected" and response_action in {"approve", "execute_action"}:
             raise ValueError("rejected approval cannot be approved or executed")
         if approval.status == "approved" and response_action == "reject":
@@ -323,6 +616,7 @@ def respond_to_canonical_approval(
                 settings=settings,
                 client=client,
                 receipt_store=receipt_store,
+                session_service=session_service,
             )
             next_status = "rejected"
         else:
@@ -335,6 +629,7 @@ def respond_to_canonical_approval(
                     settings=settings,
                     client=client,
                     receipt_store=receipt_store,
+                    session_service=session_service,
                 )
             next_status = "approved"
             execution_result = execute_registered_action_for_decision(
@@ -342,6 +637,7 @@ def respond_to_canonical_approval(
                 settings=settings,
                 client=client,
                 receipt_store=receipt_store,
+                session_service=session_service,
                 operator=operator,
             )
 
@@ -352,6 +648,27 @@ def respond_to_canonical_approval(
             response_action=response_action,
         )
         approval_store.update(updated_approval)
+        if session_service is not None:
+            session_service.record_event(
+                event_type=(
+                    "approval_approved" if next_status == "approved" else "approval_rejected"
+                ),
+                project_id=updated_approval.project_id,
+                session_id=updated_approval.session_id,
+                correlation_id=f"corr:approval:{updated_approval.approval_id}",
+                causation_id=updated_approval.decision.decision_id,
+                related_ids={
+                    "approval_id": updated_approval.approval_id,
+                    "decision_id": updated_approval.decision.decision_id,
+                    "response_id": f"approval-response:{_short_hash(response_key)}",
+                },
+                payload={
+                    "response_action": response_action,
+                    "approval_status": next_status,
+                    "operator": operator,
+                    "note": note,
+                },
+            )
 
         operator_notes = [
             f"response={response_action} operator={operator}",

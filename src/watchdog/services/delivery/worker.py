@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from watchdog.services.delivery.http_client import DeliveryAttemptResult, OpenClawDeliveryClient
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
@@ -33,11 +35,154 @@ class DeliveryWorker:
         delivery_client: OpenClawDeliveryClient,
         settings: Settings,
         session_spine_store: SessionSpineStore | None = None,
+        session_service: SessionService | None = None,
     ) -> None:
         self._store = store
         self._delivery_client = delivery_client
         self._settings = settings
         self._session_spine_store = session_spine_store
+        self._session_service = session_service
+
+    @staticmethod
+    def _notification_payload(record: DeliveryOutboxRecord) -> dict[str, Any] | None:
+        payload = record.envelope_payload
+        if payload.get("envelope_type") != "notification":
+            return None
+        return payload
+
+    @staticmethod
+    def _notification_related_ids(
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+        *,
+        extra: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        related_ids = {"envelope_id": record.envelope_id}
+        event_id = payload.get("event_id")
+        if isinstance(event_id, str) and event_id:
+            related_ids["notification_event_id"] = event_id
+        notification_kind = payload.get("notification_kind")
+        if isinstance(notification_kind, str) and notification_kind:
+            related_ids["notification_kind"] = notification_kind
+        if extra:
+            related_ids.update(extra)
+        return related_ids
+
+    @staticmethod
+    def _notification_payload_fields(
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        mirrored: dict[str, Any] = {
+            "outbox_seq": record.outbox_seq,
+            "delivery_status": record.delivery_status,
+            "delivery_attempt": record.delivery_attempt,
+        }
+        for field in (
+            "event_id",
+            "notification_kind",
+            "severity",
+            "title",
+            "summary",
+            "reason",
+            "occurred_at",
+            "decision_result",
+            "action_name",
+        ):
+            value = payload.get(field)
+            if value is not None:
+                mirrored[field] = value
+        return mirrored
+
+    def _record_notification_event(
+        self,
+        *,
+        event_type: str,
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+        correlation_id: str,
+        causation_id: str | None = None,
+        related_ids: dict[str, str] | None = None,
+        event_payload: dict[str, Any] | None = None,
+    ) -> None:
+        if self._session_service is None:
+            return
+        self._session_service.record_event(
+            event_type=event_type,
+            project_id=record.project_id,
+            session_id=record.session_id,
+            occurred_at=_iso_z(datetime.now(UTC)),
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            related_ids=self._notification_related_ids(
+                record,
+                payload,
+                extra=related_ids,
+            ),
+            payload=event_payload
+            or self._notification_payload_fields(record, payload),
+        )
+
+    def _record_notification_announced(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+    ) -> None:
+        self._record_notification_event(
+            event_type="notification_announced",
+            record=record,
+            payload=payload,
+            correlation_id=f"corr:notification:{record.envelope_id}:announce",
+            causation_id=str(payload.get("event_id") or record.envelope_id),
+        )
+
+    def _record_notification_delivery_result(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+        result: DeliveryAttemptResult,
+    ) -> None:
+        attempt = record.delivery_attempt
+        outcome_payload = self._notification_payload_fields(record, payload)
+        outcome_payload.update(
+            {
+                "delivery_status": result.delivery_status,
+                "accepted": result.accepted,
+            }
+        )
+        if result.failure_code is not None:
+            outcome_payload["failure_code"] = result.failure_code
+        if result.status_code is not None:
+            outcome_payload["status_code"] = result.status_code
+        event_type = (
+            "notification_delivery_succeeded"
+            if result.delivery_status == "delivered"
+            else "notification_delivery_failed"
+        )
+        self._record_notification_event(
+            event_type=event_type,
+            record=record,
+            payload=payload,
+            correlation_id=f"corr:notification:{record.envelope_id}:attempt:{attempt}",
+            causation_id=str(payload.get("event_id") or record.envelope_id),
+            event_payload=outcome_payload,
+        )
+        if result.receipt_id:
+            receipt_payload = self._notification_payload_fields(record, payload)
+            receipt_payload["receipt_id"] = result.receipt_id
+            if result.received_at is not None:
+                receipt_payload["received_at"] = result.received_at
+            self._record_notification_event(
+                event_type="notification_receipt_recorded",
+                record=record,
+                payload=payload,
+                correlation_id=f"corr:notification:{record.envelope_id}:receipt:{result.receipt_id}",
+                causation_id=str(payload.get("event_id") or record.envelope_id),
+                related_ids={"receipt_id": result.receipt_id},
+                event_payload=receipt_payload,
+            )
 
     def _next_ready_record(
         self,
@@ -235,6 +380,7 @@ class DeliveryWorker:
         record = self._next_ready_record(now=now, session_id=session_id)
         if record is None:
             return None
+        notification_payload = self._notification_payload(record)
         stale_progress = self._stale_progress_summary(record=record, now=now)
         if stale_progress is not None:
             occurred_at, age_seconds = stale_progress
@@ -254,6 +400,8 @@ class DeliveryWorker:
                 next_retry_at=next_retry_at,
                 now=now,
             )
+        if notification_payload is not None:
+            self._record_notification_announced(record=record, payload=notification_payload)
         result = self._delivery_client.deliver_record(record)
         if result.delivery_status == "delivered":
             notes = list(record.operator_notes)
@@ -273,9 +421,23 @@ class DeliveryWorker:
                     "updated_at": _iso_z(now),
                 }
             )
-            return self._store.update_delivery_record(updated)
+            updated = self._store.update_delivery_record(updated)
+            if notification_payload is not None:
+                self._record_notification_delivery_result(
+                    record=updated,
+                    payload=notification_payload,
+                    result=result,
+                )
+            return updated
         if result.delivery_status == "retryable_failure":
-            return self._apply_retryable_failure(record=record, result=result, now=now)
+            updated = self._apply_retryable_failure(record=record, result=result, now=now)
+            if notification_payload is not None:
+                self._record_notification_delivery_result(
+                    record=updated,
+                    payload=notification_payload,
+                    result=result,
+                )
+            return updated
         notes = list(record.operator_notes)
         notes.append(
             f"delivery_failed failure_code={result.failure_code or 'unknown'} attempts={record.delivery_attempt + 1}"
@@ -290,4 +452,11 @@ class DeliveryWorker:
                 "updated_at": _iso_z(now),
             }
         )
-        return self._store.update_delivery_record(updated)
+        updated = self._store.update_delivery_record(updated)
+        if notification_payload is not None:
+            self._record_notification_delivery_result(
+                record=updated,
+                payload=notification_payload,
+                result=result,
+            )
+        return updated

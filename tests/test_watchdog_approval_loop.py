@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import threading
 
 from fastapi.testclient import TestClient
+import pytest
 
 from watchdog.main import create_app
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
@@ -161,6 +163,389 @@ def test_materialize_canonical_approval_reuses_same_record_for_same_decision(tmp
     assert pending[0].envelope_id == first.envelope_id
 
 
+def test_materialize_canonical_approval_refreshes_pending_record_for_newer_fact_snapshot(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+    )
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    first = materialize_canonical_approval(
+        _decision(),
+        approval_store=store,
+    )
+    second_decision = _decision().model_copy(
+        update={
+            "decision_id": "decision:needs-human-v8",
+            "decision_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001"
+            ),
+            "fact_snapshot_version": "fact-v8",
+            "idempotency_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001"
+            ),
+            "created_at": "2026-04-07T00:05:00Z",
+            "decision_reason": "session still requires explicit human decision after newer evidence",
+            "why_escalated": "human_gate matched newer persisted facts",
+            "evidence": {
+                "decision": {
+                    "action_ref": "execute_recovery",
+                    "decision_result": "require_user_decision",
+                },
+                "requested_action_args": {"mode": "safe", "resume": True},
+            },
+        }
+    )
+
+    second = materialize_canonical_approval(
+        second_decision,
+        approval_store=store,
+    )
+    persisted = store.get(first.envelope_id)
+
+    assert second.approval_id == first.approval_id
+    assert second.envelope_id == first.envelope_id
+    assert second.approval_token == first.approval_token
+    assert second.fact_snapshot_version == "fact-v8"
+    assert second.idempotency_key == (
+        "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001|approval"
+    )
+    assert second.requested_action_args == {"mode": "safe", "resume": True}
+    assert second.decision.fact_snapshot_version == "fact-v8"
+    assert second.decision.decision_reason == (
+        "session still requires explicit human decision after newer evidence"
+    )
+    assert persisted is not None
+    assert persisted.fact_snapshot_version == "fact-v8"
+    assert persisted.decision.fact_snapshot_version == "fact-v8"
+
+
+def test_materialize_canonical_approval_reuses_legacy_pending_record_for_same_approval_id(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        build_canonical_approval_record,
+        materialize_canonical_approval,
+    )
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    legacy_record = build_canonical_approval_record(_decision()).model_copy(
+        update={
+            "envelope_id": "approval-envelope:legacy",
+            "approval_token": "approval-token:legacy",
+        }
+    )
+    store.put(legacy_record)
+
+    refreshed = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:needs-human-v8",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001"
+                ),
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001"
+                ),
+                "created_at": "2026-04-07T00:05:00Z",
+                "decision_reason": "session still requires explicit human decision after newer evidence",
+                "why_escalated": "human_gate matched newer persisted facts",
+            }
+        ),
+        approval_store=store,
+    )
+
+    assert len(store.list_records()) == 1
+    assert refreshed.approval_id == "appr_001"
+    assert refreshed.envelope_id == "approval-envelope:legacy"
+    assert refreshed.approval_token == "approval-token:legacy"
+    assert refreshed.fact_snapshot_version == "fact-v8"
+    assert refreshed.decision.fact_snapshot_version == "fact-v8"
+
+
+def test_materialize_canonical_approval_reuses_legacy_pending_delivery_record_for_same_approval_id(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        build_canonical_approval_record,
+        materialize_canonical_approval,
+    )
+    from watchdog.services.delivery.store import DeliveryOutboxStore
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    legacy_record = build_canonical_approval_record(_decision()).model_copy(
+        update={
+            "envelope_id": "approval-envelope:legacy",
+            "approval_token": "approval-token:legacy",
+        }
+    )
+    store.put(legacy_record)
+
+    refreshed = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:needs-human-v8",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001"
+                ),
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001"
+                ),
+                "created_at": "2026-04-07T00:05:00Z",
+            }
+        ),
+        approval_store=store,
+        delivery_outbox_store=delivery_store,
+    )
+
+    pending = delivery_store.list_pending_delivery_records(session_id=refreshed.session_id)
+
+    assert [record.envelope_id for record in pending] == ["approval-envelope:legacy"]
+    assert pending[0].fact_snapshot_version == "fact-v8"
+
+
+def test_canonical_approval_store_reconciles_duplicate_pending_records_for_same_approval_id(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import CanonicalApprovalStore, build_canonical_approval_record
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    older = build_canonical_approval_record(_decision()).model_copy(
+        update={
+            "envelope_id": "approval-envelope:old",
+            "approval_token": "approval-token:old",
+        }
+    )
+    newer = build_canonical_approval_record(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:needs-human-v8",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001"
+                ),
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001"
+                ),
+                "created_at": "2026-04-07T00:05:00Z",
+            }
+        )
+    ).model_copy(
+        update={
+            "envelope_id": "approval-envelope:new",
+            "approval_token": "approval-token:new",
+            "created_at": "2026-04-07T00:05:00Z",
+        }
+    )
+    (tmp_path / "canonical_approvals.json").write_text(
+        json.dumps(
+            {
+                older.envelope_id: older.model_dump(mode="json"),
+                newer.envelope_id: newer.model_dump(mode="json"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    updated = store.reconcile_duplicate_pending_records_by_approval_id(
+        decided_by="policy-startup-approval-id-reconcile",
+    )
+    older_persisted = store.get(older.envelope_id)
+    newer_persisted = store.get(newer.envelope_id)
+
+    assert [record.envelope_id for record in updated] == [older.envelope_id]
+    assert older_persisted is not None
+    assert older_persisted.status == "superseded"
+    assert older_persisted.decided_by == "policy-startup-approval-id-reconcile"
+    assert any(
+        note.startswith("approval_superseded_by_duplicate_approval_id ")
+        for note in older_persisted.operator_notes
+    )
+    assert newer_persisted is not None
+    assert newer_persisted.status == "pending"
+
+
+def test_canonical_approval_store_supersedes_only_older_pending_records(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+    )
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    older = materialize_canonical_approval(
+        _decision(),
+        approval_store=store,
+    )
+    newer = materialize_canonical_approval(
+        _decision(
+            action_ref="continue_session",
+            approval_id="appr_002",
+        ).model_copy(
+            update={
+                "decision_id": "decision:needs-human-v9",
+                "decision_key": (
+                    "session:repo-a|fact-v9|policy-v1|require_user_decision|"
+                    "continue_session|appr_002"
+                ),
+                "fact_snapshot_version": "fact-v9",
+                "idempotency_key": (
+                    "session:repo-a|fact-v9|policy-v1|require_user_decision|"
+                    "continue_session|appr_002"
+                ),
+                "created_at": "2026-04-07T00:05:00Z",
+                "evidence": {
+                    "decision": {
+                        "action_ref": "continue_session",
+                        "decision_result": "require_user_decision",
+                    }
+                },
+            }
+        ),
+        approval_store=store,
+    )
+
+    updated = store.supersede_pending_records(
+        session_id="session:repo-a",
+        project_id="repo-a",
+        fact_snapshot_version="fact-v8",
+        reason="approval_superseded_by_decision decision:resume result=auto_execute_and_notify",
+    )
+    older_persisted = store.get(older.envelope_id)
+    newer_persisted = store.get(newer.envelope_id)
+
+    assert [record.envelope_id for record in updated] == [older.envelope_id]
+    assert older_persisted is not None
+    assert older_persisted.status == "superseded"
+    assert older_persisted.decided_by == "policy-supersede"
+    assert any(
+        "approval_superseded_by_decision decision:resume result=auto_execute_and_notify"
+        in note
+        for note in older_persisted.operator_notes
+    )
+    assert newer_persisted is not None
+    assert newer_persisted.status == "pending"
+
+
+def test_canonical_approval_store_reconciles_pending_records_against_later_non_user_decisions(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+    )
+
+    store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=store,
+    )
+    later_auto_decision = _decision(
+        action_ref="continue_session",
+        decision_result="auto_execute_and_notify",
+    ).model_copy(
+        update={
+            "decision_id": "decision:auto-v9",
+            "decision_key": (
+                "session:repo-a|fact-v9|policy-v1|auto_execute_and_notify|"
+                "continue_session|"
+            ),
+            "risk_class": "none",
+            "decision_reason": "registered action and complete evidence",
+            "matched_policy_rules": ["registered_action"],
+            "why_not_escalated": "policy_allows_auto_execution",
+            "why_escalated": None,
+            "fact_snapshot_version": "fact-v9",
+            "idempotency_key": (
+                "session:repo-a|fact-v9|policy-v1|auto_execute_and_notify|"
+                "continue_session|"
+            ),
+            "created_at": "2026-04-07T00:05:00Z",
+            "evidence": {
+                "decision": {
+                    "action_ref": "continue_session",
+                    "decision_result": "auto_execute_and_notify",
+                    "approval_id": None,
+                }
+            },
+        }
+    )
+
+    updated = store.reconcile_pending_records_against_decisions(
+        [later_auto_decision],
+        decided_by="policy-startup-reconcile",
+    )
+    persisted = store.get(approval.envelope_id)
+
+    assert [record.envelope_id for record in updated] == [approval.envelope_id]
+    assert persisted is not None
+    assert persisted.status == "superseded"
+    assert persisted.decided_by == "policy-startup-reconcile"
+    assert any(
+        "approval_superseded_by_historical_decision decision_id=decision:auto-v9"
+        in note
+        for note in persisted.operator_notes
+    )
+
+
+def test_superseded_canonical_approval_cannot_be_responded_to(tmp_path: Path) -> None:
+    from watchdog.services.approvals.service import (
+        ApprovalResponseStore,
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+
+    client = FakeAClient(context_pressure="critical")
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+    )
+    approval_store.supersede_pending_records(
+        session_id=approval.session_id,
+        project_id=approval.project_id,
+        fact_snapshot_version=approval.fact_snapshot_version,
+        reason="approval_superseded_by_decision decision:resume result=auto_execute_and_notify",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="superseded approval cannot be approved, rejected, or executed",
+    ):
+        respond_to_canonical_approval(
+            envelope_id=approval.envelope_id,
+            response_action="approve",
+            client_request_id="req-superseded",
+            operator="alice",
+            note="too late",
+            approval_store=approval_store,
+            response_store=response_store,
+            settings=_settings(tmp_path),
+            client=client,
+            receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+        )
+
+    assert client.decision_calls == []
+
+
 def test_approve_response_is_idempotent_and_executes_requested_action_once(
     tmp_path: Path,
 ) -> None:
@@ -263,6 +648,100 @@ def test_reject_response_records_rejection_without_executing_requested_action(
     pending = delivery_store.list_pending_delivery_records(session_id=approval.session_id)
     assert [record.envelope_type for record in pending] == ["approval", "notification"]
     assert pending[1].envelope_payload["severity"] == "critical"
+
+
+def test_materialize_canonical_approval_records_session_event(tmp_path: Path) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        session_service=session_service,
+    )
+
+    events = session_service.list_events(
+        session_id=approval.session_id,
+        event_type="approval_requested",
+    )
+
+    assert len(events) == 1
+    assert events[0].correlation_id == f"corr:approval:{approval.approval_id}"
+    assert events[0].related_ids == {
+        "approval_id": approval.approval_id,
+        "decision_id": approval.decision.decision_id,
+    }
+    assert events[0].payload["requested_action"] == "execute_recovery"
+
+
+@pytest.mark.parametrize(
+    ("response_action", "expected_event_type", "expected_status"),
+    [
+        ("approve", "approval_approved", "approved"),
+        ("reject", "approval_rejected", "rejected"),
+    ],
+)
+def test_respond_to_canonical_approval_records_session_event(
+    tmp_path: Path,
+    response_action: str,
+    expected_event_type: str,
+    expected_status: str,
+) -> None:
+    from watchdog.services.approvals.service import (
+        ApprovalResponseStore,
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    client = FakeAClient(context_pressure="critical")
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        session_service=session_service,
+    )
+
+    result = respond_to_canonical_approval(
+        envelope_id=approval.envelope_id,
+        response_action=response_action,
+        client_request_id=f"req-{response_action}",
+        operator="alice",
+        note="looks safe",
+        approval_store=approval_store,
+        response_store=response_store,
+        settings=_settings(tmp_path),
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+    )
+
+    events = session_service.list_events(
+        session_id=approval.session_id,
+        event_type=expected_event_type,
+    )
+
+    assert result.approval_status == expected_status
+    assert len(events) == 1
+    assert events[0].correlation_id == f"corr:approval:{approval.approval_id}"
+    assert events[0].related_ids == {
+        "approval_id": approval.approval_id,
+        "decision_id": approval.decision.decision_id,
+        "response_id": result.response_id,
+    }
+    assert events[0].payload["response_action"] == response_action
 
 
 def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: Path) -> None:

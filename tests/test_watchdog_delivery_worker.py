@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from watchdog.contracts.session_spine.models import FactRecord, SessionProjection, TaskProgressView
 from watchdog.services.approvals.service import (
     CanonicalApprovalRecord,
     CanonicalApprovalResponseRecord,
+    build_canonical_approval_record,
 )
 from watchdog.services.delivery.envelopes import (
     DecisionEnvelope,
@@ -17,6 +20,7 @@ from watchdog.services.delivery.envelopes import (
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.session_service import SessionService, SessionServiceStore
 from watchdog.services.session_spine.store import PersistedSessionRecord
 from watchdog.settings import Settings
 
@@ -189,6 +193,46 @@ def _progress_record(*, last_progress_at: str = "2026-04-07T00:00:00Z") -> Persi
     )
 
 
+def _notification(
+    *,
+    envelope_id: str = "notification-envelope:test",
+    correlation_id: str = "notification:test",
+    session_id: str = "session:repo-a",
+    project_id: str = "repo-a",
+    native_thread_id: str = "thr_native_1",
+    fact_snapshot_version: str = "fact-v7",
+    created_at: str = "2026-04-07T00:20:00Z",
+    occurred_at: str = "2026-04-07T00:20:00Z",
+    event_id: str = "event:test-notification",
+    severity: str = "info",
+    notification_kind: str = "progress_summary",
+    title: str = "progress update for repo-a",
+    summary: str = "still coding locally",
+    reason: str = "phase=editing_source; context=low; stuck=0",
+) -> NotificationEnvelope:
+    return NotificationEnvelope(
+        envelope_id=envelope_id,
+        correlation_id=correlation_id,
+        session_id=session_id,
+        project_id=project_id,
+        native_thread_id=native_thread_id,
+        policy_version="policy-v1",
+        fact_snapshot_version=fact_snapshot_version,
+        idempotency_key=(
+            f"{session_id}|{fact_snapshot_version}|{notification_kind}|{envelope_id}"
+        ),
+        audit_ref=correlation_id,
+        created_at=created_at,
+        occurred_at=occurred_at,
+        event_id=event_id,
+        severity=severity,
+        notification_kind=notification_kind,
+        title=title,
+        summary=summary,
+        reason=reason,
+    )
+
+
 def test_envelope_builder_freezes_delivery_matrix_for_decision_results() -> None:
     auto_execute = build_envelopes_for_decision(
         _decision(decision_result="auto_execute_and_notify", action_ref="execute_recovery")
@@ -215,6 +259,11 @@ def test_envelope_builder_freezes_delivery_matrix_for_decision_results() -> None
     assert [envelope.envelope_type for envelope in require_user] == ["approval"]
     assert require_user[0].approval_id == "appr_001"
     assert require_user[0].requested_action == "execute_recovery"
+    assert require_user[0].risk_level == "L2"
+    assert require_user[0].command == "execute_recovery"
+    assert require_user[0].reason == "frozen test decision"
+    assert require_user[0].status == "pending"
+    assert require_user[0].requested_at == "2026-04-07T00:00:00Z"
 
     assert [envelope.envelope_type for envelope in block_and_alert] == ["notification"]
     assert block_and_alert[0].notification_kind == "decision_result"
@@ -235,6 +284,65 @@ def test_envelope_builder_emits_approval_result_notification_after_user_response
     assert envelopes[0].notification_kind == "approval_result"
     assert envelopes[0].severity == "info"
     assert envelopes[0].summary == "approval approved via approve"
+
+
+def test_approval_envelope_carries_openclaw_compatibility_fields_and_action_args() -> None:
+    decision = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+    )
+    decision.evidence["requested_action_args"] = {"mode": "safe", "approval_id": "appr_001"}
+
+    envelope = build_envelopes_for_decision(decision)[0]
+
+    assert envelope.requested_action_args == {"mode": "safe", "approval_id": "appr_001"}
+    assert envelope.command == 'execute_recovery {"approval_id":"appr_001","mode":"safe"}'
+    assert envelope.reason == "frozen test decision"
+    assert envelope.risk_level == "L2"
+
+
+def test_decision_envelope_carries_openclaw_compatibility_fields_and_action_args() -> None:
+    decision = _decision(
+        decision_result="auto_execute_and_notify",
+        action_ref="execute_recovery",
+        approval_id=None,
+    )
+    decision.evidence["requested_action_args"] = {"mode": "safe", "resume": True}
+
+    envelope = build_envelopes_for_decision(decision)[0]
+
+    assert envelope.action_args == {"mode": "safe", "resume": True}
+    assert envelope.title == "decision auto_execute_and_notify"
+    assert envelope.summary == "frozen test decision"
+    assert envelope.reason == "frozen test decision"
+    assert envelope.command == 'execute_recovery {"mode":"safe","resume":true}'
+    assert envelope.risk_level == "L0"
+
+
+def test_approval_identity_stays_stable_across_fact_snapshot_versions() -> None:
+    approval_v1 = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+        fact_snapshot_version="fact-v7",
+    )
+    approval_v2 = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+        fact_snapshot_version="fact-v8",
+    )
+
+    envelope_v1 = build_envelopes_for_decision(approval_v1)[0]
+    envelope_v2 = build_envelopes_for_decision(approval_v2)[0]
+    record_v1 = build_canonical_approval_record(approval_v1)
+    record_v2 = build_canonical_approval_record(approval_v2)
+
+    assert envelope_v1.envelope_id == envelope_v2.envelope_id
+    assert envelope_v1.approval_token == envelope_v2.approval_token
+    assert record_v1.envelope_id == record_v2.envelope_id
+    assert record_v1.approval_token == record_v2.approval_token
 
 
 def test_delivery_outbox_store_assigns_monotonic_outbox_seq_and_seeds_delivery_state(
@@ -259,6 +367,121 @@ def test_delivery_outbox_store_assigns_monotonic_outbox_seq_and_seeds_delivery_s
 
     assert [record.outbox_seq for record in first + second] == [1, 2]
     assert [record.delivery_status for record in first + second] == ["pending", "pending"]
+
+
+def test_delivery_outbox_store_refreshes_pending_approval_payload_for_same_envelope_id(
+    tmp_path: Path,
+) -> None:
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+        fact_snapshot_version="fact-v7",
+    )
+    first_decision.evidence["requested_action_args"] = {"mode": "safe"}
+    second_decision = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+        fact_snapshot_version="fact-v8",
+    ).model_copy(
+        update={
+            "decision_reason": "newer snapshot still requires explicit human decision",
+            "why_escalated": "human_gate matched newer persisted facts",
+            "idempotency_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001"
+            ),
+            "decision_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001"
+            ),
+        }
+    )
+    second_decision.evidence["requested_action_args"] = {"mode": "safe", "resume": True}
+
+    first = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))[0]
+    store.update_delivery_record(
+        first.model_copy(
+            update={
+                "delivery_status": "retrying",
+                "delivery_attempt": 2,
+                "failure_code": "transport_error",
+                "next_retry_at": "2026-04-07T00:10:00Z",
+                "receipt_id": "rcpt_stale",
+            }
+        )
+    )
+    second = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))[0]
+
+    assert second.envelope_id == first.envelope_id
+    assert second.outbox_seq == first.outbox_seq
+    assert second.fact_snapshot_version == "fact-v8"
+    assert second.idempotency_key == (
+        "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001|approval"
+    )
+    assert second.delivery_status == "pending"
+    assert second.delivery_attempt == 0
+    assert second.failure_code is None
+    assert second.next_retry_at is None
+    assert second.receipt_id is None
+    assert second.envelope_payload["fact_snapshot_version"] == "fact-v8"
+    assert second.envelope_payload["requested_action_args"] == {
+        "mode": "safe",
+        "resume": True,
+    }
+    assert second.envelope_payload["summary"] == "newer snapshot still requires explicit human decision"
+
+
+def test_delivery_outbox_store_keeps_delivered_approval_stable_for_same_envelope_id(
+    tmp_path: Path,
+) -> None:
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+        fact_snapshot_version="fact-v7",
+    )
+    second_decision = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+        fact_snapshot_version="fact-v8",
+    ).model_copy(
+        update={
+            "decision_reason": "newer snapshot still requires explicit human decision",
+            "why_escalated": "human_gate matched newer persisted facts",
+            "idempotency_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001"
+            ),
+            "decision_key": (
+                "session:repo-a|fact-v8|policy-v1|require_user_decision|execute_recovery|appr_001"
+            ),
+        }
+    )
+
+    first = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))[0]
+    delivered = store.update_delivery_record(
+        first.model_copy(
+            update={
+                "delivery_status": "delivered",
+                "delivery_attempt": 1,
+                "receipt_id": "rcpt_001",
+                "updated_at": "2026-04-07T00:02:00Z",
+            }
+        )
+    )
+    second = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))[0]
+
+    assert second.envelope_id == first.envelope_id
+    assert second.outbox_seq == first.outbox_seq
+    assert second.delivery_status == "delivered"
+    assert second.delivery_attempt == 1
+    assert second.receipt_id == "rcpt_001"
+    assert second.fact_snapshot_version == delivered.fact_snapshot_version
+    assert second.idempotency_key == delivered.idempotency_key
+    assert second.envelope_payload["fact_snapshot_version"] == "fact-v7"
+    assert second.envelope_payload["summary"] == first.envelope_payload["summary"]
 
 
 def test_delivery_outbox_store_orders_same_session_by_fact_snapshot_then_outbox_seq(
@@ -341,6 +564,43 @@ class _SessionSpineStoreStub:
                 self.last_local_manual_activity_at = value
 
         return _Record(self._last_local_manual_activity_at)
+
+
+class _NotificationObservingClient:
+    def __init__(self, session_service: SessionService) -> None:
+        self._session_service = session_service
+        self.calls: list[str] = []
+        self.visible_event_types_during_delivery: list[str] = []
+
+    def deliver_record(self, record):
+        from watchdog.services.delivery.http_client import DeliveryAttemptResult
+
+        self.calls.append(record.envelope_id)
+        self.visible_event_types_during_delivery = [
+            event.event_type
+            for event in self._session_service.list_events(
+                session_id=record.session_id,
+                related_id_key="envelope_id",
+                related_id_value=record.envelope_id,
+            )
+        ]
+        return DeliveryAttemptResult(
+            envelope_id=record.envelope_id,
+            delivery_status="delivered",
+            receipt_id="rcpt_notification",
+            received_at="2026-04-07T00:20:02Z",
+            accepted=True,
+        )
+
+
+class _FailingSessionService:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self.calls: list[str] = []
+
+    def record_event(self, **kwargs):
+        self.calls.append(str(kwargs["event_type"]))
+        raise self._error
 
 
 def test_delivery_worker_blocks_later_records_in_same_session_while_head_is_retrying(
@@ -436,6 +696,98 @@ def test_delivery_worker_does_not_block_other_sessions_when_one_session_head_is_
     assert delivered is not None
     assert delivered.envelope_id == ready.envelope_id
     assert client.calls == [ready.envelope_id]
+
+
+def test_delivery_worker_records_notification_session_events_in_delivery_order(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    (record,) = store.enqueue_envelopes(
+        [
+            _notification(
+                envelope_id="notification-envelope:session-events",
+                correlation_id="progress-summary:repo-a:session-events",
+                event_id="event:notification-session-events",
+            )
+        ]
+    )
+
+    client = _NotificationObservingClient(service)
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path),
+        session_service=service,
+    )
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert client.calls == [record.envelope_id]
+    assert client.visible_event_types_during_delivery == ["notification_announced"]
+
+    events = service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value=record.envelope_id,
+    )
+
+    assert [event.event_type for event in events] == [
+        "notification_announced",
+        "notification_delivery_succeeded",
+        "notification_receipt_recorded",
+    ]
+    assert events[0].payload["notification_kind"] == "progress_summary"
+    assert events[1].payload["delivery_attempt"] == 1
+    assert events[1].payload["delivery_status"] == "delivered"
+    assert events[2].related_ids["receipt_id"] == "rcpt_notification"
+    assert events[2].payload["received_at"] == "2026-04-07T00:20:02Z"
+
+
+def test_delivery_worker_fails_closed_before_notification_side_effect_when_session_barrier_errors(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    (record,) = store.enqueue_envelopes(
+        [
+            _notification(
+                envelope_id="notification-envelope:session-barrier-failure",
+                correlation_id="progress-summary:repo-a:session-barrier-failure",
+                event_id="event:notification-session-barrier-failure",
+            )
+        ]
+    )
+    barrier_error = RuntimeError("announce barrier offline")
+    failing_service = _FailingSessionService(barrier_error)
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path),
+        session_service=failing_service,
+    )
+
+    with pytest.raises(RuntimeError, match="announce barrier offline"):
+        worker.process_next_ready(
+            now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+            session_id="session:repo-a",
+        )
+
+    assert failing_service.calls == ["notification_announced"]
+    assert client.calls == []
+    persisted = store.get_delivery_record(record.envelope_id)
+    assert persisted.delivery_status == "pending"
+    assert persisted.delivery_attempt == 0
 
 
 def test_delivery_worker_records_dead_letter_note_when_retry_budget_is_exhausted(
