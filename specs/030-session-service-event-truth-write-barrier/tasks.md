@@ -84,7 +84,7 @@
 ### Task 30.4 收敛审批、通知、人工接管与记忆异常 canonical events
 
 - **任务编号**：T304
-- **状态**：进行中（2026-04-12 校准）
+- **状态**：已完成（2026-04-13 approval timeout fact source）
 - **依赖**：T303
 - **文件**：
   - `src/watchdog/services/session_service/service.py`
@@ -103,7 +103,7 @@
   1. canonical approval materialization、同一 approval 的幂等响应、startup reconcile、delivery supersede/requeue 与 stable read surface overlay 已有测试通过；
   2. OpenClaw webhook bootstrap 已能把 transport dead-letter 重新排队，审批/通知兼容面也已稳定；
   3. `SessionService` 已补齐 `memory_unavailable_degraded`、`memory_conflict_detected` 与 `approval_expired` 的稳定 writer，`tests/test_watchdog_session_service.py` 已锁定其 correlation / related_ids / payload 语义；
-  4. `approval_requested / approval_approved / approval_rejected / human_override_recorded` 与通知相关 canonical events 已接入现有热路径，但 `approval_expired` 仍只有 writer、尚未接入真实 timeout fact source，因此本任务仍未完成。
+  4. 启动期 `_reconcile_stale_pending_approvals()` 现在会基于 `created_at + approval_expiration_seconds` 计算真实过期事实，先调用 `SessionService.record_approval_expired()`，再把 canonical approval 关成 `expired` 并 supersede delivery outbox，`tests/test_watchdog_approval_loop.py` 已锁定该写屏障顺序与 expired 响应拒绝路径。
 
 ## Batch 5
 
@@ -160,8 +160,9 @@
 - **当前实现备注**：
   1. 已实际通过：`tests/test_watchdog_delivery_http.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py tests/test_openclaw_contracts.py`，共 120 个用例；
   2. 另已通过：`uv run pytest -q tests/test_watchdog_command_leases.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_action_execution.py tests/test_watchdog_delivery_store.py tests/test_watchdog_policy_engine.py tests/test_long_running_autonomy_doc_contracts.py`，共 35 个用例；本轮还补充锁定了 command lease runtime gating；
-  3. `uv run ai-sdlc verify constraints` 当前无法执行，原因是本地环境缺少 `ai-sdlc` 可执行入口；
-  4. 在 command lease 的 live renewal 位点与独立 `session_service` 模块未补齐前，030 仍不应宣告完成，也不应切到下一个 projection work item。
+  3. 本轮另已通过：`uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`，共 57 个用例，并补齐 approval timeout 到 `approval_expired` 的真实事实源；
+  4. `uv run ai-sdlc verify constraints` 当前无法执行，原因是本地环境缺少 `ai-sdlc` 可执行入口；
+  5. 在 command lease 的 live renewal 位点与独立 `session_service` 模块未补齐前，030 仍不应宣告完成，也不应切到下一个 projection work item。
 
 ## 预期结果
 

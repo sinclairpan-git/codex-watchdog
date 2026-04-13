@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from typing import Callable
@@ -49,6 +49,25 @@ def _timestamp_order(value: str | None) -> tuple[int, str]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return (1, parsed.astimezone(timezone.utc).isoformat())
+
+
+def _parse_utc_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _utc_isoformat(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _requested_action_args(decision: CanonicalDecisionRecord) -> dict[str, Any]:
@@ -518,6 +537,71 @@ def materialize_canonical_approval(
     return record
 
 
+def expire_pending_canonical_approvals(
+    *,
+    approval_store: CanonicalApprovalStore,
+    session_service: SessionService | None,
+    now: datetime,
+    expiration_seconds: float,
+    decided_by: str = "approval-timeout-reconcile",
+    expiration_reason: str = "timeout_elapsed",
+) -> list[CanonicalApprovalRecord]:
+    if expiration_seconds <= 0:
+        return []
+
+    now_utc = now.astimezone(timezone.utc) if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    updated_records: list[CanonicalApprovalRecord] = []
+    pending_records = sorted(
+        (
+            record
+            for record in approval_store.list_records()
+            if record.status == "pending"
+        ),
+        key=CanonicalApprovalStore._pending_record_order,
+    )
+    for record in pending_records:
+        current = approval_store.get(record.envelope_id)
+        if current is None or current.status != "pending":
+            continue
+        created_at = _parse_utc_timestamp(current.created_at)
+        if created_at is None:
+            continue
+        expires_at = created_at + timedelta(seconds=expiration_seconds)
+        if expires_at > now_utc:
+            continue
+        expires_at_iso = _utc_isoformat(expires_at)
+        causation_id = f"approval-expiration:{current.envelope_id}:{expires_at_iso}"
+        if session_service is not None:
+            session_service.record_approval_expired(
+                project_id=current.project_id,
+                session_id=current.session_id,
+                approval_id=current.approval_id,
+                decision_id=current.decision.decision_id,
+                envelope_id=current.envelope_id,
+                requested_action=current.requested_action,
+                expiration_reason=expiration_reason,
+                causation_id=causation_id,
+                occurred_at=expires_at_iso,
+            )
+        notes = list(current.operator_notes)
+        notes.append(
+            "approval_expired_by_timeout "
+            f"expiration_seconds={expiration_seconds:g} "
+            f"expires_at={expires_at_iso}"
+        )
+        updated = current.model_copy(
+            update={
+                "status": "expired",
+                "decided_at": expires_at_iso,
+                "decided_by": decided_by,
+                "operator_notes": notes,
+            }
+        )
+        approval_store.update(updated)
+        updated_records.append(updated)
+    return updated_records
+
+
 def _approval_action_result(
     approval: CanonicalApprovalRecord,
     *,
@@ -598,6 +682,8 @@ def respond_to_canonical_approval(
             raise KeyError(f"unknown approval envelope: {envelope_id}")
         if approval.status == "superseded":
             raise ValueError("superseded approval cannot be approved, rejected, or executed")
+        if approval.status == "expired":
+            raise ValueError("expired approval cannot be approved, rejected, or executed")
         if approval.status == "rejected" and response_action in {"approve", "execute_action"}:
             raise ValueError("rejected approval cannot be approved or executed")
         if approval.status == "approved" and response_action == "reject":

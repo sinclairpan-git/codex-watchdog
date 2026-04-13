@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import threading
@@ -679,6 +680,133 @@ def test_materialize_canonical_approval_records_session_event(tmp_path: Path) ->
         "decision_id": approval.decision.decision_id,
     }
     assert events[0].payload["requested_action"] == "execute_recovery"
+
+
+def test_expire_pending_canonical_approval_records_session_event_before_closing_record(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        CanonicalApprovalStore,
+        expire_pending_canonical_approvals,
+        materialize_canonical_approval,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+    )
+    approval_store.update(
+        approval.model_copy(
+            update={
+                "created_at": "2026-04-07T00:00:00Z",
+            }
+        )
+    )
+
+    original_update = approval_store.update
+    observed_event_counts: list[int] = []
+
+    def _checking_update(record):
+        events = session_service.list_events(
+            session_id=approval.session_id,
+            event_type="approval_expired",
+        )
+        observed_event_counts.append(len(events))
+        assert len(events) == 1
+        return original_update(record)
+
+    approval_store.update = _checking_update
+
+    expired = expire_pending_canonical_approvals(
+        approval_store=approval_store,
+        session_service=session_service,
+        now=datetime(2026, 4, 7, 0, 2, 0, tzinfo=UTC),
+        expiration_seconds=60.0,
+    )
+
+    refreshed = approval_store.get(approval.envelope_id)
+    events = session_service.list_events(
+        session_id=approval.session_id,
+        event_type="approval_expired",
+    )
+
+    assert len(expired) == 1
+    assert refreshed is not None
+    assert refreshed.status == "expired"
+    assert refreshed.decided_by == "approval-timeout-reconcile"
+    assert observed_event_counts == [1]
+    assert len(events) == 1
+    assert events[0].related_ids == {
+        "approval_id": approval.approval_id,
+        "decision_id": approval.decision.decision_id,
+        "envelope_id": approval.envelope_id,
+    }
+    assert events[0].payload == {
+        "approval_status": "expired",
+        "requested_action": approval.requested_action,
+        "expiration_reason": "timeout_elapsed",
+    }
+
+
+def test_startup_reconcile_expires_stale_pending_approvals(tmp_path: Path) -> None:
+    from watchdog.main import _reconcile_stale_pending_approvals
+    from watchdog.services.approvals.service import (
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+
+    settings = _settings(tmp_path).model_copy(update={"approval_expiration_seconds": 60.0})
+    client = FakeAClient(context_pressure="critical")
+    app = create_app(settings=settings, a_client=client)
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(update={"created_at": "2026-04-07T00:00:00Z"})
+    )
+
+    reconciled = _reconcile_stale_pending_approvals(app)
+    refreshed = app.state.canonical_approval_store.get(approval.envelope_id)
+    delivery_record = app.state.delivery_outbox_store.get_delivery_record(approval.envelope_id)
+    events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="approval_expired",
+    )
+
+    assert reconciled == 1
+    assert refreshed is not None
+    assert refreshed.status == "expired"
+    assert delivery_record is not None
+    assert delivery_record.delivery_status == "superseded"
+    assert any(
+        note.startswith("delivery_superseded reason=approval_expired_by_timeout")
+        for note in delivery_record.operator_notes
+    )
+    assert len(events) == 1
+    assert events[0].related_ids["approval_id"] == approval.approval_id
+
+    with pytest.raises(
+        ValueError,
+        match="expired approval cannot be approved, rejected, or executed",
+    ):
+        respond_to_canonical_approval(
+            envelope_id=approval.envelope_id,
+            response_action="approve",
+            client_request_id="req-expired",
+            operator="alice",
+            note="too late",
+            approval_store=app.state.canonical_approval_store,
+            response_store=app.state.approval_response_store,
+            settings=settings,
+            client=client,
+            receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+        )
 
 
 @pytest.mark.parametrize(

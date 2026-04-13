@@ -53,3 +53,15 @@
   - 审批请求、审批批准/拒绝、人工接管、通知重排队、memory anomalies 的 canonical writer 已落地；
   - `approval_expired` 目前只冻结到 `SessionService` writer，仓库内尚未找到真实 approval timeout / expiry 事实源，因此没有继续凭空扩展业务流；
   - 下一合理执行入口是决定 approval timeout 事实应落在哪个 runtime tick / reconcile path，再把该事实接到 `record_approval_expired()`。
+- 已把真实 approval timeout fact source 接到启动期 reconcile：
+  - `src/watchdog/services/approvals/service.py` 新增 `expire_pending_canonical_approvals()`，按 `created_at + approval_expiration_seconds` 计算过期点，并固定为“先写 `approval_expired` session event，再把 canonical approval 标成 `expired`”；
+  - `src/watchdog/main.py` 的 `_reconcile_stale_pending_approvals()` 现已接入该 helper，并会把对应 approval envelope 一并 supersede 出 delivery outbox；
+  - `respond_to_canonical_approval()` 现在会拒绝对 `expired` approval 的后续批准/拒绝/执行请求，避免过期后再次执行 side effect。
+- 已补充并通过的回归：
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py -k 'expire_pending_canonical_approval or startup_reconcile_expires_stale_pending_approvals'`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_session_service.py tests/test_watchdog_session_service_atomicity.py tests/test_watchdog_command_leases.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`
+- 当前对 `T304` 的判断更新为：
+  - `approval_requested -> approval_approved | approval_rejected | approval_expired` 已全部由 Session events 驱动，且 `approval_expired` 已接上真实 timeout fact source；
+  - 启动期 reconcile 已成为当前实现中的 approval expiry runtime source，后续若引入更细粒度后台 tick，只需复用同一 helper，不需要再改 event contract；
+  - 因此 `T304` 可以回填为已完成，当前下一执行入口重新收敛到 `T305` 的 live lease renewal 与最终 `T306` 验证收口。
+- `uv run ai-sdlc verify constraints` 仍无法执行，报错为缺少 `ai-sdlc` 可执行入口（`Failed to spawn: ai-sdlc`），因此 formal constraints 只能继续按仓库内 specs/tasks/log 进行人工回填。

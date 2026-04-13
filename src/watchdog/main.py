@@ -22,7 +22,11 @@ from watchdog.api import session_spine_events as session_spine_events_routes
 from watchdog.api import session_spine_queries as session_spine_query_routes
 from watchdog.api import supervision as supervision_routes
 from watchdog.services.a_client.client import AControlAgentClient
-from watchdog.services.approvals.service import ApprovalResponseStore, CanonicalApprovalStore
+from watchdog.services.approvals.service import (
+    ApprovalResponseStore,
+    CanonicalApprovalStore,
+    expire_pending_canonical_approvals,
+)
 from watchdog.services.delivery.http_client import OpenClawDeliveryClient
 from watchdog.services.delivery.openclaw_webhook_store import (
     OpenClawWebhookEndpointStore,
@@ -64,8 +68,14 @@ def _reconcile_stale_pending_approvals(app: FastAPI) -> int:
     deduped = app.state.canonical_approval_store.reconcile_duplicate_pending_records_by_approval_id(
         decided_by="policy-startup-approval-id-reconcile",
     )
-    superseded = [*reconciled, *deduped]
-    if superseded:
+    expired = expire_pending_canonical_approvals(
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+        now=datetime.now(UTC),
+        expiration_seconds=float(app.state.settings.approval_expiration_seconds),
+    )
+    reconciled_records = [*reconciled, *deduped, *expired]
+    if reconciled_records:
         updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         app.state.delivery_outbox_store.supersede_records(
             envelope_reasons={
@@ -74,19 +84,21 @@ def _reconcile_stale_pending_approvals(app: FastAPI) -> int:
                         note
                         for note in reversed(record.operator_notes)
                         if note.startswith("approval_superseded_by_")
+                        or note.startswith("approval_expired_by_timeout")
                     ),
-                    "approval_superseded_by_reconcile",
+                    "approval_state_reconciled",
                 )
-                for record in superseded
+                for record in reconciled_records
             },
             updated_at=updated_at,
         )
         logger.info(
-            "watchdog startup superseded %s stale approvals and %s duplicate approvals",
+            "watchdog startup reconciled approvals: stale=%s duplicate=%s expired=%s",
             len(reconciled),
             len(deduped),
+            len(expired),
         )
-    return len(superseded)
+    return len(reconciled_records)
 
 
 def _drain_delivery_outbox(app: FastAPI, *, now: datetime | None = None) -> None:
