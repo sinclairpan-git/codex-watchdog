@@ -34,7 +34,7 @@
 ## Task 45.2 写失败测试锁定 release-gate evidence write-side contract
 
 - **任务编号**：T452
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 resident runtime 对 release-gate evidence 的唯一 write-side surface。
 - **文件**：
   - `tests/test_watchdog_session_spine_runtime.py`
@@ -45,11 +45,15 @@
   3. 覆盖现有 evidence shape 保持不变。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
+  1. 已新增 shared write contract module surface 红测；
+  2. 已锁定正式 report path 必须经过 shared helper；
+  3. 已锁定 `report_load_failed` fallback path 也必须经过同一 shared helper。
 
 ## Task 45.3 实现最小 shared write helper 与 resident runtime 收口
 
 - **任务编号**：T453
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：让 resident runtime 只通过 shared write-side contract 组装 release-gate evidence。
 - **文件**：
   - `src/watchdog/services/brain/release_gate_write_contract.py`
@@ -63,11 +67,16 @@
   4. 不引入 schema、manifest、persistence、parameter rename 或 workflow 变化。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
+- **完成情况**：
+  1. 已新增 `src/watchdog/services/brain/release_gate_write_contract.py`；
+  2. `_decision_evidence_for_intent()` 已改为通过 shared write-side helper 组装 `release_gate_verdict + release_gate_evidence_bundle`；
+  3. 正式 report path 与 fallback path 已复用同一 helper，existing evidence shape 保持不变；
+  4. direct helper 单测已补齐，不再只靠 orchestrator 集成测试兜底。
 
 ## Task 45.4 更新执行日志与 handoff 摘要
 
 - **任务编号**：T454
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 handoff。
 - **文件**：
   - `specs/045-resident-runtime-release-gate-evidence-write-contract/task-execution-log.md`
@@ -83,11 +92,15 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已补齐 red/green/verification/code review 闭环；
+  2. 已把 `.ai-sdlc` 元数据更新到 045 完成态；
+  3. 已明确后续 resident runtime producer 只能复用 shared write-side contract。
 
 ## Task 45.5 完成 045 整体验证并交接后续 work item
 
 - **任务编号**：T455
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：完成 045 的整体验证，并把 release-gate write-side contract 作为后续 work item 的正式依赖写回 handoff。
 - **文件**：
   - `specs/045-resident-runtime-release-gate-evidence-write-contract/task-execution-log.md`
@@ -101,6 +114,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅 handoff 与总实施计划一致
+- **完成情况**：
+  1. `WI-045` 已完成并成为后续 resident runtime producer 的正式依赖；
+  2. Hermes Agent 专家与 Anthropic Manager 专家最终复核均无 blocking/P1；
+  3. 后续实现不得再复制 `ReleaseGateEvidenceBundle(...)` 拼装逻辑。
 
 ## 整体验收
 

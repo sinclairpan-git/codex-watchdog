@@ -676,25 +676,25 @@
 - Modify/Add: `src/watchdog/services/brain/release_gate_write_contract.py`
 - Test: `tests/test_watchdog_session_spine_runtime.py`
 
-- [ ] **Step 1: 写失败测试，冻结 resident runtime release-gate evidence write-side contract**
+- [x] **Step 1: 写失败测试，冻结 resident runtime release-gate evidence write-side contract**
   - 覆盖 resident runtime 不得继续在 `_decision_evidence_for_intent()` 中手工组装 `release_gate_verdict` / `release_gate_evidence_bundle`。
   - 覆盖 formal report path 与 report load failure fallback 都必须通过 shared write-side helper 组装同一 evidence shape。
   - 覆盖现有 evidence surface 不变，不引入新字段或 schema 漂移。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_session_spine_runtime.py -q`
   - Expected: 因当前 resident runtime 仍内联组装 `release_gate_verdict` / `release_gate_evidence_bundle`，write-side contract 尚未收口而失败。
 
-- [ ] **Step 3: 实现最小 release-gate write-side contract**
+- [x] **Step 3: 实现最小 release-gate write-side contract**
   - 新增 shared write-side helper，统一组装 runtime decision evidence 中的 `release_gate_verdict` / `release_gate_evidence_bundle`。
   - 让 resident runtime 正式 report path 与 report load failure fallback 都复用同一 helper。
   - 保持现有 evidence shape、read-side/policy surface 与 schema 不变。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py -q`
   - Expected: resident runtime 写侧 evidence contract 已通过 shared helper 收口，正式 path 与 fallback path 均输出稳定 canonical surface。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/brain/release_gate_write_contract.py tests/test_watchdog_session_spine_runtime.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/045-resident-runtime-release-gate-evidence-write-contract`
   - `git commit -m "feat: formalize release gate write-side contract"`
 
