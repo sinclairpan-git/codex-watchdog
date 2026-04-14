@@ -1024,7 +1024,6 @@ class ResidentOrchestrator:
                 goal_contract_readiness=goal_contract_readiness,
                 now=now,
             )
-            release_gate_verdict = read_release_gate_decision_evidence(intent_evidence).verdict
             decision = evaluate_persisted_session_policy(
                 record,
                 action_ref=action_ref,
@@ -1035,11 +1034,7 @@ class ResidentOrchestrator:
                     if isinstance(intent_evidence.get("validator_verdict"), dict)
                     else None
                 ),
-                release_gate_verdict=(
-                    release_gate_verdict.model_dump(mode="json")
-                    if release_gate_verdict is not None
-                    else None
-                ),
+                release_gate_verdict=intent_evidence,
                 goal_contract_readiness=goal_contract_readiness,
             )
             decision = decision.model_copy(

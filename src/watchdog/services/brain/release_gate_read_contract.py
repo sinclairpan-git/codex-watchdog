@@ -35,15 +35,24 @@ def read_release_gate_decision_evidence(
     evidence: Mapping[str, object] | None,
 ) -> ReleaseGateDecisionReadSnapshot:
     source = evidence if isinstance(evidence, Mapping) else {}
+    verdict = _read_optional_model(
+        source.get("release_gate_verdict"),
+        ReleaseGateVerdict,
+    )
+    bundle = _read_optional_model(
+        source.get("release_gate_evidence_bundle"),
+        ReleaseGateEvidenceBundle,
+    )
+    has_verdict_payload = "release_gate_verdict" in source
+    has_evidence_bundle_payload = "release_gate_evidence_bundle" in source
+    if not has_verdict_payload:
+        legacy_verdict = _read_optional_model(source, ReleaseGateVerdict)
+        if legacy_verdict is not None:
+            verdict = legacy_verdict
+            has_verdict_payload = True
     return ReleaseGateDecisionReadSnapshot(
-        verdict=_read_optional_model(
-            source.get("release_gate_verdict"),
-            ReleaseGateVerdict,
-        ),
-        evidence_bundle=_read_optional_model(
-            source.get("release_gate_evidence_bundle"),
-            ReleaseGateEvidenceBundle,
-        ),
-        has_verdict_payload="release_gate_verdict" in source,
-        has_evidence_bundle_payload="release_gate_evidence_bundle" in source,
+        verdict=verdict,
+        evidence_bundle=bundle,
+        has_verdict_payload=has_verdict_payload,
+        has_evidence_bundle_payload=has_evidence_bundle_payload,
     )

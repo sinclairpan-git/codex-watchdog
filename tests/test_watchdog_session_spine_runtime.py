@@ -138,12 +138,19 @@ def _runtime_gate_pass_kwargs() -> dict[str, dict[str, object]]:
             "reason": "schema_and_risk_ok",
         },
         "release_gate_verdict": {
-            "status": "pass",
-            "decision_trace_ref": "trace:seed",
-            "approval_read_ref": "approval:none",
-            "report_id": "report-seed",
-            "report_hash": "sha256:report-seed",
-            "input_hash": "sha256:input-seed",
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": "trace:seed",
+                "approval_read_ref": "approval:none",
+                "report_id": "report-seed",
+                "report_hash": "sha256:report-seed",
+                "input_hash": "sha256:input-seed",
+            },
+            "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                report_id="report-seed",
+                report_hash="sha256:report-seed",
+                input_hash="sha256:input-seed",
+            ),
         },
     }
 

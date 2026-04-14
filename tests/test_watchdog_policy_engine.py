@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 from watchdog.contracts.session_spine.models import (
     ApprovalProjection,
     FactRecord,
@@ -69,6 +71,35 @@ def _record(
         facts=facts,
         approval_queue=approval_queue or [],
     )
+
+
+def _formal_release_gate_bundle(
+    *,
+    report_id: str,
+    report_hash: str,
+    input_hash: str,
+) -> dict[str, object]:
+    return {
+        "certification_packet_corpus": {
+            "artifact_ref": "artifacts/certification-packets.jsonl"
+        },
+        "shadow_decision_ledger": {
+            "artifact_ref": "artifacts/shadow-ledger.jsonl"
+        },
+        "release_gate_report_ref": "artifacts/release-gate-report.json",
+        "label_manifest_ref": "tests/fixtures/release_gate_label_manifest.json",
+        "generated_by": "codex",
+        "report_approved_by": "operator-a",
+        "report_id": report_id,
+        "report_hash": report_hash,
+        "input_hash": input_hash,
+    }
+
+
+def test_policy_engine_release_gate_read_contract_module_exports_policy_surface() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_read_contract")
+
+    assert hasattr(module, "read_release_gate_decision_evidence")
 
 
 def test_policy_engine_routes_human_gate_to_require_user_decision() -> None:
@@ -179,6 +210,7 @@ def test_policy_engine_allows_auto_execution_when_goal_contract_is_ready() -> No
         record,
         action_ref="continue_session",
         trigger="resident_supervision",
+        brain_intent="propose_execute",
         goal_contract_readiness=GoalContractReadiness(
             mode="autonomous_ready",
             missing_fields=[],
@@ -188,12 +220,19 @@ def test_policy_engine_allows_auto_execution_when_goal_contract_is_ready() -> No
             "reason": "schema_and_risk_ok",
         },
         release_gate_verdict={
-            "status": "pass",
-            "decision_trace_ref": "trace:1",
-            "approval_read_ref": "approval:none",
-            "report_id": "report-1",
-            "report_hash": "sha256:report",
-            "input_hash": "sha256:input",
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": "trace:1",
+                "approval_read_ref": "approval:none",
+                "report_id": "report-1",
+                "report_hash": "sha256:report",
+                "input_hash": "sha256:input",
+            },
+            "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                report_id="report-1",
+                report_hash="sha256:report",
+                input_hash="sha256:input",
+            ),
         },
     )
 
@@ -222,3 +261,69 @@ def test_policy_engine_fails_closed_when_propose_execute_lacks_runtime_gate_evid
     assert decision.decision_result == "block_and_alert"
     assert decision.risk_class == "hard_block"
     assert "runtime_gate_missing" in decision.matched_policy_rules
+
+
+def test_policy_engine_fails_closed_when_formal_report_pass_lacks_bundle() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="propose_execute",
+        goal_contract_readiness=GoalContractReadiness(
+            mode="autonomous_ready",
+            missing_fields=[],
+        ),
+        validator_verdict={
+            "status": "pass",
+            "reason": "schema_and_risk_ok",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": "trace:1",
+                "approval_read_ref": "approval:none",
+                "report_id": "report-1",
+                "report_hash": "sha256:report",
+                "input_hash": "sha256:input",
+            }
+        },
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "release_gate_degraded" in decision.matched_policy_rules
+    assert decision.uncertainty_reasons == ["release_gate_missing"]
+
+
+def test_policy_engine_keeps_resident_default_path_without_bundle() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="propose_execute",
+        goal_contract_readiness=GoalContractReadiness(
+            mode="autonomous_ready",
+            missing_fields=[],
+        ),
+        validator_verdict={
+            "status": "pass",
+            "reason": "schema_and_risk_ok",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": "trace:1",
+                "approval_read_ref": "approval:none",
+                "report_id": "report:resident_default",
+                "report_hash": "sha256:resident_default",
+                "input_hash": "sha256:input",
+            }
+        },
+    )
+
+    assert decision.decision_result == "auto_execute_and_notify"
+    assert decision.risk_class == "none"
