@@ -104,11 +104,6 @@
 | `openclaw-codex-watchdog-prd.md:583-586 / ### 10.1.2 人工审批` | B 侧需要提供审批决策回传入口 | `src/watchdog/api/feishu_control.py:64-95 /实现证据；src/watchdog/api/openclaw_responses.py:90-158 /实现证据` | — | `src/watchdog/main.py:285-300 /入口证据` | 无验证 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | B 侧需要提供 continue / pause / resume / summarize / force_handoff / retry_with_conservative_path 等动作入口 | `src/watchdog/api/session_spine_actions.py:113-367 /实现证据` | — | `src/watchdog/main.py:285-296 /入口证据` | 无验证 | 未落地 |
 
-### 11. OpenClaw 集成要求
-
-| 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
-| --- | --- | --- | --- | --- | --- | --- |
-
 ### 12. 数据持久化设计
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
