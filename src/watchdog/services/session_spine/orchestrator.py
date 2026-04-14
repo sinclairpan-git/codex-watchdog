@@ -24,6 +24,9 @@ from watchdog.services.brain.release_gate_read_contract import (
 from watchdog.services.brain.release_gate_write_contract import (
     build_release_gate_runtime_evidence,
 )
+from watchdog.services.session_spine.event_gate_payload_contract import (
+    build_session_event_gate_payload,
+)
 from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.brain.validator import DecisionValidator
@@ -161,8 +164,6 @@ class ResidentOrchestrator:
         correlation_id = self._decision_correlation_id(decision)
         decision_evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         decision_trace = decision_evidence.get("decision_trace")
-        validator_verdict = decision_evidence.get("validator_verdict")
-        release_gate_verdict = read_release_gate_decision_evidence(decision_evidence).verdict
         self._session_service.record_event(
             event_type="decision_proposed",
             project_id=decision.project_id,
@@ -196,11 +197,10 @@ class ResidentOrchestrator:
                 "decision_reason": decision.decision_reason,
                 "matched_policy_rules": list(decision.matched_policy_rules),
                 "decision_trace": decision_trace,
-                "validator_verdict": validator_verdict,
-                "release_gate_verdict": (
-                    release_gate_verdict.model_dump(mode="json")
-                    if release_gate_verdict is not None
-                    else None
+                **build_session_event_gate_payload(
+                    evidence=decision_evidence,
+                    include_validator=True,
+                    include_bundle=False,
                 ),
             },
         )
@@ -556,7 +556,6 @@ class ResidentOrchestrator:
     ) -> dict[str, Any]:
         evidence = self._decision_evidence_map(decision)
         trace = evidence.get("decision_trace")
-        release_gate = read_release_gate_decision_evidence(evidence)
         action = build_watchdog_action_from_decision(decision)
         completion_evidence_ref = self._artifact_ref(
             "receipt",
@@ -592,12 +591,13 @@ class ResidentOrchestrator:
                 result=result,
             ),
         }
-        if release_gate.verdict is not None:
-            payload["release_gate_verdict"] = release_gate.verdict.model_dump(mode="json")
-        if release_gate.evidence_bundle is not None:
-            payload["release_gate_evidence_bundle"] = release_gate.evidence_bundle.model_dump(
-                mode="json"
+        payload.update(
+            build_session_event_gate_payload(
+                evidence=evidence,
+                include_validator=False,
+                include_bundle=True,
             )
+        )
         return payload
 
     def _cache_auto_continue_control_link_error(

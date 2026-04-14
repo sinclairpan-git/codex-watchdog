@@ -312,6 +312,14 @@ def test_release_gate_write_contract_runtime_module_exports_typed_surface() -> N
     assert hasattr(module, "build_release_gate_runtime_evidence")
 
 
+def test_session_event_gate_payload_contract_module_exports_surface() -> None:
+    module = importlib.import_module(
+        "watchdog.services.session_spine.event_gate_payload_contract"
+    )
+
+    assert hasattr(module, "build_session_event_gate_payload")
+
+
 def test_release_gate_write_contract_preserves_loaded_artifact_bundle(
     tmp_path: Path,
 ) -> None:
@@ -1812,6 +1820,9 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
     )
     app = create_app(settings, a_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
+    contract_module = importlib.import_module(
+        "watchdog.services.session_spine.event_gate_payload_contract"
+    )
 
     def _decision_with_gate(*args, **kwargs) -> CanonicalDecisionRecord:
         persisted_record = args[0]
@@ -1847,11 +1858,15 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
         "watchdog.services.session_spine.orchestrator.evaluate_persisted_session_policy",
         side_effect=_decision_with_gate,
     ):
-        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
-            steer_mock.return_value = {"success": True, "data": {"accepted": True}}
-            app.state.resident_orchestrator.orchestrate_all(
-                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
-            )
+        with patch(
+            "watchdog.services.session_spine.orchestrator.build_session_event_gate_payload",
+            wraps=contract_module.build_session_event_gate_payload,
+        ) as helper_mock:
+            with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+                steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+                app.state.resident_orchestrator.orchestrate_all(
+                    now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+                )
 
     decision = app.state.policy_decision_store.list_records()[0]
     session_events = app.state.session_service.list_events(
@@ -1862,6 +1877,91 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
     assert session_events[1].payload["validator_verdict"]["status"] == "pass"
     assert session_events[1].payload["release_gate_verdict"]["decision_trace_ref"] == "trace:1"
     assert session_events[1].payload["release_gate_verdict"]["approval_read_ref"] == "approval:event:1"
+    assert "release_gate_evidence_bundle" not in session_events[1].payload
+    assert helper_mock.call_count >= 1
+
+
+def test_resident_orchestrator_command_terminal_payload_uses_gate_payload_contract(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "release-gate-report.json"
+    trace = _release_gate_trace()
+    _write_release_gate_report(
+        report_path,
+        trace=trace,
+        expires_at="2026-04-20T00:00:00Z",
+    )
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        release_gate_report_path=str(report_path),
+        release_gate_risk_policy_version="risk:v1",
+        release_gate_decision_input_builder_version="dib:v1",
+        release_gate_policy_engine_version="policy:v1",
+        release_gate_tool_schema_hash="tool:abc",
+        release_gate_memory_provider_adapter_hash="memory:abc",
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    contract_module = importlib.import_module(
+        "watchdog.services.session_spine.event_gate_payload_contract"
+    )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.build_session_event_gate_payload",
+        wraps=contract_module.build_session_event_gate_payload,
+    ) as helper_mock:
+        with patch.object(
+            app.state.resident_orchestrator,
+            "_decision_trace_for_intent",
+            return_value=trace,
+        ):
+            with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+                steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+                outcomes = app.state.resident_orchestrator.orchestrate_all(
+                    now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+                )
+
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    decision = app.state.policy_decision_store.list_records()[0]
+    result = WatchdogActionResult(
+        action_code="continue_session",
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="decision:terminal",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.NOOP,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="ok",
+        facts=[],
+    )
+    payload = app.state.resident_orchestrator._command_terminal_payload(
+        decision=decision,
+        command_id=f"command:{decision.decision_id}",
+        claim_seq=1,
+        result=result,
+    )
+    assert helper_mock.call_count >= 1
+    assert "release_gate_verdict" in payload
+    assert "validator_verdict" not in payload
 
 
 def test_resident_orchestrator_does_not_execute_when_release_gate_or_validator_do_not_pass(
