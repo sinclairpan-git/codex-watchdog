@@ -1,0 +1,41 @@
+current_stage: implementation
+current_batch: 1
+last_committed_task: T391
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/039-release-gate-loading-api-and-evidence-bundle/spec.md
+  plan_path: specs/039-release-gate-loading-api-and-evidence-bundle/plan.md
+  tasks_path: specs/039-release-gate-loading-api-and-evidence-bundle/tasks.md
+  active_files:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/spec.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/plan.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/tasks.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/runtime.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-039` 已从 `WI-035` handoff 中正式追加，目标是把 `release_gate_report` 的 shared loading API 与 `release_gate_evidence_bundle` 正式化。
+    - 当前 formal docs 已冻结的关键边界：
+      - `release_gate_report` 的 parse/validate/hash/drift 判定只能通过单一 shared loader；
+      - formal artifacts 与 blocker metadata 只能通过统一 evidence bundle surface 回读；
+      - runtime、ops/read-side 与后续入口不得继续复制 helper 逻辑；
+      - 039 不新增新的 gate policy、risk taxonomy 或放行门槛。
+    - `T391` 已完成：
+      - 已新增 `Task 10` 到总实施计划；
+      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/039-*` 基线；
+      - Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1；
+      - 当前下一执行入口固定为 `T392`。
+current_branch: codex/wi-038-future-worker-canonical-execution
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T11:15:00+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

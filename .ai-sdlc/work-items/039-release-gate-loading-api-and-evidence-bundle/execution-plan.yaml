@@ -1,0 +1,136 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T391
+  title: 冻结 039 formal docs 与 shared loading / evidence bundle 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/spec.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/plan.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/tasks.md`'
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/runtime.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T392
+  title: 写失败测试锁定 shared loading API 与 evidence bundle contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_release_gate.py`'
+  - '`tests/test_watchdog_release_gate_evidence.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T391
+- task_id: T393
+  title: 实现最小 shared loading API 与 evidence bundle
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/brain/release_gate_loading.py`'
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`src/watchdog/services/brain/release_gate_evidence.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/observability/metrics_export.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T392
+- task_id: T394
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/runtime.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T393
+- task_id: T395
+  title: 完成 039 整体验证并交接下一 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/039-release-gate-loading-api-and-evidence-bundle/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/latest-summary.md`'
+  - '`.ai-sdlc/work-items/039-release-gate-loading-api-and-evidence-bundle/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: pending
+  depends_on:
+  - T394
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T391
+  status: completed
+  started_at: '2026-04-14T11:15:00+08:00'
+  completed_at: '2026-04-14T11:15:00+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T392
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T393
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T394
+  status: pending
+  started_at: ''
+  completed_at: ''
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T395
+  status: pending
+  started_at: ''
+  completed_at: ''
+current_batch: 1
