@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from watchdog.main import create_app
 from watchdog.settings import Settings
 
@@ -84,3 +86,68 @@ def test_future_worker_service_writes_requested_to_consumed_canonical_chain(
     }
     assert events[-1].related_ids["worker_task_ref"] == "worker:task-1"
     assert events[-1].related_ids["decision_id"] == "decision:2"
+
+
+def test_future_worker_service_rejects_late_result_before_parent_consume(
+    tmp_path: Path,
+) -> None:
+    app = create_app(_settings(tmp_path), start_background_workers=False)
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-late",
+        decision_trace_ref="trace:late",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:late"],
+        retrieval_handles=["handle:late"],
+        distilled_summary_ref="summary:late",
+        execution_budget_ref="budget:late",
+        occurred_at="2026-04-14T03:10:00Z",
+    )
+    service.record_started(
+        worker_task_ref="worker:task-late",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T03:11:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    service.record_completed(
+        worker_task_ref="worker:task-late",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        result_summary_ref="summary:worker:late",
+        artifact_refs=["artifact:patch:late"],
+        input_contract_hash="sha256:input-late",
+        result_hash="sha256:result-late",
+        occurred_at="2026-04-14T03:12:00Z",
+    )
+    service.reject_result(
+        worker_task_ref="worker:task-late",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        reason="late_result",
+        occurred_at="2026-04-14T03:13:00Z",
+    )
+
+    with pytest.raises(ValueError, match="terminal future worker state: rejected"):
+        service.consume_result(
+            worker_task_ref="worker:task-late",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            consumed_by_decision_id="decision:late",
+            occurred_at="2026-04-14T03:14:00Z",
+        )
+
+    events = app.state.session_service.list_events(session_id="session:repo-a")
+
+    assert [event.event_type for event in events] == [
+        "future_worker_requested",
+        "future_worker_started",
+        "future_worker_completed",
+        "future_worker_result_rejected",
+    ]
+    assert events[-1].payload["reason"] == "late_result"

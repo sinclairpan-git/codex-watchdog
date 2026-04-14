@@ -105,7 +105,8 @@
   1. `build_ops_summary()` 已新增 `future_workers` 读侧视图，可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
   2. `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`，可直接看见 `late_result` 等阻断原因；
   3. `metrics_export.py` 已新增 future worker 状态与阻断原因 gauge；
-  4. stale/late rejection 的 e2e 支线仍待继续补齐后再收口 `T384`。
+  4. `tests/e2e/test_watchdog_future_worker_execution.py` 已新增 late-result rejection 支线，固定 `rejected` 后不得再被 parent consume；
+  5. recovery-supersede 与 late-result 两条 rejection 支线都已入测，剩余收口点主要在 orchestrator 正式接线与更完整的 stale-result 主链。
 
 ## Task 38.5 更新执行日志与 handoff 摘要
 

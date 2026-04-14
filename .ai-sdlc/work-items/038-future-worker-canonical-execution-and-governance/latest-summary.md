@@ -5,7 +5,7 @@ Total Tasks: 5
 Completed Tasks: 2
 Halted Tasks: 0
 Total Batches: 5
-Completed Batches: 4
+Completed Batches: 5
 Last Committed Task: T382
 
 ## Notes
@@ -34,7 +34,7 @@ Last Committed Task: T382
   - `build_ops_summary()` 已新增 `future_workers` 读侧视图，可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
   - `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`；
   - `metrics_export.py` 已导出 future worker 状态与阻断原因 gauge；
-  - stale/late rejection 的 e2e 支线仍待继续补齐。
+  - late-result rejection 的 e2e 支线已补齐，固定 `rejected` 后不得再被 parent consume。
 
 ## Latest Verification
 - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py` -> `3 passed in 0.02s`
@@ -48,10 +48,12 @@ Last Committed Task: T382
 - `uv run pytest -q tests/test_watchdog_recovery_execution.py -k supersedes_parent_future_workers` -> `1 passed in 0.30s`
 - `uv run pytest -q tests/test_watchdog_recovery_execution.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_ops.py` -> `30 passed in 1.27s`
 - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_memory_packets.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `86 passed in 4.19s`
+- `uv run pytest -q tests/e2e/test_watchdog_future_worker_execution.py` -> `2 passed in 0.47s`
+- `uv run pytest -q tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_future_worker_runtime.py tests/test_watchdog_ops.py` -> `31 passed in 1.06s`
 
 ## Handoff
 - 当前下一步是继续推进 `T383`，把 orchestrator/recovery 的 supersede / crash continuation 正式接线补齐。
 - 现在 recovery 的 parent-worker supersede 已落地，`T383` 下一步收敛到 orchestrator 侧 create/consume 正式接线。
-- `T384` 的 ops/read-side 已落地，下一步补 stale/late rejection 的 e2e 支线后再整体收口。
+- `T384` 的 ops/read-side、recovery-supersede rejection 与 late-result rejection e2e 已落地，下一步看 orchestrator 接线后是否还需要更长的 stale-result 主链 e2e。
 - 后续工作不得回退到隐式共享状态、worker 本地真相或人工口头治理。
 - Hermes Agent 专家 / Anthropic Manager 专家子线程本轮两次 wait 都超时，尚未形成正式 blocking/P1 verdict；当前只能依据本地回归继续推进。

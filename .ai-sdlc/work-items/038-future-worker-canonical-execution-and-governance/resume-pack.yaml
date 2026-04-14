@@ -1,5 +1,5 @@
 current_stage: implementation
-current_batch: 5
+current_batch: 6
 last_committed_task: T382
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
@@ -21,6 +21,7 @@ working_set_snapshot:
   - '`tests/test_watchdog_future_worker_runtime.py`'
   - '`tests/test_watchdog_ops.py`'
   - '`tests/test_watchdog_recovery_execution.py`'
+  - '`tests/e2e/test_watchdog_future_worker_execution.py`'
   - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/runtime.yaml`'
   - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/resume-pack.yaml`'
@@ -54,13 +55,13 @@ working_set_snapshot:
       - `build_ops_summary()` 已新增 `future_workers` 读侧视图；
       - `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`；
       - `metrics_export.py` 已导出 future worker 状态与阻断原因 gauge；
-      - stale/late rejection 的 e2e 支线仍待补齐。
+      - late-result rejection 的 e2e 支线已补齐，固定 `rejected` 后不得再被 parent consume。
     - 本轮已两次发起 Hermes Agent 专家 / Anthropic Manager 专家子线程复核，但 `wait_agent` 均超时；
       当前只确认本地回归通过，正式专家 blocking/P1 verdict 需下轮补做。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T09:38:44+08:00'
+timestamp: '2026-04-14T09:41:10+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

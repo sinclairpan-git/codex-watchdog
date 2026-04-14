@@ -92,3 +92,15 @@
 - 当前收口判断：
   - `T383` 继续推进，但剩余缺口已收敛到 orchestrator 侧 create/consume 正式接线；
   - recovery 侧的 parent-worker supersede 治理已不再缺位。
+
+### Phase 4：late-result rejection e2e branch
+
+- 已新增 `tests/e2e/test_watchdog_future_worker_execution.py` 支线：
+  - 固定 `requested -> started -> completed -> result_rejected(late_result)`；
+  - 固定 `rejected` 后 parent `consume_result` 必须 fail closed。
+- 本轮验证：
+  - `uv run pytest -q tests/e2e/test_watchdog_future_worker_execution.py` -> `2 passed in 0.47s`
+  - `uv run pytest -q tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_future_worker_runtime.py tests/test_watchdog_ops.py` -> `31 passed in 1.06s`
+- 当前收口判断：
+  - `T384` 的 late-result rejection 支线已进入正式 e2e；
+  - 继续向前时，应优先把 orchestrator 侧 create/consume 接线补齐，再决定是否需要更长的 stale-result parent-decision 主链 e2e。
