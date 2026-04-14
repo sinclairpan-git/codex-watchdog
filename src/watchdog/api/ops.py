@@ -83,6 +83,9 @@ class OpsReleaseGateBlocker(BaseModel):
     report_ref: str | None = None
     certification_packet_corpus_ref: str | None = None
     shadow_decision_ledger_ref: str | None = None
+    label_manifest_ref: str | None = None
+    generated_by: str | None = None
+    report_approved_by: str | None = None
 
 
 class OpsFutureWorkerStatus(BaseModel):
@@ -206,6 +209,9 @@ def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
                     str(certification.get("artifact_ref") or "") or None
                 ),
                 shadow_decision_ledger_ref=str(ledger.get("artifact_ref") or "") or None,
+                label_manifest_ref=str(bundle.get("label_manifest_ref") or "") or None,
+                generated_by=str(bundle.get("generated_by") or "") or None,
+                report_approved_by=str(bundle.get("report_approved_by") or "") or None,
             )
         )
     blockers.sort(key=lambda item: (item.reason, item.project_id, item.decision_id))

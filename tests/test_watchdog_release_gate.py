@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
+import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -288,6 +290,63 @@ def test_parse_release_gate_report_rejects_python_equal_but_json_drifted_taxonom
 
     with pytest.raises(ValueError, match="runtime_gate_reason_taxonomy"):
         module.parse_release_gate_report(payload)
+
+
+def test_release_gate_loading_module_exports_shared_loader_surface() -> None:
+    assert (
+        importlib.util.find_spec("watchdog.services.brain.release_gate_loading")
+        is not None
+    )
+
+    module = importlib.import_module("watchdog.services.brain.release_gate_loading")
+
+    assert hasattr(module, "LoadedReleaseGateArtifacts")
+    assert hasattr(module, "load_release_gate_artifacts")
+
+
+def test_release_gate_shared_loader_rejects_report_hash_drift(tmp_path: Path) -> None:
+    loading = importlib.import_module("watchdog.services.brain.release_gate_loading")
+    report = {
+        "report_id": "report-1",
+        "report_hash": "sha256:seed",
+        "sample_window": "2026-04-01..2026-04-07",
+        "shadow_window": "2026-04-08..2026-04-09",
+        "label_manifest": "tests/fixtures/release_gate_label_manifest.json",
+        "generated_by": "codex",
+        "report_approved_by": "operator-a",
+        "artifact_ref": "tests/fixtures/release_gate_expected_report.json",
+        "expires_at": "2026-05-01T00:00:00Z",
+        "provider": "provider-a",
+        "model": "model-a",
+        "prompt_schema_ref": "prompt:v1",
+        "output_schema_ref": "schema:v1",
+        "risk_policy_version": "risk:v1",
+        "decision_input_builder_version": "dib:v1",
+        "policy_engine_version": "policy:v1",
+        "tool_schema_hash": "tool:abc",
+        "memory_provider_adapter_hash": "memory:abc",
+        "input_hash": "sha256:input",
+        **_runtime_governance_fields(),
+    }
+    canonical = json.dumps(report, sort_keys=True, separators=(",", ":"))
+    report["report_hash"] = f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+    report["generated_by"] = "tampered-codex"
+    report_path = tmp_path / "release_gate_report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="report_hash"):
+        loading.load_release_gate_artifacts(
+            report_path=str(report_path),
+            runtime_contract={
+                "risk_policy_version": "risk:v1",
+                "decision_input_builder_version": "dib:v1",
+                "policy_engine_version": "policy:v1",
+                "tool_schema_hash": "tool:abc",
+                "memory_provider_adapter_hash": "memory:abc",
+            },
+            certification_packet_corpus_ref="tests/fixtures/release_gate_packets.jsonl",
+            shadow_decision_ledger_ref="tests/fixtures/release_gate_shadow_runs.jsonl",
+        )
 
 
 def test_release_gate_evaluator_accepts_current_matching_report() -> None:

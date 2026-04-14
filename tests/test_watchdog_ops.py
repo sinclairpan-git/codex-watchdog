@@ -679,6 +679,9 @@ def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path
                         "artifact_ref": "artifacts/shadow-ledger.jsonl"
                     },
                     "release_gate_report_ref": "artifacts/release-gate-report.json",
+                    "label_manifest_ref": "tests/fixtures/release_gate_label_manifest.json",
+                    "generated_by": "codex",
+                    "report_approved_by": "operator-a",
                 },
             },
         )
@@ -696,6 +699,9 @@ def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path
     assert blocker["report_ref"] == "artifacts/release-gate-report.json"
     assert blocker["certification_packet_corpus_ref"] == "artifacts/certification-packets.jsonl"
     assert blocker["shadow_decision_ledger_ref"] == "artifacts/shadow-ledger.jsonl"
+    assert blocker.get("label_manifest_ref") == "tests/fixtures/release_gate_label_manifest.json"
+    assert blocker.get("generated_by") == "codex"
+    assert blocker.get("report_approved_by") == "operator-a"
 
 
 def test_build_ops_summary_normalizes_runtime_gate_reason_taxonomy(tmp_path: Path) -> None:

@@ -12,17 +12,17 @@ from pydantic import ValidationError
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
+from watchdog.services.brain.release_gate import (
+    ReleaseGateEvaluator,
+    ReleaseGateReport,
+    ReleaseGateVerdict,
+)
 from watchdog.services.brain.release_gate_evidence import (
     CertificationPacketCorpus,
     ReleaseGateEvidenceBundle,
     ShadowDecisionLedger,
 )
-from watchdog.services.brain.release_gate import (
-    parse_release_gate_report,
-    ReleaseGateEvaluator,
-    ReleaseGateReport,
-    ReleaseGateVerdict,
-)
+from watchdog.services.brain.release_gate_loading import load_release_gate_artifacts
 from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.brain.validator import DecisionValidator
@@ -714,12 +714,16 @@ class ResidentOrchestrator:
             output_schema_ref=trace.output_schema_ref,
         )
 
-    def _load_release_gate_report(self) -> ReleaseGateReport | None:
+    def _load_release_gate_report(self, *, trace: DecisionTrace):
         report_path = self._settings.release_gate_report_path
         if not report_path:
             return None
-        payload = json.loads(Path(report_path).read_text(encoding="utf-8"))
-        return parse_release_gate_report(payload)
+        return load_release_gate_artifacts(
+            report_path=report_path,
+            runtime_contract=self._release_gate_runtime_contract(trace=trace),
+            certification_packet_corpus_ref=self._settings.release_gate_certification_packet_corpus_ref,
+            shadow_decision_ledger_ref=self._settings.release_gate_shadow_decision_ledger_ref,
+        )
 
     @staticmethod
     def _release_gate_now(now: datetime) -> str:
@@ -777,10 +781,12 @@ class ResidentOrchestrator:
         )
         approval_read = self._approval_read_snapshot_for_session(record)
         report = None
+        loaded_artifacts = None
         verdict = None
         if self._settings.release_gate_report_path:
             try:
-                report = self._load_release_gate_report()
+                loaded_artifacts = self._load_release_gate_report(trace=decision_trace)
+                report = loaded_artifacts.report
             except (OSError, ValueError, json.JSONDecodeError, ValidationError):
                 verdict = self._report_load_failure_verdict(
                     trace=decision_trace,
@@ -800,7 +806,11 @@ class ResidentOrchestrator:
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
         evidence["release_gate_verdict"] = release_gate_verdict.model_dump(mode="json")
-        if self._settings.release_gate_report_path:
+        if loaded_artifacts is not None:
+            evidence["release_gate_evidence_bundle"] = loaded_artifacts.evidence_bundle.model_dump(
+                mode="json"
+            )
+        elif self._settings.release_gate_report_path:
             evidence["release_gate_evidence_bundle"] = ReleaseGateEvidenceBundle(
                 certification_packet_corpus=CertificationPacketCorpus(
                     artifact_ref=self._settings.release_gate_certification_packet_corpus_ref
@@ -809,7 +819,10 @@ class ResidentOrchestrator:
                     artifact_ref=self._settings.release_gate_shadow_decision_ledger_ref
                 ),
                 release_gate_report_ref=self._settings.release_gate_report_path,
-            ).model_dump(mode="json")
+                report_id=release_gate_verdict.report_id,
+                report_hash=release_gate_verdict.report_hash,
+                input_hash=release_gate_verdict.input_hash,
+            ).model_dump(mode="json", exclude_none=True)
         if brain_intent.intent == "candidate_closure":
             evidence["requested_action_args"] = self._candidate_closure_action_args(record)
         return evidence

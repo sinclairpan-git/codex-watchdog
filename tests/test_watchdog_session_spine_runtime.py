@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from contextlib import suppress
@@ -170,7 +171,6 @@ def _write_release_gate_report(
     evaluator = ReleaseGateEvaluator()
     report = {
         "report_id": "report:runtime-qualified",
-        "report_hash": "sha256:runtime-qualified",
         "sample_window": "2026-04-01/2026-04-05",
         "shadow_window": "2026-04-06/2026-04-07",
         "label_manifest": "manifest:runtime-qualified",
@@ -191,6 +191,9 @@ def _write_release_gate_report(
         "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
         "runtime_gate_reason_taxonomy": DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
     }
+    material = dict(report)
+    canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
+    report["report_hash"] = f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
@@ -1751,10 +1754,17 @@ def test_resident_orchestrator_uses_configured_release_gate_report_for_auto_exec
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     release_gate_verdict = decisions[0].evidence["release_gate_verdict"]
+    release_gate_bundle = decisions[0].evidence["release_gate_evidence_bundle"]
     assert release_gate_verdict["status"] == "pass"
     assert release_gate_verdict["report_id"] == report["report_id"]
     assert release_gate_verdict["report_hash"] == report["report_hash"]
     assert release_gate_verdict["input_hash"] == report["input_hash"]
+    assert release_gate_bundle.get("label_manifest_ref") == report["label_manifest"]
+    assert release_gate_bundle.get("generated_by") == report["generated_by"]
+    assert release_gate_bundle.get("report_approved_by") == report["report_approved_by"]
+    assert release_gate_bundle.get("report_id") == report["report_id"]
+    assert release_gate_bundle.get("report_hash") == report["report_hash"]
+    assert release_gate_bundle.get("input_hash") == report["input_hash"]
     assert app.state.command_lease_store.list_events() != []
 
 
@@ -1879,9 +1889,20 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_gove
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     release_gate_verdict = decisions[0].evidence["release_gate_verdict"]
+    release_gate_bundle = decisions[0].evidence["release_gate_evidence_bundle"]
     assert release_gate_verdict["status"] == "degraded"
     assert release_gate_verdict["degrade_reason"] == "report_load_failed"
     assert release_gate_verdict["report_id"] == "report:load_failed"
+    assert release_gate_bundle["release_gate_report_ref"] == str(report_path)
+    assert (
+        release_gate_bundle["certification_packet_corpus"]["artifact_ref"]
+        == settings.release_gate_certification_packet_corpus_ref
+    )
+    assert (
+        release_gate_bundle["shadow_decision_ledger"]["artifact_ref"]
+        == settings.release_gate_shadow_decision_ledger_ref
+    )
+    assert release_gate_bundle["report_id"] == "report:load_failed"
     assert app.state.command_lease_store.list_events() == []
     steer_mock.assert_not_called()
 

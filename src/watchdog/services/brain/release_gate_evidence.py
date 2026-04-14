@@ -19,3 +19,9 @@ class ReleaseGateEvidenceBundle(_ReleaseGateEvidenceModel):
     certification_packet_corpus: CertificationPacketCorpus
     shadow_decision_ledger: ShadowDecisionLedger
     release_gate_report_ref: str = Field(min_length=1)
+    label_manifest_ref: str | None = None
+    generated_by: str | None = None
+    report_approved_by: str | None = None
+    report_id: str | None = None
+    report_hash: str | None = None
+    input_hash: str | None = None

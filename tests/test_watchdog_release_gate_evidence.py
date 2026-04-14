@@ -13,6 +13,35 @@ def test_release_gate_evidence_module_exports_frozen_evidence_types() -> None:
     assert hasattr(module, "ReleaseGateEvidenceBundle")
 
 
+def test_release_gate_evidence_bundle_carries_formal_governance_metadata() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_evidence")
+
+    bundle = module.ReleaseGateEvidenceBundle(
+        certification_packet_corpus=module.CertificationPacketCorpus(
+            artifact_ref="artifacts/certification-packets.jsonl"
+        ),
+        shadow_decision_ledger=module.ShadowDecisionLedger(
+            artifact_ref="artifacts/shadow-ledger.jsonl"
+        ),
+        release_gate_report_ref="artifacts/release-gate-report.json",
+        label_manifest_ref="tests/fixtures/release_gate_label_manifest.json",
+        generated_by="codex",
+        report_approved_by="operator-a",
+        report_id="report:2026-04-14",
+        report_hash="sha256:report",
+        input_hash="sha256:input",
+    )
+
+    dumped = bundle.model_dump(mode="json")
+
+    assert dumped["label_manifest_ref"] == "tests/fixtures/release_gate_label_manifest.json"
+    assert dumped["generated_by"] == "codex"
+    assert dumped["report_approved_by"] == "operator-a"
+    assert dumped["report_id"] == "report:2026-04-14"
+    assert dumped["report_hash"] == "sha256:report"
+    assert dumped["input_hash"] == "sha256:input"
+
+
 def test_future_worker_trace_ref_is_declarative_only() -> None:
     models = importlib.import_module("watchdog.services.brain.models")
 
