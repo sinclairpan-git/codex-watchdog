@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 import json
 import time
 from contextlib import suppress
@@ -30,7 +31,7 @@ from watchdog.services.policy.decisions import (
     build_canonical_decision_record,
 )
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
-from watchdog.services.session_spine.orchestrator import _parse_iso
+from watchdog.services.session_spine.orchestrator import ResidentOrchestrator, _parse_iso
 from watchdog.services.session_spine.service import build_approval_inbox_bundle, build_session_read_bundle
 from watchdog.settings import Settings
 
@@ -196,6 +197,161 @@ def _write_release_gate_report(
     report["report_hash"] = f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
+
+
+def _runtime_gate_decision(
+    *,
+    release_gate_verdict: dict[str, object],
+    validator_verdict: dict[str, object] | None = None,
+) -> CanonicalDecisionRecord:
+    return CanonicalDecisionRecord(
+        decision_id="decision:runtime-gate",
+        decision_key=(
+            "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|"
+            "propose_execute|continue_session|"
+        ),
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        approval_id=None,
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        brain_intent="propose_execute",
+        runtime_disposition="auto_execute_and_notify",
+        decision_result="auto_execute_and_notify",
+        risk_class="none",
+        decision_reason="registered action and complete evidence",
+        matched_policy_rules=["registered_action"],
+        why_not_escalated="policy_allows_auto_execution",
+        why_escalated=None,
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key=(
+            "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|"
+            "propose_execute|continue_session|"
+        ),
+        created_at="2099-01-01T00:00:00Z",
+        operator_notes=[],
+        evidence={
+            "validator_verdict": validator_verdict
+            or {"status": "pass", "reason": "schema_and_risk_ok"},
+            "release_gate_verdict": release_gate_verdict,
+        },
+    )
+
+
+def _with_formal_release_gate_bundle(
+    decision: CanonicalDecisionRecord,
+) -> CanonicalDecisionRecord:
+    return decision.model_copy(
+        update={
+            "evidence": {
+                **decision.evidence,
+                "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                    report_id="report-seed",
+                    report_hash="sha256:report-seed",
+                    input_hash="sha256:input-seed",
+                ),
+            }
+        }
+    )
+
+
+def _formal_release_gate_bundle(
+    *,
+    report_id: str,
+    report_hash: str,
+    input_hash: str,
+) -> dict[str, object]:
+    return {
+        "certification_packet_corpus": {
+            "artifact_ref": "artifacts/certification-packets.jsonl"
+        },
+        "shadow_decision_ledger": {
+            "artifact_ref": "artifacts/shadow-ledger.jsonl"
+        },
+        "release_gate_report_ref": "artifacts/release-gate-report.json",
+        "label_manifest_ref": "tests/fixtures/release_gate_label_manifest.json",
+        "generated_by": "codex",
+        "report_approved_by": "operator-a",
+        "report_id": report_id,
+        "report_hash": report_hash,
+        "input_hash": input_hash,
+    }
+
+
+def test_release_gate_read_contract_runtime_module_exports_typed_surface() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_read_contract")
+
+    assert hasattr(module, "ReleaseGateDecisionReadSnapshot")
+    assert hasattr(module, "read_release_gate_decision_evidence")
+
+
+def test_resident_orchestrator_rejects_incomplete_pass_release_gate_verdict() -> None:
+    decision = _runtime_gate_decision(
+        release_gate_verdict={
+            "status": "pass",
+            "decision_trace_ref": "trace:seed",
+            "approval_read_ref": "approval:none",
+            "report_id": "report-seed",
+            "input_hash": "sha256:input-seed",
+        }
+    )
+
+    assert ResidentOrchestrator._decision_has_runtime_gate(decision) is False
+    assert ResidentOrchestrator._decision_allows_auto_execute(decision) is False
+
+
+def test_resident_orchestrator_rejects_pass_verdict_without_bundle() -> None:
+    decision = _runtime_gate_decision(
+        release_gate_verdict={
+            "status": "pass",
+            "decision_trace_ref": "trace:seed",
+            "approval_read_ref": "approval:none",
+            "report_id": "report-seed",
+            "report_hash": "sha256:report-seed",
+            "input_hash": "sha256:input-seed",
+        }
+    )
+
+    assert ResidentOrchestrator._decision_has_runtime_gate(decision) is False
+    assert ResidentOrchestrator._decision_allows_auto_execute(decision) is False
+
+
+def test_resident_orchestrator_rejects_pass_verdict_with_partial_bundle() -> None:
+    decision = _runtime_gate_decision(
+        release_gate_verdict={
+            "status": "pass",
+            "decision_trace_ref": "trace:seed",
+            "approval_read_ref": "approval:none",
+            "report_id": "report-seed",
+            "report_hash": "sha256:report-seed",
+            "input_hash": "sha256:input-seed",
+        }
+    ).model_copy(
+        update={
+            "evidence": {
+                "validator_verdict": {"status": "pass", "reason": "schema_and_risk_ok"},
+                "release_gate_verdict": {
+                    "status": "pass",
+                    "decision_trace_ref": "trace:seed",
+                    "approval_read_ref": "approval:none",
+                    "report_id": "report-seed",
+                    "report_hash": "sha256:report-seed",
+                    "input_hash": "sha256:input-seed",
+                },
+                "release_gate_evidence_bundle": {
+                    "release_gate_report_ref": "artifacts/release-gate-report.json",
+                    "generated_by": "codex",
+                },
+            }
+        }
+    )
+
+    assert ResidentOrchestrator._decision_has_runtime_gate(decision) is False
+    assert ResidentOrchestrator._decision_allows_auto_execute(decision) is False
 
 
 class RecordingDeliveryClient:
@@ -1314,6 +1470,11 @@ def test_resident_orchestrator_materializes_future_worker_requests_once_per_deci
                 "report_hash": "sha256:worker-request",
                 "input_hash": "sha256:worker-request-input",
             },
+            "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                report_id="report:worker-request",
+                report_hash="sha256:worker-request",
+                input_hash="sha256:worker-request-input",
+            ),
             "future_worker_requests": [request.model_dump(mode="json")],
         },
     ):
@@ -1403,6 +1564,11 @@ def test_resident_orchestrator_rejects_partial_future_worker_request_materializa
                 "report_hash": "sha256:worker-request-batch",
                 "input_hash": "sha256:worker-request-batch-input",
             },
+            "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                report_id="report:worker-request-batch",
+                report_hash="sha256:worker-request-batch",
+                input_hash="sha256:worker-request-batch-input",
+            ),
             "future_worker_requests": [
                 valid_request.model_dump(mode="json"),
                 invalid_request.model_dump(mode="json"),
@@ -2044,12 +2210,14 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
     decision = app.state.policy_decision_store.put(
-        evaluate_persisted_session_policy(
-            record,
-            action_ref="continue_session",
-            trigger="resident_orchestrator",
-            brain_intent="propose_execute",
-            **_runtime_gate_pass_kwargs(),
+        _with_formal_release_gate_bundle(
+            evaluate_persisted_session_policy(
+                record,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                **_runtime_gate_pass_kwargs(),
+            )
         )
     )
     command_id = f"command:{decision.decision_id}"
@@ -2111,12 +2279,14 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
     decision = app.state.policy_decision_store.put(
-        evaluate_persisted_session_policy(
-            record,
-            action_ref="continue_session",
-            trigger="resident_orchestrator",
-            brain_intent="propose_execute",
-            **_runtime_gate_pass_kwargs(),
+        _with_formal_release_gate_bundle(
+            evaluate_persisted_session_policy(
+                record,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                **_runtime_gate_pass_kwargs(),
+            )
         )
     )
     command_id = f"command:{decision.decision_id}"
@@ -2193,12 +2363,14 @@ def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
     decision = app.state.policy_decision_store.put(
-        evaluate_persisted_session_policy(
-            record,
-            action_ref="continue_session",
-            trigger="resident_orchestrator",
-            brain_intent="propose_execute",
-            **_runtime_gate_pass_kwargs(),
+        _with_formal_release_gate_bundle(
+            evaluate_persisted_session_policy(
+                record,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                **_runtime_gate_pass_kwargs(),
+            )
         )
     )
     command_id = f"command:{decision.decision_id}"

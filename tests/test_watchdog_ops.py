@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -566,6 +567,13 @@ def test_build_ops_summary_surfaces_runtime_gate_degradation_alert(tmp_path: Pat
     assert summary.release_gate_blockers[0].input_hash == "sha256:input"
 
 
+def test_release_gate_read_contract_module_exports_typed_surface() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_read_contract")
+
+    assert hasattr(module, "ReleaseGateDecisionReadSnapshot")
+    assert hasattr(module, "read_release_gate_decision_evidence")
+
+
 def test_build_ops_summary_breaks_runtime_gate_alerts_down_by_degrade_reason(
     tmp_path: Path,
 ) -> None:
@@ -702,6 +710,80 @@ def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path
     assert blocker.get("label_manifest_ref") == "tests/fixtures/release_gate_label_manifest.json"
     assert blocker.get("generated_by") == "codex"
     assert blocker.get("report_approved_by") == "operator-a"
+
+
+def test_build_ops_summary_drops_partial_release_gate_bundle_metadata(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:runtime-gate-partial-bundle",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="release gate blocks autonomous execution",
+            matched_policy_rules=["release_gate_degraded"],
+            why_not_escalated=None,
+            why_escalated="release gate verdict is not pass: report_expired",
+            uncertainty_reasons=["report_expired"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|"
+                "propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "degraded",
+                    "degrade_reason": "report_expired",
+                    "report_id": "report:2026-04-14",
+                    "report_hash": "sha256:report",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:1",
+                    "approval_read_ref": "approval:none",
+                },
+                "release_gate_evidence_bundle": {
+                    "certification_packet_corpus": "invalid",
+                    "shadow_decision_ledger": {
+                        "artifact_ref": "artifacts/shadow-ledger.jsonl"
+                    },
+                    "release_gate_report_ref": "artifacts/release-gate-report.json",
+                    "label_manifest_ref": "tests/fixtures/release_gate_label_manifest.json",
+                    "generated_by": "codex",
+                    "report_approved_by": "operator-a",
+                },
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    blocker = summary.release_gate_blockers[0]
+    assert blocker.reason == "report_expired"
+    assert blocker.report_id == "report:2026-04-14"
+    assert blocker.report_hash == "sha256:report"
+    assert blocker.input_hash == "sha256:input"
+    assert blocker.report_ref is None
+    assert blocker.certification_packet_corpus_ref is None
+    assert blocker.shadow_decision_ledger_ref is None
+    assert blocker.label_manifest_ref is None
+    assert blocker.generated_by is None
+    assert blocker.report_approved_by is None
 
 
 def test_build_ops_summary_normalizes_runtime_gate_reason_taxonomy(tmp_path: Path) -> None:

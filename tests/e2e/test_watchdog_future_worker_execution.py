@@ -254,6 +254,21 @@ def test_resident_orchestrator_materializes_and_consumes_future_worker_chain(
             "report_hash": "sha256:e2e-worker",
             "input_hash": "sha256:e2e-worker-input",
         },
+        "release_gate_evidence_bundle": {
+            "certification_packet_corpus": {
+                "artifact_ref": "artifacts/certification-packets.jsonl"
+            },
+            "shadow_decision_ledger": {
+                "artifact_ref": "artifacts/shadow-ledger.jsonl"
+            },
+            "release_gate_report_ref": "artifacts/release-gate-report.json",
+            "label_manifest_ref": "tests/fixtures/release_gate_label_manifest.json",
+            "generated_by": "codex",
+            "report_approved_by": "operator-a",
+            "report_id": "report:e2e-worker",
+            "report_hash": "sha256:e2e-worker",
+            "input_hash": "sha256:e2e-worker-input",
+        },
         "future_worker_requests": [request.model_dump(mode="json")],
     }
 

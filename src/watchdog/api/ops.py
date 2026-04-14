@@ -10,9 +10,12 @@ from pydantic import BaseModel, Field
 from a_control_agent.envelope import ok
 from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus
+from watchdog.services.brain.release_gate import normalize_runtime_gate_reason
+from watchdog.services.brain.release_gate_read_contract import (
+    read_release_gate_decision_evidence,
+)
 from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxStore
-from watchdog.services.brain.release_gate import normalize_runtime_gate_reason
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_service.service import SessionService
 from watchdog.settings import Settings
@@ -173,45 +176,49 @@ def _runtime_gate_reason_counts(decisions) -> dict[str, int]:
 def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
     blockers: list[OpsReleaseGateBlocker] = []
     for record in decisions:
-        evidence = record.evidence if isinstance(record.evidence, dict) else {}
-        verdict = evidence.get("release_gate_verdict")
-        if not isinstance(verdict, dict) or str(verdict.get("status")) == "pass":
+        release_gate = read_release_gate_decision_evidence(
+            record.evidence if isinstance(record.evidence, dict) else None
+        )
+        verdict = release_gate.verdict
+        if verdict is None or verdict.status == "pass":
             continue
-        bundle = (
-            evidence.get("release_gate_evidence_bundle")
-            if isinstance(evidence.get("release_gate_evidence_bundle"), dict)
-            else {}
-        )
-        certification = (
-            bundle.get("certification_packet_corpus")
-            if isinstance(bundle.get("certification_packet_corpus"), dict)
-            else {}
-        )
-        ledger = (
-            bundle.get("shadow_decision_ledger")
-            if isinstance(bundle.get("shadow_decision_ledger"), dict)
-            else {}
-        )
-        reason = normalize_runtime_gate_reason(
-            str(verdict.get("degrade_reason") or "") or "unknown"
-        )
+        bundle = release_gate.evidence_bundle
+        reason = normalize_runtime_gate_reason(verdict.degrade_reason or "unknown")
         blockers.append(
             OpsReleaseGateBlocker(
                 decision_id=record.decision_id,
                 project_id=record.project_id,
                 session_id=record.session_id,
                 reason=reason,
-                report_id=str(verdict.get("report_id") or "") or None,
-                report_hash=str(verdict.get("report_hash") or "") or None,
-                input_hash=str(verdict.get("input_hash") or "") or None,
-                report_ref=str(bundle.get("release_gate_report_ref") or "") or None,
-                certification_packet_corpus_ref=(
-                    str(certification.get("artifact_ref") or "") or None
+                report_id=verdict.report_id,
+                report_hash=verdict.report_hash,
+                input_hash=verdict.input_hash,
+                report_ref=(
+                    bundle.release_gate_report_ref
+                    if bundle is not None
+                    else None
                 ),
-                shadow_decision_ledger_ref=str(ledger.get("artifact_ref") or "") or None,
-                label_manifest_ref=str(bundle.get("label_manifest_ref") or "") or None,
-                generated_by=str(bundle.get("generated_by") or "") or None,
-                report_approved_by=str(bundle.get("report_approved_by") or "") or None,
+                certification_packet_corpus_ref=(
+                    bundle.certification_packet_corpus.artifact_ref
+                    if bundle is not None
+                    else None
+                ),
+                shadow_decision_ledger_ref=(
+                    bundle.shadow_decision_ledger.artifact_ref
+                    if bundle is not None
+                    else None
+                ),
+                label_manifest_ref=(
+                    bundle.label_manifest_ref
+                    if bundle is not None
+                    else None
+                ),
+                generated_by=bundle.generated_by if bundle is not None else None,
+                report_approved_by=(
+                    bundle.report_approved_by
+                    if bundle is not None
+                    else None
+                ),
             )
         )
     blockers.sort(key=lambda item: (item.reason, item.project_id, item.decision_id))

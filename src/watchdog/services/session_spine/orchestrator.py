@@ -23,6 +23,9 @@ from watchdog.services.brain.release_gate_evidence import (
     ShadowDecisionLedger,
 )
 from watchdog.services.brain.release_gate_loading import load_release_gate_artifacts
+from watchdog.services.brain.release_gate_read_contract import (
+    read_release_gate_decision_evidence,
+)
 from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.brain.validator import DecisionValidator
@@ -158,7 +161,7 @@ class ResidentOrchestrator:
         decision_evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         decision_trace = decision_evidence.get("decision_trace")
         validator_verdict = decision_evidence.get("validator_verdict")
-        release_gate_verdict = decision_evidence.get("release_gate_verdict")
+        release_gate_verdict = read_release_gate_decision_evidence(decision_evidence).verdict
         self._session_service.record_event(
             event_type="decision_proposed",
             project_id=decision.project_id,
@@ -193,7 +196,11 @@ class ResidentOrchestrator:
                 "matched_policy_rules": list(decision.matched_policy_rules),
                 "decision_trace": decision_trace,
                 "validator_verdict": validator_verdict,
-                "release_gate_verdict": release_gate_verdict,
+                "release_gate_verdict": (
+                    release_gate_verdict.model_dump(mode="json")
+                    if release_gate_verdict is not None
+                    else None
+                ),
             },
         )
 
@@ -523,7 +530,7 @@ class ResidentOrchestrator:
         result: WatchdogActionResult,
     ) -> dict[str, Any]:
         evidence = self._decision_evidence_map(decision)
-        release_gate_verdict = evidence.get("release_gate_verdict")
+        release_gate_verdict = read_release_gate_decision_evidence(evidence).verdict
         return {
             "decision_result": decision.decision_result,
             "action_status": str(result.action_status),
@@ -532,8 +539,8 @@ class ResidentOrchestrator:
             "auto_execute_total": 1,
             "delivery_enqueue_expected": int(result.action_status == ActionStatus.COMPLETED),
             "release_gate_status": (
-                str(release_gate_verdict.get("status"))
-                if isinstance(release_gate_verdict, dict)
+                release_gate_verdict.status
+                if release_gate_verdict is not None
                 else "unknown"
             ),
         }
@@ -548,8 +555,7 @@ class ResidentOrchestrator:
     ) -> dict[str, Any]:
         evidence = self._decision_evidence_map(decision)
         trace = evidence.get("decision_trace")
-        release_gate_verdict = evidence.get("release_gate_verdict")
-        bundle = evidence.get("release_gate_evidence_bundle")
+        release_gate = read_release_gate_decision_evidence(evidence)
         action = build_watchdog_action_from_decision(decision)
         completion_evidence_ref = self._artifact_ref(
             "receipt",
@@ -585,10 +591,12 @@ class ResidentOrchestrator:
                 result=result,
             ),
         }
-        if isinstance(release_gate_verdict, dict):
-            payload["release_gate_verdict"] = release_gate_verdict
-        if isinstance(bundle, dict):
-            payload["release_gate_evidence_bundle"] = bundle
+        if release_gate.verdict is not None:
+            payload["release_gate_verdict"] = release_gate.verdict.model_dump(mode="json")
+        if release_gate.evidence_bundle is not None:
+            payload["release_gate_evidence_bundle"] = release_gate.evidence_bundle.model_dump(
+                mode="json"
+            )
         return payload
 
     def _cache_auto_continue_control_link_error(
@@ -840,6 +848,10 @@ class ResidentOrchestrator:
         return self._decision_store.put(decision)
 
     @staticmethod
+    def _pass_verdict_requires_bundle(release_gate_verdict: ReleaseGateVerdict) -> bool:
+        return release_gate_verdict.report_id != "report:resident_default"
+
+    @staticmethod
     def _decision_allows_auto_execute(decision) -> bool:
         if decision.brain_intent not in (None, "propose_execute"):
             return False
@@ -847,8 +859,14 @@ class ResidentOrchestrator:
         validator_verdict = evidence.get("validator_verdict")
         if not isinstance(validator_verdict, dict) or validator_verdict.get("status") != "pass":
             return False
-        release_gate_verdict = evidence.get("release_gate_verdict")
-        if not isinstance(release_gate_verdict, dict) or release_gate_verdict.get("status") != "pass":
+        release_gate = read_release_gate_decision_evidence(evidence)
+        release_gate_verdict = release_gate.verdict
+        if release_gate_verdict is None or release_gate_verdict.status != "pass":
+            return False
+        if (
+            ResidentOrchestrator._pass_verdict_requires_bundle(release_gate_verdict)
+            and release_gate.evidence_bundle is None
+        ):
             return False
         return True
 
@@ -865,8 +883,14 @@ class ResidentOrchestrator:
     @staticmethod
     def _decision_has_runtime_gate(decision) -> bool:
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
-        return isinstance(evidence.get("validator_verdict"), dict) and isinstance(
-            evidence.get("release_gate_verdict"), dict
+        release_gate = read_release_gate_decision_evidence(evidence)
+        return (
+            isinstance(evidence.get("validator_verdict"), dict)
+            and release_gate.verdict is not None
+            and (
+                not ResidentOrchestrator._pass_verdict_requires_bundle(release_gate.verdict)
+                or release_gate.evidence_bundle is not None
+            )
         )
 
     def _session_has_event(self, *, session_id: str, event_type: str) -> bool:
@@ -1000,6 +1024,7 @@ class ResidentOrchestrator:
                 goal_contract_readiness=goal_contract_readiness,
                 now=now,
             )
+            release_gate_verdict = read_release_gate_decision_evidence(intent_evidence).verdict
             decision = evaluate_persisted_session_policy(
                 record,
                 action_ref=action_ref,
@@ -1011,8 +1036,8 @@ class ResidentOrchestrator:
                     else None
                 ),
                 release_gate_verdict=(
-                    intent_evidence.get("release_gate_verdict")
-                    if isinstance(intent_evidence.get("release_gate_verdict"), dict)
+                    release_gate_verdict.model_dump(mode="json")
+                    if release_gate_verdict is not None
                     else None
                 ),
                 goal_contract_readiness=goal_contract_readiness,
