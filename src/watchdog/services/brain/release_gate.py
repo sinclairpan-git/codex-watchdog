@@ -94,6 +94,8 @@ class ReleaseGateReport(_ReleaseGateModel):
     input_hash: str = Field(min_length=1)
     runtime_contract_surface_ref: str = Field(min_length=1)
     runtime_gate_reason_taxonomy: RuntimeGateReasonTaxonomy
+    shadow_decision_count: int | None = None
+    certification_packet_count: int | None = None
 
 
 def parse_release_gate_report(payload: dict[str, object]) -> ReleaseGateReport:

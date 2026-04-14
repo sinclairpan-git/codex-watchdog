@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -11,6 +10,9 @@ from watchdog.services.brain.release_gate_evidence import (
     CertificationPacketCorpus,
     ReleaseGateEvidenceBundle,
     ShadowDecisionLedger,
+)
+from watchdog.services.brain.release_gate_report_material import (
+    stable_release_gate_report_hash,
 )
 
 
@@ -34,7 +36,7 @@ def load_release_gate_artifacts(
 ) -> LoadedReleaseGateArtifacts:
     payload = json.loads(Path(report_path).read_text(encoding="utf-8"))
     report = parse_release_gate_report(payload)
-    expected_report_hash = _stable_report_hash(payload)
+    expected_report_hash = stable_release_gate_report_hash(payload)
     if report.report_hash != expected_report_hash:
         raise ValueError("report_hash drifted from canonical material")
     return LoadedReleaseGateArtifacts(
@@ -57,13 +59,3 @@ def load_release_gate_artifacts(
             input_hash=report.input_hash,
         ),
     )
-
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-
-def _stable_report_hash(payload: dict[str, object]) -> str:
-    material = dict(payload)
-    material.pop("report_hash", None)
-    return f"sha256:{hashlib.sha256(_canonical_json(material).encode('utf-8')).hexdigest()}"

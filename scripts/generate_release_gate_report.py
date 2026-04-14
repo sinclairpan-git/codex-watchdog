@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
 from watchdog.services.brain.release_gate import (
     DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
     DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
+)
+from watchdog.services.brain.release_gate_report_material import (
+    build_release_gate_report_id,
+    stable_release_gate_report_hash,
 )
 
 
@@ -30,11 +33,6 @@ def _single_value(rows: list[dict[str, object]], field: str) -> str:
     if len(values) != 1:
         raise ValueError(f"expected exactly one {field}, got: {sorted(values)}")
     return next(iter(values))
-
-
-def _stable_report_hash(payload: dict[str, object]) -> str:
-    material = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return f"sha256:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
 
 
 def _display_path(path: Path) -> str:
@@ -62,17 +60,7 @@ def build_report(
         raise ValueError("shadow runs fixture must not be empty")
 
     input_hash = _single_value(packets, "input_hash")
-    report_seed = {
-        "artifact_ref": artifact_ref,
-        "sample_window": sample_window,
-        "shadow_window": shadow_window,
-        "input_hash": input_hash,
-        "generated_by": generated_by,
-        "report_approved_by": report_approved_by,
-    }
-    report_id = f"report:{hashlib.sha256(json.dumps(report_seed, sort_keys=True).encode('utf-8')).hexdigest()[:16]}"
     payload = {
-        "report_id": report_id,
         "sample_window": sample_window,
         "shadow_window": shadow_window,
         "label_manifest": label_manifest_path,
@@ -99,7 +87,8 @@ def build_report(
         "shadow_decision_count": len(shadow_runs),
         "certification_packet_count": len(packets),
     }
-    payload["report_hash"] = _stable_report_hash(payload)
+    payload["report_id"] = build_release_gate_report_id(payload)
+    payload["report_hash"] = stable_release_gate_report_hash(payload)
     return payload
 
 

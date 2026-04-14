@@ -349,6 +349,48 @@ def test_release_gate_shared_loader_rejects_report_hash_drift(tmp_path: Path) ->
         )
 
 
+def test_release_gate_report_material_module_exports_shared_contract() -> None:
+    assert (
+        importlib.util.find_spec("watchdog.services.brain.release_gate_report_material")
+        is not None
+    )
+
+    module = importlib.import_module("watchdog.services.brain.release_gate_report_material")
+
+    assert hasattr(module, "canonicalize_release_gate_report_material")
+    assert hasattr(module, "build_release_gate_report_id")
+    assert hasattr(module, "stable_release_gate_report_hash")
+
+
+def test_release_gate_report_material_helpers_rebuild_fixture_and_loader_hash() -> None:
+    root = Path(__file__).resolve().parents[1]
+    module = importlib.import_module("watchdog.services.brain.release_gate_report_material")
+    loading = importlib.import_module("watchdog.services.brain.release_gate_loading")
+    fixture_path = root / "tests" / "fixtures" / "release_gate_expected_report.json"
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    material = module.canonicalize_release_gate_report_material(payload)
+
+    assert "report_hash" not in material
+    assert module.build_release_gate_report_id(payload) == payload["report_id"]
+    assert module.stable_release_gate_report_hash(payload) == payload["report_hash"]
+
+    loaded = loading.load_release_gate_artifacts(
+        report_path=str(fixture_path),
+        runtime_contract={
+            "risk_policy_version": payload["risk_policy_version"],
+            "decision_input_builder_version": payload["decision_input_builder_version"],
+            "policy_engine_version": payload["policy_engine_version"],
+            "tool_schema_hash": payload["tool_schema_hash"],
+            "memory_provider_adapter_hash": payload["memory_provider_adapter_hash"],
+        },
+        certification_packet_corpus_ref="tests/fixtures/release_gate_packets.jsonl",
+        shadow_decision_ledger_ref="tests/fixtures/release_gate_shadow_runs.jsonl",
+    )
+
+    assert loaded.raw_payload_hash == module.stable_release_gate_report_hash(payload)
+
+
 def test_release_gate_evaluator_accepts_current_matching_report() -> None:
     module = importlib.import_module("watchdog.services.brain.release_gate")
 
