@@ -72,3 +72,23 @@
 - 当前收口判断：
   - `T383` 仍未完成，因为 orchestrator/recovery 对 supersede / crash continuation 的正式接线还没落地；
   - `T384` 已进入进行中，ops/read-side 已落地，但 stale/late rejection 的 e2e 支线仍待补齐。
+
+### Phase 3：recovery continuation supersede future workers
+
+- 已补红测并转绿：
+  - recovery continuation 发生时，parent session 上运行中的 future worker 必须进入 `future_worker_cancelled`；
+  - recovery continuation 发生时，已完成但尚未被 parent consume 的 future worker result 必须进入 `future_worker_result_rejected`。
+- 已完成实现：
+  - `src/watchdog/services/session_spine/recovery.py`
+    - recovery 记账后会扫描 parent session 的 future worker canonical events；
+    - 对 `requested/running` worker 统一写 `future_worker_cancelled(reason=recovery_superseded_by_child_session)`；
+    - 对 `completed` 但未 consume 的 worker 统一写 `future_worker_result_rejected(reason=recovery_superseded_by_child_session)`。
+  - `tests/test_watchdog_recovery_execution.py`
+    - 已固定 recovery supersede parent future workers 的正式红/绿链。
+- 本轮验证：
+  - `uv run pytest -q tests/test_watchdog_recovery_execution.py -k supersedes_parent_future_workers` -> `1 passed in 0.30s`
+  - `uv run pytest -q tests/test_watchdog_recovery_execution.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_ops.py` -> `30 passed in 1.27s`
+  - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_memory_packets.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `86 passed in 4.19s`
+- 当前收口判断：
+  - `T383` 继续推进，但剩余缺口已收敛到 orchestrator 侧 create/consume 正式接线；
+  - recovery 侧的 parent-worker supersede 治理已不再缺位。

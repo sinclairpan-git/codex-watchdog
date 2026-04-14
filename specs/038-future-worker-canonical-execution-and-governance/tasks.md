@@ -81,7 +81,8 @@
   3. 已在 `create_app()` 中接入 `app.state.future_worker_service`，并打通 request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 到 `Session Service` 的单一路径；
   4. parent-side canonical consume、stale-result rejection 的最小 service 已在位；
   5. 当前 batch 已把 `future_worker` 收紧成显式状态机，禁止 `failed/cancelled/rejected/consumed` 终态后继续 `completed/consume` 等非法跃迁，并固定 `consume/reject` 必须在 `completed` 之后发生；
-  6. orchestrator/recovery 级治理仍待继续补齐。
+  6. recovery continuation 现已会 supersede parent session 上未收口的 future worker：运行中 worker 记 `cancelled`，已完成未 consume 的 worker 记 `result_rejected`；
+  7. orchestrator 侧 create/consume 正式接线仍待继续补齐。
 
 ## Task 38.4 收口 ops surfacing 与 formal worker e2e 主链
 

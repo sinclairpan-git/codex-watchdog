@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
+from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.session_spine.recovery import perform_recovery_execution
 from watchdog.settings import Settings
 
@@ -302,3 +303,108 @@ def test_perform_recovery_execution_adopts_goal_contract_for_child_session(
     assert adoption_events[0].related_ids["goal_contract_version"] == revised.version
     assert adoption_events[0].related_ids["source_packet_id"] == "packet:handoff-v9"
     assert adoption_events[0].related_ids["recovery_transaction_id"].startswith("recovery-tx:")
+
+
+def test_perform_recovery_execution_supersedes_parent_future_workers(tmp_path) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    future_workers = FutureWorkerExecutionService(session_service)
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"goal_contract_version": "goal-v9"},
+    )
+
+    future_workers.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-running",
+        decision_trace_ref="trace:running",
+        goal_contract_version="goal-v9",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:running"],
+        retrieval_handles=["handle:running"],
+        distilled_summary_ref="summary:running",
+        execution_budget_ref="budget:running",
+        occurred_at="2026-04-14T05:00:00Z",
+    )
+    future_workers.record_started(
+        worker_task_ref="worker:task-running",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T05:01:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    future_workers.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-completed",
+        decision_trace_ref="trace:completed",
+        goal_contract_version="goal-v9",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:completed"],
+        retrieval_handles=["handle:completed"],
+        distilled_summary_ref="summary:completed",
+        execution_budget_ref="budget:completed",
+        occurred_at="2026-04-14T05:02:00Z",
+    )
+    future_workers.record_started(
+        worker_task_ref="worker:task-completed",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T05:03:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    future_workers.record_completed(
+        worker_task_ref="worker:task-completed",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        result_summary_ref="summary:worker:completed",
+        artifact_refs=["artifact:completed"],
+        input_contract_hash="sha256:input-completed",
+        result_hash="sha256:result-completed",
+        occurred_at="2026-04-14T05:04:00Z",
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+
+    cancelled_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="future_worker_cancelled",
+    )
+    rejected_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="future_worker_result_rejected",
+    )
+
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0].related_ids["worker_task_ref"] == "worker:task-running"
+    assert cancelled_events[0].payload["reason"] == "recovery_superseded_by_child_session"
+    assert len(rejected_events) == 1
+    assert rejected_events[0].related_ids["worker_task_ref"] == "worker:task-completed"
+    assert rejected_events[0].payload["reason"] == "recovery_superseded_by_child_session"

@@ -9,6 +9,7 @@ import httpx
 
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.facts import build_fact_records
@@ -234,6 +235,11 @@ def _record_recovery_truth(
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
     )
+    _supersede_parent_future_workers_for_recovery(
+        project_id=project_id,
+        parent_session_id=recorded.parent_session_id,
+        session_service=service,
+    )
     if (
         recorded.child_session_id is None
         or goal_contract_version == "goal-contract:unknown"
@@ -341,3 +347,49 @@ def _supersede_stale_interactions_for_recovery(
                 }
             )
         )
+
+
+def _supersede_parent_future_workers_for_recovery(
+    *,
+    project_id: str,
+    parent_session_id: str,
+    session_service: SessionService,
+) -> None:
+    future_worker_service = FutureWorkerExecutionService(session_service)
+    grouped_events: dict[str, list[dict[str, Any] | Any]] = {}
+    for event in session_service.list_events(session_id=parent_session_id):
+        worker_task_ref = str(event.related_ids.get("worker_task_ref") or "").strip()
+        if not worker_task_ref or not event.event_type.startswith("future_worker_"):
+            continue
+        grouped_events.setdefault(worker_task_ref, []).append(event)
+
+    for worker_task_ref, events in grouped_events.items():
+        latest_event = max(events, key=lambda event: event.log_seq or 0)
+        if latest_event.event_type in {
+            "future_worker_requested",
+            "future_worker_started",
+            "future_worker_heartbeat",
+            "future_worker_summary_published",
+        }:
+            future_worker_service.record_cancelled(
+                worker_task_ref=worker_task_ref,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                occurred_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                    "+00:00",
+                    "Z",
+                ),
+                reason="recovery_superseded_by_child_session",
+            )
+            continue
+        if latest_event.event_type == "future_worker_completed":
+            future_worker_service.reject_result(
+                worker_task_ref=worker_task_ref,
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                occurred_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                    "+00:00",
+                    "Z",
+                ),
+                reason="recovery_superseded_by_child_session",
+            )

@@ -5,7 +5,7 @@ Total Tasks: 5
 Completed Tasks: 2
 Halted Tasks: 0
 Total Batches: 5
-Completed Batches: 3
+Completed Batches: 4
 Last Committed Task: T382
 
 ## Notes
@@ -28,7 +28,8 @@ Last Committed Task: T382
   - `Session Service` 已登记 `future_worker_*` canonical events；
   - `create_app()` 已接入 `app.state.future_worker_service`；
   - completion gate、frozen `decision_trace_ref` 回读与 worker runtime contract provenance 已补齐；
-  - 当前 batch 已新增 future worker transition gate，禁止终态后的非法 `completed/consume`。
+  - 当前 batch 已新增 future worker transition gate，禁止终态后的非法 `completed/consume`；
+  - recovery continuation 现已会 supersede parent session 上未收口的 future worker，运行中 worker 记 `cancelled`，已完成未 consume 的 result 记 `rejected`。
 - `T384` 正在进行：
   - `build_ops_summary()` 已新增 `future_workers` 读侧视图，可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
   - `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`；
@@ -44,9 +45,13 @@ Last Committed Task: T382
 - `uv run pytest -q tests/test_watchdog_future_worker_runtime.py tests/test_watchdog_ops.py` -> `22 passed in 0.93s`
 - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py` -> `46 passed in 3.10s`
 - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_memory_packets.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `85 passed in 5.42s`
+- `uv run pytest -q tests/test_watchdog_recovery_execution.py -k supersedes_parent_future_workers` -> `1 passed in 0.30s`
+- `uv run pytest -q tests/test_watchdog_recovery_execution.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_ops.py` -> `30 passed in 1.27s`
+- `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_memory_packets.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `86 passed in 4.19s`
 
 ## Handoff
 - 当前下一步是继续推进 `T383`，把 orchestrator/recovery 的 supersede / crash continuation 正式接线补齐。
+- 现在 recovery 的 parent-worker supersede 已落地，`T383` 下一步收敛到 orchestrator 侧 create/consume 正式接线。
 - `T384` 的 ops/read-side 已落地，下一步补 stale/late rejection 的 e2e 支线后再整体收口。
 - 后续工作不得回退到隐式共享状态、worker 本地真相或人工口头治理。
 - Hermes Agent 专家 / Anthropic Manager 专家子线程本轮两次 wait 都超时，尚未形成正式 blocking/P1 verdict；当前只能依据本地回归继续推进。
