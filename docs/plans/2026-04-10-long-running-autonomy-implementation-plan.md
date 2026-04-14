@@ -278,7 +278,7 @@
 - Create: `tests/fixtures/release_gate_expected_report.json`
 - Create: `tests/fixtures/release_gate_label_manifest.json`
 
-- [ ] **Step 1: 写失败测试，冻结决策闭环能力**
+- [x] **Step 1: 写失败测试，冻结决策闭环能力**
   - 覆盖 `Policy Gate -> Decision Input Builder -> Goal Closure Judge -> Recovery Planner -> Decision Validator` 的最小顺序闭环。
   - 覆盖 `Brain` 只能产出声明式 `DecisionIntent`，不得直接执行工具、claim lease、写完成态或修改 approval state。
   - 覆盖 `DecisionInputBuilder` 只生成 versioned `decision_packet_input`，不拥有最终 prompt/messages/tool schema 组装权。
@@ -291,11 +291,11 @@
   - 覆盖 `release_gate_report` 必须引用冻结窗口、`label_manifest`、`generated_by`、`approved_by` 与归档地址；缺任一字段不得视为可放行报告。
   - 覆盖 provider/model/prompt/schema/risk-policy/tool-schema/memory-adapter 任一变化都会使既有 `release_gate_report` 失效，必须重新认证。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py -q`
   - Expected: 因 `Brain` 闭环、provider 准入、replay harness、release gate 证据包或量化放行报告尚未实现而失败。
 
-- [ ] **Step 3: 实现最小 Brain 决策闭环**
+- [x] **Step 3: 实现最小 Brain 决策闭环**
   - 实现 `Decision Input Builder`、`Goal Closure Judge`、`Recovery Planner`、`Decision Validator` 的最小服务编排。
   - 实现 provider certification、模式分级和结构化输出校验，并明确区分 inference provider certification 与 memory provider adapter certification。
   - 实现历史 `packet_replay` 与 `session_semantic_replay`，输出漂移、缺口原因和失败分类。
@@ -305,11 +305,11 @@
   - 实现 release gate evaluator，基于证据包生成唯一有效的 `release_gate_report`；未达门槛、报告缺失、报告过期、输入哈希不一致或当前 approval 不满足时自动停留在 `observe-only/suggest-only`，门槛回归失败时自动降级。
   - 仅在低风险前提满足时允许 orchestrator 消费 `propose_execute` 进入执行面，否则退化为 `suggest_only`、`require_approval` 或 `reject`。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py -q`
   - Expected: 自治主链路具备可评估、可回放、可降级的低风险自动决策能力，并且 low-risk 模式受“量化门槛 + 证据包 + 放行报告 + runtime 校验”四重约束。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/brain scripts/generate_release_gate_report.py docs/operations/release-gate-runbook.md src/watchdog/services/policy/engine.py src/watchdog/services/session_spine/orchestrator.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/fixtures/release_gate_packets.jsonl tests/fixtures/release_gate_shadow_runs.jsonl tests/fixtures/release_gate_expected_report.json tests/fixtures/release_gate_label_manifest.json`
   - `git commit -m "feat: add brain decision loop and provider certification"`
 
@@ -332,7 +332,7 @@
 - Test: `tests/test_openclaw_contracts.py`
 - Create: `tests/test_watchdog_notification_delivery.py`
 
-- [ ] **Step 1: 写失败测试，冻结 Feishu 控制语义**
+- [x] **Step 1: 写失败测试，冻结 Feishu 控制语义**
   - 覆盖 DM 才允许高风险确认。
   - 覆盖 `interaction_context_id`、`interaction_family_id`、actor binding、过期、replay protection。
   - 覆盖审批确认、通知回执与人工覆盖都必须先落 `Session Service` 事件，再映射为控制动作。
@@ -340,11 +340,11 @@
   - 覆盖同一 `interaction_family_id` 任意时刻只允许一个有效上下文，旧上下文晚到送达/回复只能记审计不能双生效。
   - 覆盖 OpenClaw 入口退为兼容层而非主执行入口。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py -q`
   - Expected: 因 Feishu 控制面缺失、通知投递中间态未建模、上下文 supersede 语义未冻结或 OpenClaw 仍承担主职责而失败。
 
-- [ ] **Step 3: 实现最小控制面切换**
+- [x] **Step 3: 实现最小控制面切换**
   - 新增 Feishu command gateway 与 ACL。
   - 把审批确认、通知回执、人工覆盖统一映射为 `Session Service` 事件与 projection 更新。
   - 把通知送达成功、发送失败、重试排队、上下文 supersede、窗口过期与 stale/audit 的状态面明确收口到 `delivery/store.py`、`delivery/worker.py` 与 `session_service/models.py` / `session_spine/projection.py`，避免 handler 自行分叉记状态。
@@ -353,11 +353,11 @@
   - `main.py` 中把新控制面注册为主入口。
   - OpenClaw bootstrap/callbacks 仅保留迁移期兼容协议，并标记退役边界。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_ops.py -q`
   - Expected: 主控制面切到 Feishu，通知/审批的中间态故障可恢复，补发后的旧上下文不会双生效，OpenClaw 只剩兼容读写接口。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/feishu_control src/watchdog/api/feishu_control.py src/watchdog/main.py src/watchdog/api/openclaw_bootstrap.py src/watchdog/api/openclaw_callbacks.py src/watchdog/services/adapters/openclaw/adapter.py src/watchdog/services/delivery/store.py src/watchdog/services/delivery/worker.py src/watchdog/services/session_service/models.py src/watchdog/services/session_spine/projection.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_ops.py`
   - `git commit -m "feat: switch primary control plane to feishu"`
 
@@ -374,29 +374,29 @@
 - Modify: `src/watchdog/services/feishu_control/service.py`
 - Modify: `src/watchdog/services/session_service/service.py`
 
-- [ ] **Step 1: 写失败测试，冻结一期通关场景**
+- [x] **Step 1: 写失败测试，冻结一期通关场景**
   - 覆盖 `Feishu DM -> Goal Contract -> Brain 决策 -> Session write barrier -> command lease -> 执行/审批 -> continuity recovery -> 完成判定 -> replay/指标落账` 的单一主链路。
   - 覆盖 worker crash、claim timeout、通知发送失败、旧交互上下文 supersede、stale interaction、人工 override 与 `remote compact` 后子会话接续。
   - 覆盖全流程不得依赖手工改库、手工补事件或绕过 release gate。
   - 覆盖 `certification_packet_corpus + shadow_decision_ledger -> release_gate_report -> low-risk auto-decision` 的通关链路；没有有效报告或报告与当前输入哈希不一致时，e2e 必须阻断自动执行。
   - 覆盖放行前必须先通过固定 runbook/脚本冻结样本窗口、标注清单和归档报告，不能通过临时人工操作直接放行。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py -q`
   - Expected: 因跨模块 glue、端到端状态恢复或 release gate 仍未完全收口而失败。
 
-- [ ] **Step 3: 补齐通关所需的跨模块 glue**
+- [x] **Step 3: 补齐通关所需的跨模块 glue**
   - 在前述模块中补齐命令租约恢复、通知投递恢复、人工接管、child session 接续、release gate 证据归档与放行报告汇总。
   - 保证 golden path 在进入 `low-risk auto-decision` 前，已经完成样本冻结、shadow 决策记账和 `release_gate_report` 生成/校验，而不是在上线后再补证据。
   - 保证 `release_gate_runbook` 与生成脚本成为正式阻断门输入，而不是可选运维说明。
   - 保证单一 golden path 在不手工修状态的前提下可重复通过。
   - 将该 e2e 通关用例定义为一期放行的阻断门，而不是可选演示脚本。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py tests/test_watchdog_ops.py -q`
   - Expected: 一期存在单一、可重复、可审计的自治主链路通关标准，且 release gate 的证据包与放行报告能在端到端链路中被生成、校验并阻断不合格配置。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add tests/e2e/test_watchdog_autonomy_golden_path.py tests/e2e/test_watchdog_midstate_recovery.py tests/e2e/test_watchdog_release_gate_e2e.py src/watchdog/services/brain/release_gate.py src/watchdog/services/brain/release_gate_evidence.py src/watchdog/services/feishu_control/service.py src/watchdog/services/session_service/service.py tests/test_watchdog_ops.py`
   - `git commit -m "test: add autonomy golden path release gate"`
 
@@ -409,10 +409,12 @@
 - [ ] 完成 Task 4 后，确认 `remote compact` 一类问题走 recovery transaction，而不是重复旧会话重试。
 - [x] 完成 Task 5 后，确认 `Memory Hub` 以独立 contract 对外提供 `resident/session-search/skills/packet-inputs` 能力；`user-model/periodic-nudge` 如存在也仅为 assistive-only preview contract，且不覆盖 Session truth / Goal Contract。
 - [x] 完成 Task 5 后，确认长期记忆写入遵循“基线建档 + 增量摄取 + provenance + security verdict”，`watchdog/Codex` 主路径已接入，`AI_AutoSDLC` 仅保留 disabled-by-default preview compatibility contract，preview 入口不阻塞一期放行，且 `Memory Hub` 不可用或冲突时会写入 `memory_unavailable_degraded` / `memory_conflict_detected` canonical event 后再安全降级。
-- [ ] 完成 Task 6 后，确认 `Brain` 具备 provider certification、replay、decision validation 和低风险自动决策闭环，且受明确量化 release gate、证据包和放行报告约束。
-- [ ] 完成 Task 6 后，确认 release gate 的样本冻结、人工标注、报告归档均有脚本化产物与责任人元数据，不能靠临时人工流程替代。
-- [ ] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，OpenClaw 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
-- [ ] 完成 Task 8 后，确认至少一条 `Feishu DM -> Goal Contract -> Brain -> Session write barrier -> command execution -> interruption recovery -> human approval/override -> completion -> replay/metrics` 主链路可在无手工补状态前提下重复打通，并且 low-risk 放行前已经产出并校验对应的 `release_gate_report`。
+- [x] 完成 Task 6 后，确认 `Brain` 具备 provider certification、replay、decision validation 和低风险自动决策闭环，且受明确量化 release gate、证据包和放行报告约束。
+- [x] 完成 Task 6 后，确认 release gate 的样本冻结、人工标注、报告归档均有脚本化产物与责任人元数据，不能靠临时人工流程替代。
+- [x] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，OpenClaw 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
+- [x] 完成 Task 8 后，确认至少一条 `Feishu DM -> Goal Contract -> Brain -> Session write barrier -> command execution -> interruption recovery -> human approval/override -> completion -> replay/metrics` 主链路可在无手工补状态前提下重复打通，并且 low-risk 放行前已经产出并校验对应的 `release_gate_report`。
+- [x] 完成 Task 9 后，确认 future worker / sub-agent 只以 canonical execution contract 存在，lifecycle 与 result consume/reject 全部进入 `Session Service` truth，worker 输出只有在 parent canonical consume 后才真正生效。
+- [x] 完成 Task 9 后，确认 declarative worker request、same-trace replay/consume、late-result rejection 与 recovery supersede 都已 fail-closed，并能从 runtime / recovery / ops/read-side 回看。
 
 ### Task 9: 把 future worker / sub-agent 收敛为 canonical execution contract
 
@@ -431,29 +433,29 @@
 - Create: `tests/test_watchdog_future_worker_runtime.py`
 - Create: `tests/e2e/test_watchdog_future_worker_execution.py`
 
-- [ ] **Step 1: 写失败测试，冻结 worker/sub-agent canonical execution 边界**
+- [x] **Step 1: 写失败测试，冻结 worker/sub-agent canonical execution 边界**
   - 覆盖 `FutureWorkerTraceRef` 从声明式 schema 升格为正式 worker execution contract，但 worker 仍不得直接写 Goal Contract、approval、risk band 或 completion truth。
   - 覆盖 `worker_started -> worker_heartbeat -> worker_summary_published -> worker_completed|worker_failed|worker_cancelled` 必须作为 `Session Service` canonical events 落账。
   - 覆盖 worker 只允许消费冻结的 `decision_trace_ref`、`input_packet_refs`、`retrieval_handles` 与 `distilled_summary_ref`，不得绕过到 Memory Hub 私有状态或 live provider memory。
   - 覆盖 worker crash、stale completion、duplicate worker start、result late arrival 与 parent session supersede 时必须 fail closed。
   - 覆盖 parent session 只通过 canonical worker result envelope 消费 worker 输出，而不是隐式把 worker side effects 当成已完成真相。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py -q`
   - Expected: 因 worker/sub-agent 仍只有声明式 schema、缺少 canonical events 与 runtime/recovery glue 而失败。
 
-- [ ] **Step 3: 实现最小 canonical worker execution contract**
+- [x] **Step 3: 实现最小 canonical worker execution contract**
   - 新增 `future_worker` 服务层，收口 worker execution request、result envelope、budget/scope 与 canonical refs。
   - 在 `Session Service` 中补齐 worker lifecycle events、stale result rejection、supersede/cancel 记录与 parent-child worker lineage。
   - 让 orchestrator / recovery 只消费 canonical worker records，不直接信任 worker 进程本地状态。
   - 保证 worker 输出必须经 parent-side canonical consumption 才能影响后续决策或 completion judgment。
   - 保证 worker scope / allowed hands / retrieval refs / distilled summary 仍沿用 034/035 已冻结的 contract，而不是定义第二套上下文协议。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py -q`
   - Expected: worker/sub-agent 已进入 canonical truth、runtime/recovery/ops 都能看见其 lifecycle 与阻断原因，且不会越权修改 parent session 真相。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/future_worker src/watchdog/services/session_service src/watchdog/services/brain/models.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/session_spine/recovery.py src/watchdog/services/memory_hub/models.py tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py`
   - `git commit -m "feat: add canonical future worker execution contract"`
 
