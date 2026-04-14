@@ -971,6 +971,108 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
     assert session_events[2].related_ids["command_id"] == command_id
 
 
+def test_resident_orchestrator_replay_reads_future_worker_events_by_decision_trace(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    command_id = f"command:{decision.decision_id}"
+    trace_id = decision.evidence["decision_trace"]["trace_id"]
+    app.state.session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T06:00:00Z",
+        correlation_id="corr:future-worker:replay-1",
+        related_ids={
+            "worker_task_ref": "worker:replay-1",
+            "decision_trace_ref": trace_id,
+        },
+        payload={"scope": "read_only"},
+    )
+    app.state.session_service.record_event(
+        event_type="future_worker_completed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T06:01:00Z",
+        correlation_id="corr:future-worker:replay-1",
+        related_ids={
+            "worker_task_ref": "worker:replay-1",
+            "summary_ref": "summary:worker:replay-1",
+        },
+        payload={
+            "worker_task_ref": "worker:replay-1",
+            "parent_session_id": "session:repo-a",
+            "decision_trace_ref": trace_id,
+            "result_summary_ref": "summary:worker:replay-1",
+            "artifact_refs": [],
+            "input_contract_hash": "sha256:replay-input",
+            "result_hash": "sha256:replay-result",
+            "produced_at": "2026-04-14T06:01:00Z",
+            "status": "completed",
+            "worker_runtime_contract": {"provider": "codex"},
+        },
+    )
+
+    relevant_events = app.state.resident_orchestrator._decision_relevant_session_events(
+        decision,
+        command_id=command_id,
+    )
+
+    assert [event.event_type for event in relevant_events] == [
+        "decision_proposed",
+        "decision_validated",
+        "command_created",
+        "future_worker_requested",
+        "future_worker_completed",
+    ]
+    with patch.object(
+        app.state.resident_orchestrator._replay_service,
+        "session_semantic_replay",
+        wraps=app.state.resident_orchestrator._replay_service.session_semantic_replay,
+    ) as session_replay_mock:
+        replay_summary = app.state.resident_orchestrator._command_terminal_replay_summary(
+            decision,
+            command_id=command_id,
+        )
+
+    assert replay_summary["session_semantic_replay"]["replay_incomplete"] is False
+    assert session_replay_mock.call_args is not None
+    assert session_replay_mock.call_args.kwargs["required_event_ids"] == [
+        event.event_id for event in relevant_events
+    ]
+
+
 def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contract(
     tmp_path: Path,
 ) -> None:

@@ -297,14 +297,35 @@ class ResidentOrchestrator:
     def _decision_evidence_map(decision) -> dict[str, Any]:
         return decision.evidence if isinstance(decision.evidence, dict) else {}
 
+    @staticmethod
+    def _decision_trace_ref(decision) -> str | None:
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        trace = evidence.get("decision_trace")
+        if not isinstance(trace, dict):
+            return None
+        trace_id = trace.get("trace_id")
+        return trace_id if isinstance(trace_id, str) and trace_id else None
+
     def _decision_relevant_session_events(self, decision, *, command_id: str):
         if self._session_service is None:
             return []
+        decision_trace_ref = self._decision_trace_ref(decision)
         return [
             event
             for event in self._session_service.list_events(session_id=decision.session_id)
             if event.related_ids.get("decision_id") == decision.decision_id
-            or event.related_ids.get("command_id") == command_id
+            or (
+                event.event_type == "command_created"
+                and event.related_ids.get("command_id") == command_id
+            )
+            or (
+                decision_trace_ref is not None
+                and event.event_type.startswith("future_worker_")
+                and (
+                    event.related_ids.get("decision_trace_ref") == decision_trace_ref
+                    or event.payload.get("decision_trace_ref") == decision_trace_ref
+                )
+            )
         ]
 
     def _command_terminal_replay_summary(self, decision, *, command_id: str) -> dict[str, Any]:
@@ -329,7 +350,12 @@ class ResidentOrchestrator:
         required_event_ids = [
             event.event_id
             for event in relevant_events
-            if event.event_type in {"decision_proposed", "decision_validated", "command_created"}
+            if event.event_type in {
+                "decision_proposed",
+                "decision_validated",
+                "command_created",
+            }
+            or event.event_type.startswith("future_worker_")
         ]
         return {
             "packet_replay": self._replay_service.packet_replay(
