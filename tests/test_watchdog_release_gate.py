@@ -24,6 +24,15 @@ def _runtime_governance_fields() -> dict[str, object]:
     }
 
 
+def _load_script_module(path: Path, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_release_gate_module_exports_report_and_verdict_types() -> None:
     module = importlib.import_module("watchdog.services.brain.release_gate")
 
@@ -389,6 +398,79 @@ def test_release_gate_report_material_helpers_rebuild_fixture_and_loader_hash() 
     )
 
     assert loaded.raw_payload_hash == module.stable_release_gate_report_hash(payload)
+
+
+def test_refresh_release_gate_artifacts_script_exports_single_refresh_entrypoint() -> None:
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "refresh_release_gate_artifacts.py"
+    assert script.exists()
+
+    module = _load_script_module(script, "refresh_release_gate_artifacts")
+
+    assert hasattr(module, "refresh_release_gate_artifacts")
+
+
+def test_refresh_release_gate_artifacts_script_rebuilds_loader_valid_report(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "refresh_release_gate_artifacts.py"
+    module = _load_script_module(script, "refresh_release_gate_artifacts")
+    loading = importlib.import_module("watchdog.services.brain.release_gate_loading")
+    packets = root / "tests" / "fixtures" / "release_gate_packets.jsonl"
+    shadow_runs = root / "tests" / "fixtures" / "release_gate_shadow_runs.jsonl"
+    label_manifest = root / "tests" / "fixtures" / "release_gate_label_manifest.json"
+    output_path = tmp_path / "release_gate_report.json"
+
+    module.refresh_release_gate_artifacts(
+        packets_path=str(packets),
+        shadow_runs_path=str(shadow_runs),
+        label_manifest_path=str(label_manifest),
+        generated_by="codex",
+        report_approved_by="operator-a",
+        artifact_ref="tmp/rebuilt-release-gate-report.json",
+        sample_window="2026-04-01..2026-04-07",
+        shadow_window="2026-04-08..2026-04-09",
+        output_path=str(output_path),
+    )
+
+    rebuilt = json.loads(output_path.read_text(encoding="utf-8"))
+    loaded = loading.load_release_gate_artifacts(
+        report_path=str(output_path),
+        runtime_contract={
+            "risk_policy_version": rebuilt["risk_policy_version"],
+            "decision_input_builder_version": rebuilt["decision_input_builder_version"],
+            "policy_engine_version": rebuilt["policy_engine_version"],
+            "tool_schema_hash": rebuilt["tool_schema_hash"],
+            "memory_provider_adapter_hash": rebuilt["memory_provider_adapter_hash"],
+        },
+        certification_packet_corpus_ref="tests/fixtures/release_gate_packets.jsonl",
+        shadow_decision_ledger_ref="tests/fixtures/release_gate_shadow_runs.jsonl",
+    )
+
+    assert loaded.report.report_hash == rebuilt["report_hash"]
+
+
+def test_refresh_release_gate_artifacts_script_fails_closed_when_input_missing(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "refresh_release_gate_artifacts.py"
+    module = _load_script_module(script, "refresh_release_gate_artifacts")
+    output_path = tmp_path / "release_gate_report.json"
+
+    with pytest.raises((FileNotFoundError, ValueError)):
+        module.refresh_release_gate_artifacts(
+            packets_path=str(tmp_path / "missing-packets.jsonl"),
+            shadow_runs_path=str(tmp_path / "missing-shadow-runs.jsonl"),
+            label_manifest_path=str(tmp_path / "missing-label-manifest.json"),
+            generated_by="codex",
+            report_approved_by="operator-a",
+            artifact_ref="tmp/rebuilt-release-gate-report.json",
+            sample_window="2026-04-01..2026-04-07",
+            shadow_window="2026-04-08..2026-04-09",
+            output_path=str(output_path),
+        )
 
 
 def test_release_gate_evaluator_accepts_current_matching_report() -> None:

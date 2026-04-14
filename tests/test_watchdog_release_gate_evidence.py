@@ -151,3 +151,17 @@ def test_release_gate_runbook_documents_runtime_load_time_validation() -> None:
     assert "JSON object" in contents
     assert "canonical JSON contract" in contents
     assert "report_load_failed" in contents
+
+
+def test_release_gate_runbook_documents_single_refresh_command_contract() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runbook = root / "docs" / "operations" / "release-gate-runbook.md"
+
+    assert runbook.exists()
+    contents = runbook.read_text(encoding="utf-8")
+
+    assert "scripts/refresh_release_gate_artifacts.py" in contents
+    assert "archive rebuild" in contents
+    assert "fixture regeneration" in contents
+    assert "唯一正式命令" in contents
+    assert "禁止人工编辑 JSON" in contents

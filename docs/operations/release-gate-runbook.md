@@ -24,6 +24,15 @@
 2. 再运行 `scripts/generate_release_gate_report.py` 生成唯一有效的 `release_gate_report`。
 3. 用生成出的 `report_hash` 和当前输入哈希做 runtime 校验。
 
+## Refresh / Rebuild Contract
+
+- `scripts/refresh_release_gate_artifacts.py` 是 `release_gate_report` refresh、archive rebuild 与 fixture regeneration 的唯一正式命令。
+- 这条命令只能复用现有 `scripts/generate_release_gate_report.py`、`src/watchdog/services/brain/release_gate_report_material.py` 与 shared loader；禁止局部重写 hash/material 或手写 report 构造逻辑。
+- refresh 成功的最低标准是：输出 report 立即通过 shared loader 校验；如果 loader 不接受，就视为 refresh 失败。
+- operator 如需执行 archive rebuild 或 fixture regeneration，也必须通过这条命令完成，不能分散成手工步骤。
+- 禁止人工编辑 JSON、手工猜 `report_hash`、手工拼装 `report_id` 或绕过 loader 校验。
+- 041 只正式化这条单一 refresh 命令，不引入新的 manifest、archive metadata model 或额外平台层。
+
 ## Runtime Contract Surface
 
 - runtime contract 的唯一配置入口是 `Settings.build_runtime_contract(...)`。
