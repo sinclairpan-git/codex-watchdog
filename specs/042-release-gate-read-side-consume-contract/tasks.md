@@ -34,7 +34,7 @@
 ## Task 42.2 写失败测试锁定 read-side consume contract
 
 - **任务编号**：T422
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 read-side consumer 对 release gate decision evidence 的唯一 consume surface。
 - **文件**：
   - `tests/test_watchdog_ops.py`
@@ -47,11 +47,16 @@
   4. 覆盖 malformed / partial evidence 必须 fail closed。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
+  1. 已新增 shared read contract module surface 红测；
+  2. 已锁定 `ops.py` 对 partial / malformed bundle 的整包 fail-closed；
+  3. 已锁定 resident runtime 不得把缺字段或缺 bundle 的 formal pass verdict 当作有效 runtime gate；
+  4. 初次红测确认当前缺口就是 helper 缺失与 read-side 继续消费裸 dict。
 
 ## Task 42.3 实现最小 read-side helper 与 consumer 收口
 
 - **任务编号**：T423
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：交付 shared typed read contract，并让首批正式 consumer 只通过它读取 release gate evidence。
 - **文件**：
   - `src/watchdog/services/brain/release_gate_read_contract.py`
@@ -67,11 +72,16 @@
   4. 不引入 policy、schema、persistence、manifest 或 query facade 变化。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
+- **完成情况**：
+  1. 已新增 `src/watchdog/services/brain/release_gate_read_contract.py`，统一 typed 解析 `release_gate_verdict + release_gate_evidence_bundle`；
+  2. `src/watchdog/api/ops.py` 与 resident runtime 读侧已改为只消费 shared helper；
+  3. 已修掉两轮对抗复核指出的 P1：formal pass verdict 在缺 bundle 或 partial bundle 时继续 fail closed；
+  4. future-worker patched evidence 与 e2e 也已补成完整 formal bundle，避免半截 evidence 继续漏过 runtime consume path。
 
 ## Task 42.4 更新执行日志与 handoff 摘要
 
 - **任务编号**：T424
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 handoff。
 - **文件**：
   - `specs/042-release-gate-read-side-consume-contract/task-execution-log.md`
@@ -87,11 +97,15 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已把方案选择、freeze、红测缺口、实现与两轮 P1 修复写回执行日志；
+  2. `.ai-sdlc` 元数据已同步到 042 完成态；
+  3. handoff 已明确后续任何 consumer 都必须复用 shared read contract。
 
 ## Task 42.5 完成 042 整体验证并交接后续 work item
 
 - **任务编号**：T425
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：完成 042 的整体验证，并把 read-side consume contract 作为后续 work item 的正式依赖写回 handoff。
 - **文件**：
   - `specs/042-release-gate-read-side-consume-contract/task-execution-log.md`
@@ -105,6 +119,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅 handoff 与总实施计划一致
+- **完成情况**：
+  1. `WI-042` 已完成：release gate decision evidence 的 read-side consume path 已收敛到唯一 typed contract；
+  2. 后续 consumer 不得再复制 verdict/bundle 字段路径或把 partial evidence 当作 formal runtime gate；
+  3. 最后一轮 Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1。
 
 ## 整体验收
 

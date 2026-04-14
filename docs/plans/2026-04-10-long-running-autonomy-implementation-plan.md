@@ -581,25 +581,25 @@
 - Test: `tests/test_watchdog_ops.py`
 - Test: `tests/test_watchdog_session_spine_runtime.py`
 
-- [ ] **Step 1: 写失败测试，冻结 read-side consume contract**
+- [x] **Step 1: 写失败测试，冻结 read-side consume contract**
   - 覆盖 read-side consumer 不得继续手工剥取 `release_gate_verdict` / `release_gate_evidence_bundle` 的嵌套 dict。
   - 覆盖 shared helper 必须把 decision evidence 解析成正式 typed surface，并保留 `report_id`、`report_hash`、`input_hash`、artifact refs 与 governance metadata。
   - 覆盖 malformed / partial evidence 在 read-side 必须 fail closed，不能悄悄当作完整 blocker metadata 或 pass evidence 继续消费。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py -q`
   - Expected: 因当前仍缺少 shared typed read-side helper，`ops.py` / orchestrator 继续手工消费 evidence dict 而失败。
 
-- [ ] **Step 3: 实现最小 read-side consume contract**
+- [x] **Step 3: 实现最小 read-side consume contract**
   - 新增 shared typed helper，统一解析 `release_gate_verdict + release_gate_evidence_bundle`。
   - 让 `ops.py` 与现有 read-side consumer 只通过该 helper 读取 blocker metadata / runtime pass qualification，不再复制字段路径与嵌套结构。
   - 明确 malformed / partial evidence 的 fail-closed 纪律，但不新增 policy、schema、persistence 或 query facade。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py -q`
   - Expected: read-side consume path 已通过 shared typed helper 收口，字段路径与 fail-closed 纪律不再散落在 consumer 侧。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/brain/release_gate_read_contract.py src/watchdog/api/ops.py src/watchdog/services/session_spine/orchestrator.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/042-release-gate-read-side-consume-contract`
   - `git commit -m "feat: formalize release gate read-side consume contract"`
 

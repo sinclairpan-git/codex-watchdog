@@ -1,6 +1,6 @@
-current_stage: execute
-current_batch: 2
-last_committed_task: ''
+current_stage: verify
+current_batch: 5
+last_committed_task: T425
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -14,6 +14,12 @@ working_set_snapshot:
   - '`specs/042-release-gate-read-side-consume-contract/plan.md`'
   - '`specs/042-release-gate-read-side-consume-contract/tasks.md`'
   - '`specs/042-release-gate-read-side-consume-contract/task-execution-log.md`'
+  - '`src/watchdog/services/brain/release_gate_read_contract.py`'
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/e2e/test_watchdog_future_worker_execution.py`'
   - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/runtime.yaml`'
   - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/resume-pack.yaml`'
@@ -35,10 +41,22 @@ working_set_snapshot:
       - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/042-*` 基线；
       - Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1；
       - 当前下一执行入口固定为 `T422`。
+    - `T422` 已完成：
+      - 已新增 shared read contract module surface 红测；
+      - 已锁定 `ops.py` 对 partial / malformed bundle 的整包 fail-closed；
+      - 已锁定 resident runtime 不得把缺字段或缺 bundle 的 formal pass verdict 当作有效 runtime gate。
+    - `T423` 已完成：
+      - 已新增 `src/watchdog/services/brain/release_gate_read_contract.py`；
+      - `src/watchdog/api/ops.py` 与 resident runtime 读侧已改为只消费 shared helper；
+      - 已修掉两轮对抗复核指出的 P1，并把 future-worker patched evidence / e2e 一并对齐 formal bundle。
+    - `T424` 已完成：
+      - 执行日志、总实施计划 Task 13 与 `.ai-sdlc` 元数据已同步到 042 完成态。
+    - `T425` 已完成：
+      - `WI-042` 已完成：后续任何 read-side consumer 都必须复用 shared read contract。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T14:26:03+08:00'
+timestamp: '2026-04-14T14:27:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''
