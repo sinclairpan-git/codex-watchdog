@@ -1,6 +1,6 @@
-current_stage: implementation
-current_batch: 7
-last_committed_task: T382
+current_stage: verify
+current_batch: 5
+last_committed_task: T385
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -45,23 +45,21 @@ working_set_snapshot:
     - `T382` 已完成：
       - contract/runtime/e2e 三类红测都已建好并转绿；
       - 首轮红测暴露的模块缺失、`Session Service` event 缺失、app wiring 缺失均已补齐。
-    - `T383` 正在进行：
-      - `src/watchdog/services/future_worker/` 已落地 models/service，request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 都能写回 canonical truth；
-      - transition gate、late-result rejection、recovery supersede、trace inheritance 都已补齐；
-      - orchestrator replay 现在会读取同 trace 的 worker truth，wrong-trace worker 事件会被排除；
-      - orchestrator 成功 command 现在会在 `command_executed` 前 canonical consume 同 trace 下已 completed 的 worker result；
-      - 当前剩余缺口只收敛到 create-side：parent 如何正式声明 / 请求 future worker contract 仍未接上。
-    - `T384` 正在进行：
-      - `build_ops_summary()` 已新增 `future_workers` 读侧视图；
-      - `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`；
-      - `metrics_export.py` 已导出 future worker 状态与阻断原因 gauge；
-      - late-result rejection、wrong-trace exclusion 与 parent consume replay 断言都已入测；
-      - 完整 worker create -> run -> consume golden path 还差 declarative request contract 的最后一段。
-    - 最近两轮 Hermes Agent 专家 / Anthropic Manager 专家复核均无 blocking/P1。
+    - `T383` 已完成：
+      - `src/watchdog/services/future_worker/` models/service、transition gate、recovery supersede、trace inheritance、same-trace replay/consume 都已接入 canonical truth；
+      - orchestrator 现已会从 decision evidence 读取 declarative `future_worker_requests`，并在整批 schema + drift 预校验通过后再物化 canonical `future_worker_requested`；
+      - command 成功当下与 command 已 `executed` 的后续 tick，都会 canonical consume 同 trace 下已完成的 worker result。
+    - `T384` 已完成：
+      - `build_ops_summary()`、ops read-side、metrics 与 e2e 主链已经全部覆盖 future worker requested/running/completed/rejected/consumed 治理面；
+      - formal e2e 已固定 declarative request materialize -> worker run -> completed -> later-tick parent consume 的完整 golden path。
+    - `T385` 已完成：
+      - 执行日志、任务状态与 `.ai-sdlc` 元数据已同步到完成态；
+      - future worker 结果只有在 parent canonical consume 后才真正生效，后续工作不得回退到隐式共享状态。
+    - 最后一轮 Hermes Agent 专家 / Anthropic Manager 专家复核均无 blocking/P1。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T10:55:00+08:00'
+timestamp: '2026-04-14T11:05:28+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

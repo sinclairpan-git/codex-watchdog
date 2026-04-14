@@ -134,3 +134,34 @@
 - 当前收口判断：
   - `T383` 现在只剩“parent 如何正式声明 / 请求 future worker contract”的 create-side 接线未完成；
   - `T384` 的 replay/read-side/consume 主链已进一步收紧，但完整 worker create -> run -> consume golden path 仍待补最后一段 declarative request contract。
+
+### Phase 3 / 4 / 5：declarative request contract + full-chain handoff
+
+- 已补红测并转绿：
+  - orchestrator 必须从 decision evidence 物化 declarative `future_worker_requests`，写出 canonical `future_worker_requested`；
+  - 同一 `decision_trace_ref` 下重复 tick 不得重复 request；
+  - parent command 已 `executed` 的后续 tick，仍需 consume 同 trace 下后完成的 worker result；
+  - declarative worker request batch 若存在后项 drift，不得留下前项已写入的 partial canonical truth。
+- 已完成实现：
+  - `src/watchdog/services/session_spine/orchestrator.py`
+    - 新增 `FutureWorkerExecutionRequest` contract 消费；
+    - `_record_command_created()` 对同一 `decision_id + command_id` 幂等跳过；
+    - `_materialize_future_worker_requests()` 现已先做整批 request schema + drift 预校验，再统一写 `future_worker_requested`；
+    - command 已 `executed` 的后续 tick 现在也会调用 same-trace completed worker consume 路径。
+  - `tests/test_watchdog_session_spine_runtime.py`
+    - 已固定 declarative worker request 只物化一次；
+    - 已固定 request batch 中后项 drift 时不得留下前项 partial materialization。
+  - `tests/e2e/test_watchdog_future_worker_execution.py`
+    - 已固定 declarative request materialize -> started -> summary_published -> completed -> later-tick result_consumed 的正式主链。
+- 本轮验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'materializes_future_worker_requests_once_per_decision_trace or rejects_partial_future_worker_request_materialization'` -> `2 passed, 40 deselected in 0.84s`
+  - `uv run pytest -q tests/e2e/test_watchdog_future_worker_execution.py -k materializes_and_consumes_future_worker_chain` -> `1 passed, 2 deselected in 0.74s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py` -> `77 passed in 6.22s`
+- 对抗复核：
+  - Hermes Agent 专家：先指出一个真实 P1，`future_worker_requests` 若边遍历边落账会导致后项 drift 时留下前项 partial materialization；
+  - 修复后再次复核，Hermes Agent 专家：无 blocking/P1；
+  - Anthropic Manager 专家：无 blocking/P1。
+- 最终收口判断：
+  - `T383` 已完成：worker canonical truth、runtime glue、recovery supersede、same-trace replay/consume 与 declarative request contract 已全部闭环；
+  - `T384` 已完成：ops/read-side、late-result rejection 与 formal worker golden-path e2e 已全部收口；
+  - 下一步只剩 `T385` 的 handoff / metadata 完成态同步。

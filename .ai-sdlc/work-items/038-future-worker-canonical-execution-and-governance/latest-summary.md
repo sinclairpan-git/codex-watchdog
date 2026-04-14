@@ -1,12 +1,12 @@
 # Development Summary
 
-Status: in_progress
+Status: completed
 Total Tasks: 5
-Completed Tasks: 2
+Completed Tasks: 5
 Halted Tasks: 0
 Total Batches: 5
-Completed Batches: 2
-Last Committed Task: T382
+Completed Batches: 5
+Last Committed Task: T385
 
 ## Notes
 - `WI-038` 已从 `WI-035` / `WI-037` 的 handoff 正式追加，目标是把 future worker / sub-agent 从声明式预留 schema 收口成 canonical execution contract。
@@ -23,21 +23,17 @@ Last Committed Task: T382
   - 新增 contract/runtime/e2e 三类红测；
   - 首轮红测暴露 `future_worker` 模块缺失、`Session Service` 无 `future_worker_*` event、`app.state.future_worker_service` 未接入；
   - 当前三份测试已转绿。
-- `T383` 正在进行：
-  - 已新增 `src/watchdog/services/future_worker/models.py` 与 `service.py`；
-  - `Session Service` 已登记 `future_worker_*` canonical events；
-  - `create_app()` 已接入 `app.state.future_worker_service`；
-  - completion gate、frozen `decision_trace_ref` 回读与 worker runtime contract provenance 已补齐；
-  - 当前 batch 已新增 future worker transition gate，禁止终态后的非法 `completed/consume`；
-  - recovery continuation 现已会 supersede parent session 上未收口的 future worker，运行中 worker 记 `cancelled`，已完成未 consume 的 result 记 `rejected`；
-  - orchestrator replay 现已读取同 trace 的 worker truth，wrong-trace worker 事件会被排除；
-  - orchestrator 成功 command 现已会 canonical consume 同 trace 下处于 `completed` 的 worker result。
-- `T384` 正在进行：
-  - `build_ops_summary()` 已新增 `future_workers` 读侧视图，可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
-  - `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`；
-  - `metrics_export.py` 已导出 future worker 状态与阻断原因 gauge；
-  - late-result rejection 的 e2e 支线已补齐，固定 `rejected` 后不得再被 parent consume；
-  - same-trace replay、wrong-trace 排除与 parent consume replay 断言都已补齐。
+- `T383` 已完成：
+  - `future_worker` lifecycle、transition gate、recovery supersede、same-trace replay/consume 与 declarative request contract 已全部接入 canonical truth；
+  - orchestrator 现已对 `future_worker_requests` 先做整批 schema + drift 预校验，再物化 canonical `future_worker_requested`，避免 partial materialization；
+  - command 成功当下与 command 已 `executed` 的后续 tick，都会 consume 同 trace 下已完成的 worker result。
+- `T384` 已完成：
+  - `build_ops_summary()`、`ops` read-side 与 metrics 已稳定暴露 future worker 状态和 `blocking_reason`；
+  - late-result rejection、recovery supersede、wrong-trace exclusion 与 consumed terminal 都可从 canonical event 链和 ops/read-side 回看；
+  - formal e2e 已固定 declarative request materialize -> worker run -> completed -> later-tick parent consume 的完整 golden path。
+- `T385` 已完成：
+  - 执行日志、任务状态与 `.ai-sdlc` 元数据已同步到 038 完成态；
+  - handoff 已固定：future worker 结果只有在 parent canonical consume 后才真正生效，后续工作不得回退到隐式共享状态。
 
 ## Latest Verification
 - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py` -> `3 passed in 0.02s`
@@ -57,10 +53,13 @@ Last Committed Task: T382
 - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k consumes_completed_future_worker_results_for_same_trace` -> `1 passed in 1.25s`
 - `uv run pytest -q tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py` -> `11 passed in 2.20s`
 - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py` -> `74 passed in 5.59s`
+- `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'materializes_future_worker_requests_once_per_decision_trace or rejects_partial_future_worker_request_materialization'` -> `2 passed, 40 deselected in 0.84s`
+- `uv run pytest -q tests/e2e/test_watchdog_future_worker_execution.py -k materializes_and_consumes_future_worker_chain` -> `1 passed, 2 deselected in 0.74s`
+- `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py` -> `77 passed in 6.22s`
+- `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py` -> `3 passed in 0.03s`
 
 ## Handoff
-- 当前下一步是继续推进 `T383`，把 parent declarative worker request/create contract 正式接到 orchestrator / decision evidence。
-- recovery supersede、replay required-event gating、trace inheritance 与 parent consume 已落地，create-side 现在是 038 剩余最大的实现缺口。
-- `T384` 的 ops/read-side、late-result rejection、wrong-trace exclusion 与 parent consume replay 已落地；下一步看 create-side contract 接上后是否还需要更长的 worker create -> run -> consume golden path e2e。
-- 后续工作不得回退到隐式共享状态、worker 本地真相或人工口头治理。
-- 最近两轮 Hermes Agent 专家 / Anthropic Manager 专家复核均无 blocking/P1。
+- `WI-038` 已完成：future worker / sub-agent 现在只作为 canonical execution contract 存在，不再留有“声明式预留但 runtime 不治理”的缺口。
+- 后续如果继续扩展 worker 能力，只能建立在现有 canonical `future_worker_*` truth、same-trace replay/consume 与 fail-closed request materialization 之上。
+- future worker 结果只有在 parent canonical consume 后才真正生效；后续工作不得回退到隐式共享状态、worker 本地真相或人工口头治理。
+- 最后一轮 Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1。

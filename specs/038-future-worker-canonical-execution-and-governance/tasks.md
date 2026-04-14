@@ -56,7 +56,7 @@
 ## Task 38.3 补齐 canonical worker execution truth 与 runtime glue
 
 - **任务编号**：T383
-- **状态**：进行中
+- **状态**：已完成（2026-04-14）
 - **目标**：在不引入第二状态机的前提下，把 worker/sub-agent 正式纳入 Session truth、runtime 与 recovery。
 - **文件**：
   - `src/watchdog/services/future_worker/models.py`
@@ -75,19 +75,22 @@
   4. crash / supersede / cancel / late-result 都进入同一条 canonical recovery/governance 链。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py`
-- **当前进展**：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py`
+- **完成情况**：
   1. 已新增 `src/watchdog/services/future_worker/models.py` 与 `service.py`，提供 `FutureWorkerExecutionRequest`、`FutureWorkerResultEnvelope` 与最小 lifecycle service；
   2. 已在 `Session Service` 中登记 `future_worker_requested|started|heartbeat|summary_published|completed|failed|cancelled|result_consumed|result_rejected` canonical events；
   3. 已在 `create_app()` 中接入 `app.state.future_worker_service`，并打通 request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 到 `Session Service` 的单一路径；
   4. parent-side canonical consume、stale-result rejection 的最小 service 已在位；
-  5. 当前 batch 已把 `future_worker` 收紧成显式状态机，禁止 `failed/cancelled/rejected/consumed` 终态后继续 `completed/consume` 等非法跃迁，并固定 `consume/reject` 必须在 `completed` 之后发生；
+  5. 已把 `future_worker` 收紧成显式状态机，禁止 `failed/cancelled/rejected/consumed` 终态后继续 `completed/consume` 等非法跃迁，并固定 `consume/reject` 必须在 `completed` 之后发生；
   6. recovery continuation 现已会 supersede parent session 上未收口的 future worker：运行中 worker 记 `cancelled`，已完成未 consume 的 worker 记 `result_rejected`；
-  7. orchestrator 侧 create/consume 正式接线仍待继续补齐。
+  7. orchestrator replay 现已只读取同 `decision_trace_ref` 的 worker truth，wrong-trace worker 事件不会混入当前 decision replay；
+  8. parent command 成功后、以及 command 已 `executed` 的后续 tick 上，orchestrator 都会 canonical consume 同 trace 下已 `completed` 的 worker result；
+  9. parent declarative `future_worker_requests` 已正式接入 orchestrator / decision evidence，只有整批 request schema + drift 预校验通过后才会 materialize `future_worker_requested`，避免 partial canonical truth。
 
 ## Task 38.4 收口 ops surfacing 与 formal worker e2e 主链
 
 - **任务编号**：T384
-- **状态**：进行中
+- **状态**：已完成（2026-04-14）
 - **目标**：把 worker/sub-agent 的正式运行层级、阻断原因与 stale-result rejection 暴露到 ops/read-side 与 e2e。
 - **文件**：
   - `src/watchdog/api/ops.py`
@@ -101,17 +104,20 @@
   3. e2e 能固定至少一条正式 worker 主链与一条 stale/late rejection 支线。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_ops.py`
-- **当前进展**：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py`
+- **完成情况**：
   1. `build_ops_summary()` 已新增 `future_workers` 读侧视图，可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
   2. `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`，可直接看见 `late_result` 等阻断原因；
   3. `metrics_export.py` 已新增 future worker 状态与阻断原因 gauge；
   4. `tests/e2e/test_watchdog_future_worker_execution.py` 已新增 late-result rejection 支线，固定 `rejected` 后不得再被 parent consume；
-  5. recovery-supersede 与 late-result 两条 rejection 支线都已入测，剩余收口点主要在 orchestrator 正式接线与更完整的 stale-result 主链。
+  5. recovery-supersede 与 late-result 两条 rejection 支线都已入测；
+  6. e2e 现已固定 declarative request materialize -> worker start -> summary -> completed -> later-tick parent consume 的正式 golden path；
+  7. same-trace replay、wrong-trace 排除、late-result rejection 与 consumed terminal read-side 现在都可从 ops/read-side 与 canonical event 链直接回看。
 
 ## Task 38.5 更新执行日志与 handoff 摘要
 
 - **任务编号**：T385
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定 038 的下一执行入口与治理口径。
 - **文件**：
   - `specs/038-future-worker-canonical-execution-and-governance/task-execution-log.md`
@@ -127,6 +133,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已把 declarative worker request contract、same-trace consume 与 partial-materialization fail-closed 闭环写入执行日志；
+  2. `.ai-sdlc` 元数据已更新到 `T385` 完成态，可直接恢复到 038 已收口的最新状态；
+  3. handoff 已明确：future worker 结果只有在 parent canonical consume 后才算真正生效，后续工作不得回退到隐式共享状态或局部 worker 真相。
 
 ## 整体验收
 

@@ -59,7 +59,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: in_progress
+  status: completed
   depends_on:
   - T382
 - task_id: T384
@@ -77,7 +77,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: in_progress
+  status: completed
   depends_on:
   - T383
 - task_id: T385
@@ -96,7 +96,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T384
 batches:
@@ -118,21 +118,21 @@ batches:
   phase: 3
   tasks:
   - T383
-  status: in_progress
+  status: completed
   started_at: '2026-04-14T08:50:54+08:00'
-  completed_at: ''
+  completed_at: '2026-04-14T11:03:42+08:00'
 - batch_id: 4
   phase: 4
   tasks:
   - T384
-  status: pending
-  started_at: ''
-  completed_at: ''
+  status: completed
+  started_at: '2026-04-14T11:03:42+08:00'
+  completed_at: '2026-04-14T11:03:42+08:00'
 - batch_id: 5
   phase: 5
   tasks:
   - T385
-  status: pending
-  started_at: ''
-  completed_at: ''
-current_batch: 3
+  status: completed
+  started_at: '2026-04-14T11:03:42+08:00'
+  completed_at: '2026-04-14T11:05:28+08:00'
+current_batch: 5
