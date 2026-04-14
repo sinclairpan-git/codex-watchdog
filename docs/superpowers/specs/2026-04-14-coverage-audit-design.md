@@ -61,6 +61,11 @@ If any evidence slot is empty, record the item as "unlanded" with the missing sl
 - Do **not** infer completion from "Status: completed" alone.
 - If a requirement exists only as a preview/contract without integration,
   record "missing entry evidence."
+- If the same requirement appears in multiple sources (PRD + plan + architecture),
+  keep a single row and list all source anchors in the Source column.
+- If multiple valid entry paths exist, prefer the one explicitly referenced in
+  a plan/task summary; otherwise pick the most central runtime path and note
+  alternatives in the evidence cell.
 
 ## Non-Goals
 
