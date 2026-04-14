@@ -215,5 +215,10 @@
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | git push / release / 发布流程自动化 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 远程桌面控制、通用 SSH 运维入口 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 对 OpenClaw 核心代码进行深度侵入式修改（优先通过外置服务集成） | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
-| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 多项目面板、差异化审批模板、语言栈分类器、更细粒度 compaction、Slack/Telegram/iMessage 复用、研发日报 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 多项目并发监管面板 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 基于项目类型的差异化审批模板 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 针对不同仓库语言栈的特定失败分类器 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 更细颗粒度的 context compaction 策略 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | Slack / Telegram / iMessage 等多通道复用 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 研发日报 / 自动阶段性汇总 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:928-933 / ## 21. 参考约束（供研发理解，不要求照抄到代码）` | 协议层以 app-server 为核心、消费上游消息、内网优先、最小暴露面、审批与沙箱为系统级边界 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
