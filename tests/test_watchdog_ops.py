@@ -1092,3 +1092,82 @@ def test_build_ops_summary_preserves_worker_state_after_transition_rejection(
     assert summary.future_workers[0].status == "running"
     assert summary.future_workers[0].last_event_type == "future_worker_transition_rejected"
     assert summary.future_workers[0].blocking_reason == "invalid_transition:running->running"
+
+
+def test_build_ops_summary_preserves_completed_state_after_duplicate_completion_rejection(
+    tmp_path: Path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    settings = Settings(data_dir=str(tmp_path))
+
+    session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:50:00Z",
+        correlation_id="corr:future-worker:task-dup-complete",
+        related_ids={
+            "worker_task_ref": "worker:task-dup-complete",
+            "decision_trace_ref": "trace:dup-complete",
+        },
+        payload={"scope": "read_only"},
+    )
+    session_service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:51:00Z",
+        correlation_id="corr:future-worker:task-dup-complete",
+        related_ids={"worker_task_ref": "worker:task-dup-complete"},
+        payload={"worker_runtime_contract": {"provider": "codex"}},
+    )
+    session_service.record_event(
+        event_type="future_worker_completed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:52:00Z",
+        correlation_id="corr:future-worker:task-dup-complete",
+        related_ids={
+            "worker_task_ref": "worker:task-dup-complete",
+            "summary_ref": "summary:dup-complete",
+        },
+        payload={
+            "worker_task_ref": "worker:task-dup-complete",
+            "parent_session_id": "session:repo-a",
+            "decision_trace_ref": "trace:dup-complete",
+            "result_summary_ref": "summary:dup-complete",
+            "artifact_refs": [],
+            "input_contract_hash": "sha256:dup-complete-input",
+            "result_hash": "sha256:dup-complete-result",
+            "produced_at": "2026-04-14T05:52:00Z",
+            "status": "completed",
+            "worker_runtime_contract": {"provider": "codex"},
+        },
+    )
+    session_service.record_event(
+        event_type="future_worker_transition_rejected",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:53:00Z",
+        correlation_id=(
+            "corr:future-worker:task-dup-complete:future_worker_completed:2026-04-14T05:53:00Z"
+        ),
+        related_ids={
+            "worker_task_ref": "worker:task-dup-complete",
+            "attempted_event_type": "future_worker_completed",
+        },
+        payload={
+            "attempted_event_type": "future_worker_completed",
+            "current_state": "completed",
+            "reason": "invalid_transition:completed->completed",
+            "worker_task_ref": "worker:task-dup-complete",
+        },
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert len(summary.future_workers) == 1
+    assert summary.future_workers[0].worker_task_ref == "worker:task-dup-complete"
+    assert summary.future_workers[0].status == "completed"
+    assert summary.future_workers[0].last_event_type == "future_worker_transition_rejected"
+    assert summary.future_workers[0].blocking_reason == "invalid_transition:completed->completed"
