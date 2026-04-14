@@ -37,6 +37,7 @@ from watchdog.services.delivery.envelopes import (
     progress_summary_fingerprint,
 )
 from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.models import GoalContractReadiness
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import PolicyDecisionStore
@@ -105,6 +106,7 @@ class ResidentOrchestrator:
         command_lease_store: CommandLeaseStore,
         state_store: ResidentOrchestrationStateStore,
         session_service: SessionService | None = None,
+        future_worker_service: FutureWorkerExecutionService | None = None,
         brain_service: BrainDecisionService | None = None,
         replay_service: DecisionReplayService | None = None,
         decision_validator: DecisionValidator | None = None,
@@ -120,6 +122,7 @@ class ResidentOrchestrator:
         self._command_lease_store = command_lease_store
         self._state_store = state_store
         self._session_service = session_service
+        self._future_worker_service = future_worker_service
         self._brain_service = brain_service or BrainDecisionService()
         self._replay_service = replay_service or DecisionReplayService()
         self._decision_validator = decision_validator or DecisionValidator()
@@ -372,6 +375,67 @@ class ResidentOrchestrator:
                 required_event_ids=required_event_ids,
             ).model_dump(mode="json"),
         }
+
+    @staticmethod
+    def _future_worker_state_event(event) -> bool:
+        return event.event_type in {
+            "future_worker_requested",
+            "future_worker_started",
+            "future_worker_completed",
+            "future_worker_failed",
+            "future_worker_cancelled",
+            "future_worker_result_consumed",
+            "future_worker_result_rejected",
+        }
+
+    def _consume_completed_future_worker_results(
+        self,
+        decision,
+        *,
+        command_id: str,
+        occurred_at: str,
+    ) -> list[str]:
+        if self._session_service is None or self._future_worker_service is None:
+            return []
+        relevant_events = self._decision_relevant_session_events(decision, command_id=command_id)
+        grouped_events: dict[str, list[object]] = {}
+        for event in relevant_events:
+            if not event.event_type.startswith("future_worker_"):
+                continue
+            worker_task_ref = str(event.related_ids.get("worker_task_ref") or "").strip()
+            if not worker_task_ref:
+                continue
+            grouped_events.setdefault(worker_task_ref, []).append(event)
+
+        consumed_refs: list[str] = []
+        for worker_task_ref, events in grouped_events.items():
+            ordered_events = sorted(
+                events,
+                key=lambda event: (
+                    event.log_seq or 0,
+                    _parse_iso(event.occurred_at) or datetime.min.replace(tzinfo=UTC),
+                    event.event_id,
+                ),
+            )
+            last_state_event = next(
+                (
+                    event
+                    for event in reversed(ordered_events)
+                    if self._future_worker_state_event(event)
+                ),
+                None,
+            )
+            if last_state_event is None or last_state_event.event_type != "future_worker_completed":
+                continue
+            self._future_worker_service.consume_result(
+                worker_task_ref=worker_task_ref,
+                project_id=decision.project_id,
+                parent_session_id=decision.session_id,
+                consumed_by_decision_id=decision.decision_id,
+                occurred_at=occurred_at,
+            )
+            consumed_refs.append(worker_task_ref)
+        return consumed_refs
 
     def _command_terminal_metrics_summary(
         self,
@@ -915,6 +979,15 @@ class ResidentOrchestrator:
                             receipt_store=self._action_receipt_store,
                             session_service=self._session_service,
                         )
+                        if result.action_status == ActionStatus.COMPLETED:
+                            self._consume_completed_future_worker_results(
+                                decision,
+                                command_id=command_plan.command_id,
+                                occurred_at=now.astimezone(UTC)
+                                .replace(microsecond=0)
+                                .isoformat()
+                                .replace("+00:00", "Z"),
+                            )
                         self._record_command_terminal_result(
                             decision=decision,
                             result=result,

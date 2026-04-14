@@ -280,6 +280,7 @@ def create_app(
         command_lease_store=app.state.command_lease_store,
         state_store=app.state.resident_orchestration_state_store,
         session_service=app.state.session_service,
+        future_worker_service=app.state.future_worker_service,
     )
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(events_proxy_routes.router, prefix="/api/v1")

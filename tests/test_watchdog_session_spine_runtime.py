@@ -1149,6 +1149,109 @@ def test_resident_orchestrator_replay_excludes_future_worker_events_with_wrong_t
     ]
 
 
+def test_resident_orchestrator_consumes_completed_future_worker_results_for_same_trace(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    trace = _release_gate_trace().model_copy(update={"trace_id": "trace:consume-worker"})
+    app.state.future_worker_service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:consume-1",
+        decision_trace_ref=trace.trace_id,
+        goal_contract_version=trace.goal_contract_version,
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:consume-1"],
+        retrieval_handles=["handle:consume-1"],
+        distilled_summary_ref="summary:consume-1",
+        execution_budget_ref="budget:consume-1",
+        occurred_at="2026-04-14T06:20:00Z",
+    )
+    app.state.future_worker_service.record_started(
+        worker_task_ref="worker:consume-1",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T06:21:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    app.state.future_worker_service.record_completed(
+        worker_task_ref="worker:consume-1",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        result_summary_ref="summary:worker:consume-1",
+        artifact_refs=["artifact:consume-1"],
+        input_contract_hash="sha256:consume-input",
+        result_hash="sha256:consume-result",
+        occurred_at="2026-04-14T06:22:00Z",
+    )
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_trace_for_intent",
+        return_value=trace,
+    ):
+        with patch.object(
+            app.state.resident_orchestrator._replay_service,
+            "session_semantic_replay",
+            wraps=app.state.resident_orchestrator._replay_service.session_semantic_replay,
+        ) as session_replay_mock:
+            with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+                steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+                app.state.resident_orchestrator.orchestrate_all(
+                    now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+                )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    command_id = f"command:{decision.decision_id}"
+    relevant_events = app.state.resident_orchestrator._decision_relevant_session_events(
+        decision,
+        command_id=command_id,
+    )
+    worker_events = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.related_ids.get("worker_task_ref") == "worker:consume-1"
+    ]
+
+    assert [event.event_type for event in worker_events] == [
+        "future_worker_requested",
+        "future_worker_started",
+        "future_worker_completed",
+        "future_worker_result_consumed",
+    ]
+    assert worker_events[-1].related_ids["decision_id"] == decision.decision_id
+    assert worker_events[-1].related_ids["decision_trace_ref"] == trace.trace_id
+    assert session_replay_mock.call_args is not None
+    assert session_replay_mock.call_args.kwargs["required_event_ids"] == [
+        event.event_id for event in relevant_events
+    ]
+
+
 def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contract(
     tmp_path: Path,
 ) -> None:
