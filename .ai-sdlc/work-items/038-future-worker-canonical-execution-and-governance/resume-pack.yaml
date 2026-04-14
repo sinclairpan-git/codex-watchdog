@@ -1,0 +1,43 @@
+current_stage: implementation
+current_batch: 2
+last_committed_task: T381
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/038-future-worker-canonical-execution-and-governance/spec.md
+  plan_path: specs/038-future-worker-canonical-execution-and-governance/plan.md
+  tasks_path: specs/038-future-worker-canonical-execution-and-governance/tasks.md
+  active_files:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/spec.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/plan.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/tasks.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-038` 已从 `WI-035` / `WI-037` 的 handoff 正式追加，目标是把 future worker / sub-agent 从声明式预留 schema 收口成 canonical execution contract。
+    - 当前 formal docs 已冻结的关键边界：
+      - worker requested/start/heartbeat/summary/completed/failed/cancelled/consumed/rejected 都必须进入 `Session Service`；
+      - worker 只消费冻结的 `DecisionTrace`、packet refs、retrieval handles 与 distilled summary；
+      - worker 不得直接修改 Goal Contract、approval、risk band、completion truth 或 release gate verdict；
+      - stale/late/duplicate/supersede/crash recovery 都必须 fail closed 并进入 canonical truth。
+    - `T381` 已完成：
+      - 已新增 `Task 9` 到总实施计划；
+      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/038-*` 基线。
+      - Anthropic Manager 专家与 Hermes Agent 专家复核均无 blocking/P1。
+    - 下一执行入口是 `T382`：
+      - 先写 worker lifecycle / consume / reject / stale-result fail-closed 红测；
+      - 再补 Session truth、runtime/recovery glue 与 ops/e2e。
+current_branch: codex/wi-038-future-worker-canonical-execution
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T08:45:25+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

@@ -414,6 +414,49 @@
 - [ ] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，OpenClaw 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
 - [ ] 完成 Task 8 后，确认至少一条 `Feishu DM -> Goal Contract -> Brain -> Session write barrier -> command execution -> interruption recovery -> human approval/override -> completion -> replay/metrics` 主链路可在无手工补状态前提下重复打通，并且 low-risk 放行前已经产出并校验对应的 `release_gate_report`。
 
+### Task 9: 把 future worker / sub-agent 收敛为 canonical execution contract
+
+**Canonical execution work item:** `specs/038-future-worker-canonical-execution-and-governance/`
+
+**Files:**
+- Create: `src/watchdog/services/future_worker/models.py`
+- Create: `src/watchdog/services/future_worker/service.py`
+- Modify: `src/watchdog/services/session_service/models.py`
+- Modify: `src/watchdog/services/session_service/service.py`
+- Modify: `src/watchdog/services/brain/models.py`
+- Modify: `src/watchdog/services/session_spine/orchestrator.py`
+- Modify: `src/watchdog/services/session_spine/recovery.py`
+- Modify: `src/watchdog/services/memory_hub/models.py`
+- Create: `tests/test_watchdog_future_worker_contract.py`
+- Create: `tests/test_watchdog_future_worker_runtime.py`
+- Create: `tests/e2e/test_watchdog_future_worker_execution.py`
+
+- [ ] **Step 1: 写失败测试，冻结 worker/sub-agent canonical execution 边界**
+  - 覆盖 `FutureWorkerTraceRef` 从声明式 schema 升格为正式 worker execution contract，但 worker 仍不得直接写 Goal Contract、approval、risk band 或 completion truth。
+  - 覆盖 `worker_started -> worker_heartbeat -> worker_summary_published -> worker_completed|worker_failed|worker_cancelled` 必须作为 `Session Service` canonical events 落账。
+  - 覆盖 worker 只允许消费冻结的 `decision_trace_ref`、`input_packet_refs`、`retrieval_handles` 与 `distilled_summary_ref`，不得绕过到 Memory Hub 私有状态或 live provider memory。
+  - 覆盖 worker crash、stale completion、duplicate worker start、result late arrival 与 parent session supersede 时必须 fail closed。
+  - 覆盖 parent session 只通过 canonical worker result envelope 消费 worker 输出，而不是隐式把 worker side effects 当成已完成真相。
+
+- [ ] **Step 2: 运行测试确认正确失败**
+  - Run: `uv run pytest tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py -q`
+  - Expected: 因 worker/sub-agent 仍只有声明式 schema、缺少 canonical events 与 runtime/recovery glue 而失败。
+
+- [ ] **Step 3: 实现最小 canonical worker execution contract**
+  - 新增 `future_worker` 服务层，收口 worker execution request、result envelope、budget/scope 与 canonical refs。
+  - 在 `Session Service` 中补齐 worker lifecycle events、stale result rejection、supersede/cancel 记录与 parent-child worker lineage。
+  - 让 orchestrator / recovery 只消费 canonical worker records，不直接信任 worker 进程本地状态。
+  - 保证 worker 输出必须经 parent-side canonical consumption 才能影响后续决策或 completion judgment。
+  - 保证 worker scope / allowed hands / retrieval refs / distilled summary 仍沿用 034/035 已冻结的 contract，而不是定义第二套上下文协议。
+
+- [ ] **Step 4: 运行测试确认通过**
+  - Run: `uv run pytest tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py -q`
+  - Expected: worker/sub-agent 已进入 canonical truth、runtime/recovery/ops 都能看见其 lifecycle 与阻断原因，且不会越权修改 parent session 真相。
+
+- [ ] **Step 5: 提交**
+  - `git add src/watchdog/services/future_worker src/watchdog/services/session_service src/watchdog/services/brain/models.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/session_spine/recovery.py src/watchdog/services/memory_hub/models.py tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py`
+  - `git commit -m "feat: add canonical future worker execution contract"`
+
 ## 风险控制
 
 - 所有阶段都必须维持现有 stable read contract，不允许一次性拆掉全部兼容层。
