@@ -1,5 +1,5 @@
 current_stage: implementation
-current_batch: 6
+current_batch: 7
 last_committed_task: T382
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
@@ -14,7 +14,9 @@ working_set_snapshot:
   - '`specs/038-future-worker-canonical-execution-and-governance/plan.md`'
   - '`specs/038-future-worker-canonical-execution-and-governance/tasks.md`'
   - '`specs/038-future-worker-canonical-execution-and-governance/task-execution-log.md`'
+  - '`src/watchdog/main.py`'
   - '`src/watchdog/services/future_worker/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
   - '`src/watchdog/api/ops.py`'
   - '`src/watchdog/observability/metrics_export.py`'
   - '`src/watchdog/services/session_spine/recovery.py`'
@@ -22,6 +24,7 @@ working_set_snapshot:
   - '`tests/test_watchdog_ops.py`'
   - '`tests/test_watchdog_recovery_execution.py`'
   - '`tests/e2e/test_watchdog_future_worker_execution.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/runtime.yaml`'
   - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/resume-pack.yaml`'
@@ -37,31 +40,28 @@ working_set_snapshot:
       - stale/late/duplicate/supersede/crash recovery 都必须 fail closed 并进入 canonical truth。
     - `T381` 已完成：
       - 已新增 `Task 9` 到总实施计划；
-      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/038-*` 基线。
+      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/038-*` 基线；
       - Anthropic Manager 专家与 Hermes Agent 专家复核均无 blocking/P1。
     - `T382` 已完成：
-      - 新增 contract/runtime/e2e 三类红测；
-      - 红测已锁定 `future_worker` 模块、`Session Service` event 与 app-level service wiring；
-      - 当前三份测试已转绿。
+      - contract/runtime/e2e 三类红测都已建好并转绿；
+      - 首轮红测暴露的模块缺失、`Session Service` event 缺失、app wiring 缺失均已补齐。
     - `T383` 正在进行：
-      - `src/watchdog/services/future_worker/` 已落地最小 models/service；
-      - `Session Service` 已登记 `future_worker_*` canonical events；
-      - `app.state.future_worker_service` 已接入，并打通 request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 到 `Session Service`；
-      - completion gate、frozen `decision_trace_ref` 回读与 worker runtime contract provenance 已补齐；
-      - 当前 batch 已新增 explicit transition gate，禁止终态后的非法 `completed/consume`；
-      - recovery continuation 现已会 supersede parent session 上未收口的 future worker；
-      - orchestrator 侧 create/consume 正式接线仍待继续补齐。
+      - `src/watchdog/services/future_worker/` 已落地 models/service，request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 都能写回 canonical truth；
+      - transition gate、late-result rejection、recovery supersede、trace inheritance 都已补齐；
+      - orchestrator replay 现在会读取同 trace 的 worker truth，wrong-trace worker 事件会被排除；
+      - orchestrator 成功 command 现在会在 `command_executed` 前 canonical consume 同 trace 下已 completed 的 worker result；
+      - 当前剩余缺口只收敛到 create-side：parent 如何正式声明 / 请求 future worker contract 仍未接上。
     - `T384` 正在进行：
       - `build_ops_summary()` 已新增 `future_workers` 读侧视图；
       - `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`；
       - `metrics_export.py` 已导出 future worker 状态与阻断原因 gauge；
-      - late-result rejection 的 e2e 支线已补齐，固定 `rejected` 后不得再被 parent consume。
-    - 本轮已两次发起 Hermes Agent 专家 / Anthropic Manager 专家子线程复核，但 `wait_agent` 均超时；
-      当前只确认本地回归通过，正式专家 blocking/P1 verdict 需下轮补做。
+      - late-result rejection、wrong-trace exclusion 与 parent consume replay 断言都已入测；
+      - 完整 worker create -> run -> consume golden path 还差 declarative request contract 的最后一段。
+    - 最近两轮 Hermes Agent 专家 / Anthropic Manager 专家复核均无 blocking/P1。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T09:41:10+08:00'
+timestamp: '2026-04-14T10:55:00+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

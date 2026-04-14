@@ -104,3 +104,33 @@
 - 当前收口判断：
   - `T384` 的 late-result rejection 支线已进入正式 e2e；
   - 继续向前时，应优先把 orchestrator 侧 create/consume 接线补齐，再决定是否需要更长的 stale-result parent-decision 主链 e2e。
+
+### Phase 3 / 4：orchestrator replay + consume 正式接线
+
+- 已补红测并转绿：
+  - parent terminal replay 必须把同 `decision_trace_ref` 的 `future_worker_*` 事件升为 `required_event_ids`；
+  - wrong-trace worker 事件不得混入当前 decision replay；
+  - parent command 成功后，同 trace 下已 `completed` 且未 `consumed/rejected` 的 worker result 必须由 orchestrator canonical consume。
+- 已完成实现：
+  - `src/watchdog/services/session_spine/orchestrator.py`
+    - `_decision_relevant_session_events()` 现在只纳入 `decision_*`、`command_created` 与同 trace 的 `future_worker_*`；
+    - `session_semantic_replay.required_event_ids` 现已覆盖同 trace worker truth，而不是只看 parent decision 三件套；
+    - command 成功后、`command_executed` 落账前，会 canonical consume 同 trace 下处于 `completed` 的 worker result。
+  - `src/watchdog/services/future_worker/service.py`
+    - 非 `requested` 的 lifecycle / reject / consume / transition_rejected 事件现在都会继承冻结的 `decision_trace_ref`；
+    - `result_rejected` 与 `transition_rejected` 不再静默掉出 parent replay / ops / audit。
+  - `tests/test_watchdog_session_spine_runtime.py`
+    - 已固定 same-trace worker truth 被 replay 读取；
+    - 已固定 wrong-trace worker truth 被 replay 排除；
+    - 已固定 command 成功后 `future_worker_result_consumed` 会按当前 `decision_id` 正式落账。
+- 本轮验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k future_worker_events` -> `2 passed in 1.17s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k consumes_completed_future_worker_results_for_same_trace` -> `1 passed in 1.25s`
+  - `uv run pytest -q tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py` -> `11 passed in 2.20s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py` -> `74 passed in 5.59s`
+- 对抗复核：
+  - Anthropic Manager 专家：无 blocking/P1；
+  - Hermes Agent 专家：无 blocking/P1。
+- 当前收口判断：
+  - `T383` 现在只剩“parent 如何正式声明 / 请求 future worker contract”的 create-side 接线未完成；
+  - `T384` 的 replay/read-side/consume 主链已进一步收紧，但完整 worker create -> run -> consume golden path 仍待补最后一段 declarative request contract。

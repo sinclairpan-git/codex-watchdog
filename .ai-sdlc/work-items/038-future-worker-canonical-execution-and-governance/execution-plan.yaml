@@ -77,7 +77,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: in_progress
   depends_on:
   - T383
 - task_id: T385
