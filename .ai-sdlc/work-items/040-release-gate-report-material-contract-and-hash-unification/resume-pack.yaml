@@ -1,6 +1,6 @@
-current_stage: implementation
-current_batch: 1
-last_committed_task: T401
+current_stage: verify
+current_batch: 5
+last_committed_task: T405
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -14,6 +14,11 @@ working_set_snapshot:
   - '`specs/040-release-gate-report-material-contract-and-hash-unification/plan.md`'
   - '`specs/040-release-gate-report-material-contract-and-hash-unification/tasks.md`'
   - '`specs/040-release-gate-report-material-contract-and-hash-unification/task-execution-log.md`'
+  - '`src/watchdog/services/brain/release_gate_report_material.py`'
+  - '`src/watchdog/services/brain/release_gate_loading.py`'
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`scripts/generate_release_gate_report.py`'
+  - '`tests/test_watchdog_release_gate.py`'
   - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/runtime.yaml`'
   - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/resume-pack.yaml`'
@@ -29,11 +34,25 @@ working_set_snapshot:
     - `T401` 已完成：
       - 已新增 `Task 11` 到总实施计划；
       - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/040-*` 基线；
+      - Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1；
       - 当前下一执行入口固定为 `T402`。
+    - `T402` 已完成：
+      - 已新增 shared report material/hash module surface 红测；
+      - 已锁定 fixture 的 `report_id/report_hash` 与 loader 的 `raw_payload_hash` 必须通过 shared helper 对齐；
+      - 首轮红测已确认模块缺失与 script/loader 局部 helper 分叉。
+    - `T403` 已完成：
+      - 已新增 `release_gate_report_material.py`，统一 canonical material、`report_id` seed 与 `report_hash`；
+      - script 与 loader 已改为只消费 shared helper；
+      - script 产物里的 `shadow_decision_count/certification_packet_count` 与 loader schema 现在已经对齐；
+      - 最后一轮 Hermes Agent 专家 / Anthropic Manager 专家复核均无 blocking/P1。
+    - `T404` 已完成：
+      - 执行日志、总实施计划 Task 11 与 `.ai-sdlc` 元数据已同步到完成态。
+    - `T405` 已完成：
+      - `WI-040` 已完成：后续任何 report refresh / validation 都必须复用 shared report material/hash contract。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T11:50:00+08:00'
+timestamp: '2026-04-14T11:52:09+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

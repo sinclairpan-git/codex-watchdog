@@ -29,12 +29,12 @@
   1. 已新增 `Task 11` 到总实施计划，并挂到 `specs/040-release-gate-report-material-contract-and-hash-unification/`；
   2. 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/040-*` 基线；
   3. 已把 040 收紧为 report material/hash shared contract，而不是扩新的 release gate 行为；
-  4. 当前等待 Hermes Agent 专家与 Anthropic Manager 专家复核。
+  4. Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1。
 
 ## Task 40.2 写失败测试锁定 shared report material/hash contract
 
 - **任务编号**：T402
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 `release_gate_report` canonical material、`report_id` seed 与 `report_hash` 算法只能来自单一 shared helper。
 - **文件**：
   - `tests/test_watchdog_release_gate.py`
@@ -46,11 +46,16 @@
   4. 覆盖 governance metadata、冻结窗口、artifact refs 与 `input_hash` 纳入 canonical material 的方式固定。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_release_gate.py`
+- **完成情况**：
+  1. 已新增 `release_gate_report_material` shared helper module surface 红测；
+  2. 已锁定 fixture 里的 `report_id/report_hash` 必须能由 shared helper 重建；
+  3. 已锁定 loader 的 `raw_payload_hash` 必须与 shared helper 计算结果一致；
+  4. 初次红测确认当前缺口就是缺少 shared helper，generator / loader 仍各自维护本地 hash/material 逻辑。
 
 ## Task 40.3 实现最小 shared report material/hash helper
 
 - **任务编号**：T403
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：交付单一 shared helper，让 generator script、loader 与 fixture refresh 共享同一份 report material/hash contract。
 - **文件**：
   - `src/watchdog/services/brain/release_gate_report_material.py`
@@ -65,11 +70,16 @@
   4. checked-in fixture 输出保持稳定。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py`
+- **完成情况**：
+  1. 已新增 `src/watchdog/services/brain/release_gate_report_material.py`，统一 canonical material、`report_id` seed 与 `report_hash` 计算；
+  2. `scripts/generate_release_gate_report.py` 与 `src/watchdog/services/brain/release_gate_loading.py` 已改为只消费 shared helper；
+  3. 实现过程中暴露出真实契约缺口：script 生成的 canonical report 含 `shadow_decision_count` / `certification_packet_count`，但 loader schema 会误拒；现已补进 `ReleaseGateReport`；
+  4. Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1。
 
 ## Task 40.4 更新执行日志与 handoff 摘要
 
 - **任务编号**：T404
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 handoff。
 - **文件**：
   - `specs/040-release-gate-report-material-contract-and-hash-unification/task-execution-log.md`
@@ -85,11 +95,15 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已把 red/green/review 闭环、实现提交与 formal handoff 写回执行日志；
+  2. `.ai-sdlc` 元数据已同步到 040 完成态；
+  3. handoff 已明确后续任何 report refresh / validation 都必须复用 shared helper。
 
 ## Task 40.5 完成 040 整体验证并交接下一 work item
 
 - **任务编号**：T405
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：完成 040 的整体验证，并把 shared report material/hash contract 作为后续 work item 的正式依赖写回 handoff。
 - **文件**：
   - `specs/040-release-gate-report-material-contract-and-hash-unification/task-execution-log.md`
@@ -103,6 +117,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅 handoff 与总实施计划一致
+- **完成情况**：
+  1. `WI-040` 已完成：`release_gate_report` canonical material、`report_id` seed 与 `report_hash` 计算已成为唯一正式生成面；
+  2. 下一批如需刷新 report / fixture / archive，只能声明依赖 shared helper，不能再复制局部 hash/material 算法；
+  3. 最后一轮 Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1。
 
 ## 整体验收
 
