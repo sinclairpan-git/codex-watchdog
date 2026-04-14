@@ -102,6 +102,12 @@ def test_policy_engine_release_gate_read_contract_module_exports_policy_surface(
     assert hasattr(module, "read_release_gate_decision_evidence")
 
 
+def test_policy_engine_validator_read_contract_module_exports_policy_surface() -> None:
+    module = importlib.import_module("watchdog.services.brain.validator_read_contract")
+
+    assert hasattr(module, "read_validator_decision_evidence")
+
+
 def test_policy_engine_routes_human_gate_to_require_user_decision() -> None:
     record = _record(facts=[_fact("approval_pending"), _fact("awaiting_human_direction")])
 
@@ -327,3 +333,42 @@ def test_policy_engine_keeps_resident_default_path_without_bundle() -> None:
 
     assert decision.decision_result == "auto_execute_and_notify"
     assert decision.risk_class == "none"
+
+
+def test_policy_engine_fails_closed_when_validator_pass_payload_is_malformed() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="propose_execute",
+        goal_contract_readiness=GoalContractReadiness(
+            mode="autonomous_ready",
+            missing_fields=[],
+        ),
+        validator_verdict={
+            "status": "pass",
+            "reason": "schema_and_risk_ok",
+            "unexpected": "raw-dict-leak",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": "trace:1",
+                "approval_read_ref": "approval:none",
+                "report_id": "report-1",
+                "report_hash": "sha256:report",
+                "input_hash": "sha256:input",
+            },
+            "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                report_id="report-1",
+                report_hash="sha256:report",
+                input_hash="sha256:input",
+            ),
+        },
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "validator_gate_degraded" in decision.matched_policy_rules

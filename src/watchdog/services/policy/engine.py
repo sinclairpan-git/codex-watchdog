@@ -7,6 +7,10 @@ from watchdog.services.brain.release_gate_read_contract import (
     ReleaseGateDecisionReadSnapshot,
     read_release_gate_decision_evidence,
 )
+from watchdog.services.brain.validator_read_contract import (
+    ValidatorDecisionReadSnapshot,
+    read_validator_decision_evidence,
+)
 from watchdog.services.policy.decisions import (
     CanonicalDecisionRecord,
     build_canonical_decision_record,
@@ -33,8 +37,8 @@ def evaluate_persisted_session_policy(
     action_ref: str,
     trigger: str,
     brain_intent: str | None = None,
-    validator_verdict: dict[str, Any] | None = None,
-    release_gate_verdict: dict[str, Any] | None = None,
+    validator_verdict: Mapping[str, Any] | None = None,
+    release_gate_verdict: Mapping[str, Any] | None = None,
     policy_version: str = POLICY_VERSION,
     goal_contract_readiness: GoalContractReadiness | None = None,
 ) -> CanonicalDecisionRecord:
@@ -235,14 +239,15 @@ def evaluate_persisted_session_policy(
 def _goal_contract_evidence(
     readiness: GoalContractReadiness | None,
     *,
-    validator_verdict: dict[str, Any] | None = None,
+    validator_verdict: Mapping[str, Any] | None = None,
     release_gate_verdict: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     evidence: dict[str, Any] = {}
+    validator = read_validator_decision_evidence(validator_verdict)
     release_gate = read_release_gate_decision_evidence(release_gate_verdict)
     if readiness is None:
-        if validator_verdict is not None:
-            evidence["validator_verdict"] = dict(validator_verdict)
+        if validator.verdict is not None:
+            evidence["validator_verdict"] = validator.verdict.model_dump(mode="json")
         if release_gate.verdict is not None:
             evidence["release_gate_verdict"] = release_gate.verdict.model_dump(mode="json")
         if release_gate.evidence_bundle is not None:
@@ -251,8 +256,8 @@ def _goal_contract_evidence(
             )
         return evidence or None
     evidence["goal_contract_readiness"] = readiness.model_dump(mode="json")
-    if validator_verdict is not None:
-        evidence["validator_verdict"] = dict(validator_verdict)
+    if validator.verdict is not None:
+        evidence["validator_verdict"] = validator.verdict.model_dump(mode="json")
     if release_gate.verdict is not None:
         evidence["release_gate_verdict"] = release_gate.verdict.model_dump(mode="json")
     if release_gate.evidence_bundle is not None:
@@ -269,17 +274,20 @@ def _runtime_gate_override(
     trigger: str,
     brain_intent: str | None,
     policy_version: str,
-    validator_verdict: dict[str, Any] | None,
+    validator_verdict: Mapping[str, Any] | None,
     release_gate_verdict: Mapping[str, Any] | None,
     extra_evidence: dict[str, Any] | None,
 ) -> CanonicalDecisionRecord | None:
     if brain_intent != "propose_execute":
         return None
-    if not _verdict_is_pass(validator_verdict):
+    validator = read_validator_decision_evidence(validator_verdict)
+    if not _validator_snapshot_is_pass(validator):
         matched_rule = (
-            "runtime_gate_missing" if validator_verdict is None else "validator_gate_degraded"
+            "runtime_gate_missing"
+            if not _validator_snapshot_has_gate_evidence(validator)
+            else "validator_gate_degraded"
         )
-        degrade_reason = _verdict_reason(validator_verdict, fallback="validator_missing")
+        degrade_reason = _validator_snapshot_reason(validator, fallback="validator_missing")
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_BLOCK_AND_ALERT,
@@ -331,14 +339,24 @@ def _runtime_gate_override(
     return None
 
 
-def _verdict_is_pass(verdict: dict[str, Any] | None) -> bool:
-    return isinstance(verdict, dict) and verdict.get("status") == "pass"
+def _validator_snapshot_is_pass(snapshot: ValidatorDecisionReadSnapshot) -> bool:
+    return snapshot.verdict is not None and snapshot.verdict.status == "pass"
 
 
-def _verdict_reason(verdict: dict[str, Any] | None, *, fallback: str) -> str:
-    if not isinstance(verdict, dict):
+def _validator_snapshot_has_gate_evidence(
+    snapshot: ValidatorDecisionReadSnapshot,
+) -> bool:
+    return snapshot.verdict is not None or snapshot.has_verdict_payload
+
+
+def _validator_snapshot_reason(
+    snapshot: ValidatorDecisionReadSnapshot,
+    *,
+    fallback: str,
+) -> str:
+    if snapshot.verdict is None:
         return fallback
-    return str(verdict.get("degrade_reason") or verdict.get("reason") or fallback)
+    return snapshot.verdict.reason or fallback
 
 
 def _release_gate_snapshot_requires_bundle(

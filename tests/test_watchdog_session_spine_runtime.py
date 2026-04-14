@@ -296,6 +296,13 @@ def test_release_gate_read_contract_runtime_module_exports_typed_surface() -> No
     assert hasattr(module, "read_release_gate_decision_evidence")
 
 
+def test_validator_read_contract_runtime_module_exports_typed_surface() -> None:
+    module = importlib.import_module("watchdog.services.brain.validator_read_contract")
+
+    assert hasattr(module, "ValidatorDecisionReadSnapshot")
+    assert hasattr(module, "read_validator_decision_evidence")
+
+
 def test_resident_orchestrator_rejects_incomplete_pass_release_gate_verdict() -> None:
     decision = _runtime_gate_decision(
         release_gate_verdict={
@@ -355,6 +362,29 @@ def test_resident_orchestrator_rejects_pass_verdict_with_partial_bundle() -> Non
                 },
             }
         }
+    )
+
+    assert ResidentOrchestrator._decision_has_runtime_gate(decision) is False
+    assert ResidentOrchestrator._decision_allows_auto_execute(decision) is False
+
+
+def test_resident_orchestrator_rejects_malformed_pass_validator_verdict() -> None:
+    decision = _with_formal_release_gate_bundle(
+        _runtime_gate_decision(
+            release_gate_verdict={
+                "status": "pass",
+                "decision_trace_ref": "trace:seed",
+                "approval_read_ref": "approval:none",
+                "report_id": "report-seed",
+                "report_hash": "sha256:report-seed",
+                "input_hash": "sha256:input-seed",
+            },
+            validator_verdict={
+                "status": "pass",
+                "reason": "schema_and_risk_ok",
+                "unexpected": "raw-dict-leak",
+            },
+        )
     )
 
     assert ResidentOrchestrator._decision_has_runtime_gate(decision) is False

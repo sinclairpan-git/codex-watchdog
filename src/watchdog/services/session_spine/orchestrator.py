@@ -29,6 +29,9 @@ from watchdog.services.brain.release_gate_read_contract import (
 from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.brain.validator import DecisionValidator
+from watchdog.services.brain.validator_read_contract import (
+    read_validator_decision_evidence,
+)
 from watchdog.services.actions.executor import (
     build_watchdog_action_from_decision,
     execute_canonical_decision,
@@ -856,8 +859,8 @@ class ResidentOrchestrator:
         if decision.brain_intent not in (None, "propose_execute"):
             return False
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
-        validator_verdict = evidence.get("validator_verdict")
-        if not isinstance(validator_verdict, dict) or validator_verdict.get("status") != "pass":
+        validator_verdict = read_validator_decision_evidence(evidence).verdict
+        if validator_verdict is None or validator_verdict.status != "pass":
             return False
         release_gate = read_release_gate_decision_evidence(evidence)
         release_gate_verdict = release_gate.verdict
@@ -884,8 +887,10 @@ class ResidentOrchestrator:
     def _decision_has_runtime_gate(decision) -> bool:
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         release_gate = read_release_gate_decision_evidence(evidence)
+        validator_verdict = read_validator_decision_evidence(evidence).verdict
         return (
-            isinstance(evidence.get("validator_verdict"), dict)
+            validator_verdict is not None
+            and validator_verdict.status == "pass"
             and release_gate.verdict is not None
             and (
                 not ResidentOrchestrator._pass_verdict_requires_bundle(release_gate.verdict)
@@ -1029,11 +1034,7 @@ class ResidentOrchestrator:
                 action_ref=action_ref,
                 trigger="resident_orchestrator",
                 brain_intent=brain_intent.intent,
-                validator_verdict=(
-                    intent_evidence.get("validator_verdict")
-                    if isinstance(intent_evidence.get("validator_verdict"), dict)
-                    else None
-                ),
+                validator_verdict=intent_evidence,
                 release_gate_verdict=intent_evidence,
                 goal_contract_readiness=goal_contract_readiness,
             )
