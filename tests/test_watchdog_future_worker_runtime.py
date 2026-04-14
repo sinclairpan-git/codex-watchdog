@@ -150,8 +150,11 @@ def test_future_worker_service_emits_heartbeat_failed_and_cancelled_events(tmp_p
         "future_worker_failed",
         "future_worker_cancelled",
     ]
+    assert events[2].related_ids["decision_trace_ref"] == "trace:2"
     assert events[2].payload["heartbeat"]["progress"] == "indexing"
+    assert events[3].related_ids["decision_trace_ref"] == "trace:2"
     assert events[3].payload["reason"] == "runtime_error"
+    assert events[4].related_ids["decision_trace_ref"] == "trace:3"
     assert events[4].payload["reason"] == "superseded_by_new_worker"
 
 
@@ -448,7 +451,9 @@ def test_future_worker_service_audits_duplicate_start_and_completion_attempts(
     ]
 
     assert len(transition_rejections) == 2
+    assert transition_rejections[0].related_ids["decision_trace_ref"] == "trace:7"
     assert transition_rejections[0].payload["attempted_event_type"] == "future_worker_started"
     assert transition_rejections[0].payload["reason"] == "invalid_transition:running->running"
+    assert transition_rejections[1].related_ids["decision_trace_ref"] == "trace:7"
     assert transition_rejections[1].payload["attempted_event_type"] == "future_worker_completed"
     assert transition_rejections[1].payload["reason"] == "invalid_transition:completed->completed"

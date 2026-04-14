@@ -79,6 +79,8 @@ def test_future_worker_service_writes_requested_to_consumed_canonical_chain(
         "future_worker_completed",
         "future_worker_result_consumed",
     ]
+    assert events[1].related_ids["decision_trace_ref"] == "trace:1"
+    assert events[2].related_ids["decision_trace_ref"] == "trace:1"
     assert events[3].payload["decision_trace_ref"] == "trace:1"
     assert events[3].payload["worker_runtime_contract"] == {
         "provider": "codex",
@@ -86,6 +88,7 @@ def test_future_worker_service_writes_requested_to_consumed_canonical_chain(
     }
     assert events[-1].related_ids["worker_task_ref"] == "worker:task-1"
     assert events[-1].related_ids["decision_id"] == "decision:2"
+    assert events[-1].related_ids["decision_trace_ref"] == "trace:1"
 
 
 def test_future_worker_service_rejects_late_result_before_parent_consume(
@@ -151,5 +154,8 @@ def test_future_worker_service_rejects_late_result_before_parent_consume(
         "future_worker_result_rejected",
         "future_worker_transition_rejected",
     ]
+    assert events[1].related_ids["decision_trace_ref"] == "trace:late"
+    assert events[-2].related_ids["decision_trace_ref"] == "trace:late"
     assert events[-2].payload["reason"] == "late_result"
+    assert events[-1].related_ids["decision_trace_ref"] == "trace:late"
     assert events[-1].payload["reason"] == "terminal_state:rejected"

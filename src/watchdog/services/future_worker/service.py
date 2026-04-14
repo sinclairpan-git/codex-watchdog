@@ -56,6 +56,21 @@ class FutureWorkerExecutionService:
     def _correlation_id(worker_task_ref: str) -> str:
         return f"corr:future-worker:{worker_task_ref}"
 
+    def _decision_trace_ref_for_worker(
+        self,
+        *,
+        parent_session_id: str,
+        worker_task_ref: str,
+    ) -> str:
+        request_event = self._require_request_event(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+        )
+        decision_trace_ref = request_event.related_ids.get("decision_trace_ref")
+        if not decision_trace_ref:
+            raise ValueError(f"missing decision trace for future worker {worker_task_ref}")
+        return decision_trace_ref
+
     def request_worker(
         self,
         *,
@@ -442,6 +457,10 @@ class FutureWorkerExecutionService:
         current_state: str,
         reason: str,
     ) -> None:
+        decision_trace_ref = self._decision_trace_ref_for_worker(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+        )
         self._session_service.record_event(
             event_type="future_worker_transition_rejected",
             project_id=project_id,
@@ -455,10 +474,12 @@ class FutureWorkerExecutionService:
                 "current_state": current_state,
                 "reason": reason,
                 "worker_task_ref": worker_task_ref,
+                "decision_trace_ref": decision_trace_ref,
             },
             related_ids={
                 "worker_task_ref": worker_task_ref,
                 "attempted_event_type": attempted_event_type,
+                "decision_trace_ref": decision_trace_ref,
             },
         )
 
@@ -506,15 +527,24 @@ class FutureWorkerExecutionService:
         related_ids: dict[str, str] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
+        lifecycle_related_ids = {
+            "worker_task_ref": worker_task_ref,
+            **dict(related_ids or {}),
+        }
+        lifecycle_payload = dict(payload or {})
+        if event_type != "future_worker_requested" and "decision_trace_ref" not in lifecycle_related_ids:
+            decision_trace_ref = self._decision_trace_ref_for_worker(
+                parent_session_id=parent_session_id,
+                worker_task_ref=worker_task_ref,
+            )
+            lifecycle_related_ids["decision_trace_ref"] = decision_trace_ref
+            lifecycle_payload.setdefault("decision_trace_ref", decision_trace_ref)
         self._session_service.record_event(
             event_type=event_type,
             project_id=project_id,
             session_id=parent_session_id,
             occurred_at=occurred_at,
             correlation_id=self._correlation_id(worker_task_ref),
-            related_ids={
-                "worker_task_ref": worker_task_ref,
-                **dict(related_ids or {}),
-            },
-            payload=dict(payload or {}),
+            related_ids=lifecycle_related_ids,
+            payload=lifecycle_payload,
         )
