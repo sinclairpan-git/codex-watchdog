@@ -415,8 +415,8 @@
 - [x] 完成 Task 8 后，确认至少一条 `Feishu DM -> Goal Contract -> Brain -> Session write barrier -> command execution -> interruption recovery -> human approval/override -> completion -> replay/metrics` 主链路可在无手工补状态前提下重复打通，并且 low-risk 放行前已经产出并校验对应的 `release_gate_report`。
 - [x] 完成 Task 9 后，确认 future worker / sub-agent 只以 canonical execution contract 存在，lifecycle 与 result consume/reject 全部进入 `Session Service` truth，worker 输出只有在 parent canonical consume 后才真正生效。
 - [x] 完成 Task 9 后，确认 declarative worker request、same-trace replay/consume、late-result rejection 与 recovery supersede 都已 fail-closed，并能从 runtime / recovery / ops/read-side 回看。
-- [ ] 完成 Task 10 后，确认 `release_gate_report` 的加载、校验、hash exactness、runtime contract drift 判定与 evidence bundle 回读都通过单一 shared API 暴露，而不是分散在 helper / orchestrator / ops 各自实现。
-- [ ] 完成 Task 10 后，确认后续任何消费 release gate 的入口都只能复用 shared loading / evidence bundle contract，不能再手写 parse/validate 或绕开 `report_load_failed` fail-closed 语义。
+- [x] 完成 Task 10 后，确认 `release_gate_report` 的加载、校验、hash exactness、runtime contract drift 判定与 evidence bundle 回读都通过单一 shared API 暴露，而不是分散在 helper / orchestrator / ops 各自实现。
+- [x] 完成 Task 10 后，确认后续任何消费 release gate 的入口都只能复用 shared loading / evidence bundle contract，不能再手写 parse/validate 或绕开 `report_load_failed` fail-closed 语义。
 
 ### Task 9: 把 future worker / sub-agent 收敛为 canonical execution contract
 
@@ -477,28 +477,28 @@
 - Test: `tests/test_watchdog_ops.py`
 - Test: `tests/test_watchdog_session_spine_runtime.py`
 
-- [ ] **Step 1: 写失败测试，冻结 shared loading / evidence bundle contract**
+- [x] **Step 1: 写失败测试，冻结 shared loading / evidence bundle contract**
   - 覆盖 `release_gate_report` 只能通过单一 shared loading helper 进入 runtime，后续入口不得各自手写 parse/validate。
   - 覆盖 shared loader 至少返回 canonical report、raw payload hash、runtime contract snapshot 与 evidence bundle refs，而不是只给布尔放行结果。
   - 覆盖 `certification_packet_corpus`、`shadow_decision_ledger`、`label_manifest`、`artifact_ref`、`generated_by`、`approved_by`、TTL 与 `input_hash` 必须能通过统一 bundle/query surface 回读。
   - 覆盖 report 缺失、过期、hash drift、runtime contract drift、非对象 JSON、默认值补全漂移与 Python 宽松相等等路径都只能 fail closed。
   - 覆盖 ops/read-side 只消费 shared loader / bundle 的 canonical输出，而不是自行拼 blocker reason 或 artifact metadata。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py -q`
   - Expected: 因 runtime 仍主要通过局部 helper 消费、未暴露共享 bundle surface 或 read-side 仍各自拼装 blocker metadata 而失败。
 
-- [ ] **Step 3: 实现最小 shared loading API 与 evidence bundle**
+- [x] **Step 3: 实现最小 shared loading API 与 evidence bundle**
   - 新增 shared loading helper，统一收口 `release_gate_report` 的 read/parse/validate/hash/runtime-contract-drift 判定。
   - 把 `release_gate_evidence` 中 formal artifacts 收口成可复用 evidence bundle，而不是由 orchestrator / ops / future work items 各自重新拼接。
   - 让 orchestrator、ops/read-side 与后续入口都只消费 shared loader / bundle 返回的 canonical surface。
   - 保持现有 fail-closed 语义，不新增第二套 gate 状态机或旁路放行规则。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py -q`
   - Expected: `release_gate_report` 的加载、证据包回读、ops surfacing 与 runtime fail-closed 语义都通过统一 contract 收口，后续入口不再重复解析规则。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/brain/release_gate.py src/watchdog/services/brain/release_gate_evidence.py src/watchdog/services/brain/release_gate_loading.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/api/ops.py src/watchdog/observability/metrics_export.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py`
   - `git commit -m "feat: share release gate loading contract"`
 
