@@ -1,6 +1,6 @@
-current_stage: execute
-current_batch: 2
-last_committed_task: ''
+current_stage: verify
+current_batch: 5
+last_committed_task: T445
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -14,6 +14,11 @@ working_set_snapshot:
   - '`specs/044-policy-engine-typed-validator-consume-contract/plan.md`'
   - '`specs/044-policy-engine-typed-validator-consume-contract/tasks.md`'
   - '`specs/044-policy-engine-typed-validator-consume-contract/task-execution-log.md`'
+  - '`src/watchdog/services/brain/validator_read_contract.py`'
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/runtime.yaml`'
   - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/resume-pack.yaml`'
@@ -35,10 +40,22 @@ working_set_snapshot:
       - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/044-*` 基线；
       - Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1；
       - 当前下一执行入口固定为 `T442`。
+    - `T442` 已完成：
+      - 已新增 shared validator read contract module surface 红测；
+      - 已锁定 malformed `validator_verdict` pass payload 必须 fail closed；
+      - 已锁定 resident runtime 不得把 malformed pass validator dict 当作 auto-execute 真值。
+    - `T443` 已完成：
+      - 已新增 `src/watchdog/services/brain/validator_read_contract.py`；
+      - `policy engine` 与 resident runtime 已改为只消费 shared typed validator contract；
+      - legacy raw validator dict 兼容路径已明确为过渡入口，不是新的正式输入面。
+    - `T444` 已完成：
+      - 执行日志、总实施计划 Task 15 与 `.ai-sdlc` 元数据已同步到 044 完成态。
+    - `T445` 已完成：
+      - `WI-044` 已完成：后续任何 validator consumer 都必须复用 shared typed contract。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T15:04:31+08:00'
+timestamp: '2026-04-14T15:08:22+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

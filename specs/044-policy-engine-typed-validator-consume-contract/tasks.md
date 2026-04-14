@@ -34,7 +34,7 @@
 ## Task 44.2 写失败测试锁定 typed validator consume contract
 
 - **任务编号**：T442
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 `policy engine` 与 resident runtime 对 validator evidence 的唯一 consume surface。
 - **文件**：
   - `tests/test_watchdog_policy_engine.py`
@@ -46,11 +46,15 @@
   3. 覆盖合法 typed pass verdict 保持当前 allow path。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py`
+- **完成情况**：
+  1. 已新增 shared validator read contract module surface 红测；
+  2. 已锁定 malformed `validator_verdict` pass payload 不能再通过 raw dict 漏过；
+  3. 已锁定 resident runtime 不得把 malformed pass validator dict 当作有效 auto-execute 真值。
 
 ## Task 44.3 实现最小 typed validator helper 与 consumer 收口
 
 - **任务编号**：T443
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：让 `policy engine` 与 resident runtime 只通过 shared typed validator contract 解释 validator state。
 - **文件**：
   - `src/watchdog/services/brain/validator_read_contract.py`
@@ -66,11 +70,16 @@
   4. 不引入 policy surface、schema、persistence、manifest 或 release-gate write-side 变化。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py`
+- **完成情况**：
+  1. 已新增 `src/watchdog/services/brain/validator_read_contract.py`；
+  2. `policy engine` 已改为通过 shared typed validator contract 解释 validator gate；
+  3. resident runtime 的 auto-execute/runtime-gate 判断已改为复用同一 typed helper；
+  4. legacy raw validator dict 兼容路径已明确为过渡入口，不是新的正式输入面。
 
 ## Task 44.4 更新执行日志与 handoff 摘要
 
 - **任务编号**：T444
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 handoff。
 - **文件**：
   - `specs/044-policy-engine-typed-validator-consume-contract/task-execution-log.md`
@@ -86,11 +95,15 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已补齐 red/green/verification/code review 闭环；
+  2. 已把 `.ai-sdlc` 元数据更新到 044 完成态；
+  3. 已明确后续 validator consumer 只能复用 typed contract。
 
 ## Task 44.5 完成 044 整体验证并交接后续 work item
 
 - **任务编号**：T445
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：完成 044 的整体验证，并把 typed validator consume contract 作为后续 work item 的正式依赖写回 handoff。
 - **文件**：
   - `specs/044-policy-engine-typed-validator-consume-contract/task-execution-log.md`
@@ -104,6 +117,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅 handoff 与总实施计划一致
+- **完成情况**：
+  1. `WI-044` 已完成并成为后续 validator consumer 的正式依赖；
+  2. Hermes Agent 专家与 Anthropic Manager 专家最终复核均无 blocking/P1；
+  3. 后续实现不得再复制 raw validator dict 解释逻辑，legacy raw dict 兼容只能视为过渡路径。
 
 ## 整体验收
 
