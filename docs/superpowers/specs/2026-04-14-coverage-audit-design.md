@@ -1,82 +1,74 @@
-# Coverage Audit Design: PRD + Plan + Architecture Unmet Requirements
+# 覆盖性审计设计：PRD + 计划 + 架构的未落地盘点
 
-## Purpose
+## 目标
 
-Produce a matrix-style audit that lists every requirement or scope item that is not yet
-landed, where "not yet landed" means **missing any one** of: implementation evidence,
-verification evidence, or a formal entry/route into the main runtime path.
+产出一份矩阵式审计，列出所有**尚未落地**的需求或范围条款。
+“未落地”的判定为：**实现证据 / 验证证据 / 正式入口证据**三者任一缺失。
 
-The audit must answer: "Which designed, decomposed, or staged (MVP/Phase 1/Phase 2)
-requirements remain unlanded?"
+审计必须回答：**设计提到的、拆分的、或规划了 MVP/一期/二期的条款中，至今仍未落地的全量清单是什么。**
 
-## Scope
+## 范围
 
-**Documents included:**
+**纳入文档：**
 
-1. PRD: `openclaw-codex-watchdog-prd.md`
-2. Implementation plan: `docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
-3. Architecture & stage definitions: `docs/architecture/*`
+1. PRD：`openclaw-codex-watchdog-prd.md`
+2. 总实施计划：`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
+3. 架构与阶段定义：`docs/architecture/*`
 
-**Artifacts used as evidence:**
+**可用证据来源：**
 
-- Work item summaries: `.ai-sdlc/work-items/*/latest-summary.md`
-- Work item execution logs (for verification lines): `specs/*/task-execution-log.md`
-- Tests (for verification evidence): `tests/**`
-- Code and routes (for implementation and entry evidence): `src/**`, `scripts/**`, `docs/operations/**`
+- Work item 总结：`.ai-sdlc/work-items/*/latest-summary.md`
+- Work item 执行日志：`specs/*/task-execution-log.md`
+- 测试（验证证据）：`tests/**`
+- 代码与路由（实现/入口证据）：`src/**`、`scripts/**`、`docs/operations/**`
 
-## Audit Rule (Strict Evidence)
+## 严格判定规则
 
-A requirement is **unlanded** if **any** of the following is missing:
+某条需求**只要缺失任一**证据，即判为“未落地”：
 
-1. **Implementation evidence**: code/module/script/route exists and is referenced.
-2. **Verification evidence**: tests or verification log exists and passed.
-3. **Formal entry evidence**: an explicit entry point exists (API/CLI route or
-   primary runtime integration path).
+1. **实现证据**：代码/模块/脚本/接口已存在并可被引用。
+2. **验证证据**：测试通过记录或执行日志中的验证记录。
+3. **正式入口证据**：API/CLI/运行时路由/主链路接入点明确存在。
 
-If any evidence slot is empty, record the item as "unlanded" with the missing slot(s).
+## 输出格式：矩阵表格
 
-## Output: Matrix Format
+**列字段**
 
-**Columns**
+- 来源（文档 + 章节/条款锚点）
+- 需求/条款摘要（1–2 行）
+- 实现证据（文件/提交/summary）
+- 验证证据（测试/日志）
+- 入口证据（API/CLI/运行时路径）
+- 缺口类型（无实现/无验证/无入口）
+- 结论（未落地）
 
-- Source (document + section/line anchor)
-- Requirement / Scope Item (1–2 lines)
-- Implementation Evidence (file/commit/summary)
-- Verification Evidence (test/log)
-- Entry Evidence (API/CLI/route/runtime path)
-- Missing Evidence (impl / verify / entry)
-- Verdict (Unlanded)
+**排序**
 
-**Ordering**
+1. PRD 的目标/成功标准/关键场景
+2. 总实施计划的任务与阶段性承诺（含 MVP/一期/二期约束）
+3. 架构文档中的一期通关/Release Gate/MVP/二期条款
 
-1. PRD requirements and success criteria
-2. Implementation plan Tasks/Steps (incl. MVP/Phase 1/Phase 2 commitments)
-3. Architecture stage requirements (MVP / Phase 1 / Phase 2 / release gate clauses)
+## 证据映射规则
 
-## Evidence Mapping Rules
+- 优先使用 work item summary 与执行日志作为直接证据。
+- 若 summary/日志缺失，再使用测试作为验证证据。
+- 入口证据仅在计划或 summary 明确指向时引用。
+- 不能仅凭 “Status: completed” 判定落地。
+- 若仅冻结了 preview/contract 而未接入主链路，记为“缺入口证据”。
+- 同一条款在多个来源重复出现时，仅保留一行，**在来源列列出全部锚点**。
+- 若存在多个有效入口，优先选计划/summary 明确引用的入口；
+  若无明确引用，则选主链路入口并在证据栏注明替代入口。
 
-- Prefer **direct evidence** from work item summaries and execution logs.
-- Use **tests** as verification evidence only if a summary/log is missing.
-- Use **routes/modules** as entry evidence only if referenced in summaries or plan.
-- Do **not** infer completion from "Status: completed" alone.
-- If a requirement exists only as a preview/contract without integration,
-  record "missing entry evidence."
-- If the same requirement appears in multiple sources (PRD + plan + architecture),
-  keep a single row and list all source anchors in the Source column.
-- If multiple valid entry paths exist, prefer the one explicitly referenced in
-  a plan/task summary; otherwise pick the most central runtime path and note
-  alternatives in the evidence cell.
+## 非目标
 
-## Non-Goals
+- 不输出“已落地全量清单”。
+- 不修改现有实现。
+- 不重写已有规划或规格。
+- 不新增需求。
 
-- Do not produce a full list of completed items.
-- Do not adjust or change any implementation.
-- Do not rewrite existing plans or specs.
-- Do not introduce new requirements.
+## 验收标准
 
-## Acceptance Criteria
-
-1. Every unlanded requirement is listed in the matrix.
-2. Each row names the missing evidence slot(s).
-3. Citations point to the exact source and evidence (file + section).
-4. Output is scoped to PRD + plan + architecture only.
+1. 所有未落地条款都在矩阵中出现。
+2. 每一行清楚标注缺失证据类型。
+3. 证据引用可追溯到具体文件与章节。
+4. 审计仅覆盖 PRD + 计划 + 架构三类文档。
