@@ -64,7 +64,12 @@
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `openclaw-codex-watchdog-prd.md:61-73 / ### 3.1 In Scope` | 监管、查询、控制、审批、恢复属于首版范围 | `src/a_control_agent/main.py:123-132 /实现证据；src/watchdog/main.py:285-300 /实现证据` | — | — | 无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 不实现飞书通道接入，不依赖桌面 UI 观察，不把 A 做成任意命令执行器 | `src/watchdog/api/feishu_control.py:64-95 /实现证据；src/a_control_agent/api/deps.py:4-10 /实现证据；src/watchdog/api/deps.py:4-10 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 飞书机器人、OpenClaw 渠道插件本身的安装与接入 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | A 机桌面 UI 层级的视觉监控或自动点击 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 完全无人值守地自动批准所有高风险命令 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | git push / release / 发布流程自动化 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 远程桌面控制、通用 SSH 运维入口 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 对 OpenClaw 核心代码进行深度侵入式修改（优先通过外置服务集成） | — | — | — | 无实现、无验证、无入口 | 未落地 |
 
 ### 4. 总体方案
 
@@ -92,16 +97,10 @@
 | `openclaw-codex-watchdog-prd.md:376-383 / ### 8.1 无进展卡顿阈值` | 需要能按阈值识别无进展卡顿并触发 soft steer | `src/watchdog/services/status_analyzer/stuck.py:27-75 /实现证据；src/watchdog/api/supervision.py:78-162 /实现证据` | `tests/test_m2_stuck.py:14-19 /验证证据；tests/test_m2_watchdog_supervision.py:44-79 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:384-390 / ### 8.2 循环失败阈值` | 需要能识别同类错误重复出现并升级处理 | `src/a_control_agent/storage/tasks_store.py:546-603 /实现证据；src/watchdog/services/status_analyzer/stuck.py:27-75 /实现证据` | `tests/test_m2_stuck.py:30-75 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:391-397 / ### 8.3 上下文压力阈值` | context_pressure 达到 critical 时必须进入恢复路径 | `src/a_control_agent/api/recovery.py:31-234 /实现证据；src/watchdog/api/recover_watchdog.py:26-57 /实现证据；src/watchdog/services/session_spine/recovery.py:80-190 /实现证据` | `tests/test_m4_watchdog_recover.py:41-75 /验证证据` | — | 无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:398-434 / ### 8.4 自动 steer 模板` | soft steer、waiting-for-direction、break-loop、handoff summary 需要具备稳定模板 | `src/a_control_agent/storage/tasks_store.py:477-603 /实现证据；src/watchdog/api/supervision.py:78-123 /实现证据；src/watchdog/services/session_spine/recovery.py:80-190 /实现证据` | `tests/test_m2_watchdog_supervision.py:44-148 /验证证据；tests/test_m4_watchdog_recover.py:41-75 /验证证据` | — | 无入口 | 未落地 |
-
-### 9. A-Control-Agent API 设计
-
-| 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `openclaw-codex-watchdog-prd.md:441-446 / ### 9.1 设计原则` | 业务化 API、统一 envelope、鉴权、审计是 API 设计前提 | `src/a_control_agent/envelope.py:12-27 /实现证据；src/a_control_agent/api/deps.py:4-10 /实现证据；src/a_control_agent/api/recovery.py:31-234 /实现证据` | — | — | 无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:448-458 / ### 9.2 通用响应格式` | 所有返回应统一包含 success / request_id / data / error / ts | `src/a_control_agent/envelope.py:12-27 /实现证据` | — | — | 无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:462-507 / #### 9.3.1-9.3.4` | 创建任务、查询任务状态、注入 steer、执行 handoff 的业务 API 必须可用 | `src/a_control_agent/api/tasks.py:47-267 /实现证据；src/a_control_agent/api/recovery.py:31-100 /实现证据` | `tests/test_m2_stuck.py:14-19 /验证证据；tests/test_m4_watchdog_recover.py:41-75 /验证证据` | `src/a_control_agent/main.py:123-132 /入口证据` | 无缺口 | 已落地 |
-| `openclaw-codex-watchdog-prd.md:526-563 / #### 9.3.5-9.3.8` | resume、待审批列表、审批决策、事件流接口必须可用 | `src/a_control_agent/api/recovery.py:112-234 /实现证据；src/a_control_agent/api/approvals.py:27-158 /实现证据；src/a_control_agent/api/tasks.py:151-188 /实现证据` | `tests/test_m3_agent_approvals.py:11-120 /验证证据` | `src/a_control_agent/main.py:123-132 /入口证据` | 无缺口 | 已落地 |
+| `openclaw-codex-watchdog-prd.md:400-408 / #### 8.4.1 soft steer` | soft steer 模板 | `src/watchdog/services/action_executor/steer.py:9-15 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:410-415 / #### 8.4.2 waiting-for-direction steer` | waiting-for-direction steer 模板 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:417-422 / #### 8.4.3 break-loop steer` | break-loop steer 模板 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:424-435 / #### 8.4.4 handoff summary prompt` | handoff summary prompt 模板 | `src/a_control_agent/storage/handoff_manager.py:13-48 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 
 ### 10. Watchdog / Policy Engine API 设计
 
@@ -162,7 +161,6 @@
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收` | 进展查询、steer、L1 自动批准、L2 人工审批、critical 恢复、重启后可查询都要成立 | `src/watchdog/api/progress.py:29-65 /实现证据；src/watchdog/api/supervision.py:78-162 /实现证据；src/a_control_agent/api/approvals.py:27-158 /实现证据；src/a_control_agent/api/recovery.py:31-234 /实现证据` | `tests/test_m2_watchdog_supervision.py:44-148 /验证证据；tests/test_m3_agent_approvals.py:11-120 /验证证据；tests/test_m4_watchdog_recover.py:41-95 /验证证据` | `src/watchdog/main.py:285-300 /入口证据；src/a_control_agent/main.py:123-132 /入口证据` | 无缺口 | 已落地 |
 | `openclaw-codex-watchdog-prd.md:845-850 / ### 17.2 安全验收` | 未暴露公网、token 校验、L3 不得自动通过、所有自动动作需留痕 | `src/a_control_agent/api/deps.py:4-10 /实现证据；src/watchdog/api/deps.py:4-10 /实现证据；src/a_control_agent/risk/classifier.py:6-43 /实现证据；src/a_control_agent/storage/tasks_store.py:477-603 /实现证据` | `tests/test_m3_risk.py:6-28 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:852-857 / ### 17.3 可靠性验收` | 重启不丢审批、A 不可达要明确告警、handoff/resume 不应错乱 | `src/watchdog/main.py:65-103 /实现证据；src/watchdog/api/progress.py:29-65 /实现证据；src/a_control_agent/api/recovery.py:31-234 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 
