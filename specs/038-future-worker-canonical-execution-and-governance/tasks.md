@@ -79,12 +79,14 @@
   1. 已新增 `src/watchdog/services/future_worker/models.py` 与 `service.py`，提供 `FutureWorkerExecutionRequest`、`FutureWorkerResultEnvelope` 与最小 lifecycle service；
   2. 已在 `Session Service` 中登记 `future_worker_requested|started|heartbeat|summary_published|completed|failed|cancelled|result_consumed|result_rejected` canonical events；
   3. 已在 `create_app()` 中接入 `app.state.future_worker_service`，并打通 request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 到 `Session Service` 的单一路径；
-  4. parent-side canonical consume、stale-result rejection 的最小 service 已在位，但 orchestrator/recovery/ops 级治理仍待继续补齐。
+  4. parent-side canonical consume、stale-result rejection 的最小 service 已在位；
+  5. 当前 batch 已把 `future_worker` 收紧成显式状态机，禁止 `failed/cancelled/rejected/consumed` 终态后继续 `completed/consume` 等非法跃迁，并固定 `consume/reject` 必须在 `completed` 之后发生；
+  6. orchestrator/recovery 级治理仍待继续补齐。
 
 ## Task 38.4 收口 ops surfacing 与 formal worker e2e 主链
 
 - **任务编号**：T384
-- **状态**：未开始
+- **状态**：进行中
 - **目标**：把 worker/sub-agent 的正式运行层级、阻断原因与 stale-result rejection 暴露到 ops/read-side 与 e2e。
 - **文件**：
   - `src/watchdog/api/ops.py`
@@ -98,6 +100,11 @@
   3. e2e 能固定至少一条正式 worker 主链与一条 stale/late rejection 支线。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_ops.py`
+- **当前进展**：
+  1. `build_ops_summary()` 已新增 `future_workers` 读侧视图，可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
+  2. `ops` 读侧已暴露 `worker_task_ref / decision_trace_ref / last_event_type / blocking_reason`，可直接看见 `late_result` 等阻断原因；
+  3. `metrics_export.py` 已新增 future worker 状态与阻断原因 gauge；
+  4. stale/late rejection 的 e2e 支线仍待继续补齐后再收口 `T384`。
 
 ## Task 38.5 更新执行日志与 handoff 摘要
 

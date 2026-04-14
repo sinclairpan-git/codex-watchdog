@@ -11,6 +11,8 @@ from watchdog.main import create_app
 from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
+from watchdog.services.session_service.service import SessionService
+from watchdog.services.session_service.store import SessionServiceStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 
@@ -819,3 +821,221 @@ def test_build_ops_summary_falls_back_to_unknown_runtime_gate_reason(tmp_path: P
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["runtime_gate_unknown"]
     assert summary.alerts[0].count == 1
+
+
+def test_build_ops_summary_surfaces_future_worker_status_and_blocking_reason(
+    tmp_path: Path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    settings = Settings(data_dir=str(tmp_path))
+
+    session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:00:00Z",
+        correlation_id="corr:future-worker:task-running",
+        related_ids={
+            "worker_task_ref": "worker:task-running",
+            "decision_trace_ref": "trace:running",
+        },
+        payload={"scope": "read_only"},
+    )
+    session_service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:01:00Z",
+        correlation_id="corr:future-worker:task-running",
+        related_ids={"worker_task_ref": "worker:task-running"},
+        payload={"worker_runtime_contract": {"provider": "codex"}},
+    )
+    session_service.record_event(
+        event_type="future_worker_heartbeat",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:02:00Z",
+        correlation_id="corr:future-worker:task-running",
+        related_ids={"worker_task_ref": "worker:task-running"},
+        payload={"heartbeat": {"progress": "indexing"}},
+    )
+
+    session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-b",
+        session_id="session:repo-b",
+        occurred_at="2026-04-14T05:10:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={
+            "worker_task_ref": "worker:task-rejected",
+            "decision_trace_ref": "trace:rejected",
+        },
+        payload={"scope": "read_only"},
+    )
+    session_service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-b",
+        session_id="session:repo-b",
+        occurred_at="2026-04-14T05:11:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={"worker_task_ref": "worker:task-rejected"},
+        payload={"worker_runtime_contract": {"provider": "codex"}},
+    )
+    session_service.record_event(
+        event_type="future_worker_completed",
+        project_id="repo-b",
+        session_id="session:repo-b",
+        occurred_at="2026-04-14T05:12:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={
+            "worker_task_ref": "worker:task-rejected",
+            "summary_ref": "summary:worker:rejected",
+        },
+        payload={
+            "worker_task_ref": "worker:task-rejected",
+            "parent_session_id": "session:repo-b",
+            "decision_trace_ref": "trace:rejected",
+            "result_summary_ref": "summary:worker:rejected",
+            "artifact_refs": [],
+            "input_contract_hash": "sha256:input",
+            "result_hash": "sha256:result",
+            "produced_at": "2026-04-14T05:12:00Z",
+            "status": "completed",
+            "worker_runtime_contract": {"provider": "codex"},
+        },
+    )
+    session_service.record_event(
+        event_type="future_worker_result_rejected",
+        project_id="repo-b",
+        session_id="session:repo-b",
+        occurred_at="2026-04-14T05:13:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={"worker_task_ref": "worker:task-rejected"},
+        payload={"reason": "late_result"},
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert [item.worker_task_ref for item in summary.future_workers] == [
+        "worker:task-rejected",
+        "worker:task-running",
+    ]
+    statuses = {item.worker_task_ref: item for item in summary.future_workers}
+    assert statuses["worker:task-running"].status == "running"
+    assert statuses["worker:task-running"].last_event_type == "future_worker_heartbeat"
+    assert statuses["worker:task-running"].decision_trace_ref == "trace:running"
+    assert statuses["worker:task-running"].blocking_reason is None
+    assert statuses["worker:task-rejected"].status == "rejected"
+    assert statuses["worker:task-rejected"].last_event_type == "future_worker_result_rejected"
+    assert statuses["worker:task-rejected"].decision_trace_ref == "trace:rejected"
+    assert statuses["worker:task-rejected"].blocking_reason == "late_result"
+
+
+def test_watchdog_metrics_exports_future_worker_status_and_blocking_reason(
+    tmp_path: Path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:20:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={
+            "worker_task_ref": "worker:task-rejected",
+            "decision_trace_ref": "trace:rejected",
+        },
+        payload={"scope": "read_only"},
+    )
+    session_service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:21:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={"worker_task_ref": "worker:task-rejected"},
+        payload={"worker_runtime_contract": {"provider": "codex"}},
+    )
+    session_service.record_event(
+        event_type="future_worker_completed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:22:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={
+            "worker_task_ref": "worker:task-rejected",
+            "summary_ref": "summary:worker:rejected",
+        },
+        payload={
+            "worker_task_ref": "worker:task-rejected",
+            "parent_session_id": "session:repo-a",
+            "decision_trace_ref": "trace:rejected",
+            "result_summary_ref": "summary:worker:rejected",
+            "artifact_refs": [],
+            "input_contract_hash": "sha256:input",
+            "result_hash": "sha256:result",
+            "produced_at": "2026-04-14T05:22:00Z",
+            "status": "completed",
+            "worker_runtime_contract": {"provider": "codex"},
+        },
+    )
+    session_service.record_event(
+        event_type="future_worker_result_rejected",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:23:00Z",
+        correlation_id="corr:future-worker:task-rejected",
+        related_ids={"worker_task_ref": "worker:task-rejected"},
+        payload={"reason": "late_result"},
+    )
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert 'watchdog_future_worker_status_active{status="rejected"} 1' in response.text
+    assert 'watchdog_future_worker_blocked_active{reason="late_result"} 1' in response.text
+
+
+def test_watchdog_ops_alerts_expose_future_worker_read_side(tmp_path: Path) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:30:00Z",
+        correlation_id="corr:future-worker:task-running",
+        related_ids={
+            "worker_task_ref": "worker:task-running",
+            "decision_trace_ref": "trace:running",
+        },
+        payload={"scope": "read_only"},
+    )
+    session_service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:31:00Z",
+        correlation_id="corr:future-worker:task-running",
+        related_ids={"worker_task_ref": "worker:task-running"},
+        payload={"worker_runtime_contract": {"provider": "codex"}},
+    )
+
+    response = client.get(
+        "/api/v1/watchdog/ops/alerts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    future_workers = response.json()["data"]["future_workers"]
+    assert len(future_workers) == 1
+    assert future_workers[0]["worker_task_ref"] == "worker:task-running"
+    assert future_workers[0]["status"] == "running"
+    assert future_workers[0]["decision_trace_ref"] == "trace:running"

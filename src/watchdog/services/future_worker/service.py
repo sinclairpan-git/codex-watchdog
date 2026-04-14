@@ -8,6 +8,45 @@ from watchdog.services.future_worker.models import (
 )
 from watchdog.services.session_service.service import SessionService
 
+_WORKER_STATE_BY_EVENT_TYPE = {
+    "future_worker_requested": "requested",
+    "future_worker_started": "running",
+    "future_worker_heartbeat": "running",
+    "future_worker_summary_published": "running",
+    "future_worker_completed": "completed",
+    "future_worker_failed": "failed",
+    "future_worker_cancelled": "cancelled",
+    "future_worker_result_consumed": "consumed",
+    "future_worker_result_rejected": "rejected",
+}
+
+_TERMINAL_WORKER_STATES = {"failed", "cancelled", "consumed", "rejected"}
+
+_ALLOWED_NEXT_WORKER_EVENTS: dict[str | None, set[str]] = {
+    None: {"future_worker_requested"},
+    "requested": {
+        "future_worker_started",
+        "future_worker_heartbeat",
+        "future_worker_failed",
+        "future_worker_cancelled",
+    },
+    "running": {
+        "future_worker_heartbeat",
+        "future_worker_summary_published",
+        "future_worker_completed",
+        "future_worker_failed",
+        "future_worker_cancelled",
+    },
+    "completed": {
+        "future_worker_result_consumed",
+        "future_worker_result_rejected",
+    },
+    "failed": set(),
+    "cancelled": set(),
+    "consumed": set(),
+    "rejected": set(),
+}
+
 
 class FutureWorkerExecutionService:
     def __init__(self, session_service: SessionService) -> None:
@@ -33,6 +72,11 @@ class FutureWorkerExecutionService:
         execution_budget_ref: str,
         occurred_at: str,
     ) -> FutureWorkerExecutionRequest:
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_requested",
+        )
         request = FutureWorkerExecutionRequest(
             project_id=project_id,
             parent_session_id=parent_session_id,
@@ -70,6 +114,11 @@ class FutureWorkerExecutionService:
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
         )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_started",
+        )
         self._record_lifecycle_event(
             event_type="future_worker_started",
             project_id=project_id,
@@ -91,6 +140,11 @@ class FutureWorkerExecutionService:
         self._require_request_event(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+        )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_summary_published",
         )
         self._record_lifecycle_event(
             event_type="future_worker_summary_published",
@@ -114,6 +168,11 @@ class FutureWorkerExecutionService:
         self._require_request_event(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+        )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_heartbeat",
         )
         self._record_lifecycle_event(
             event_type="future_worker_heartbeat",
@@ -139,6 +198,11 @@ class FutureWorkerExecutionService:
         request_event = self._require_request_event(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+        )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_completed",
         )
         started_event = self._require_started_event(
             parent_session_id=parent_session_id,
@@ -190,6 +254,11 @@ class FutureWorkerExecutionService:
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
         )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_result_consumed",
+        )
         self._record_lifecycle_event(
             event_type="future_worker_result_consumed",
             project_id=project_id,
@@ -213,6 +282,11 @@ class FutureWorkerExecutionService:
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
         )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_failed",
+        )
         self._record_lifecycle_event(
             event_type="future_worker_failed",
             project_id=project_id,
@@ -234,6 +308,11 @@ class FutureWorkerExecutionService:
         self._require_request_event(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+        )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_cancelled",
         )
         self._record_lifecycle_event(
             event_type="future_worker_cancelled",
@@ -257,6 +336,15 @@ class FutureWorkerExecutionService:
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
         )
+        self._require_completed_event(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+        )
+        self._assert_transition_allowed(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+            next_event_type="future_worker_result_rejected",
+        )
         self._record_lifecycle_event(
             event_type="future_worker_result_rejected",
             project_id=project_id,
@@ -273,6 +361,37 @@ class FutureWorkerExecutionService:
             for event in events
             if event.related_ids.get("worker_task_ref") == worker_task_ref
         ]
+
+    def _current_worker_state(self, *, parent_session_id: str, worker_task_ref: str) -> str | None:
+        for event in reversed(
+            self._worker_events(
+                parent_session_id=parent_session_id,
+                worker_task_ref=worker_task_ref,
+            )
+        ):
+            state = _WORKER_STATE_BY_EVENT_TYPE.get(event.event_type)
+            if state is not None:
+                return state
+        return None
+
+    def _assert_transition_allowed(
+        self,
+        *,
+        parent_session_id: str,
+        worker_task_ref: str,
+        next_event_type: str,
+    ) -> None:
+        current_state = self._current_worker_state(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+        )
+        if current_state in _TERMINAL_WORKER_STATES:
+            raise ValueError(f"terminal future worker state: {current_state}")
+        allowed_events = _ALLOWED_NEXT_WORKER_EVENTS.get(current_state, set())
+        if next_event_type not in allowed_events:
+            next_state = _WORKER_STATE_BY_EVENT_TYPE.get(next_event_type, "unknown")
+            source_state = current_state or "none"
+            raise ValueError(f"invalid future worker transition: {source_state} -> {next_state}")
 
     def _require_request_event(self, *, parent_session_id: str, worker_task_ref: str):
         for event in reversed(

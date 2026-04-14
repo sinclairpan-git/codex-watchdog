@@ -32,6 +32,8 @@ def build_watchdog_metrics_text(
     label_vals = {k: float(v) for k, v in sorted(counts.items())}
     alert_vals: dict[str, float] = {}
     release_gate_blocker_vals: dict[str, float] = {}
+    future_worker_status_vals: dict[str, float] = {}
+    future_worker_blocked_vals: dict[str, float] = {}
     if data_dir is not None and settings is not None:
         summary = build_ops_summary(data_dir=data_dir, settings=settings)
         alert_vals = {item.alert_code: float(item.count) for item in summary.alerts}
@@ -39,6 +41,14 @@ def build_watchdog_metrics_text(
             release_gate_blocker_vals[blocker.reason] = (
                 release_gate_blocker_vals.get(blocker.reason, 0.0) + 1.0
             )
+        for worker in summary.future_workers:
+            future_worker_status_vals[worker.status] = (
+                future_worker_status_vals.get(worker.status, 0.0) + 1.0
+            )
+            if worker.blocking_reason:
+                future_worker_blocked_vals[worker.blocking_reason] = (
+                    future_worker_blocked_vals.get(worker.blocking_reason, 0.0) + 1.0
+                )
     parts: list[str] = [
         render_labeled_counter(
             "watchdog_audit_events_total",
@@ -69,6 +79,18 @@ def build_watchdog_metrics_text(
             "Active release gate blockers by normalized reason.",
             label_key="reason",
             values=release_gate_blocker_vals if release_gate_blocker_vals else {"none": 0.0},
+        ),
+        _render_labeled_gauge(
+            "watchdog_future_worker_status_active",
+            "Active future worker states by canonical status.",
+            label_key="status",
+            values=future_worker_status_vals if future_worker_status_vals else {"none": 0.0},
+        ),
+        _render_labeled_gauge(
+            "watchdog_future_worker_blocked_active",
+            "Active future worker blocking reasons.",
+            label_key="reason",
+            values=future_worker_blocked_vals if future_worker_blocked_vals else {"none": 0.0},
         ),
     ]
     return "".join(parts)

@@ -14,6 +14,7 @@ from watchdog.services.approvals.service import CanonicalApprovalRecord, Canonic
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.brain.release_gate import normalize_runtime_gate_reason
 from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.session_service.service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -29,6 +30,30 @@ _RUNTIME_GATE_ALERT_RULES = {
     "runtime_gate_missing",
     "release_gate_degraded",
     "validator_gate_degraded",
+}
+
+_FUTURE_WORKER_EVENT_TYPES = {
+    "future_worker_requested",
+    "future_worker_started",
+    "future_worker_heartbeat",
+    "future_worker_summary_published",
+    "future_worker_completed",
+    "future_worker_failed",
+    "future_worker_cancelled",
+    "future_worker_result_consumed",
+    "future_worker_result_rejected",
+}
+
+_FUTURE_WORKER_STATUS_BY_EVENT_TYPE = {
+    "future_worker_requested": "requested",
+    "future_worker_started": "running",
+    "future_worker_heartbeat": "running",
+    "future_worker_summary_published": "running",
+    "future_worker_completed": "completed",
+    "future_worker_failed": "failed",
+    "future_worker_cancelled": "cancelled",
+    "future_worker_result_consumed": "consumed",
+    "future_worker_result_rejected": "rejected",
 }
 
 
@@ -59,11 +84,23 @@ class OpsReleaseGateBlocker(BaseModel):
     shadow_decision_ledger_ref: str | None = None
 
 
+class OpsFutureWorkerStatus(BaseModel):
+    project_id: str
+    session_id: str
+    worker_task_ref: str
+    status: str
+    last_event_type: str
+    occurred_at: str
+    decision_trace_ref: str | None = None
+    blocking_reason: str | None = None
+
+
 class OpsSummary(BaseModel):
     status: str
     active_alerts: int
     alerts: list[OpsAlert] = Field(default_factory=list)
     release_gate_blockers: list[OpsReleaseGateBlocker] = Field(default_factory=list)
+    future_workers: list[OpsFutureWorkerStatus] = Field(default_factory=list)
 
 
 def _parse_iso8601(value: str | None) -> datetime | None:
@@ -174,6 +211,66 @@ def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
     return blockers
 
 
+def _session_event_order(event) -> tuple[int, datetime, str]:
+    occurred_at = _parse_iso8601(event.occurred_at) or datetime.min.replace(tzinfo=UTC)
+    return (event.log_seq or 0, occurred_at, event.event_id)
+
+
+def _future_worker_decision_trace_ref(events) -> str | None:
+    for event in events:
+        decision_trace_ref = event.related_ids.get("decision_trace_ref")
+        if decision_trace_ref:
+            return decision_trace_ref
+    for event in reversed(events):
+        decision_trace_ref = event.payload.get("decision_trace_ref")
+        if isinstance(decision_trace_ref, str) and decision_trace_ref:
+            return decision_trace_ref
+    return None
+
+
+def _future_worker_blocking_reason(event) -> str | None:
+    reason = event.payload.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    return None
+
+
+def _future_worker_statuses(*, data_dir: Path) -> list[OpsFutureWorkerStatus]:
+    session_service = SessionService.from_data_dir(data_dir)
+    grouped_events: dict[tuple[str, str, str], list[object]] = {}
+    for event in session_service.list_events():
+        if event.event_type not in _FUTURE_WORKER_EVENT_TYPES:
+            continue
+        worker_task_ref = event.related_ids.get("worker_task_ref")
+        if not worker_task_ref:
+            continue
+        key = (event.project_id, event.session_id, worker_task_ref)
+        grouped_events.setdefault(key, []).append(event)
+
+    statuses: list[OpsFutureWorkerStatus] = []
+    for (project_id, session_id, worker_task_ref), events in grouped_events.items():
+        ordered_events = sorted(events, key=_session_event_order)
+        last_event = ordered_events[-1]
+        status = _FUTURE_WORKER_STATUS_BY_EVENT_TYPE.get(last_event.event_type)
+        if status is None:
+            continue
+        statuses.append(
+            OpsFutureWorkerStatus(
+                project_id=project_id,
+                session_id=session_id,
+                worker_task_ref=worker_task_ref,
+                status=status,
+                last_event_type=last_event.event_type,
+                occurred_at=last_event.occurred_at,
+                decision_trace_ref=_future_worker_decision_trace_ref(ordered_events),
+                blocking_reason=_future_worker_blocking_reason(last_event),
+            )
+        )
+
+    statuses.sort(key=lambda item: (item.worker_task_ref, item.session_id, item.project_id))
+    return statuses
+
+
 def build_ops_summary(
     *,
     data_dir: Path,
@@ -223,6 +320,7 @@ def build_ops_summary(
     )
     runtime_gate_reason_counts = _runtime_gate_reason_counts(decisions)
     release_gate_blockers = _release_gate_blockers(decisions)
+    future_workers = _future_worker_statuses(data_dir=data_dir)
     recovery_failed = sum(
         1
         for _, result in receipt_items
@@ -292,6 +390,7 @@ def build_ops_summary(
         active_alerts=len(alerts),
         alerts=alerts,
         release_gate_blockers=release_gate_blockers,
+        future_workers=future_workers,
     )
 
 
@@ -312,6 +411,9 @@ def get_ops_alerts(
             "alerts": [item.model_dump(mode="json") for item in summary.alerts],
             "release_gate_blockers": [
                 item.model_dump(mode="json") for item in summary.release_gate_blockers
+            ],
+            "future_workers": [
+                item.model_dump(mode="json") for item in summary.future_workers
             ],
         },
     )

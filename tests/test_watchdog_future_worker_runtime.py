@@ -285,3 +285,85 @@ def test_future_worker_service_rejects_consume_before_completed(tmp_path: Path) 
             consumed_by_decision_id="decision:5",
             occurred_at="2026-04-14T04:32:00Z",
         )
+
+
+@pytest.mark.parametrize(
+    ("terminal_event", "terminal_reason", "terminal_at", "expected_status"),
+    [
+        ("failed", "runtime_error", "2026-04-14T04:42:00Z", "failed"),
+        ("cancelled", "superseded_by_new_worker", "2026-04-14T04:43:00Z", "cancelled"),
+    ],
+)
+def test_future_worker_service_rejects_completion_after_terminal_state(
+    tmp_path: Path,
+    terminal_event: str,
+    terminal_reason: str,
+    terminal_at: str,
+    expected_status: str,
+) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-6",
+        decision_trace_ref="trace:6",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:6"],
+        retrieval_handles=["handle:6"],
+        distilled_summary_ref="summary:6",
+        execution_budget_ref="budget:6",
+        occurred_at="2026-04-14T04:40:00Z",
+    )
+    service.record_started(
+        worker_task_ref="worker:task-6",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:41:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    if terminal_event == "failed":
+        service.record_failed(
+            worker_task_ref="worker:task-6",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            occurred_at=terminal_at,
+            reason=terminal_reason,
+        )
+    else:
+        service.record_cancelled(
+            worker_task_ref="worker:task-6",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            occurred_at=terminal_at,
+            reason=terminal_reason,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=f"terminal future worker state: {expected_status}",
+    ):
+        service.record_completed(
+            worker_task_ref="worker:task-6",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            result_summary_ref="summary:worker:6",
+            artifact_refs=["artifact:patch:6"],
+            input_contract_hash="sha256:input-contract-6",
+            result_hash="sha256:result-6",
+            occurred_at="2026-04-14T04:44:00Z",
+        )

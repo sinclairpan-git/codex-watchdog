@@ -43,3 +43,32 @@
   - Anthropic Manager 专家：无 blocking/P1；
   - Hermes Agent 专家：无 blocking/P1。
 - 当前下一执行入口停在 `T383`，继续把 orchestrator/recovery/ops 级治理补齐，而不是停留在 service-level lifecycle。
+
+### Phase 3 / 4：worker governance state machine + ops read-side
+
+- 已补红测并转绿：
+  - `failed/cancelled` 终态后不允许再 `completed`；
+  - `ops/read-side` 必须暴露 future worker 层级与 `blocking_reason`；
+  - metrics 必须导出 future worker 状态与阻断原因。
+- 已完成实现：
+  - `src/watchdog/services/future_worker/service.py`
+    - 新增显式 transition gate；
+    - 禁止 `failed/cancelled/rejected/consumed` 终态后的非法跃迁；
+    - 强制 `consume/reject` 必须在 `completed` 之后发生。
+  - `src/watchdog/api/ops.py`
+    - `OpsSummary` 已新增 `future_workers`；
+    - read-side 可区分 `requested/running/completed/failed/cancelled/rejected/consumed`；
+    - read-side 可回看 `decision_trace_ref`、`last_event_type` 与 `blocking_reason`。
+  - `src/watchdog/observability/metrics_export.py`
+    - 已新增 future worker canonical status / blocked reason gauge。
+- 本轮验证：
+  - `uv run pytest -q tests/test_watchdog_future_worker_runtime.py tests/test_watchdog_ops.py` -> `22 passed in 0.93s`
+  - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py` -> `46 passed in 3.10s`
+  - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py tests/test_watchdog_ops.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_memory_packets.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `85 passed in 5.42s`
+- 对抗复核：
+  - 已两次发起 Hermes Agent 专家 / Anthropic Manager 专家子线程复核；
+  - 两轮 `wait_agent` 均超时，未形成正式 blocking/P1 verdict；
+  - 本 batch 仅能确认本地回归通过，正式专家复核需在下一批继续补做。
+- 当前收口判断：
+  - `T383` 仍未完成，因为 orchestrator/recovery 对 supersede / crash continuation 的正式接线还没落地；
+  - `T384` 已进入进行中，ops/read-side 已落地，但 stale/late rejection 的 e2e 支线仍待补齐。
