@@ -35,6 +35,7 @@ from watchdog.services.delivery.openclaw_webhook_store import (
 )
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
+from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_service import SessionService, SessionServiceStore
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
@@ -243,6 +244,9 @@ def create_app(
     app.state.command_lease_store = CommandLeaseStore(
         Path(settings.data_dir) / "command_leases.json",
         session_service=app.state.session_service,
+    )
+    app.state.future_worker_service = FutureWorkerExecutionService(
+        app.state.session_service,
     )
     app.state.openclaw_webhook_endpoint_store = OpenClawWebhookEndpointStore(
         openclaw_webhook_endpoint_state_path(settings)

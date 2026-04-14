@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from watchdog.services.session_service.models import CONTROLLED_SESSION_EVENT_TYPES
+from watchdog.services.session_service.service import SessionService
+from watchdog.services.session_service.store import SessionServiceStore
+
+
+def test_session_service_registers_future_worker_lifecycle_event_types() -> None:
+    expected = {
+        "future_worker_requested",
+        "future_worker_started",
+        "future_worker_heartbeat",
+        "future_worker_summary_published",
+        "future_worker_completed",
+        "future_worker_failed",
+        "future_worker_cancelled",
+        "future_worker_result_consumed",
+        "future_worker_result_rejected",
+    }
+
+    missing = expected.difference(CONTROLLED_SESSION_EVENT_TYPES)
+
+    assert missing == set()
+
+
+def test_session_service_persists_future_worker_lifecycle_events(tmp_path: Path) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T03:00:00Z",
+        correlation_id="corr:worker:task-1",
+        related_ids={
+            "worker_task_ref": "worker:task-1",
+            "decision_trace_ref": "trace:1",
+        },
+        payload={
+            "scope": "read_only",
+            "goal_contract_version": "goal-contract:v1",
+            "execution_budget_ref": "budget:worker:1",
+        },
+    )
+    service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T03:01:00Z",
+        correlation_id="corr:worker:task-1",
+        related_ids={"worker_task_ref": "worker:task-1"},
+        payload={"worker_runtime_contract": {"provider": "codex", "model": "gpt-5.4"}},
+    )
+    service.record_event(
+        event_type="future_worker_result_rejected",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T03:02:00Z",
+        correlation_id="corr:worker:task-1",
+        related_ids={"worker_task_ref": "worker:task-1"},
+        payload={"reason": "late_result"},
+    )
+
+    events = service.list_events(session_id="session:repo-a")
+
+    assert [event.event_type for event in events] == [
+        "future_worker_requested",
+        "future_worker_started",
+        "future_worker_result_rejected",
+    ]
+    assert events[-1].payload["reason"] == "late_result"
+
+
+def test_future_worker_service_emits_heartbeat_failed_and_cancelled_events(tmp_path: Path) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-2",
+        decision_trace_ref="trace:2",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:2"],
+        retrieval_handles=["handle:2"],
+        distilled_summary_ref="summary:2",
+        execution_budget_ref="budget:2",
+        occurred_at="2026-04-14T03:59:00Z",
+    )
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-3",
+        decision_trace_ref="trace:3",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:3"],
+        retrieval_handles=["handle:3"],
+        distilled_summary_ref="summary:3",
+        execution_budget_ref="budget:3",
+        occurred_at="2026-04-14T03:59:30Z",
+    )
+    service.record_heartbeat(
+        worker_task_ref="worker:task-2",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:00:00Z",
+        heartbeat={"progress": "indexing", "stuck_level": 0},
+    )
+    service.record_failed(
+        worker_task_ref="worker:task-2",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:01:00Z",
+        reason="runtime_error",
+    )
+    service.record_cancelled(
+        worker_task_ref="worker:task-3",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:02:00Z",
+        reason="superseded_by_new_worker",
+    )
+
+    events = app.state.session_service.list_events(session_id="session:repo-a")
+
+    assert [event.event_type for event in events] == [
+        "future_worker_requested",
+        "future_worker_requested",
+        "future_worker_heartbeat",
+        "future_worker_failed",
+        "future_worker_cancelled",
+    ]
+    assert events[2].payload["heartbeat"]["progress"] == "indexing"
+    assert events[3].payload["reason"] == "runtime_error"
+    assert events[4].payload["reason"] == "superseded_by_new_worker"
+
+
+def test_future_worker_service_rejects_lifecycle_without_request_context(tmp_path: Path) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    with pytest.raises(ValueError, match="unknown future worker request"):
+        app.state.future_worker_service.record_started(
+            worker_task_ref="worker:task-orphan",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            occurred_at="2026-04-14T04:10:00Z",
+        )
+
+
+def test_future_worker_completed_event_reuses_frozen_trace_and_runtime_contract(
+    tmp_path: Path,
+) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-4",
+        decision_trace_ref="trace:4",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:4"],
+        retrieval_handles=["handle:4"],
+        distilled_summary_ref="summary:4",
+        execution_budget_ref="budget:4",
+        occurred_at="2026-04-14T04:20:00Z",
+    )
+    service.record_started(
+        worker_task_ref="worker:task-4",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:21:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    service.record_completed(
+        worker_task_ref="worker:task-4",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        result_summary_ref="summary:worker:4",
+        artifact_refs=["artifact:patch:4"],
+        input_contract_hash="sha256:input-contract-4",
+        result_hash="sha256:result-4",
+        occurred_at="2026-04-14T04:22:00Z",
+    )
+
+    completed = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.event_type == "future_worker_completed"
+    ]
+
+    assert len(completed) == 1
+    assert completed[0].payload["decision_trace_ref"] == "trace:4"
+    assert completed[0].payload["worker_runtime_contract"] == {
+        "provider": "codex",
+        "model": "gpt-5.4",
+    }
+
+
+def test_future_worker_service_rejects_consume_before_completed(tmp_path: Path) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-5",
+        decision_trace_ref="trace:5",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:5"],
+        retrieval_handles=["handle:5"],
+        distilled_summary_ref="summary:5",
+        execution_budget_ref="budget:5",
+        occurred_at="2026-04-14T04:30:00Z",
+    )
+    service.record_started(
+        worker_task_ref="worker:task-5",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:31:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+
+    with pytest.raises(ValueError, match="missing future worker completed event"):
+        service.consume_result(
+            worker_task_ref="worker:task-5",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            consumed_by_decision_id="decision:5",
+            occurred_at="2026-04-14T04:32:00Z",
+        )

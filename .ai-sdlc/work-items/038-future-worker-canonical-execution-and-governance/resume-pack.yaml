@@ -31,13 +31,20 @@ working_set_snapshot:
       - 已新增 `Task 9` 到总实施计划；
       - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/038-*` 基线。
       - Anthropic Manager 专家与 Hermes Agent 专家复核均无 blocking/P1。
-    - 下一执行入口是 `T382`：
-      - 先写 worker lifecycle / consume / reject / stale-result fail-closed 红测；
-      - 再补 Session truth、runtime/recovery glue 与 ops/e2e。
+    - `T382` 已完成：
+      - 新增 contract/runtime/e2e 三类红测；
+      - 红测已锁定 `future_worker` 模块、`Session Service` event 与 app-level service wiring；
+      - 当前三份测试已转绿。
+    - `T383` 正在进行：
+      - `src/watchdog/services/future_worker/` 已落地最小 models/service；
+      - `Session Service` 已登记 `future_worker_*` canonical events；
+      - `app.state.future_worker_service` 已接入，并打通 request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 到 `Session Service`；
+      - completion gate、frozen `decision_trace_ref` 回读与 worker runtime contract provenance 已补齐；
+      - orchestrator/recovery/ops 级治理仍待继续补齐。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T08:45:25+08:00'
+timestamp: '2026-04-14T08:58:45+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

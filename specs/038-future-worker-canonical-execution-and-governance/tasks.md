@@ -34,7 +34,7 @@
 ## Task 38.2 写失败测试锁定 worker lifecycle、consume/reject 与 stale-result fail-closed
 
 - **任务编号**：T382
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 worker/sub-agent 正式治理面，避免实现阶段把 worker 结果直接变成新真相。
 - **文件**：
   - `tests/test_watchdog_future_worker_contract.py`
@@ -48,11 +48,15 @@
   4. 覆盖 parent consume worker result 前，worker 输出不得直接生效。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/e2e/test_watchdog_future_worker_execution.py`
+- **完成情况**：
+  1. 已新增 contract/runtime/e2e 三类红测，固定 `future_worker` 模块存在性、worker lifecycle canonical events 与 app-level service wiring；
+  2. 首轮红测明确暴露三个真实缺口：`future_worker` 模块缺失、`Session Service` 不接受 `future_worker_*` event、`app.state.future_worker_service` 未接入；
+  3. 当前三份测试已在最小接线后转绿。
 
 ## Task 38.3 补齐 canonical worker execution truth 与 runtime glue
 
 - **任务编号**：T383
-- **状态**：未开始
+- **状态**：进行中
 - **目标**：在不引入第二状态机的前提下，把 worker/sub-agent 正式纳入 Session truth、runtime 与 recovery。
 - **文件**：
   - `src/watchdog/services/future_worker/models.py`
@@ -71,6 +75,11 @@
   4. crash / supersede / cancel / late-result 都进入同一条 canonical recovery/governance 链。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_future_worker_contract.py tests/test_watchdog_future_worker_runtime.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_recovery_execution.py`
+- **当前进展**：
+  1. 已新增 `src/watchdog/services/future_worker/models.py` 与 `service.py`，提供 `FutureWorkerExecutionRequest`、`FutureWorkerResultEnvelope` 与最小 lifecycle service；
+  2. 已在 `Session Service` 中登记 `future_worker_requested|started|heartbeat|summary_published|completed|failed|cancelled|result_consumed|result_rejected` canonical events；
+  3. 已在 `create_app()` 中接入 `app.state.future_worker_service`，并打通 request/start/heartbeat/summary/completed/failed/cancelled/consume/reject 到 `Session Service` 的单一路径；
+  4. parent-side canonical consume、stale-result rejection 的最小 service 已在位，但 orchestrator/recovery/ops 级治理仍待继续补齐。
 
 ## Task 38.4 收口 ops surfacing 与 formal worker e2e 主链
 

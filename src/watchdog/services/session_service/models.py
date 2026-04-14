@@ -39,6 +39,15 @@ CONTROLLED_SESSION_EVENT_TYPES = (
     "lineage_committed",
     "parent_session_closed_or_cooled",
     "recovery_tx_completed",
+    "future_worker_requested",
+    "future_worker_started",
+    "future_worker_heartbeat",
+    "future_worker_summary_published",
+    "future_worker_completed",
+    "future_worker_failed",
+    "future_worker_cancelled",
+    "future_worker_result_consumed",
+    "future_worker_result_rejected",
 )
 
 SESSION_LINEAGE_RELATIONS = (
