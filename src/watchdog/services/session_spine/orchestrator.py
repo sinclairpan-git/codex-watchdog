@@ -37,6 +37,7 @@ from watchdog.services.delivery.envelopes import (
     progress_summary_fingerprint,
 )
 from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.future_worker.models import FutureWorkerExecutionRequest
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.models import GoalContractReadiness
 from watchdog.services.goal_contract.service import GoalContractService
@@ -90,6 +91,7 @@ class AutoExecuteCommandPlan:
     command_id: str
     claim_seq: int | None
     should_execute: bool
+    current_status: str | None = None
 
 
 class ResidentOrchestrator:
@@ -198,6 +200,16 @@ class ResidentOrchestrator:
     def _record_command_created(self, decision, *, command_id: str) -> None:
         if self._session_service is None:
             return
+        existing = self._session_service.list_events(
+            session_id=decision.session_id,
+            event_type="command_created",
+        )
+        if any(
+            event.related_ids.get("decision_id") == decision.decision_id
+            and event.related_ids.get("command_id") == command_id
+            for event in existing
+        ):
+            return
         self._session_service.record_event(
             event_type="command_created",
             project_id=decision.project_id,
@@ -241,6 +253,7 @@ class ResidentOrchestrator:
                 command_id=command_id,
                 claim_seq=claim.claim_seq,
                 should_execute=True,
+                current_status="claimed",
             )
         if current.status == "claimed" and current.worker_id == "resident_orchestrator":
             self._command_lease_store.renew_lease(
@@ -257,6 +270,7 @@ class ResidentOrchestrator:
             command_id=command_id,
             claim_seq=None,
             should_execute=False,
+            current_status=current.status,
         )
 
     def _record_command_terminal_result(
@@ -308,6 +322,70 @@ class ResidentOrchestrator:
             return None
         trace_id = trace.get("trace_id")
         return trace_id if isinstance(trace_id, str) and trace_id else None
+
+    def _future_worker_request_contracts(self, decision) -> list[FutureWorkerExecutionRequest]:
+        evidence = self._decision_evidence_map(decision)
+        requests = evidence.get("future_worker_requests")
+        if not isinstance(requests, list):
+            return []
+        return [FutureWorkerExecutionRequest.model_validate(request) for request in requests]
+
+    def _materialized_future_worker_request_exists(
+        self,
+        *,
+        parent_session_id: str,
+        worker_task_ref: str,
+    ) -> bool:
+        if self._session_service is None:
+            return False
+        return any(
+            event.event_type == "future_worker_requested"
+            and event.related_ids.get("worker_task_ref") == worker_task_ref
+            for event in self._session_service.list_events(session_id=parent_session_id)
+        )
+
+    def _materialize_future_worker_requests(
+        self,
+        decision,
+        *,
+        occurred_at: str,
+    ) -> list[str]:
+        if self._future_worker_service is None:
+            return []
+        decision_trace_ref = self._decision_trace_ref(decision)
+        request_contracts = self._future_worker_request_contracts(decision)
+        requests_to_materialize: list[FutureWorkerExecutionRequest] = []
+        for request in request_contracts:
+            if request.project_id != decision.project_id:
+                raise ValueError("future worker request project drift")
+            if request.parent_session_id != decision.session_id:
+                raise ValueError("future worker request session drift")
+            if decision_trace_ref is None or request.decision_trace_ref != decision_trace_ref:
+                raise ValueError("future worker request decision trace drift")
+            if self._materialized_future_worker_request_exists(
+                parent_session_id=request.parent_session_id,
+                worker_task_ref=request.worker_task_ref,
+            ):
+                continue
+            requests_to_materialize.append(request)
+        materialized_refs: list[str] = []
+        for request in requests_to_materialize:
+            self._future_worker_service.request_worker(
+                project_id=request.project_id,
+                parent_session_id=request.parent_session_id,
+                worker_task_ref=request.worker_task_ref,
+                decision_trace_ref=request.decision_trace_ref,
+                goal_contract_version=request.goal_contract_version,
+                scope=request.scope,
+                allowed_hands=list(request.allowed_hands),
+                input_packet_refs=list(request.input_packet_refs),
+                retrieval_handles=list(request.retrieval_handles),
+                distilled_summary_ref=request.distilled_summary_ref,
+                execution_budget_ref=request.execution_budget_ref,
+                occurred_at=occurred_at,
+            )
+            materialized_refs.append(request.worker_task_ref)
+        return materialized_refs
 
     def _decision_relevant_session_events(self, decision, *, command_id: str):
         if self._session_service is None:
@@ -970,6 +1048,13 @@ class ResidentOrchestrator:
                     command_id=self._command_id_for_decision(decision),
                 )
                 command_plan = self._plan_auto_execute_command(decision, now=now)
+                self._materialize_future_worker_requests(
+                    decision,
+                    occurred_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                        "+00:00",
+                        "Z",
+                    ),
+                )
                 if command_plan.should_execute:
                     try:
                         result = execute_canonical_decision(
@@ -1025,6 +1110,15 @@ class ResidentOrchestrator:
                         )
                         if not self._cache_auto_continue_control_link_error(decision, exc):
                             raise
+                elif command_plan.current_status == "executed":
+                    self._consume_completed_future_worker_results(
+                        decision,
+                        command_id=command_plan.command_id,
+                        occurred_at=now.astimezone(UTC)
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    )
             elif decision.decision_result == DECISION_REQUIRE_USER_DECISION:
                 materialize_canonical_approval(
                     decision,

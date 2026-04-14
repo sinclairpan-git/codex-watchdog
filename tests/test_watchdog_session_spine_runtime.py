@@ -22,6 +22,7 @@ from watchdog.services.brain.release_gate import (
 )
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.future_worker.models import FutureWorkerExecutionRequest
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import (
     CanonicalDecisionRecord,
@@ -1250,6 +1251,175 @@ def test_resident_orchestrator_consumes_completed_future_worker_results_for_same
     assert session_replay_mock.call_args.kwargs["required_event_ids"] == [
         event.event_id for event in relevant_events
     ]
+
+
+def test_resident_orchestrator_materializes_future_worker_requests_once_per_decision_trace(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    trace = _release_gate_trace().model_copy(update={"trace_id": "trace:request-contract"})
+    request = FutureWorkerExecutionRequest(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:request-contract",
+        decision_trace_ref=trace.trace_id,
+        goal_contract_version=trace.goal_contract_version,
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:request-contract"],
+        retrieval_handles=["handle:request-contract"],
+        distilled_summary_ref="summary:request-contract",
+        execution_budget_ref="budget:request-contract",
+    )
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_evidence_for_intent",
+        return_value={
+            "brain_rationale": "materialize_worker_request",
+            "decision_trace": trace.model_dump(mode="json"),
+            "validator_verdict": {"status": "pass", "reason": "schema_and_risk_ok"},
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": trace.trace_id,
+                "approval_read_ref": "approval:none",
+                "report_id": "report:worker-request",
+                "report_hash": "sha256:worker-request",
+                "input_hash": "sha256:worker-request-input",
+            },
+            "future_worker_requests": [request.model_dump(mode="json")],
+        },
+    ):
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+            app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+            )
+            app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=UTC)
+            )
+
+    request_events = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.event_type == "future_worker_requested"
+        and event.related_ids.get("worker_task_ref") == "worker:request-contract"
+    ]
+
+    assert len(request_events) == 1
+    assert request_events[0].related_ids["decision_trace_ref"] == trace.trace_id
+    assert request_events[0].payload["allowed_hands"] == ["codex"]
+    assert request_events[0].payload["execution_budget_ref"] == "budget:request-contract"
+
+
+def test_resident_orchestrator_rejects_partial_future_worker_request_materialization(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    trace = _release_gate_trace().model_copy(update={"trace_id": "trace:request-batch"})
+    valid_request = FutureWorkerExecutionRequest(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:valid-request",
+        decision_trace_ref=trace.trace_id,
+        goal_contract_version=trace.goal_contract_version,
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:valid-request"],
+        retrieval_handles=["handle:valid-request"],
+        distilled_summary_ref="summary:valid-request",
+        execution_budget_ref="budget:valid-request",
+    )
+    invalid_request = valid_request.model_copy(
+        update={
+            "worker_task_ref": "worker:invalid-request",
+            "decision_trace_ref": "trace:wrong-request",
+        }
+    )
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_evidence_for_intent",
+        return_value={
+            "brain_rationale": "reject_partial_worker_request_batch",
+            "decision_trace": trace.model_dump(mode="json"),
+            "validator_verdict": {"status": "pass", "reason": "schema_and_risk_ok"},
+            "release_gate_verdict": {
+                "status": "pass",
+                "decision_trace_ref": trace.trace_id,
+                "approval_read_ref": "approval:none",
+                "report_id": "report:worker-request-batch",
+                "report_hash": "sha256:worker-request-batch",
+                "input_hash": "sha256:worker-request-batch-input",
+            },
+            "future_worker_requests": [
+                valid_request.model_dump(mode="json"),
+                invalid_request.model_dump(mode="json"),
+            ],
+        },
+    ):
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+            with pytest.raises(ValueError, match="future worker request decision trace drift"):
+                app.state.resident_orchestrator.orchestrate_all(
+                    now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+                )
+
+    request_events = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.event_type == "future_worker_requested"
+    ]
+
+    assert request_events == []
 
 
 def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contract(
