@@ -102,7 +102,11 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `openclaw-codex-watchdog-prd.md:567-582 / ### 10.1.1 查询进展` | B 侧需要提供任务进展读取入口并在 A 不可达时明确报错 | `src/watchdog/api/progress.py:29-65 /实现证据` | — | `src/watchdog/main.py:285-300 /入口证据` | 无验证 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:583-586 / ### 10.1.2 人工审批` | B 侧需要提供审批决策回传入口 | `src/watchdog/api/feishu_control.py:64-95 /实现证据；src/watchdog/api/openclaw_responses.py:90-158 /实现证据` | — | `src/watchdog/main.py:285-300 /入口证据` | 无验证 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | B 侧需要提供 continue / pause / resume / summarize / force_handoff / retry_with_conservative_path 等动作入口 | `src/watchdog/api/session_spine_actions.py:113-367 /实现证据` | — | `src/watchdog/main.py:285-296 /入口证据` | 无验证 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `continue` → stable `ActionCode.CONTINUE_SESSION` | `src/watchdog/contracts/session_spine/enums.py:70-76 /实现证据；src/watchdog/services/session_spine/actions.py:300-303 /实现证据` | `tests/test_watchdog_action_idempotency.py:103-152 /验证证据` | `src/watchdog/main.py:294 /入口证据` | 仅覆盖 continue_session；pause / summarize / retry_with_conservative_path 仍缺 stable ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `resume` / `force_handoff` → stable `ActionCode.EXECUTE_RECOVERY` | `src/watchdog/contracts/session_spine/enums.py:70-76 /实现证据；src/watchdog/services/session_spine/actions.py:306-312 /实现证据` | `tests/test_watchdog_action_idempotency.py:249-343 /验证证据` | `src/watchdog/main.py:294 /入口证据` | 仅覆盖 execute_recovery；pause / summarize / retry_with_conservative_path 仍缺 stable ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `pause` 目前无 stable ActionCode 映射 | — | — | `src/watchdog/main.py:294 /入口证据` | 实现缺口：无稳定 ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `summarize` 目前无 stable ActionCode 映射 | — | — | `src/watchdog/main.py:294 /入口证据` | 实现缺口：无稳定 ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `retry_with_conservative_path` 目前无 stable ActionCode 映射 | — | — | `src/watchdog/main.py:294 /入口证据` | 实现缺口：无稳定 ActionCode 映射 | 未落地 |
 
 ### 9. A-Control-Agent API 设计
 
@@ -123,8 +127,8 @@
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成` | OpenClaw 侧需把飞书消息转成 Watchdog API 调用并做项目路由 | `src/watchdog/api/feishu_control.py:64-95 /实现证据` | — | `src/watchdog/main.py:287-294 /入口证据` | 无验证 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义` | 查询、控制、审批类命令需要有稳定语义映射 | `src/watchdog/api/feishu_control.py:64-95 /实现证据；src/watchdog/api/session_spine_actions.py:113-367 /实现证据` | — | `src/watchdog/main.py:287-294 /入口证据` | 无验证 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成` | OpenClaw 侧需把飞书消息转成 Watchdog API 调用并做项目路由 | `examples/openclaw_watchdog_client.py:75-81 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | `tests/integration/test_openclaw_integration_spine.py:228-246 /验证证据` | — | 缺 runtime ingress/NL mapping | 未落地 |
+| `openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义` | 查询、控制、审批类命令需要有稳定语义映射 | `examples/openclaw_watchdog_client.py:75-81 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | `tests/integration/test_openclaw_integration_spine.py:228-246 /验证证据` | — | 缺 runtime ingress/NL mapping | 未落地 |
 
 ### 12. 数据持久化设计
 
@@ -174,7 +178,7 @@
 | `openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收` | 在出现 L1 审批请求时，系统自动批准并通知 | `src/a_control_agent/risk/classifier.py:6-43 /实现证据；src/a_control_agent/storage/approvals_store.py:66-199 /实现证据；src/a_control_agent/api/approvals.py:46-68 /实现证据` | `tests/test_m3_agent_approvals.py:32-49 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收` | 在出现 L2 审批请求时，系统通过飞书提醒人工审批 | `src/a_control_agent/api/approvals.py:71-158 /实现证据；src/watchdog/api/feishu_control.py:64-95 /实现证据` | `tests/test_m3_agent_approvals.py:51-75 /验证证据；tests/test_a_control_agent_control_flow.py:192-224 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收` | 在 context_pressure = critical 时，系统自动生成 handoff summary 并 resume | `src/a_control_agent/api/recovery.py:31-234 /实现证据；src/a_control_agent/storage/handoff_manager.py:13-48 /实现证据` | `tests/test_m4_agent_recovery.py:11-38 /验证证据；tests/test_watchdog_recovery_execution.py:93-165 /验证证据` | — | 无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收` | 在 A-Control-Agent 重启后，原 project_id 任务仍可查询状态 | `src/a_control_agent/main.py:115-132 /实现证据；src/a_control_agent/storage/tasks_store.py:196-230 /实现证据` | `tests/test_a_control_agent.py:93-117 /验证证据；tests/test_m4_agent_recovery.py:11-38 /验证证据` | — | 无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收` | 在 A-Control-Agent 重启后，原 project_id 任务仍可查询状态 | `src/a_control_agent/main.py:115-132 /实现证据；src/a_control_agent/storage/tasks_store.py:196-230 /实现证据` | — | — | 无验证/重启验证缺失；无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:845-850 / ### 17.2 安全验收` | 未暴露公网、token 校验、L3 不得自动通过、所有自动动作需留痕 | `src/a_control_agent/api/deps.py:4-10 /实现证据；src/watchdog/api/deps.py:4-10 /实现证据；src/a_control_agent/risk/classifier.py:6-43 /实现证据；src/a_control_agent/storage/tasks_store.py:477-603 /实现证据` | `tests/test_m3_risk.py:6-28 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:852-857 / ### 17.3 可靠性验收` | 重启不丢审批、A 不可达要明确告警、handoff/resume 不应错乱 | `src/watchdog/main.py:65-103 /实现证据；src/watchdog/api/progress.py:29-65 /实现证据；src/a_control_agent/api/recovery.py:31-234 /实现证据` | `tests/test_m4_agent_recovery.py:11-38 /验证证据；tests/test_watchdog_recovery_execution.py:93-165 /验证证据` | — | 无入口 | 未落地 |
 
@@ -182,7 +186,12 @@
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | 需要交付 A 服务、Watchdog 服务、集成代码、配置样例、部署说明、API 文档、测试与审计样例 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | A 服务 | `src/a_control_agent/main.py:123-132 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | Watchdog 服务 | `src/watchdog/main.py:181-300 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | integration code | `examples/openclaw_watchdog_client.py:75-166 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | `tests/integration/test_openclaw_integration_spine.py:228-246 /验证证据` | — | 无 runtime ingress | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | config samples | `config/examples/watchdog.env.example:1-28 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | getting-started 文档 | `README.md:5-14 /实现证据；docs/getting-started.zh-CN.md:287-300 /实现证据；docs/getting-started.zh-CN.md:587-654 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | openapi | `scripts/export_openapi.py:2-29 /实现证据；docs/openapi/a-control-agent.json /实现证据；docs/openapi/watchdog.json /实现证据; README.md:13 /实现证据; docs/getting-started.zh-CN.md:653 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 
 ## 约束 / 非执行性条款
 
