@@ -634,6 +634,39 @@
   - `git add src/watchdog/services/policy/engine.py src/watchdog/services/brain/release_gate_read_contract.py tests/test_watchdog_policy_engine.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/043-policy-engine-typed-runtime-gate-contract`
   - `git commit -m "feat: formalize policy engine typed runtime-gate contract"`
 
+### Task 15: 收敛 policy engine typed validator consume contract
+
+**Canonical execution work item:** `specs/044-policy-engine-typed-validator-consume-contract/`
+
+**Files:**
+- Modify: `src/watchdog/services/policy/engine.py`
+- Modify: `src/watchdog/services/session_spine/orchestrator.py`
+- Modify/Add: `src/watchdog/services/brain/validator_read_contract.py`
+- Test: `tests/test_watchdog_policy_engine.py`
+- Test: `tests/test_watchdog_session_spine_runtime.py`
+
+- [ ] **Step 1: 写失败测试，冻结 policy engine typed validator consume contract**
+  - 覆盖 `policy engine` 与 resident runtime 不得继续手工消费 raw `validator_verdict` dict。
+  - 覆盖 typed `validator_verdict` 缺失、malformed 或 partial 时必须 fail closed。
+  - 覆盖合法 typed pass verdict 继续保持现有 allow path，不改变 policy 语义。
+
+- [ ] **Step 2: 运行测试确认正确失败**
+  - Run: `uv run pytest tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py -q`
+  - Expected: 因当前 `policy engine` / resident runtime 仍直接消费 raw `validator_verdict` dict，typed consume contract 尚未收口而失败。
+
+- [ ] **Step 3: 实现最小 typed validator consume contract**
+  - 新增 shared validator read helper，统一解析 `validator_verdict`。
+  - 让 `evaluate_persisted_session_policy(...)`、`_runtime_gate_override(...)` 与 resident runtime 相关 consumer 改为只消费 typed validator snapshot。
+  - 保持现有 policy rules、decision result、risk class 与 persistence/schema 不变。
+
+- [ ] **Step 4: 运行测试确认通过**
+  - Run: `uv run pytest tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py -q`
+  - Expected: validator consume seam 已通过 typed contract 收口，missing / malformed / partial evidence 不再从 raw dict 漏过。
+
+- [ ] **Step 5: 提交**
+  - `git add src/watchdog/services/policy/engine.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/brain/validator_read_contract.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/044-policy-engine-typed-validator-consume-contract`
+  - `git commit -m "feat: formalize policy engine validator contract"`
+
 ## 风险控制
 
 - 所有阶段都必须维持现有 stable read contract，不允许一次性拆掉全部兼容层。
