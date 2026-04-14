@@ -1,0 +1,42 @@
+current_stage: implementation
+current_batch: 1
+last_committed_task: T411
+working_set_snapshot:
+  prd_path: openclaw-codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/041-release-gate-artifact-refresh-and-rebuild-contract/spec.md
+  plan_path: specs/041-release-gate-artifact-refresh-and-rebuild-contract/plan.md
+  tasks_path: specs/041-release-gate-artifact-refresh-and-rebuild-contract/tasks.md
+  active_files:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/spec.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/plan.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/tasks.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-041` 已从 `WI-040` handoff 中正式追加，目标是把 `release_gate_report` 的 refresh / archive rebuild / fixture regeneration 正式化成单一 operator contract。
+    - 先经过 Hermes Agent 专家与 Anthropic Manager 专家的对抗评估：
+      - 两位专家都推荐“方案 1”，并要求进一步收窄成“单一 refresh 命令 + runbook + contract test”；
+      - 两位专家都反对引入 machine-readable refresh manifest，认为那会把范围拉向新的 metadata / archive 平台。
+    - 当前 formal docs 已冻结的关键边界：
+      - refresh / rebuild / regeneration 只能通过单一正式命令入口；
+      - refresh 入口只能复用现有 generator、shared report material helper 与 shared loader；
+      - 041 不新增新的 gate policy、schema、evidence bundle、manifest 或 archive metadata model。
+    - `T411` 已完成：
+      - 已新增 `Task 12` 到总实施计划；
+      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/041-*` 基线；
+      - 当前下一执行入口固定为 `T412`。
+current_branch: codex/wi-038-future-worker-canonical-execution
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T12:05:00+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''
