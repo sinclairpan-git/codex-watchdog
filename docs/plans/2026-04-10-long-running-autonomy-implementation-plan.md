@@ -698,6 +698,37 @@
   - `git add src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/brain/release_gate_write_contract.py tests/test_watchdog_session_spine_runtime.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/045-resident-runtime-release-gate-evidence-write-contract`
   - `git commit -m "feat: formalize release gate write-side contract"`
 
+### Task 17: 收敛 session event gate payload write contract
+
+**Canonical execution work item:** `specs/046-session-event-gate-payload-write-contract/`
+
+**Files:**
+- Modify: `src/watchdog/services/session_spine/orchestrator.py`
+- Modify/Add: `src/watchdog/services/session_spine/event_gate_payload_contract.py`
+- Test: `tests/test_watchdog_session_spine_runtime.py`
+
+- [ ] **Step 1: 写失败测试，冻结 session event gate payload write contract**
+  - 覆盖 `decision_validated` 里的 `validator_verdict` / `release_gate_verdict` 不得继续在 orchestrator 内联拼装。
+  - 覆盖 `_command_terminal_payload()` 里的 `release_gate_verdict` / `release_gate_evidence_bundle` 不得继续在 orchestrator 内联拼装。
+  - 覆盖 shared helper 只负责 gate payload fragment，不接管 `decision_trace`、`completion_judgment`、`replay_summary`、`metrics_summary`。
+
+- [ ] **Step 2: 运行测试确认正确失败**
+  - Run: `uv run pytest tests/test_watchdog_session_spine_runtime.py -q`
+  - Expected: 因当前 session event gate payload 仍在 orchestrator 手工组装，write contract 尚未收口而失败。
+
+- [ ] **Step 3: 实现最小 session event gate payload contract**
+  - 新增 shared helper，统一组装 event payload 中的 `validator_verdict` / `release_gate_verdict` / `release_gate_evidence_bundle` gate fragment。
+  - 让 `decision_validated` 与 `_command_terminal_payload()` 都复用同一 helper。
+  - 保持现有 event payload shape、decision evidence、policy 与 read-side surface 不变。
+
+- [ ] **Step 4: 运行测试确认通过**
+  - Run: `uv run pytest tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py -q`
+  - Expected: session event gate payload 写侧已通过 shared helper 收口，formal / fallback path 继续输出稳定 canonical fragment。
+
+- [ ] **Step 5: 提交**
+  - `git add src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/session_spine/event_gate_payload_contract.py tests/test_watchdog_session_spine_runtime.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/046-session-event-gate-payload-write-contract`
+  - `git commit -m "feat: formalize session event gate payload contract"`
+
 ## 风险控制
 
 - 所有阶段都必须维持现有 stable read contract，不允许一次性拆掉全部兼容层。
