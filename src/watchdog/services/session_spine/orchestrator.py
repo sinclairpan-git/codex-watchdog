@@ -17,14 +17,12 @@ from watchdog.services.brain.release_gate import (
     ReleaseGateReport,
     ReleaseGateVerdict,
 )
-from watchdog.services.brain.release_gate_evidence import (
-    CertificationPacketCorpus,
-    ReleaseGateEvidenceBundle,
-    ShadowDecisionLedger,
-)
 from watchdog.services.brain.release_gate_loading import load_release_gate_artifacts
 from watchdog.services.brain.release_gate_read_contract import (
     read_release_gate_decision_evidence,
+)
+from watchdog.services.brain.release_gate_write_contract import (
+    build_release_gate_runtime_evidence,
 )
 from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
@@ -814,26 +812,23 @@ class ResidentOrchestrator:
             runtime_contract=self._release_gate_runtime_contract(trace=decision_trace),
             now=self._release_gate_now(now),
         )
+        release_gate_evidence = build_release_gate_runtime_evidence(
+            verdict=release_gate_verdict,
+            loaded_artifacts=loaded_artifacts,
+            report_path=self._settings.release_gate_report_path,
+            certification_packet_corpus_ref=(
+                self._settings.release_gate_certification_packet_corpus_ref
+            ),
+            shadow_decision_ledger_ref=self._settings.release_gate_shadow_decision_ledger_ref,
+        )
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
-        evidence["release_gate_verdict"] = release_gate_verdict.model_dump(mode="json")
-        if loaded_artifacts is not None:
-            evidence["release_gate_evidence_bundle"] = loaded_artifacts.evidence_bundle.model_dump(
-                mode="json"
+        evidence["release_gate_verdict"] = release_gate_evidence.verdict.model_dump(mode="json")
+        if release_gate_evidence.evidence_bundle is not None:
+            evidence["release_gate_evidence_bundle"] = release_gate_evidence.evidence_bundle.model_dump(
+                mode="json",
+                exclude_none=True,
             )
-        elif self._settings.release_gate_report_path:
-            evidence["release_gate_evidence_bundle"] = ReleaseGateEvidenceBundle(
-                certification_packet_corpus=CertificationPacketCorpus(
-                    artifact_ref=self._settings.release_gate_certification_packet_corpus_ref
-                ),
-                shadow_decision_ledger=ShadowDecisionLedger(
-                    artifact_ref=self._settings.release_gate_shadow_decision_ledger_ref
-                ),
-                release_gate_report_ref=self._settings.release_gate_report_path,
-                report_id=release_gate_verdict.report_id,
-                report_hash=release_gate_verdict.report_hash,
-                input_hash=release_gate_verdict.input_hash,
-            ).model_dump(mode="json", exclude_none=True)
         if brain_intent.intent == "candidate_closure":
             evidence["requested_action_args"] = self._candidate_closure_action_args(record)
         return evidence

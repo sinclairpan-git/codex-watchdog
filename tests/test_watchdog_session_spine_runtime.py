@@ -21,7 +21,9 @@ from watchdog.services.brain.release_gate import (
     DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
     DEFAULT_RUNTIME_GATE_REASON_TAXONOMY,
     ReleaseGateEvaluator,
+    ReleaseGateVerdict,
 )
+from watchdog.services.brain.release_gate_loading import load_release_gate_artifacts
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.http_client import DeliveryAttemptResult
 from watchdog.services.future_worker.models import FutureWorkerExecutionRequest
@@ -301,6 +303,92 @@ def test_validator_read_contract_runtime_module_exports_typed_surface() -> None:
 
     assert hasattr(module, "ValidatorDecisionReadSnapshot")
     assert hasattr(module, "read_validator_decision_evidence")
+
+
+def test_release_gate_write_contract_runtime_module_exports_typed_surface() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_write_contract")
+
+    assert hasattr(module, "ReleaseGateRuntimeEvidenceWriteBundle")
+    assert hasattr(module, "build_release_gate_runtime_evidence")
+
+
+def test_release_gate_write_contract_preserves_loaded_artifact_bundle(
+    tmp_path: Path,
+) -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_write_contract")
+    report_path = tmp_path / "runtime-release-gate-report.json"
+    trace = _release_gate_trace()
+    report = _write_release_gate_report(
+        report_path,
+        trace=trace,
+        expires_at="2026-04-20T00:00:00Z",
+    )
+    loaded_artifacts = load_release_gate_artifacts(
+        report_path=str(report_path),
+        runtime_contract={
+            "runtime_contract_surface_ref": DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
+        },
+        certification_packet_corpus_ref="artifacts/certification-packets.jsonl",
+        shadow_decision_ledger_ref="artifacts/shadow-ledger.jsonl",
+    )
+    verdict = ReleaseGateVerdict(
+        status="pass",
+        decision_trace_ref="trace:seed",
+        approval_read_ref="approval:none",
+        report_id=report["report_id"],
+        report_hash=report["report_hash"],
+        input_hash=report["input_hash"],
+    )
+
+    payload = module.build_release_gate_runtime_evidence(
+        verdict=verdict,
+        loaded_artifacts=loaded_artifacts,
+        report_path=str(report_path),
+        certification_packet_corpus_ref="artifacts/certification-packets.jsonl",
+        shadow_decision_ledger_ref="artifacts/shadow-ledger.jsonl",
+    )
+
+    assert payload.verdict == verdict
+    assert payload.evidence_bundle is not None
+    assert payload.evidence_bundle.model_dump(mode="json", exclude_none=True) == (
+        loaded_artifacts.evidence_bundle.model_dump(mode="json", exclude_none=True)
+    )
+
+
+def test_release_gate_write_contract_builds_fallback_bundle_without_extra_intent_fields() -> None:
+    module = importlib.import_module("watchdog.services.brain.release_gate_write_contract")
+    verdict = ReleaseGateVerdict(
+        status="degraded",
+        decision_trace_ref="trace:seed",
+        approval_read_ref="approval:none",
+        degrade_reason="report_load_failed",
+        report_id="report:load_failed",
+        report_hash="sha256:report_load_failed",
+        input_hash="sha256:input-seed",
+    )
+
+    payload = module.build_release_gate_runtime_evidence(
+        verdict=verdict,
+        loaded_artifacts=None,
+        report_path="artifacts/release-gate-report.json",
+        certification_packet_corpus_ref="artifacts/certification-packets.jsonl",
+        shadow_decision_ledger_ref="artifacts/shadow-ledger.jsonl",
+    )
+
+    assert payload.verdict == verdict
+    assert payload.evidence_bundle is not None
+    assert payload.evidence_bundle.model_dump(mode="json", exclude_none=True) == {
+        "certification_packet_corpus": {
+            "artifact_ref": "artifacts/certification-packets.jsonl"
+        },
+        "shadow_decision_ledger": {
+            "artifact_ref": "artifacts/shadow-ledger.jsonl"
+        },
+        "release_gate_report_ref": "artifacts/release-gate-report.json",
+        "report_id": "report:load_failed",
+        "report_hash": "sha256:report_load_failed",
+        "input_hash": "sha256:input-seed",
+    }
 
 
 def test_resident_orchestrator_rejects_incomplete_pass_release_gate_verdict() -> None:
@@ -1935,25 +2023,34 @@ def test_resident_orchestrator_uses_configured_release_gate_report_for_auto_exec
     app = create_app(settings, a_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
+    write_contract_module = importlib.import_module(
+        "watchdog.services.brain.release_gate_write_contract"
+    )
+
     with patch.object(
         app.state.resident_orchestrator,
         "_decision_trace_for_intent",
         return_value=trace,
     ):
         with patch(
-            "watchdog.services.session_spine.actions.post_steer",
-            return_value={
-                "accepted": True,
-                "action_ref": "continue_session",
-                "reply_code": "ok",
-            },
-        ):
-            outcomes = app.state.resident_orchestrator.orchestrate_all(
-                now=datetime(2026, 4, 15, 0, 0, 0, tzinfo=UTC)
-            )
+            "watchdog.services.session_spine.orchestrator.build_release_gate_runtime_evidence",
+            wraps=write_contract_module.build_release_gate_runtime_evidence,
+        ) as helper_mock:
+            with patch(
+                "watchdog.services.session_spine.actions.post_steer",
+                return_value={
+                    "accepted": True,
+                    "action_ref": "continue_session",
+                    "reply_code": "ok",
+                },
+            ):
+                outcomes = app.state.resident_orchestrator.orchestrate_all(
+                    now=datetime(2026, 4, 15, 0, 0, 0, tzinfo=UTC)
+                )
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    assert helper_mock.call_count == 1
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     release_gate_verdict = decisions[0].evidence["release_gate_verdict"]
@@ -2107,6 +2204,70 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_gove
     )
     assert release_gate_bundle["report_id"] == "report:load_failed"
     assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_uses_release_gate_write_contract_for_report_load_failed_fallback(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "release-gate-report.json"
+    report_path.write_text("[]", encoding="utf-8")
+    trace = _release_gate_trace()
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        release_gate_report_path=str(report_path),
+        release_gate_risk_policy_version="risk:v1",
+        release_gate_decision_input_builder_version="dib:v1",
+        release_gate_policy_engine_version="policy:v1",
+        release_gate_tool_schema_hash="tool:abc",
+        release_gate_memory_provider_adapter_hash="memory:abc",
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    write_contract_module = importlib.import_module(
+        "watchdog.services.brain.release_gate_write_contract"
+    )
+
+    with patch.object(
+        app.state.resident_orchestrator,
+        "_decision_trace_for_intent",
+        return_value=trace,
+    ):
+        with patch(
+            "watchdog.services.session_spine.orchestrator.build_release_gate_runtime_evidence",
+            wraps=write_contract_module.build_release_gate_runtime_evidence,
+        ) as helper_mock:
+            with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+                outcomes = app.state.resident_orchestrator.orchestrate_all(
+                    now=datetime(2026, 4, 15, 0, 0, 0, tzinfo=UTC)
+                )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    assert helper_mock.call_count == 1
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    release_gate_bundle = decisions[0].evidence["release_gate_evidence_bundle"]
+    assert release_gate_bundle["release_gate_report_ref"] == str(report_path)
     steer_mock.assert_not_called()
 
 
