@@ -35,7 +35,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T411
 - task_id: T413
@@ -54,7 +54,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T412
 - task_id: T414
@@ -73,7 +73,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T413
 - task_id: T415
@@ -90,7 +90,7 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on:
   - T414
 batches:
@@ -105,28 +105,28 @@ batches:
   phase: 2
   tasks:
   - T412
-  status: pending
-  started_at: ''
-  completed_at: ''
+  status: completed
+  started_at: '2026-04-14T12:06:00+08:00'
+  completed_at: '2026-04-14T12:12:00+08:00'
 - batch_id: 3
   phase: 3
   tasks:
   - T413
-  status: pending
-  started_at: ''
-  completed_at: ''
+  status: completed
+  started_at: '2026-04-14T12:12:00+08:00'
+  completed_at: '2026-04-14T13:20:29+08:00'
 - batch_id: 4
   phase: 4
   tasks:
   - T414
-  status: pending
-  started_at: ''
-  completed_at: ''
+  status: completed
+  started_at: '2026-04-14T13:20:29+08:00'
+  completed_at: '2026-04-14T13:20:29+08:00'
 - batch_id: 5
   phase: 5
   tasks:
   - T415
-  status: pending
-  started_at: ''
-  completed_at: ''
-current_batch: 1
+  status: completed
+  started_at: '2026-04-14T13:20:29+08:00'
+  completed_at: '2026-04-14T13:20:29+08:00'
+current_batch: 5

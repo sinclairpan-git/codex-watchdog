@@ -419,8 +419,8 @@
 - [x] 完成 Task 10 后，确认后续任何消费 release gate 的入口都只能复用 shared loading / evidence bundle contract，不能再手写 parse/validate 或绕开 `report_load_failed` fail-closed 语义。
 - [x] 完成 Task 11 后，确认 `release_gate_report` 的 report material、`report_id` seed 与 `report_hash` 计算都只存在一套 shared contract，脚本、fixture、loader 与后续入口不再各自维护本地算法。
 - [x] 完成 Task 11 后，确认 `scripts/generate_release_gate_report.py`、shared loader 与相关测试/fixture 通过同一 shared helper 对齐，后续刷新 report 或 fixture 时不会再因本地 helper 漂移引入隐性 second truth。
-- [ ] 完成 Task 12 后，确认 `release_gate_report` 的 refresh / archive rebuild / fixture regeneration 只有一个正式命令入口，并且该入口只复用既有 shared material / loader contract。
-- [ ] 完成 Task 12 后，确认 runbook 与 contract tests 已把 refresh 成功态、输出 artifact 与 drift fail-closed 纪律正式化，后续不会再靠人工改 JSON 或脚本拼装完成 report 刷新。
+- [x] 完成 Task 12 后，确认 `release_gate_report` 的 refresh / archive rebuild / fixture regeneration 只有一个正式命令入口，并且该入口只复用既有 shared material / loader contract。
+- [x] 完成 Task 12 后，确认 runbook 与 contract tests 已把 refresh 成功态、输出 artifact 与 drift fail-closed 纪律正式化，后续不会再靠人工改 JSON 或脚本拼装完成 report 刷新。
 
 ### Task 9: 把 future worker / sub-agent 收敛为 canonical execution contract
 
@@ -548,25 +548,25 @@
 - Modify: `docs/operations/release-gate-runbook.md`
 - Test: `tests/test_watchdog_release_gate.py`
 
-- [ ] **Step 1: 写失败测试，冻结 refresh / rebuild contract**
+- [x] **Step 1: 写失败测试，冻结 refresh / rebuild contract**
   - 覆盖 `release_gate_report` 的 refresh / archive rebuild / fixture regeneration 只能通过单一命令入口完成，而不是散落在手工脚本步骤或人工 JSON 编辑里。
   - 覆盖 refresh 入口只允许复用 `release_gate_report_material.py`、现有 generator 与 shared loader，不得重新定义 hash/material 逻辑。
   - 覆盖 refresh 产物必须能被 shared loader 直接接受，且 drift / 缺字段 / 输入不一致时继续 fail closed。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_release_gate.py -q`
   - Expected: 因当前缺少单一 refresh 命令入口、runbook 尚未把 refresh 成功态写成正式 contract 而失败。
 
-- [ ] **Step 3: 实现最小 refresh / rebuild contract**
+- [x] **Step 3: 实现最小 refresh / rebuild contract**
   - 新增单一 refresh 命令入口，统一 report refresh、archive rebuild、fixture regeneration 三个场景。
   - 该入口只能委托现有 `generate_release_gate_report.py` 与 shared material/loading helper，不得新增第二套 report 构造逻辑。
   - 更新 runbook，明确输入、输出、成功态与 drift fail-closed 纪律。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py -q`
   - Expected: refresh 命令、runbook 与 loader contract 已正式收口，后续刷新 report 不再依赖人工 JSON 编辑或局部 helper。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add scripts/refresh_release_gate_artifacts.py scripts/generate_release_gate_report.py docs/operations/release-gate-runbook.md tests/test_watchdog_release_gate.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/041-release-gate-artifact-refresh-and-rebuild-contract`
   - `git commit -m "feat: formalize release gate artifact refresh contract"`
 
