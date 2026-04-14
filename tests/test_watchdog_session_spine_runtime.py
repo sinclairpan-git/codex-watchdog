@@ -1073,6 +1073,82 @@ def test_resident_orchestrator_replay_reads_future_worker_events_by_decision_tra
     ]
 
 
+def test_resident_orchestrator_replay_excludes_future_worker_events_with_wrong_trace(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    command_id = f"command:{decision.decision_id}"
+    app.state.session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T06:10:00Z",
+        correlation_id="corr:future-worker:wrong-trace",
+        related_ids={
+            "worker_task_ref": "worker:wrong-trace",
+            "decision_trace_ref": "trace:other",
+        },
+        payload={"scope": "read_only"},
+    )
+    app.state.session_service.record_event(
+        event_type="future_worker_result_rejected",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T06:11:00Z",
+        correlation_id="corr:future-worker:wrong-trace",
+        related_ids={
+            "worker_task_ref": "worker:wrong-trace",
+            "decision_trace_ref": "trace:other",
+        },
+        payload={
+            "reason": "late_result",
+            "decision_trace_ref": "trace:other",
+        },
+    )
+
+    relevant_events = app.state.resident_orchestrator._decision_relevant_session_events(
+        decision,
+        command_id=command_id,
+    )
+
+    assert [event.event_type for event in relevant_events] == [
+        "decision_proposed",
+        "decision_validated",
+        "command_created",
+    ]
+
+
 def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contract(
     tmp_path: Path,
 ) -> None:
