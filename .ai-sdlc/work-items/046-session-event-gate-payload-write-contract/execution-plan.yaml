@@ -21,12 +21,110 @@ tasks:
   forbidden_paths: []
   interface_contracts: []
   merge_order: 0
-  status: pending
+  status: completed
   depends_on: []
+- task_id: T462
+  title: 写失败测试锁定 session event gate payload contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T461
+- task_id: T463
+  title: 实现最小 shared event gate helper 与 orchestrator 收口
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/session_spine/event_gate_payload_contract.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T462
+- task_id: T464
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/046-session-event-gate-payload-write-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/046-session-event-gate-payload-write-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/046-session-event-gate-payload-write-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/046-session-event-gate-payload-write-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/046-session-event-gate-payload-write-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T463
+- task_id: T465
+  title: 完成 046 整体验证并交接后续 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/046-session-event-gate-payload-write-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/046-session-event-gate-payload-write-contract/latest-summary.md`'
+  - '`.ai-sdlc/work-items/046-session-event-gate-payload-write-contract/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T464
 batches:
 - batch_id: 1
   phase: 1
   tasks:
   - T461
-  status: in_progress
-current_batch: 1
+  status: completed
+  started_at: '2026-04-14T15:21:04+08:00'
+  completed_at: '2026-04-14T15:21:04+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T462
+  status: completed
+  started_at: '2026-04-14T15:21:04+08:00'
+  completed_at: '2026-04-14T15:32:00+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T463
+  status: completed
+  started_at: '2026-04-14T15:32:00+08:00'
+  completed_at: '2026-04-14T15:40:00+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T464
+  status: completed
+  started_at: '2026-04-14T15:40:00+08:00'
+  completed_at: '2026-04-14T15:49:57+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T465
+  status: completed
+  started_at: '2026-04-14T15:49:57+08:00'
+  completed_at: '2026-04-14T15:49:57+08:00'
+current_batch: 5
