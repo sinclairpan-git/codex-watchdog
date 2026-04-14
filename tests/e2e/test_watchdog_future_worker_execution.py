@@ -149,5 +149,7 @@ def test_future_worker_service_rejects_late_result_before_parent_consume(
         "future_worker_started",
         "future_worker_completed",
         "future_worker_result_rejected",
+        "future_worker_transition_rejected",
     ]
-    assert events[-1].payload["reason"] == "late_result"
+    assert events[-2].payload["reason"] == "late_result"
+    assert events[-1].payload["reason"] == "terminal_state:rejected"

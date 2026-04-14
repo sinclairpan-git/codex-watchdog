@@ -40,6 +40,7 @@ _FUTURE_WORKER_EVENT_TYPES = {
     "future_worker_completed",
     "future_worker_failed",
     "future_worker_cancelled",
+    "future_worker_transition_rejected",
     "future_worker_result_consumed",
     "future_worker_result_rejected",
 }
@@ -250,8 +251,16 @@ def _future_worker_statuses(*, data_dir: Path) -> list[OpsFutureWorkerStatus]:
     statuses: list[OpsFutureWorkerStatus] = []
     for (project_id, session_id, worker_task_ref), events in grouped_events.items():
         ordered_events = sorted(events, key=_session_event_order)
+        state_events = [
+            event
+            for event in ordered_events
+            if event.event_type in _FUTURE_WORKER_STATUS_BY_EVENT_TYPE
+        ]
+        if not state_events:
+            continue
         last_event = ordered_events[-1]
-        status = _FUTURE_WORKER_STATUS_BY_EVENT_TYPE.get(last_event.event_type)
+        last_state_event = state_events[-1]
+        status = _FUTURE_WORKER_STATUS_BY_EVENT_TYPE.get(last_state_event.event_type)
         if status is None:
             continue
         statuses.append(

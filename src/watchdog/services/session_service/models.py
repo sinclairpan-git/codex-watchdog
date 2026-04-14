@@ -46,6 +46,7 @@ CONTROLLED_SESSION_EVENT_TYPES = (
     "future_worker_completed",
     "future_worker_failed",
     "future_worker_cancelled",
+    "future_worker_transition_rejected",
     "future_worker_result_consumed",
     "future_worker_result_rejected",
 )

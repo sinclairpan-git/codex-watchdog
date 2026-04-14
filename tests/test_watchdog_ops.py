@@ -1039,3 +1039,56 @@ def test_watchdog_ops_alerts_expose_future_worker_read_side(tmp_path: Path) -> N
     assert future_workers[0]["worker_task_ref"] == "worker:task-running"
     assert future_workers[0]["status"] == "running"
     assert future_workers[0]["decision_trace_ref"] == "trace:running"
+
+
+def test_build_ops_summary_preserves_worker_state_after_transition_rejection(
+    tmp_path: Path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    settings = Settings(data_dir=str(tmp_path))
+
+    session_service.record_event(
+        event_type="future_worker_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:40:00Z",
+        correlation_id="corr:future-worker:task-dup",
+        related_ids={
+            "worker_task_ref": "worker:task-dup",
+            "decision_trace_ref": "trace:dup",
+        },
+        payload={"scope": "read_only"},
+    )
+    session_service.record_event(
+        event_type="future_worker_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:41:00Z",
+        correlation_id="corr:future-worker:task-dup",
+        related_ids={"worker_task_ref": "worker:task-dup"},
+        payload={"worker_runtime_contract": {"provider": "codex"}},
+    )
+    session_service.record_event(
+        event_type="future_worker_transition_rejected",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        occurred_at="2026-04-14T05:42:00Z",
+        correlation_id="corr:future-worker:task-dup",
+        related_ids={
+            "worker_task_ref": "worker:task-dup",
+            "attempted_event_type": "future_worker_started",
+        },
+        payload={
+            "attempted_event_type": "future_worker_started",
+            "current_state": "running",
+            "reason": "invalid_transition:running->running",
+        },
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert len(summary.future_workers) == 1
+    assert summary.future_workers[0].worker_task_ref == "worker:task-dup"
+    assert summary.future_workers[0].status == "running"
+    assert summary.future_workers[0].last_event_type == "future_worker_transition_rejected"
+    assert summary.future_workers[0].blocking_reason == "invalid_transition:running->running"

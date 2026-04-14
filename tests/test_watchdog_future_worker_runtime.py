@@ -18,6 +18,7 @@ def test_session_service_registers_future_worker_lifecycle_event_types() -> None
         "future_worker_completed",
         "future_worker_failed",
         "future_worker_cancelled",
+        "future_worker_transition_rejected",
         "future_worker_result_consumed",
         "future_worker_result_rejected",
     }
@@ -367,3 +368,87 @@ def test_future_worker_service_rejects_completion_after_terminal_state(
             result_hash="sha256:result-6",
             occurred_at="2026-04-14T04:44:00Z",
         )
+
+
+def test_future_worker_service_audits_duplicate_start_and_completion_attempts(
+    tmp_path: Path,
+) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-7",
+        decision_trace_ref="trace:7",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:7"],
+        retrieval_handles=["handle:7"],
+        distilled_summary_ref="summary:7",
+        execution_budget_ref="budget:7",
+        occurred_at="2026-04-14T04:50:00Z",
+    )
+    service.record_started(
+        worker_task_ref="worker:task-7",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T04:51:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+
+    with pytest.raises(ValueError, match="invalid future worker transition: running -> running"):
+        service.record_started(
+            worker_task_ref="worker:task-7",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            occurred_at="2026-04-14T04:52:00Z",
+            worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+        )
+
+    service.record_completed(
+        worker_task_ref="worker:task-7",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        result_summary_ref="summary:worker:7",
+        artifact_refs=["artifact:patch:7"],
+        input_contract_hash="sha256:input-contract-7",
+        result_hash="sha256:result-7",
+        occurred_at="2026-04-14T04:53:00Z",
+    )
+
+    with pytest.raises(ValueError, match="invalid future worker transition: completed -> completed"):
+        service.record_completed(
+            worker_task_ref="worker:task-7",
+            project_id="repo-a",
+            parent_session_id="session:repo-a",
+            result_summary_ref="summary:worker:7-dup",
+            artifact_refs=["artifact:patch:7-dup"],
+            input_contract_hash="sha256:input-contract-7-dup",
+            result_hash="sha256:result-7-dup",
+            occurred_at="2026-04-14T04:54:00Z",
+        )
+
+    transition_rejections = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.event_type == "future_worker_transition_rejected"
+    ]
+
+    assert len(transition_rejections) == 2
+    assert transition_rejections[0].payload["attempted_event_type"] == "future_worker_started"
+    assert transition_rejections[0].payload["reason"] == "invalid_transition:running->running"
+    assert transition_rejections[1].payload["attempted_event_type"] == "future_worker_completed"
+    assert transition_rejections[1].payload["reason"] == "invalid_transition:completed->completed"

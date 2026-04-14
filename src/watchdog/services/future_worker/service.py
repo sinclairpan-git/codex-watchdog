@@ -75,6 +75,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_requested",
         )
         request = FutureWorkerExecutionRequest(
@@ -117,6 +119,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_started",
         )
         self._record_lifecycle_event(
@@ -144,6 +148,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_summary_published",
         )
         self._record_lifecycle_event(
@@ -172,6 +178,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_heartbeat",
         )
         self._record_lifecycle_event(
@@ -202,6 +210,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_completed",
         )
         started_event = self._require_started_event(
@@ -257,6 +267,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_result_consumed",
         )
         self._record_lifecycle_event(
@@ -285,6 +297,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_failed",
         )
         self._record_lifecycle_event(
@@ -312,6 +326,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_cancelled",
         )
         self._record_lifecycle_event(
@@ -343,6 +359,8 @@ class FutureWorkerExecutionService:
         self._assert_transition_allowed(
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
+            project_id=project_id,
+            occurred_at=occurred_at,
             next_event_type="future_worker_result_rejected",
         )
         self._record_lifecycle_event(
@@ -379,6 +397,8 @@ class FutureWorkerExecutionService:
         *,
         parent_session_id: str,
         worker_task_ref: str,
+        project_id: str,
+        occurred_at: str,
         next_event_type: str,
     ) -> None:
         current_state = self._current_worker_state(
@@ -386,12 +406,61 @@ class FutureWorkerExecutionService:
             worker_task_ref=worker_task_ref,
         )
         if current_state in _TERMINAL_WORKER_STATES:
+            self._record_transition_rejected(
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                worker_task_ref=worker_task_ref,
+                occurred_at=occurred_at,
+                attempted_event_type=next_event_type,
+                current_state=current_state,
+                reason=f"terminal_state:{current_state}",
+            )
             raise ValueError(f"terminal future worker state: {current_state}")
         allowed_events = _ALLOWED_NEXT_WORKER_EVENTS.get(current_state, set())
         if next_event_type not in allowed_events:
             next_state = _WORKER_STATE_BY_EVENT_TYPE.get(next_event_type, "unknown")
             source_state = current_state or "none"
+            self._record_transition_rejected(
+                project_id=project_id,
+                parent_session_id=parent_session_id,
+                worker_task_ref=worker_task_ref,
+                occurred_at=occurred_at,
+                attempted_event_type=next_event_type,
+                current_state=source_state,
+                reason=f"invalid_transition:{source_state}->{next_state}",
+            )
             raise ValueError(f"invalid future worker transition: {source_state} -> {next_state}")
+
+    def _record_transition_rejected(
+        self,
+        *,
+        project_id: str,
+        parent_session_id: str,
+        worker_task_ref: str,
+        occurred_at: str,
+        attempted_event_type: str,
+        current_state: str,
+        reason: str,
+    ) -> None:
+        self._session_service.record_event(
+            event_type="future_worker_transition_rejected",
+            project_id=project_id,
+            session_id=parent_session_id,
+            occurred_at=occurred_at,
+            correlation_id=(
+                f"{self._correlation_id(worker_task_ref)}:{attempted_event_type}:{occurred_at}"
+            ),
+            payload={
+                "attempted_event_type": attempted_event_type,
+                "current_state": current_state,
+                "reason": reason,
+                "worker_task_ref": worker_task_ref,
+            },
+            related_ids={
+                "worker_task_ref": worker_task_ref,
+                "attempted_event_type": attempted_event_type,
+            },
+        )
 
     def _require_request_event(self, *, parent_session_id: str, worker_task_ref: str):
         for event in reversed(
