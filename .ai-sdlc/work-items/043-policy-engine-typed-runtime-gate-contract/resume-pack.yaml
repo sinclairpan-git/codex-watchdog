@@ -1,6 +1,6 @@
-current_stage: execute
-current_batch: 2
-last_committed_task: ''
+current_stage: verify
+current_batch: 5
+last_committed_task: T435
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
@@ -14,6 +14,11 @@ working_set_snapshot:
   - '`specs/043-policy-engine-typed-runtime-gate-contract/plan.md`'
   - '`specs/043-policy-engine-typed-runtime-gate-contract/tasks.md`'
   - '`specs/043-policy-engine-typed-runtime-gate-contract/task-execution-log.md`'
+  - '`src/watchdog/services/brain/release_gate_read_contract.py`'
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
   - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/execution-plan.yaml`'
   - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/runtime.yaml`'
   - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/resume-pack.yaml`'
@@ -35,10 +40,22 @@ working_set_snapshot:
       - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/043-*` 基线；
       - Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1；
       - 当前下一执行入口固定为 `T432`。
+    - `T432` 已完成：
+      - 已新增 shared read contract module surface 红测；
+      - 已锁定 formal report pass verdict 缺 bundle 必须 fail closed；
+      - 已锁定 `report:resident_default` 默认态不要求 formal evidence bundle。
+    - `T433` 已完成：
+      - `policy engine` 已改为只通过 shared typed runtime-gate contract 解释 release-gate state；
+      - `release_gate_read_contract.py` 已兼容 runtime evidence payload 与 legacy raw verdict dict；
+      - resident runtime 已改为把完整 runtime-gate evidence 传给 `policy engine` 统一解释。
+    - `T434` 已完成：
+      - 执行日志、总实施计划 Task 14 与 `.ai-sdlc` 元数据已同步到 043 完成态。
+    - `T435` 已完成：
+      - `WI-043` 已完成：后续任何 policy/runtime-gate consumer 都必须复用 shared typed contract。
 current_branch: codex/wi-038-future-worker-canonical-execution
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-14T14:40:40+08:00'
+timestamp: '2026-04-14T14:46:09+08:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
 checkpoint_last_updated: ''
 checkpoint_fingerprint: ''

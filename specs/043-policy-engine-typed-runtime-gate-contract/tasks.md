@@ -34,7 +34,7 @@
 ## Task 43.2 写失败测试锁定 typed runtime-gate policy contract
 
 - **任务编号**：T432
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：用失败测试先锁定 `policy engine` 对 runtime-gate evidence 的唯一 consume surface。
 - **文件**：
   - `tests/test_watchdog_policy_engine.py`
@@ -45,11 +45,15 @@
   3. 覆盖 `report:resident_default` 默认态不应被误伤成 formal report drift/blocker。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_policy_engine.py`
+- **完成情况**：
+  1. 已新增 shared read contract module surface 红测；
+  2. 已锁定 formal report pass verdict 缺 bundle 时必须 fail closed；
+  3. 已锁定 `report:resident_default` 默认态不要求 formal evidence bundle。
 
 ## Task 43.3 实现最小 typed runtime-gate helper 与 policy engine 收口
 
 - **任务编号**：T433
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：让 `policy engine` 只通过 shared typed runtime-gate contract 解释 release-gate state。
 - **文件**：
   - `src/watchdog/services/policy/engine.py`
@@ -63,11 +67,15 @@
   4. 不引入 policy surface、schema、persistence、manifest 或测试平台变化。
 - **验证**：
   - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_long_running_autonomy_doc_contracts.py`
+- **完成情况**：
+  1. `policy engine` 已改为通过 shared typed runtime-gate contract 解释 release-gate state；
+  2. `release_gate_read_contract.py` 已兼容 runtime payload 与 legacy raw verdict dict；
+  3. resident runtime 已改为把完整 runtime-gate evidence 交给 policy engine 统一解释。
 
 ## Task 43.4 更新执行日志与 handoff 摘要
 
 - **任务编号**：T434
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：同步 formal docs、执行日志与 `.ai-sdlc` 元数据，固定后续 handoff。
 - **文件**：
   - `specs/043-policy-engine-typed-runtime-gate-contract/task-execution-log.md`
@@ -83,11 +91,15 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅执行日志与 `.ai-sdlc` 元数据一致
+- **完成情况**：
+  1. 已补齐 red/green/verification/code review 闭环；
+  2. 已把 `.ai-sdlc` 元数据更新到 043 完成态；
+  3. 已明确后续 policy/runtime-gate consumer 只能复用 typed contract。
 
 ## Task 43.5 完成 043 整体验证并交接后续 work item
 
 - **任务编号**：T435
-- **状态**：未开始
+- **状态**：已完成（2026-04-14）
 - **目标**：完成 043 的整体验证，并把 typed runtime-gate policy contract 作为后续 work item 的正式依赖写回 handoff。
 - **文件**：
   - `specs/043-policy-engine-typed-runtime-gate-contract/task-execution-log.md`
@@ -101,6 +113,10 @@
 - **验证**：
   - `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py`
   - 人工审阅 handoff 与总实施计划一致
+- **完成情况**：
+  1. `WI-043` 已完成并成为后续 policy/runtime-gate consumer 的正式依赖；
+  2. Hermes Agent 专家与 Anthropic Manager 专家最终复核均无 blocking/P1；
+  3. 后续实现不得再复制 raw verdict dict 解释逻辑。
 
 ## 整体验收
 

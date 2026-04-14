@@ -612,25 +612,25 @@
 - Modify: `src/watchdog/services/brain/release_gate_read_contract.py`
 - Test: `tests/test_watchdog_policy_engine.py`
 
-- [ ] **Step 1: 写失败测试，冻结 policy engine typed runtime-gate contract**
+- [x] **Step 1: 写失败测试，冻结 policy engine typed runtime-gate contract**
   - 覆盖 `policy engine` 不得继续直接消费 raw `release_gate_verdict` dict 或靠局部 `_verdict_is_pass/_verdict_reason` 手工解释 runtime gate。
   - 覆盖 `propose_execute` 路径必须通过 shared typed runtime-gate contract 判断 pass / degraded / missing / malformed。
   - 覆盖 formal report pass verdict 在缺 bundle、partial bundle 或 malformed evidence 下必须 fail closed；`report:resident_default` 默认态不应被误判成 formal report blocker。
 
-- [ ] **Step 2: 运行测试确认正确失败**
+- [x] **Step 2: 运行测试确认正确失败**
   - Run: `uv run pytest tests/test_watchdog_policy_engine.py -q`
   - Expected: 因当前 `policy engine` 仍直接消费 raw verdict dict，typed runtime-gate contract 尚未收口而失败。
 
-- [ ] **Step 3: 实现最小 typed runtime-gate policy contract**
+- [x] **Step 3: 实现最小 typed runtime-gate policy contract**
   - 让 `evaluate_persisted_session_policy(...)` 与 `_runtime_gate_override(...)` 改为复用 shared typed release-gate contract，而不是继续手工读 dict。
   - 保持现有 policy surface、rule 名称与 decision result 不变，只收敛 consume seam 与 fail-closed 纪律。
   - 如需补充 shared helper，只能在 `release_gate_read_contract.py` 内收紧，不得新增 policy/schema/persistence/manifest。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
   - Run: `uv run pytest tests/test_watchdog_policy_engine.py tests/test_long_running_autonomy_doc_contracts.py -q`
   - Expected: policy engine 已通过 typed runtime-gate contract 收口，malformed / partial evidence 不再从 raw dict 漏过。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
   - `git add src/watchdog/services/policy/engine.py src/watchdog/services/brain/release_gate_read_contract.py tests/test_watchdog_policy_engine.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/043-policy-engine-typed-runtime-gate-contract`
   - `git commit -m "feat: formalize policy engine typed runtime-gate contract"`
 
