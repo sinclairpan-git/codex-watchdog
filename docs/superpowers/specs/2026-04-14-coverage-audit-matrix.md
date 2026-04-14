@@ -1,6 +1,6 @@
 # 覆盖性审计矩阵：PRD 区块
 
-> 已扩展覆盖 PRD 3/4/6/8-22 以及 PRD 17.1 等章节，并保留 2/5/7 的核心条款行。
+> 已扩展覆盖 PRD 1/3/4/6/8-22 以及 PRD 9、17.1 等章节，并保留 2/5/7 的核心条款行。
 > 非执行性条款已单列，不计入未落地统计。
 > 严格规则：实现 / 验证 / 入口三者任一缺失，即判为“未落地”。
 
@@ -102,11 +102,12 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `openclaw-codex-watchdog-prd.md:567-582 / ### 10.1.1 查询进展` | B 侧需要提供任务进展读取入口并在 A 不可达时明确报错 | `src/watchdog/api/progress.py:29-65 /实现证据` | — | `src/watchdog/main.py:285-300 /入口证据` | 无验证 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:583-586 / ### 10.1.2 人工审批` | B 侧需要提供审批决策回传入口 | `src/watchdog/api/feishu_control.py:64-95 /实现证据；src/watchdog/api/openclaw_responses.py:90-158 /实现证据` | — | `src/watchdog/main.py:285-300 /入口证据` | 无验证 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `continue` → stable `ActionCode.CONTINUE_SESSION` | `src/watchdog/contracts/session_spine/enums.py:70-76 /实现证据；src/watchdog/services/session_spine/actions.py:300-303 /实现证据` | `tests/test_watchdog_action_idempotency.py:103-152 /验证证据` | `src/watchdog/main.py:294 /入口证据` | 仅覆盖 continue_session；pause / summarize / retry_with_conservative_path 仍缺 stable ActionCode 映射 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `resume` / `force_handoff` → stable `ActionCode.EXECUTE_RECOVERY` | `src/watchdog/contracts/session_spine/enums.py:70-76 /实现证据；src/watchdog/services/session_spine/actions.py:306-312 /实现证据` | `tests/test_watchdog_action_idempotency.py:249-343 /验证证据` | `src/watchdog/main.py:294 /入口证据` | 仅覆盖 execute_recovery；pause / summarize / retry_with_conservative_path 仍缺 stable ActionCode 映射 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `pause` 目前无 stable ActionCode 映射 | — | — | `src/watchdog/main.py:294 /入口证据` | 实现缺口：无稳定 ActionCode 映射 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `summarize` 目前无 stable ActionCode 映射 | — | — | `src/watchdog/main.py:294 /入口证据` | 实现缺口：无稳定 ActionCode 映射 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `retry_with_conservative_path` 目前无 stable ActionCode 映射 | — | — | `src/watchdog/main.py:294 /入口证据` | 实现缺口：无稳定 ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `continue` → stable `ActionCode.CONTINUE_SESSION` | `src/watchdog/contracts/session_spine/enums.py:70-76 /实现证据；src/watchdog/services/session_spine/actions.py:300-303 /实现证据` | `tests/test_watchdog_action_idempotency.py:103-152 /验证证据` | `src/watchdog/main.py:294 /入口证据` | 仅覆盖 continue_session；pause / summarize / retry_with_conservative_path / force_handoff 仍缺 stable ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `resume` → stable `ActionCode.EXECUTE_RECOVERY` | `src/watchdog/contracts/session_spine/enums.py:70-76 /实现证据；src/watchdog/services/session_spine/actions.py:306-312 /实现证据` | `tests/test_watchdog_action_idempotency.py:249-343 /验证证据` | `src/watchdog/main.py:294 /入口证据` | 仅覆盖 execute_recovery；pause / summarize / retry_with_conservative_path / force_handoff 仍缺 stable ActionCode 映射 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `force_handoff` 目前无 stable ActionCode 映射 | — | — | — | 实现缺口：无稳定 ActionCode 映射；无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `pause` 目前无 stable ActionCode 映射 | — | — | — | 实现缺口：无稳定 ActionCode 映射；无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `summarize` 目前无 stable ActionCode 映射 | — | — | — | 实现缺口：无稳定 ActionCode 映射；无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作` | PRD `retry_with_conservative_path` 目前无 stable ActionCode 映射 | — | — | — | 实现缺口：无稳定 ActionCode 映射；无入口 | 未落地 |
 
 ### 9. A-Control-Agent API 设计
 
@@ -127,8 +128,8 @@
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成` | OpenClaw 侧需把飞书消息转成 Watchdog API 调用并做项目路由 | `examples/openclaw_watchdog_client.py:75-81 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | `tests/integration/test_openclaw_integration_spine.py:228-246 /验证证据` | — | 缺 runtime ingress/NL mapping | 未落地 |
-| `openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义` | 查询、控制、审批类命令需要有稳定语义映射 | `examples/openclaw_watchdog_client.py:75-81 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | `tests/integration/test_openclaw_integration_spine.py:228-246 /验证证据` | — | 缺 runtime ingress/NL mapping | 未落地 |
+| `openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成` | OpenClaw 侧需把飞书消息转成 Watchdog API 调用并做项目路由 | `examples/openclaw_watchdog_client.py:75-81 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | — | — | 无验证；缺 runtime ingress/NL mapping | 未落地 |
+| `openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义` | 查询、控制、审批类命令需要有稳定语义映射 | `examples/openclaw_watchdog_client.py:75-81 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | — | — | 无验证；缺 runtime ingress/NL mapping | 未落地 |
 
 ### 12. 数据持久化设计
 
@@ -188,10 +189,13 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | A 服务 | `src/a_control_agent/main.py:123-132 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | Watchdog 服务 | `src/watchdog/main.py:181-300 /实现证据` | — | — | 无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | integration code | `examples/openclaw_watchdog_client.py:75-166 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | `tests/integration/test_openclaw_integration_spine.py:228-246 /验证证据` | — | 无 runtime ingress | 未落地 |
-| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | config samples | `config/examples/watchdog.env.example:1-28 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | integration code | `examples/openclaw_watchdog_client.py:75-166 /实现证据；.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md:12-15 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | config samples（A 侧） | `config/examples/a-agent.env.example:1-10 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | config samples（B 侧） | `config/examples/watchdog.env.example:1-28 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | getting-started 文档 | `README.md:5-14 /实现证据；docs/getting-started.zh-CN.md:287-300 /实现证据；docs/getting-started.zh-CN.md:587-654 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | openapi | `scripts/export_openapi.py:2-29 /实现证据；docs/openapi/a-control-agent.json /实现证据；docs/openapi/watchdog.json /实现证据; README.md:13 /实现证据; docs/getting-started.zh-CN.md:653 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | 测试用例与测试报告 | `tests/test_watchdog_audit.py:10-93 /实现证据；tests/_watchdog_audit_fixtures.py:58-220 /实现证据` | `.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/latest-summary.md:15 /验证证据` | — | 无测试报告样例 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求` | 审计日志样例 | `tests/_watchdog_audit_fixtures.py:58-220 /实现证据；src/watchdog/services/audit/replay.py:36-101 /实现证据` | `tests/test_watchdog_audit.py:10-93 /验证证据` | — | 无入口 | 未落地 |
 
 ## 约束 / 非执行性条款
 
@@ -199,6 +203,8 @@
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
+| `openclaw-codex-watchdog-prd.md:1-14 / 文档基本信息与已知前提` | 文档名称、版本、日期、状态、适用范围与已知前提 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:18-31 / ## 1. 项目背景` | 用户使用方式、当前痛点与总体动机 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 飞书机器人、OpenClaw 渠道插件本身的安装与接入 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | A 机桌面 UI 层级的视觉监控或自动点击 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 完全无人值守地自动批准所有高风险命令 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
