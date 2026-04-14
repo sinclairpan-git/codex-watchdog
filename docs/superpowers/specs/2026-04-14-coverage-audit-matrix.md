@@ -37,10 +37,10 @@
 | `openclaw-codex-watchdog-prd.md:191-201 / ### 5.4 场景四` | 同类错误连续出现或原地打转时自动打断循环，给出最多 2 个修复方向并选择最小变更方案 | `.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md:15-21 /实现证据；.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md:21-28 /实现证据；.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/latest-summary.md:14-33 /实现证据` | `.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md:24-26 /验证证据；.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md:37-40 /验证证据；.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/latest-summary.md:39-59 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:203-213 / ### 5.5 场景五` | 上下文压力过高 / 线程退化时自动生成 handoff summary，并尝试 resume；必要时新线程续跑 | `.ai-sdlc/work-items/033-recovery-transaction-lineage/latest-summary.md:12-14 /实现证据` | `.ai-sdlc/work-items/033-recovery-transaction-lineage/latest-summary.md:15-19 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:217-218 / ### 5.6 场景六` | 审批请求触发条件：Codex 请求更高权限、网络访问、工作区外访问或高破坏性操作 | `.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:14-18 /实现证据` | `.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:31-40 /验证证据` | — | 无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:220-221 / ### 5.6 场景六` | 风险分级：Watchdog 对请求做 L0/L1/L2/L3 风险分级 | — | — | — | 无实现、无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:221-222 / ### 5.6 场景六` | 低风险自动通过 | — | — | — | 无实现、无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:222-223 / ### 5.6 场景六` | 中风险飞书提醒人工审批 | — | — | — | 无实现、无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:223-224 / ### 5.6 场景六` | 高风险强制人工审批 | — | — | — | 无实现、无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六` | L0：低风险自动通过 | `src/a_control_agent/risk/classifier.py:6 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六` | L1：自动通过并通知 | `src/a_control_agent/risk/classifier.py:6 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六` | L2：中风险飞书提醒人工审批 | `src/a_control_agent/risk/classifier.py:6 /实现证据` | — | — | 无验证、无入口 | 未落地 |
+| `openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六` | L3：高风险强制人工审批 | `src/a_control_agent/risk/classifier.py:6 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 
 ### 7. 审批风险模型
 
@@ -50,3 +50,9 @@
 | `openclaw-codex-watchdog-prd.md:316-326 / #### L1：自动通过并通知` | 工作区内、可逆副作用、无系统级修改；git checkout -b / git add / 覆盖快照 / 本地构建产物 | `.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:20-28 /实现证据；.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md:21-31 /实现证据` | `.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:35-40 /验证证据；.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md:37-40 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:328-339 / #### L2：人工审批` | 需要网络、工作区外文件、外部系统影响、或不在白名单的执行行为；npm install / uv pip install / 外部依赖 / 外部 API | `.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:14-28 /实现证据；.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/latest-summary.md:26-33 /实现证据` | `.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:33-40 /验证证据；.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/latest-summary.md:41-43 /验证证据` | — | 无入口 | 未落地 |
 | `openclaw-codex-watchdog-prd.md:341-354 / #### L3：强制人工审批` | 高破坏性 / 高敏感 / 对外发布型 / 系统级配置修改；rm -rf、shell profile、git push、release / publish、写入 token / secret、关闭沙箱 | `.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md:12-21 /实现证据；.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:14-28 /实现证据; .ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md:14-17 /实现证据` | `.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md:24-26 /验证证据；.ai-sdlc/work-items/036-feishu-control-plane-and-openclaw-retirement/latest-summary.md:33-40 /验证证据；.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/latest-summary.md:37-40 /验证证据` | — | 无入口 | 未落地 |
+
+### 7.2 审批对象
+
+| 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `openclaw-codex-watchdog-prd.md:356-369 / ### 7.2 审批对象` | 审批对象应包含 approval_id / project_id / thread_id / risk_level / command / reason / requested_at / alternative / status 等字段 | — | — | — | 无实现、无验证、无入口 | 未落地 |
