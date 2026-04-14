@@ -417,6 +417,8 @@
 - [x] 完成 Task 9 后，确认 declarative worker request、same-trace replay/consume、late-result rejection 与 recovery supersede 都已 fail-closed，并能从 runtime / recovery / ops/read-side 回看。
 - [x] 完成 Task 10 后，确认 `release_gate_report` 的加载、校验、hash exactness、runtime contract drift 判定与 evidence bundle 回读都通过单一 shared API 暴露，而不是分散在 helper / orchestrator / ops 各自实现。
 - [x] 完成 Task 10 后，确认后续任何消费 release gate 的入口都只能复用 shared loading / evidence bundle contract，不能再手写 parse/validate 或绕开 `report_load_failed` fail-closed 语义。
+- [ ] 完成 Task 11 后，确认 `release_gate_report` 的 report material、`report_id` seed 与 `report_hash` 计算都只存在一套 shared contract，脚本、fixture、loader 与后续入口不再各自维护本地算法。
+- [ ] 完成 Task 11 后，确认 `scripts/generate_release_gate_report.py`、shared loader 与相关测试/fixture 通过同一 shared helper 对齐，后续刷新 report 或 fixture 时不会再因本地 helper 漂移引入隐性 second truth。
 
 ### Task 9: 把 future worker / sub-agent 收敛为 canonical execution contract
 
@@ -501,6 +503,38 @@
 - [x] **Step 5: 提交**
   - `git add src/watchdog/services/brain/release_gate.py src/watchdog/services/brain/release_gate_evidence.py src/watchdog/services/brain/release_gate_loading.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/api/ops.py src/watchdog/observability/metrics_export.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py`
   - `git commit -m "feat: share release gate loading contract"`
+
+### Task 11: 收敛 release gate report material/hash shared contract
+
+**Canonical execution work item:** `specs/040-release-gate-report-material-contract-and-hash-unification/`
+
+**Files:**
+- Create: `src/watchdog/services/brain/release_gate_report_material.py`
+- Modify: `src/watchdog/services/brain/release_gate_loading.py`
+- Modify: `scripts/generate_release_gate_report.py`
+- Test: `tests/test_watchdog_release_gate.py`
+
+- [ ] **Step 1: 写失败测试，冻结 shared report material/hash contract**
+  - 覆盖 `release_gate_report` 的 canonical material、`report_id` seed 与 `report_hash` 算法只能来自单一 shared helper，脚本、loader 与 fixture 刷新都不得各自维护本地实现。
+  - 覆盖 generator 产物与 loader 校验必须消费同一套 canonical material，而不是“碰巧等价”的重复 helper。
+  - 覆盖 governance metadata、冻结窗口、artifact refs 与 `input_hash` 进入 canonical material 的方式固定，避免 future refresh 漂移。
+
+- [ ] **Step 2: 运行测试确认正确失败**
+  - Run: `uv run pytest tests/test_watchdog_release_gate.py -q`
+  - Expected: 因 script 与 loader 仍各自维护局部 hash/material helper、shared contract 尚未抽出而失败。
+
+- [ ] **Step 3: 实现最小 shared report material/hash contract**
+  - 新增 shared helper，统一 `release_gate_report` 的 canonical JSON material、`report_id` seed 与 `report_hash` 计算入口。
+  - 让 `scripts/generate_release_gate_report.py` 与 `src/watchdog/services/brain/release_gate_loading.py` 只复用同一 helper，不再保留各自本地 hash/material 逻辑。
+  - 保持既有 report schema、evidence bundle、fail-closed 语义与 checked-in fixture 输出不变，不扩新的 gate policy。
+
+- [ ] **Step 4: 运行测试确认通过**
+  - Run: `uv run pytest tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py -q`
+  - Expected: report generation、fixture 比对与 loader validation 都通过同一 shared material/hash contract 收口，文档契约同步更新。
+
+- [ ] **Step 5: 提交**
+  - `git add src/watchdog/services/brain/release_gate_report_material.py src/watchdog/services/brain/release_gate_loading.py scripts/generate_release_gate_report.py tests/test_watchdog_release_gate.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/040-release-gate-report-material-contract-and-hash-unification`
+  - `git commit -m "feat: unify release gate report material contract"`
 
 ## 风险控制
 
