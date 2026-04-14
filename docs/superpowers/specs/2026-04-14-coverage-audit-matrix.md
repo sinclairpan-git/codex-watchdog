@@ -108,8 +108,6 @@
 
 | 来源 | 条款摘要 | 实现证据 | 验证证据 | 入口证据 | 缺口类型 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成` | OpenClaw 侧需把飞书消息转成 Watchdog API 调用并做项目路由 | `src/watchdog/main.py:285-296 /实现证据；src/watchdog/api/feishu_control.py:64-95 /实现证据` | — | — | 无验证、无入口 | 未落地 |
-| `openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义` | 查询、控制、审批类命令需要有稳定语义映射 | `src/watchdog/api/feishu_control.py:64-95 /实现证据；src/watchdog/api/session_spine_actions.py:113-367 /实现证据` | — | — | 无验证、无入口 | 未落地 |
 
 ### 12. 数据持久化设计
 
@@ -197,6 +195,8 @@
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 远程桌面控制、通用 SSH 运维入口 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:74-84 / ### 3.2 Out of Scope` | 对 OpenClaw 核心代码进行深度侵入式修改（优先通过外置服务集成） | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:603-605 / ### 11.1 已知前提` | OpenClaw 与飞书链路已存在，本项目不重做通道接入 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成` | OpenClaw 侧需把飞书消息转成 Watchdog API 调用并做项目路由 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
+| `openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义` | 查询、控制、审批类命令需要有稳定语义映射 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 多项目并发监管面板 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 基于项目类型的差异化审批模板 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
 | `openclaw-codex-watchdog-prd.md:917-925 / ## 20. 后续可扩展项（非首版）` | 针对不同仓库语言栈的特定失败分类器 | — | — | — | 非执行性条款（不计入未落地） | 非执行性条款（不计入未落地） |
