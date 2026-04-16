@@ -247,15 +247,318 @@ def test_register_native_thread_upserts_existing_thread(tmp_path: Path) -> None:
     body = r.json()
     assert body["success"] is True
     assert body["data"]["thread_id"] == "thr_native_api_1"
-    assert body["data"]["status"] == "waiting_human"
+    assert body["data"]["status"] == "waiting_for_approval"
 
     task = c.get("/api/v1/tasks/by-thread/thr_native_api_1", headers=h).json()["data"]
     assert task["task_title"] == "Native API Session"
-    assert task["status"] == "waiting_human"
-    assert task["phase"] == "approval"
+    assert task["status"] == "waiting_for_approval"
+    assert task["phase"] == "planning"
     assert task["pending_approval"] is True
     assert task["approval_risk"] == "L2"
     assert task["last_summary"] == "waiting for approval"
+
+
+def test_create_task_rejects_invalid_status_and_phase(tmp_path: Path) -> None:
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token", "X-Request-Id": "rid-invalid"}
+
+    response = c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "repo-a",
+            "cwd": "/tmp/w",
+            "task_title": "bad",
+            "status": "waiting_human",
+            "phase": "approval",
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "status" in body["error"]["message"]
+
+
+def test_create_task_rejects_invalid_stuck_level_and_context_pressure(tmp_path: Path) -> None:
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token", "X-Request-Id": "rid-invalid-shape"}
+
+    response_context = c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "repo-a",
+            "cwd": "/tmp/w",
+            "task_title": "bad-shape",
+            "context_pressure": "severe",
+        },
+        headers=h,
+    )
+    response_stuck = c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "repo-a",
+            "cwd": "/tmp/w",
+            "task_title": "bad-shape",
+            "stuck_level": "abc",
+        },
+        headers=h,
+    )
+
+    assert response_context.status_code == 200
+    body_context = response_context.json()
+    assert body_context["success"] is False
+    assert body_context["error"]["code"] == "INVALID_ARGUMENT"
+    assert "context_pressure" in body_context["error"]["message"]
+
+    assert response_stuck.status_code == 200
+    body_stuck = response_stuck.json()
+    assert body_stuck["success"] is False
+    assert body_stuck["error"]["code"] == "INVALID_ARGUMENT"
+    assert "stuck_level" in body_stuck["error"]["message"]
+
+
+def test_create_task_pending_approval_forces_waiting_for_approval_status(tmp_path: Path) -> None:
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token", "X-Request-Id": "rid-pending"}
+
+    response = c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "repo-a",
+            "cwd": "/tmp/w",
+            "task_title": "needs approval",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": True,
+            "approval_risk": "L2",
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "waiting_for_approval"
+
+    task = c.get("/api/v1/tasks/repo-a", headers=h).json()["data"]
+    assert task["status"] == "waiting_for_approval"
+    assert task["pending_approval"] is True
+
+
+def test_create_task_rejects_non_boolean_pending_approval(tmp_path: Path) -> None:
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token", "X-Request-Id": "rid-pending-shape"}
+
+    response = c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "repo-a",
+            "cwd": "/tmp/w",
+            "task_title": "shape",
+            "pending_approval": "false",
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "pending_approval" in body["error"]["message"]
+
+
+def test_register_native_thread_rejects_non_boolean_pending_approval(tmp_path: Path) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token", "X-Request-Id": "rid-native-pending-shape"}
+
+    response = c.post(
+        "/api/v1/tasks/native-threads",
+        json={
+            "thread_id": "thr_native_pending_shape",
+            "cwd": str(repo),
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": "false",
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "pending_approval" in body["error"]["message"]
+
+
+def test_register_native_thread_preserves_canonical_values_when_update_uses_unknown_state(tmp_path: Path) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    s = Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data"))
+    c = TestClient(create_app(s, start_background_workers=False))
+    h = {"Authorization": "Bearer test-token"}
+
+    c.post(
+        "/api/v1/tasks/native-threads",
+        json={
+            "thread_id": "thr_native_api_2",
+            "cwd": str(repo),
+            "task_title": "Native API Session",
+            "status": "running",
+            "phase": "planning",
+        },
+        headers=h,
+    )
+    c.post(
+        "/api/v1/tasks/native-threads",
+        json={
+            "thread_id": "thr_native_api_2",
+            "cwd": str(repo),
+            "status": "mystery_state",
+            "phase": "alien_phase",
+            "context_pressure": "exploding",
+            "stuck_level": "oops",
+        },
+        headers=h,
+    )
+
+    task = c.get("/api/v1/tasks/by-thread/thr_native_api_2", headers=h).json()["data"]
+    assert task["status"] == "running"
+    assert task["phase"] == "planning"
+    assert task["context_pressure"] == "low"
+    assert task["stuck_level"] == 0
+
+
+def test_healthz_reports_persisted_thread_counts_after_restart(tmp_path: Path) -> None:
+    data_dir = tmp_path / "agent-data"
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    settings = Settings(api_token="test-token", data_dir=str(data_dir))
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(create_app(settings, start_background_workers=False)) as client:
+        created = client.post(
+            "/api/v1/tasks/native-threads",
+            json={
+                "thread_id": "thr_native_restart_1",
+                "cwd": str(repo),
+                "task_title": "Restart Session",
+                "status": "running",
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+
+    with TestClient(create_app(settings, start_background_workers=False)) as restarted:
+        health = restarted.get("/healthz")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert health.json()["tracked_threads"] == 1
+    assert health.json()["tracked_projects"] == 1
+
+
+def test_healthz_counts_projects_distinct_from_threads(tmp_path: Path) -> None:
+    data_dir = tmp_path / "agent-data"
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    settings = Settings(api_token="test-token", data_dir=str(data_dir))
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(create_app(settings, start_background_workers=False)) as client:
+        created_a = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "repo-a", "cwd": str(repo_a), "task_title": "A1"},
+            headers=headers,
+        )
+        assert created_a.status_code == 200
+        created_b = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "repo-a", "cwd": str(repo_b), "task_title": "A2"},
+            headers=headers,
+        )
+        assert created_b.status_code == 200
+        health = client.get("/healthz")
+
+    assert health.status_code == 200
+    assert health.json()["tracked_threads"] == 2
+    assert health.json()["tracked_projects"] == 1
+
+
+def test_metrics_export_projects_distinct_from_threads(tmp_path: Path) -> None:
+    data_dir = tmp_path / "agent-data"
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    settings = Settings(api_token="test-token", data_dir=str(data_dir))
+    headers = {"Authorization": "Bearer test-token"}
+
+    with TestClient(create_app(settings, start_background_workers=False)) as client:
+        created_a = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "repo-a", "cwd": str(repo_a), "task_title": "A1"},
+            headers=headers,
+        )
+        assert created_a.status_code == 200
+        created_b = client.post(
+            "/api/v1/tasks",
+            json={"project_id": "repo-a", "cwd": str(repo_b), "task_title": "A2"},
+            headers=headers,
+        )
+        assert created_b.status_code == 200
+        metrics = client.get("/metrics")
+
+    assert metrics.status_code == 200
+    assert "aca_tasks_total 2.0" in metrics.text
+    assert "aca_projects_total 1.0" in metrics.text
+
+
+def test_pause_task_marks_runtime_paused(tmp_path: Path) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    c = TestClient(
+        create_app(
+            Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+            start_background_workers=False,
+        )
+    )
+    h = {"Authorization": "Bearer test-token"}
+
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "repo-a", "cwd": str(repo), "task_title": "t1"},
+        headers=h,
+    )
+    response = c.post("/api/v1/tasks/repo-a/pause", json={}, headers=h)
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["status"] == "paused"
+
+    task = c.get("/api/v1/tasks/repo-a", headers=h).json()["data"]
+    assert task["status"] == "paused"
+
+
+def test_risk_classifier_fails_closed_for_workspace_boundary_and_network_like_commands() -> None:
+    from a_control_agent.risk.classifier import auto_approve_allowed, classify_risk
+
+    assert auto_approve_allowed(classify_risk("ls ../")) is False
+    assert auto_approve_allowed(classify_risk("permissions:network.http")) is False
+    assert auto_approve_allowed(classify_risk("sudo launchctl kickstart system/com.apple.sshd")) is False
+    assert auto_approve_allowed(classify_risk("printenv OPENAI_API_KEY")) is False
+    assert auto_approve_allowed(classify_risk("rm -rf /tmp/build")) is False
+    assert auto_approve_allowed(classify_risk("python scripts/release.py --publish")) is False
 
 
 def test_get_unknown_project(client: TestClient) -> None:

@@ -28,6 +28,58 @@ def get_bridge(request: Request) -> Any:
     return getattr(request.app.state, "codex_bridge", None)
 
 
+@router.post("/{project_id}/pause")
+def pause(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    store: TaskStore = Depends(get_store),
+    _: None = Depends(require_token),
+) -> dict[str, Any]:
+    rec = store.get(project_id)
+    if rec is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "NOT_FOUND", "message": project_id},
+        )
+    store.merge_update(
+        project_id,
+        {
+            "status": "paused",
+            "phase": str(rec.get("phase", "planning")),
+        },
+    )
+    rec2 = store.get(project_id)
+    thread_id = str((rec2 or rec).get("thread_id") or "")
+    store.append_event(
+        project_id,
+        thread_id=thread_id,
+        event_type="pause",
+        event_source="a_control_agent",
+        payload_json={
+            "status": "paused",
+            "phase": str((rec2 or rec).get("phase", "planning")),
+        },
+    )
+    append_jsonl(
+        Path(settings.data_dir) / "audit.jsonl",
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "project_id": project_id,
+            "action": "pause",
+            "source": "a_control_agent",
+            "payload": {"status": "paused"},
+        },
+    )
+    return ok(
+        request.headers.get("x-request-id"),
+        {
+            "project_id": project_id,
+            "status": "paused",
+        },
+    )
+
+
 @router.post("/{project_id}/handoff")
 def handoff(
     project_id: str,
@@ -166,8 +218,9 @@ async def resume(
         store.merge_update(
             project_id,
             {
-                "status": "resume_failed",
-                "phase": "recovery",
+                "status": "failed",
+                "phase": "handoff",
+                "last_error_signature": str(exc),
             },
         )
         append_jsonl(
@@ -187,7 +240,7 @@ async def resume(
             {"code": "RESUME_FAILED", "message": str(exc)},
             {
                 "project_id": project_id,
-                "status": rec_failed.get("status") if rec_failed else "resume_failed",
+                "status": rec_failed.get("status") if rec_failed else "failed",
                 "mode": mode,
             },
         )

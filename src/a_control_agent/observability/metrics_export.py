@@ -26,7 +26,12 @@ def build_a_metrics_text(
             "aca_tasks_total",
             "Number of tasks persisted in A-Control-Agent.",
             float(store.count_tasks()),
-        )
+        ),
+        render_gauge(
+            "aca_projects_total",
+            "Number of distinct projects persisted in A-Control-Agent.",
+            float(store.count_projects()),
+        ),
     ]
     label_vals = {k: float(v) for k, v in sorted(counts.items())}
     parts.append(

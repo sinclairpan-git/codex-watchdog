@@ -5,21 +5,48 @@ from __future__ import annotations
 
 def classify_risk(command: str) -> str:
     c = command.lower().strip()
+    if not c:
+        return "L2"
     # L3：高敏感 / 发布 / 破坏性 / 凭证
     l3_markers = (
         "rm -rf",
         "git push",
+        "publish",
+        "deploy",
+        "release",
         "token",
         "secret",
+        "credential",
+        "credentials.",
+        "api_key",
+        "openai_api_key",
+        "password",
         "绕过",
         "绕过审批",
         "sandbox off",
+        "sudo ",
         "chmod 777",
         "/etc/",
         "launchctl",
     )
     if any(m in c for m in l3_markers):
         return "L3"
+    # fail-closed：工作区外、网络、发布、系统级与未知边界默认进入人工 gate
+    l2_fail_closed_markers = (
+        "../",
+        "..\\",
+        "ssh ",
+        "scp ",
+        "rsync ",
+        "ftp ",
+        "telnet ",
+        "http://",
+        "https://",
+        "network.",
+        "permissions:network",
+    )
+    if any(m in c for m in l2_fail_closed_markers):
+        return "L2"
     # L2：网络与外部依赖
     l2_markers = (
         "pip install",
@@ -28,7 +55,6 @@ def classify_risk(command: str) -> str:
         "yarn ",
         "curl ",
         "wget ",
-        "https://",
     )
     if any(m in c for m in l2_markers):
         return "L2"

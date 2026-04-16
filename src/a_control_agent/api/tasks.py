@@ -15,8 +15,13 @@ from a_control_agent.envelope import err, ok
 from a_control_agent.repo_activity import summarize_workspace_activity
 from a_control_agent.settings import Settings
 from a_control_agent.storage.tasks_store import TaskStore
+from watchdog.services.session_spine.task_state import (
+    is_canonical_task_phase,
+    is_canonical_task_status,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+_CANONICAL_CONTEXT_PRESSURES = {"low", "medium", "high", "critical"}
 
 
 def get_settings(request: Request) -> Settings:
@@ -95,6 +100,12 @@ def register_native_thread(
             request.headers.get("x-request-id"),
             {"code": "INVALID_ARGUMENT", "message": "project_id or cwd required"},
         )
+    raw_pending_approval = body.get("pending_approval")
+    if raw_pending_approval is not None and not isinstance(raw_pending_approval, bool):
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "pending_approval must be bool"},
+        )
     rec = store.upsert_native_thread(dict(body))
     return ok(
         request.headers.get("x-request-id"),
@@ -120,6 +131,44 @@ def create_task(
         return err(
             request.headers.get("x-request-id"),
             {"code": "INVALID_ARGUMENT", "message": "project_id required"},
+        )
+    raw_status = body.get("status")
+    if raw_status not in (None, "") and not is_canonical_task_status(raw_status):
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "status must be canonical"},
+        )
+    raw_phase = body.get("phase")
+    if raw_phase not in (None, "") and not is_canonical_task_phase(raw_phase):
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "phase must be canonical"},
+        )
+    raw_context_pressure = body.get("context_pressure")
+    if raw_context_pressure not in (None, "") and str(raw_context_pressure) not in _CANONICAL_CONTEXT_PRESSURES:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "context_pressure must be canonical"},
+        )
+    raw_stuck_level = body.get("stuck_level")
+    if raw_stuck_level not in (None, ""):
+        try:
+            stuck_level = int(raw_stuck_level)
+        except (TypeError, ValueError):
+            return err(
+                request.headers.get("x-request-id"),
+                {"code": "INVALID_ARGUMENT", "message": "stuck_level must be int"},
+            )
+        if stuck_level < 0 or stuck_level > 4:
+            return err(
+                request.headers.get("x-request-id"),
+                {"code": "INVALID_ARGUMENT", "message": "stuck_level must be 0..4"},
+            )
+    raw_pending_approval = body.get("pending_approval")
+    if raw_pending_approval is not None and not isinstance(raw_pending_approval, bool):
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "INVALID_ARGUMENT", "message": "pending_approval must be bool"},
         )
     rec = store.upsert_from_create(project_id, body)
     return ok(

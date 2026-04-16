@@ -175,7 +175,7 @@ async def test_bridge_registers_and_resolves_command_approval(tmp_path: Path) ->
     assert approval["bridge_request_id"] == "req_123"
     assert task is not None
     assert task["pending_approval"] is True
-    assert task["status"] == "waiting_human"
+    assert task["status"] == "waiting_for_approval"
     assert task["approval_risk"] == "L2"
 
     callback = await bridge.resolve_pending_approval("req_123", decision="approve", note="ok")
@@ -224,7 +224,7 @@ async def test_bridge_auto_approves_low_risk_permissions_request(tmp_path: Path)
     assert task is not None
     assert task["pending_approval"] is False
     assert task["status"] == "running"
-    assert task["phase"] == "coding"
+    assert task["phase"] == "editing_source"
     assert transport.responses == [
         (
             "req_perm_123",
@@ -234,6 +234,53 @@ async def test_bridge_auto_approves_low_risk_permissions_request(tmp_path: Path)
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_bridge_requires_human_gate_for_fail_closed_permission_boundaries(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    task_store.upsert_native_thread(
+        {
+            "project_id": "ai-demo",
+            "thread_id": "thr_live",
+            "cwd": str(tmp_path),
+            "status": "running",
+            "phase": "coding",
+        }
+    )
+    approval_store = ApprovalsStore(tmp_path / "approvals.json")
+    transport = FakeTransport({"initialize": [{"server": "fake-codex"}]})
+    bridge = CodexAppServerBridge(
+        transport=transport,
+        approvals_store=approval_store,
+        task_store=task_store,
+    )
+
+    await bridge.start()
+    approval = await bridge.ingest_server_request(
+        {
+            "id": "req_perm_high_risk",
+            "method": "item/permissions/requestApproval",
+            "params": {
+                "threadId": "thr_live",
+                "permissions": ["network.http", "credentials.read"],
+                "reason": "Need outbound request with credential access",
+            },
+        }
+    )
+    task = task_store.get("ai-demo")
+
+    assert approval is not None
+    assert approval["status"] == "pending"
+    assert approval["decided_by"] is None
+    assert approval["risk_level"] == "L3"
+    assert task is not None
+    assert task["pending_approval"] is True
+    assert task["status"] == "waiting_for_approval"
+    assert task["approval_risk"] == "L3"
+    assert transport.responses == []
 
 
 @pytest.mark.asyncio

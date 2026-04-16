@@ -1,37 +1,41 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-05T21:01:26Z'
-current_stage: verify
+pipeline_last_updated: '2026-04-16T12:53:12Z'
+current_stage: completed
 feature:
-  id: 023-codex-client-openclaw-route-template
-  spec_dir: specs/023-codex-client-openclaw-route-template
-  design_branch: design/023-codex-client-openclaw-route-template
-  feature_branch: feature/023-codex-client-openclaw-route-template
-  current_branch: codex/023-codex-client-openclaw-route-template
-  docs_baseline_ref: ''
-  docs_baseline_at: ''
+  id: 066-task-state-model-closure
+  spec_dir: specs/066-task-state-model-closure
+  design_branch: design/066-task-state-model-closure
+  feature_branch: feature/066-task-state-model-closure
+  current_branch: codex/066-task-state-model-closure
+  docs_baseline_ref: cba34ca58ef9642de3051510ee7f41e7ef5280a7319dd49d56b2b1d4f8857ff0
+  docs_baseline_at: '2026-04-16T12:53:12Z'
 multi_agent:
   supported: false
   max_parallel: 1
   tool_capability: ''
 prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
-- stage: init
-  completed_at: '2026-04-05T20:04:50Z'
-  artifacts: []
-- stage: refine
-  completed_at: '2026-04-05T20:04:50Z'
-  artifacts:
-  - spec.md
-- stage: design
-  completed_at: '2026-04-05T20:04:50Z'
-  artifacts:
-  - plan.md
-- stage: decompose
-  completed_at: '2026-04-05T20:04:50Z'
-  artifacts:
-  - tasks.md
-ai_decisions_count: 0
+  -
+    stage: init
+    completed_at: '2026-04-16T12:45:00Z'
+    artifacts: []
+  -
+    stage: refine
+    completed_at: '2026-04-16T12:50:00Z'
+    artifacts:
+      - spec.md
+  -
+    stage: design
+    completed_at: '2026-04-16T12:50:00Z'
+    artifacts:
+      - plan.md
+  -
+    stage: decompose
+    completed_at: '2026-04-16T12:50:00Z'
+    artifacts:
+      - tasks.md
+ai_decisions_count: 17
 execution_mode: auto
-linked_wi_id: 023-codex-client-openclaw-route-template
+linked_wi_id: 066-task-state-model-closure
 linked_plan_uri: null
-last_synced_at: '2026-04-05T21:01:26Z'
+last_synced_at: '2026-04-16T12:53:12Z'

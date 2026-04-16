@@ -140,8 +140,8 @@ class CodexAppServerBridge:
                 {
                     "pending_approval": True,
                     "approval_risk": approval["risk_level"],
-                    "status": "waiting_human",
-                    "phase": "approval",
+                    "status": "waiting_for_approval",
+                    "phase": str(task.get("phase") or "planning"),
                 },
             )
             return approval

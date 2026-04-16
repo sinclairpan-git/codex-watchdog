@@ -125,8 +125,12 @@ def create_app(
     app.include_router(recovery_routes.router, prefix="/api/v1")
 
     @app.get("/healthz")
-    def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    def healthz() -> dict[str, int | str]:
+        return {
+            "status": "ok",
+            "tracked_threads": app.state.task_store.count_tasks(),
+            "tracked_projects": app.state.task_store.count_projects(),
+        }
 
     @app.get("/metrics")
     def metrics(request: Request) -> Response:

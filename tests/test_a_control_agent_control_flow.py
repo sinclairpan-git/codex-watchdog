@@ -280,8 +280,9 @@ def test_resume_failure_does_not_mark_task_running(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["success"] is False
-    assert task["status"] == "resume_failed"
-    assert task["phase"] == "recovery"
+    assert task["status"] == "failed"
+    assert task["phase"] == "handoff"
+    assert task["last_error_signature"] == "bridge down"
 
 
 def test_approval_callback_failure_keeps_request_pending(tmp_path: Path) -> None:
