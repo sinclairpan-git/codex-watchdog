@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-16T12:53:12Z'
+pipeline_last_updated: '2026-04-16T13:30:33Z'
 current_stage: completed
 feature:
-  id: 066-task-state-model-closure
-  spec_dir: specs/066-task-state-model-closure
-  design_branch: design/066-task-state-model-closure
-  feature_branch: feature/066-task-state-model-closure
-  current_branch: codex/066-task-state-model-closure
-  docs_baseline_ref: cba34ca58ef9642de3051510ee7f41e7ef5280a7319dd49d56b2b1d4f8857ff0
-  docs_baseline_at: '2026-04-16T12:53:12Z'
+  id: 067-risk-boundary-and-control-observability
+  spec_dir: specs/067-risk-boundary-and-control-observability
+  design_branch: design/067-risk-boundary-and-control-observability
+  feature_branch: feature/067-risk-boundary-and-control-observability
+  current_branch: codex/067-risk-boundary-and-control-observability
+  docs_baseline_ref: 9387f784217b4482e388b4fea913707264a87f117ea64d9810b2b8eac5f56ea3
+  docs_baseline_at: '2026-04-16T13:30:33Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -17,25 +17,25 @@ prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
   -
     stage: init
-    completed_at: '2026-04-16T12:45:00Z'
+    completed_at: '2026-04-16T13:00:00Z'
     artifacts: []
   -
     stage: refine
-    completed_at: '2026-04-16T12:50:00Z'
+    completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - spec.md
   -
     stage: design
-    completed_at: '2026-04-16T12:50:00Z'
+    completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - plan.md
   -
     stage: decompose
-    completed_at: '2026-04-16T12:50:00Z'
+    completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 17
+ai_decisions_count: 35
 execution_mode: auto
-linked_wi_id: 066-task-state-model-closure
+linked_wi_id: 067-risk-boundary-and-control-observability
 linked_plan_uri: null
-last_synced_at: '2026-04-16T12:53:12Z'
+last_synced_at: '2026-04-16T13:30:33Z'

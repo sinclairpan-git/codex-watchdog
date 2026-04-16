@@ -1,0 +1,15 @@
+work_item:
+  id: 067-risk-boundary-and-control-observability
+  spec_dir: specs/067-risk-boundary-and-control-observability
+  branch: codex/067-risk-boundary-and-control-observability
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-067 and advance next work item
+artifacts:
+  - specs/067-risk-boundary-and-control-observability/spec.md
+  - specs/067-risk-boundary-and-control-observability/plan.md
+  - specs/067-risk-boundary-and-control-observability/tasks.md
+  - .ai-sdlc/work-items/067-risk-boundary-and-control-observability/execution-plan.yaml
+docs_baseline_ref: 9387f784217b4482e388b4fea913707264a87f117ea64d9810b2b8eac5f56ea3
+timestamp: '2026-04-16T13:30:33Z'

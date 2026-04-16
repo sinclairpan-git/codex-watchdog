@@ -555,7 +555,73 @@ def test_risk_classifier_fails_closed_for_workspace_boundary_and_network_like_co
 
     assert auto_approve_allowed(classify_risk("ls ../")) is False
     assert auto_approve_allowed(classify_risk("permissions:network.http")) is False
+    assert auto_approve_allowed(classify_risk("ping api.openai.com")) is False
+    assert auto_approve_allowed(classify_risk("dig internal.service.local")) is False
+    assert auto_approve_allowed(classify_risk("nslookup release.example.com")) is False
+    assert auto_approve_allowed(classify_risk("nc -vz prod-db.internal 5432")) is False
     assert auto_approve_allowed(classify_risk("sudo launchctl kickstart system/com.apple.sshd")) is False
+    assert auto_approve_allowed(classify_risk("systemctl restart nginx")) is False
+    assert auto_approve_allowed(classify_risk("/usr/bin/systemctl restart nginx")) is False
+    assert auto_approve_allowed(classify_risk("rc-service nginx restart")) is False
+    assert auto_approve_allowed(classify_risk("systemd-run --unit healthcheck /bin/true")) is False
+    assert auto_approve_allowed(classify_risk("shutdown -r now")) is False
+    assert auto_approve_allowed(classify_risk("/bin/shutdown -r now")) is False
+    assert auto_approve_allowed(classify_risk("reboot")) is False
+    assert auto_approve_allowed(classify_risk("poweroff")) is False
+    assert auto_approve_allowed(classify_risk("halt")) is False
+    assert auto_approve_allowed(classify_risk("init 0")) is False
+    assert auto_approve_allowed(classify_risk("init 6")) is False
+    assert auto_approve_allowed(classify_risk("killall python")) is False
+    assert auto_approve_allowed(classify_risk("pkill -f pytest")) is False
+    assert auto_approve_allowed(classify_risk("mount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("umount /mnt")) is False
+    assert auto_approve_allowed(classify_risk("useradd testuser")) is False
+    assert auto_approve_allowed(classify_risk("passwd root")) is False
+    assert auto_approve_allowed(classify_risk("visudo")) is False
+    assert auto_approve_allowed(classify_risk("chmod 600 ~/.ssh/id_rsa")) is False
+    assert auto_approve_allowed(classify_risk("cat ~/.ssh/id_rsa")) is False
+    assert auto_approve_allowed(classify_risk("cat ~/.aws/credentials")) is False
+    assert auto_approve_allowed(classify_risk("cat /proc/self/environ")) is False
+    assert auto_approve_allowed(classify_risk("head /proc/self/environ")) is False
+    assert auto_approve_allowed(classify_risk("/usr/bin/ping 1.1.1.1")) is False
+    assert auto_approve_allowed(classify_risk("ls && mount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("git status && visudo")) is False
+    assert auto_approve_allowed(classify_risk("ls | useradd testuser")) is False
+    assert auto_approve_allowed(classify_risk("pwd & mount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("ls\nmount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("git status\r\nvisudo")) is False
+    assert auto_approve_allowed(classify_risk("ls\tmount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("pwd\vmount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("pwd\fmount /dev/sda1 /mnt")) is False
+    assert auto_approve_allowed(classify_risk("ls $(mount /dev/sda1 /mnt)")) is False
+    assert auto_approve_allowed(classify_risk("git status `visudo`")) is False
+    assert auto_approve_allowed(classify_risk("ls <(mount /dev/sda1 /mnt)")) is False
+    assert auto_approve_allowed(classify_risk("git status >(visudo)")) is False
+    assert auto_approve_allowed(classify_risk("ls /tmp")) is False
+    assert auto_approve_allowed(classify_risk("du /var")) is False
+    assert auto_approve_allowed(classify_risk("tree /opt")) is False
+    assert auto_approve_allowed(classify_risk("git status /tmp")) is False
+    assert auto_approve_allowed(classify_risk("pytest ..")) is False
+    assert auto_approve_allowed(classify_risk("pytest /tmp")) is False
+    assert auto_approve_allowed(classify_risk("pytest --rootdir=/tmp")) is False
+    assert auto_approve_allowed(classify_risk("pytest --rootdir /tmp")) is False
+    assert auto_approve_allowed(classify_risk("uv run pytest ..")) is False
+    assert auto_approve_allowed(classify_risk("uv run pytest --rootdir=/tmp")) is False
+    assert auto_approve_allowed(classify_risk("python3 -m pytest /tmp")) is False
+    assert auto_approve_allowed(classify_risk("python3 -m pytest --rootdir=/tmp")) is False
+    assert auto_approve_allowed(classify_risk("echo snapshot")) is False
+    assert auto_approve_allowed(classify_risk("python -c \"print('snapshot')\"")) is False
+    assert auto_approve_allowed(classify_risk('bash -lc "shutdown now"')) is False
+    assert auto_approve_allowed(classify_risk('sh -c "ping api.openai.com"')) is False
+    assert (
+        auto_approve_allowed(
+            classify_risk('python -c "import os; os.system(\'reboot\')"')
+        )
+        is False
+    )
+    assert auto_approve_allowed(classify_risk('bash -lc "echo ok;shutdown now"')) is False
+    assert auto_approve_allowed(classify_risk('bash -lc "echo ok&&reboot"')) is False
+    assert auto_approve_allowed(classify_risk('bash -lc "echo ok|ping api.openai.com"')) is False
     assert auto_approve_allowed(classify_risk("printenv OPENAI_API_KEY")) is False
     assert auto_approve_allowed(classify_risk("rm -rf /tmp/build")) is False
     assert auto_approve_allowed(classify_risk("python scripts/release.py --publish")) is False

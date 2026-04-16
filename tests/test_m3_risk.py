@@ -18,7 +18,7 @@ def test_l1_git() -> None:
 
 
 def test_l0_safe() -> None:
-    assert classify_risk("pytest tests/unit -q") == "L0"
+    assert classify_risk("pwd") == "L0"
 
 
 def test_auto_approve() -> None:
