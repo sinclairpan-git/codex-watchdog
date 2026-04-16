@@ -1,0 +1,15 @@
+work_item:
+  id: 069-feishu-openai-integration-readiness
+  spec_dir: specs/069-feishu-openai-integration-readiness
+  branch: codex/069-feishu-openai-integration-readiness
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-069 and advance next work item
+artifacts:
+  - specs/069-feishu-openai-integration-readiness/spec.md
+  - specs/069-feishu-openai-integration-readiness/plan.md
+  - specs/069-feishu-openai-integration-readiness/tasks.md
+  - .ai-sdlc/work-items/069-feishu-openai-integration-readiness/execution-plan.yaml
+docs_baseline_ref: 5029dfd577fda0a9ab4b3c7494ed8b83b785f3a280d54d7abbfa8c2f053b26d8
+timestamp: '2026-04-16T14:12:41Z'

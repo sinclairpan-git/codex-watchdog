@@ -5,6 +5,8 @@ from pathlib import Path
 
 ARCHITECTURE_DOC = Path("docs/architecture/codex-long-running-autonomy-design.md")
 IMPLEMENTATION_PLAN_DOC = Path("docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md")
+GETTING_STARTED_DOC = Path("docs/getting-started.zh-CN.md")
+WATCHDOG_ENV_EXAMPLE = Path("config/examples/watchdog.env.example")
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,47 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         name="arch_covers_release_gate",
         path=ARCHITECTURE_DOC,
         must_contain=("Release Gate",),
+    ),
+    DocContractCheck(
+        name="env_example_covers_feishu_ingress_and_delivery",
+        path=WATCHDOG_ENV_EXAMPLE,
+        must_contain=(
+            "WATCHDOG_DELIVERY_TRANSPORT=feishu",
+            "WATCHDOG_FEISHU_APP_ID=",
+            "WATCHDOG_FEISHU_APP_SECRET=",
+            "WATCHDOG_FEISHU_VERIFICATION_TOKEN=",
+            "WATCHDOG_FEISHU_RECEIVE_ID=",
+            "WATCHDOG_FEISHU_RECEIVE_ID_TYPE=",
+        ),
+    ),
+    DocContractCheck(
+        name="env_example_covers_openai_compatible_provider",
+        path=WATCHDOG_ENV_EXAMPLE,
+        must_contain=(
+            "WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible",
+            "WATCHDOG_BRAIN_PROVIDER_BASE_URL=",
+            "WATCHDOG_BRAIN_PROVIDER_API_KEY=",
+            "WATCHDOG_BRAIN_PROVIDER_MODEL=",
+        ),
+    ),
+    DocContractCheck(
+        name="getting_started_covers_feishu_official_ingress",
+        path=GETTING_STARTED_DOC,
+        must_contain=(
+            "WATCHDOG_DELIVERY_TRANSPORT=feishu",
+            "WATCHDOG_FEISHU_VERIFICATION_TOKEN",
+            "/api/v1/watchdog/feishu/events",
+        ),
+    ),
+    DocContractCheck(
+        name="getting_started_covers_openai_compatible_provider",
+        path=GETTING_STARTED_DOC,
+        must_contain=(
+            "WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible",
+            "WATCHDOG_BRAIN_PROVIDER_BASE_URL",
+            "WATCHDOG_BRAIN_PROVIDER_API_KEY",
+            "WATCHDOG_BRAIN_PROVIDER_MODEL",
+        ),
     ),
 )
 

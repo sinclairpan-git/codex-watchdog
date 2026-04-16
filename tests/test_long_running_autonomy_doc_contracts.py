@@ -19,6 +19,10 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "plan_task6_forbids_manual_splicing" in names
     assert "plan_task8_e2e_blocks_without_report" in names
     assert "plan_risk_control_requires_stage_goal_conflict_schema" in names
+    assert "env_example_covers_feishu_ingress_and_delivery" in names
+    assert "env_example_covers_openai_compatible_provider" in names
+    assert "getting_started_covers_feishu_official_ingress" in names
+    assert "getting_started_covers_openai_compatible_provider" in names
 
 
 def test_long_running_autonomy_doc_validator_reports_missing_files(tmp_path) -> None:

@@ -297,6 +297,11 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_RECOVER_AUTO_RESUME` | `context_pressure` 为 critical 时，handoff 成功后是否再自动调 A 的 `resume`（`true`/`false`） |
 | `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL` | Watchdog 主动回调 OpenClaw 的根 URL；实际投递路径固定为 `/openclaw/v1/watchdog/envelopes` |
 | `WATCHDOG_OPENCLAW_WEBHOOK_TOKEN` | Watchdog 调 OpenClaw webhook 时使用的 Bearer token |
+| `WATCHDOG_DELIVERY_TRANSPORT` | 当前 delivery transport；默认 `openclaw`，切到 Feishu 主控制面时设为 `feishu` |
+| `WATCHDOG_FEISHU_APP_ID` / `WATCHDOG_FEISHU_APP_SECRET` | Feishu 自建应用凭据；启用 Feishu direct delivery 时必填 |
+| `WATCHDOG_FEISHU_VERIFICATION_TOKEN` | Feishu 官方 event subscription / URL verification 使用的 verification token |
+| `WATCHDOG_FEISHU_RECEIVE_ID` / `WATCHDOG_FEISHU_RECEIVE_ID_TYPE` | Watchdog 出站消息默认投递目标，例如 `chat_id` 或其他 Feishu receive id |
+| `WATCHDOG_FEISHU_INTERACTION_WINDOW_SECONDS` | Feishu ingress 允许的交互窗口秒数；默认 `900` |
 | `WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS` | delivery worker 轮询 `delivery_outbox` 的周期（默认 `5` 秒） |
 | `WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS` | delivery 重试初始退避秒数（默认 `5` 秒，之后指数退避） |
 | `WATCHDOG_DELIVERY_MAX_ATTEMPTS` | 单 envelope 最大投递次数；超限后落 `delivery_failed` |
@@ -312,6 +317,10 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_PUBLIC_URL_NOTIFY_INTERVAL_SECONDS` | notifier 轮询 tunnel 日志并检查 URL 变化的周期 |
 | `WATCHDOG_PUBLIC_URL_SOURCE` | 回调到 B 机 bootstrap webhook 时携带的 source 字段 |
 | `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE` | A 机持久化 B 机最新公网 envelope webhook 根地址的文件；delivery 每次发送前优先读这里，store miss 时才回退到 `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL` |
+| `WATCHDOG_BRAIN_PROVIDER_NAME` | Brain provider 选择；默认 `resident_orchestrator`，切到外部模型时设为 `openai-compatible` |
+| `WATCHDOG_BRAIN_PROVIDER_BASE_URL` | `OpenAI-compatible` provider 根地址，例如 `https://api.openai.com/v1` |
+| `WATCHDOG_BRAIN_PROVIDER_API_KEY` | `OpenAI-compatible` provider token |
+| `WATCHDOG_BRAIN_PROVIDER_MODEL` | `OpenAI-compatible` provider 的模型 ID |
 
 推荐环境文件内容：
 
@@ -322,9 +331,11 @@ WATCHDOG_PORT=8720
 WATCHDOG_A_AGENT_BASE_URL=http://<A的IP>:8710
 WATCHDOG_A_AGENT_TOKEN=<必须等于A_AGENT_API_TOKEN>
 WATCHDOG_HTTP_TIMEOUT_S=10
+WATCHDOG_DATA_DIR=.data/watchdog
 WATCHDOG_RECOVER_AUTO_RESUME=true
 WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL=http://<OpenClaw的IP或域名>:8740
 WATCHDOG_OPENCLAW_WEBHOOK_TOKEN=<强随机tokenOC>
+WATCHDOG_DELIVERY_TRANSPORT=openclaw
 WATCHDOG_DELIVERY_WORKER_INTERVAL_SECONDS=5
 WATCHDOG_DELIVERY_INITIAL_BACKOFF_SECONDS=5
 WATCHDOG_DELIVERY_MAX_ATTEMPTS=3
@@ -343,6 +354,7 @@ WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE=.data/watchdog/openclaw_webhook_en
 WATCHDOG_BASE_URL=http://127.0.0.1:8720
 WATCHDOG_DEFAULT_PROJECT_ID=
 WATCHDOG_OPERATOR=openclaw
+WATCHDOG_BRAIN_PROVIDER_NAME=resident_orchestrator
 ```
 
 027 当前新增的最小可靠投递约定如下：
@@ -354,6 +366,77 @@ WATCHDOG_OPERATOR=openclaw
 - worker 会在 `operator_notes` 中记录 `delivery_retry_scheduled`、`delivery_succeeded`、`delivery_dead_letter`，便于最小运维排障。
 - 当前仓库还新增了 resident orchestrator：后台会持续执行 `session spine refresh -> policy evaluate -> auto recovery / approval materialize -> enqueue delivery -> call OpenClaw`，并对普通进展变化按 `progress_summary` 做节流主动推送；OpenClaw 不需要记住流程状态。
 - 如果 B 机自己的公网 envelope webhook 地址会变化，A 机还提供 `POST /api/v1/watchdog/bootstrap/openclaw-webhook`。B 机只要带 `Authorization: Bearer <WATCHDOG_API_TOKEN>` 回传 `event_type=openclaw_webhook_base_url_changed`、`openclaw_webhook_base_url`、`changed_at`、`source`，A 机就会把最新地址持久化到 `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE`，后续 delivery 自动切换到新地址。
+
+### 3.2 切到 Feishu 主控制面（official ingress + direct delivery）
+
+如果你已经有可用的 Feishu 自建应用，但此前 `.env.w` 仍走 OpenClaw compatibility delivery，那么切到 Feishu 正式主控制面时至少要补以下变量：
+
+```bash
+WATCHDOG_DELIVERY_TRANSPORT=feishu
+WATCHDOG_FEISHU_APP_ID=<Feishu app id>
+WATCHDOG_FEISHU_APP_SECRET=<Feishu app secret>
+WATCHDOG_FEISHU_VERIFICATION_TOKEN=<Feishu verification token>
+WATCHDOG_FEISHU_RECEIVE_ID=<默认 chat_id 或 open_id>
+WATCHDOG_FEISHU_RECEIVE_ID_TYPE=chat_id
+WATCHDOG_FEISHU_INTERACTION_WINDOW_SECONDS=900
+```
+
+说明：
+
+- `WATCHDOG_DELIVERY_TRANSPORT=feishu` 会把 Watchdog 出站通知切到 Feishu direct delivery；
+- `WATCHDOG_FEISHU_VERIFICATION_TOKEN` 同时用于官方 `URL verification` 与 `event subscription` ingress 校验；
+- Feishu 官方回调地址应指向 Watchdog 的 `POST /api/v1/watchdog/feishu/events`；
+- 本仓库负责 Watchdog 这一侧的 callback contract，不负责 Feishu 自建应用本身的创建、安装与组织级开关。
+
+最小验收顺序：
+
+1. 保持 `GET /healthz` 正常；
+2. 让 Feishu 后台对 `POST /api/v1/watchdog/feishu/events` 发起 URL verification；
+3. 确认 callback 能收到 `{"challenge": ...}` 响应；
+4. 在 Feishu DM 里发送显式 `repo:<project_id> pause` 或 `/goal ...`，确认 Watchdog 收到 official ingress 并产生对应 canonical event；
+5. 触发一条 approval/progress/notification，确认 delivery 走的是 Feishu 而不是 OpenClaw webhook。
+
+如果你想先做本地 smoke test，可以直接模拟 URL verification：
+
+```bash
+curl -X POST "http://127.0.0.1:8720/api/v1/watchdog/feishu/events" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "url_verification",
+    "token": "<WATCHDOG_FEISHU_VERIFICATION_TOKEN>",
+    "challenge": "challenge-123"
+  }'
+```
+
+预期返回：
+
+```json
+{"challenge":"challenge-123"}
+```
+
+### 3.3 切到 OpenAI-compatible Brain provider
+
+默认配置下，Watchdog 仍使用 `resident_orchestrator`。如果你要切到通用的 `OpenAI-compatible` 外部模型，把 `.env.w` 补成：
+
+```bash
+WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible
+WATCHDOG_BRAIN_PROVIDER_BASE_URL=https://api.openai.com/v1
+WATCHDOG_BRAIN_PROVIDER_API_KEY=<OpenAI-compatible token>
+WATCHDOG_BRAIN_PROVIDER_MODEL=<model-id>
+```
+
+说明：
+
+- `WATCHDOG_BRAIN_PROVIDER_BASE_URL` 可以指向 OpenAI 官方接口，也可以指向其他兼容 `/chat/completions` contract 的 provider；
+- `WATCHDOG_BRAIN_PROVIDER_API_KEY` 与 `WATCHDOG_BRAIN_PROVIDER_MODEL` 缺一不可；
+- provider runtime 失败时，当前实现会 fail-closed 回退到既有 rule-based / resident runtime 路径，而不是直接放行。
+
+建议验收顺序：
+
+1. 先在 staging / 本地环境切 `WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible`；
+2. 保持 `release_gate_report`、approval freshness 与 risk gate 仍然有效；
+3. 触发一条低风险 Brain decision，确认 runtime contract 与 provider request 能正常生成；
+4. 再验证 provider 配置缺失或请求失败时，系统会降级而不是 silent pass。
 
 仓库已经直接提供可复用脚本与模板：
 

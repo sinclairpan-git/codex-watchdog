@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-16T14:00:01Z'
+pipeline_last_updated: '2026-04-16T14:12:41Z'
 current_stage: completed
 feature:
-  id: 068-feishu-ingress-event-subscription-contract
-  spec_dir: specs/068-feishu-ingress-event-subscription-contract
-  design_branch: design/068-feishu-ingress-event-subscription-contract
-  feature_branch: feature/068-feishu-ingress-event-subscription-contract
-  current_branch: codex/068-feishu-ingress-event-subscription-contract
-  docs_baseline_ref: 1e9d7809d34e13424c409d23b43afd39e27b436e9badf53bfd687b3c0200f889
-  docs_baseline_at: '2026-04-16T14:00:01Z'
+  id: 069-feishu-openai-integration-readiness
+  spec_dir: specs/069-feishu-openai-integration-readiness
+  design_branch: design/069-feishu-openai-integration-readiness
+  feature_branch: feature/069-feishu-openai-integration-readiness
+  current_branch: codex/069-feishu-openai-integration-readiness
+  docs_baseline_ref: 5029dfd577fda0a9ab4b3c7494ed8b83b785f3a280d54d7abbfa8c2f053b26d8
+  docs_baseline_at: '2026-04-16T14:12:41Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -34,8 +34,8 @@ completed_stages:
     completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 42
+ai_decisions_count: 46
 execution_mode: auto
-linked_wi_id: 068-feishu-ingress-event-subscription-contract
+linked_wi_id: 069-feishu-openai-integration-readiness
 linked_plan_uri: null
-last_synced_at: '2026-04-16T14:00:01Z'
+last_synced_at: '2026-04-16T14:12:41Z'
