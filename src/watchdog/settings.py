@@ -27,8 +27,10 @@ class Settings(BaseSettings):
     feishu_base_url: str = "https://open.feishu.cn"
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None
+    feishu_verification_token: str | None = None
     feishu_receive_id: str | None = None
     feishu_receive_id_type: str = "chat_id"
+    feishu_interaction_window_seconds: float = 900.0
     memory_ingest_initial_backoff_seconds: float = 5.0
     memory_ingest_max_attempts: int = 3
     memory_ingest_worker_interval_seconds: float = 5.0

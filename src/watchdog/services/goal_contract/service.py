@@ -60,6 +60,8 @@ class GoalContractService:
         inference_boundary: str | None = None,
         stage: str | None = None,
         active_goal: str | None = None,
+        causation_id: str | None = None,
+        related_ids: dict[str, str] | None = None,
     ) -> GoalContractSnapshot:
         version = "goal-v1"
         normalized_non_goals = self._normalize_list(non_goals)
@@ -107,6 +109,8 @@ class GoalContractService:
             project_id=project_id,
             session_id=session_id,
             contract=contract,
+            causation_id=causation_id,
+            related_ids=related_ids,
         )
         return contract
 
@@ -124,6 +128,8 @@ class GoalContractService:
         active_goal: str | None = None,
         phase: str | None = None,
         stage: str | None = None,
+        causation_id: str | None = None,
+        related_ids: dict[str, str] | None = None,
     ) -> GoalContractSnapshot:
         current = self.get_current_contract(project_id=project_id, session_id=session_id)
         if current is None:
@@ -177,7 +183,8 @@ class GoalContractService:
             project_id=project_id,
             session_id=session_id,
             contract=revised,
-            causation_id=expected_version,
+            causation_id=causation_id or expected_version,
+            related_ids=related_ids,
         )
         return revised
 

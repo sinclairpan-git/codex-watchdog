@@ -14,6 +14,7 @@ from watchdog.services.approvals.service import (
     respond_to_canonical_approval,
 )
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
+from watchdog.services.goal_contract.models import GoalContractSnapshot
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
 from watchdog.settings import Settings
@@ -81,7 +82,7 @@ class FeishuControlService:
     def handle_request(
         self,
         request: FeishuControlRequest,
-    ) -> CanonicalApprovalResponseRecord | dict[str, str]:
+    ) -> CanonicalApprovalResponseRecord | dict[str, object]:
         if request.event_type == "approval_response":
             return self.handle_approval_response(request)
         if request.event_type == "goal_contract_bootstrap":
@@ -126,13 +127,34 @@ class FeishuControlService:
     def handle_goal_contract_bootstrap(
         self,
         request: FeishuControlRequest,
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         self._assert_dm_channel(request)
         project_id = self._require_field(request.project_id, "project_id")
         session_id = self._require_field(request.session_id, "session_id")
         goal_message = self._require_field(request.goal_message, "goal_message")
         service = GoalContractService(self._session_service)
+        existing = self._find_existing_goal_contract_event(
+            session_id=session_id,
+            client_request_id=request.client_request_id,
+        )
+        if existing is not None:
+            contract_payload = existing.payload.get("contract")
+            if not isinstance(contract_payload, dict):
+                raise FeishuControlError("existing goal contract replay payload is invalid")
+            contract = GoalContractSnapshot.model_validate(contract_payload)
+            return {
+                "event_type": request.event_type,
+                "project_id": project_id,
+                "session_id": session_id,
+                "goal_contract_version": contract.version,
+                "replayed": True,
+            }
         current = service.get_current_contract(project_id=project_id, session_id=session_id)
+        related_ids = {
+            "feishu_event_id": request.client_request_id,
+            "feishu_message_id": request.interaction_context_id,
+            "feishu_actor_id": request.actor_id,
+        }
         if current is None:
             contract = service.bootstrap_contract(
                 project_id=project_id,
@@ -144,6 +166,8 @@ class FeishuControlService:
                 last_summary="feishu dm bootstrap",
                 explicit_deliverables=[goal_message],
                 completion_signals=["autonomy golden path release blocker passes"],
+                causation_id=request.client_request_id,
+                related_ids=related_ids,
             )
         else:
             contract = service.revise_contract(
@@ -154,6 +178,8 @@ class FeishuControlService:
                 explicit_deliverables=current.explicit_deliverables or [goal_message],
                 completion_signals=current.completion_signals
                 or ["autonomy golden path release blocker passes"],
+                causation_id=request.client_request_id,
+                related_ids=related_ids,
             )
         return {
             "event_type": request.event_type,
@@ -184,6 +210,26 @@ class FeishuControlService:
             operator="feishu",
             idempotency_key=f"feishu:{request.client_request_id}",
         )
+
+    def _find_existing_goal_contract_event(
+        self,
+        *,
+        session_id: str,
+        client_request_id: str,
+    ):
+        relevant = self._session_service.list_events(
+            session_id=session_id,
+            related_id_key="feishu_event_id",
+            related_id_value=client_request_id,
+        )
+        goal_events = [
+            event
+            for event in relevant
+            if event.event_type in {"goal_contract_created", "goal_contract_revised"}
+        ]
+        if not goal_events:
+            return None
+        return max(goal_events, key=lambda event: event.log_seq or 0)
 
     def _validate_approval_contract(
         self,

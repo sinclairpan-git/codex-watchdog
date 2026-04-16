@@ -1,0 +1,15 @@
+work_item:
+  id: 068-feishu-ingress-event-subscription-contract
+  spec_dir: specs/068-feishu-ingress-event-subscription-contract
+  branch: codex/068-feishu-ingress-event-subscription-contract
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-068 and advance next work item
+artifacts:
+  - specs/068-feishu-ingress-event-subscription-contract/spec.md
+  - specs/068-feishu-ingress-event-subscription-contract/plan.md
+  - specs/068-feishu-ingress-event-subscription-contract/tasks.md
+  - .ai-sdlc/work-items/068-feishu-ingress-event-subscription-contract/execution-plan.yaml
+docs_baseline_ref: 1e9d7809d34e13424c409d23b43afd39e27b436e9badf53bfd687b3c0200f889
+timestamp: '2026-04-16T14:00:01Z'

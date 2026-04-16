@@ -345,4 +345,5 @@ def test_app_exposes_feishu_primary_control_route_alongside_openclaw_compatibili
     paths = {route.path for route in app.routes}
 
     assert "/api/v1/watchdog/feishu/control" in paths
+    assert "/api/v1/watchdog/feishu/events" in paths
     assert "/api/v1/watchdog/openclaw/responses" in paths
