@@ -1,0 +1,31 @@
+current_stage: archived
+current_batch: 0
+last_committed_task: ''
+working_set_snapshot:
+  spec_path: specs/027-outbox-delivery-retry-receipt/spec.md
+  plan_path: specs/027-outbox-delivery-retry-receipt/plan.md
+  tasks_path: specs/027-outbox-delivery-retry-receipt/tasks.md
+  active_files:
+    - `specs/027-outbox-delivery-retry-receipt/plan.md`
+    - `specs/027-outbox-delivery-retry-receipt/spec.md`
+    - `specs/027-outbox-delivery-retry-receipt/tasks.md`
+  context_summary: |
+    # Development Summary
+    
+    Status: archived
+    Total Tasks: 0
+    Completed Tasks: 0
+    Halted Tasks: 0
+    Total Batches: 0
+    Completed Batches: 0
+    Last Committed Task: none
+    
+    ## Notes
+    - `WI-047` 回填了 `027-outbox-delivery-retry-receipt` 的 `.ai-sdlc/work-items` 镜像，用于恢复 canonical truth。
+    - Formal docs 仍以 `specs/027-outbox-delivery-retry-receipt/` 为准，镜像只补状态与恢复入口，不代表重新执行该 work item。
+    - 已发现的 formal docs：`specs/027-outbox-delivery-retry-receipt/plan.md`, `specs/027-outbox-delivery-retry-receipt/spec.md`, `specs/027-outbox-delivery-retry-receipt/tasks.md`。
+current_branch: ''
+timestamp: 2026-04-16T07:02:24Z
+mirror_status: spec_backfill
+source_spec_dir: specs/027-outbox-delivery-retry-receipt
+backfilled_at: 2026-04-16T07:02:24Z

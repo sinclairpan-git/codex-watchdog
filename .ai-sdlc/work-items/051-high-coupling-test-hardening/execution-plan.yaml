@@ -1,0 +1,142 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T511
+  title: 冻结 051 owner 边界与 formal docs
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/architecture/coverage-audit-closeout-execution-design.md`'
+  - '`docs/project-backlog.zh-CN.md`'
+  - '`specs/051-high-coupling-test-hardening/spec.md`'
+  - '`specs/051-high-coupling-test-hardening/plan.md`'
+  - '`specs/051-high-coupling-test-hardening/tasks.md`'
+  - '`specs/051-high-coupling-test-hardening/seam-matrix.md`'
+  - '`specs/051-high-coupling-test-hardening/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/runtime.yaml`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T512
+  title: 写失败测试锁定 fake/stub contract 与最小 seam smoke
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/integration/test_openclaw_integration_spine.py`'
+  - '`tests/test_codex_app_server_bridge.py`'
+  - '`tests/test_a_control_agent_control_flow.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T511
+- task_id: T513
+  title: 固定高耦合场景矩阵与 targeted suites
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`specs/051-high-coupling-test-hardening/seam-matrix.md`'
+  - '`tests/test_codex_app_server_bridge.py`'
+  - '`tests/test_a_control_agent_control_flow.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/integration/test_openclaw_integration_spine.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T512
+- task_id: T514
+  title: 固定 seam-smoke / full 验证入口并做最小测试基建修补
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/051-high-coupling-test-hardening/seam-matrix.md`'
+  - '`tests/test_codex_app_server_bridge.py`'
+  - '`tests/test_a_control_agent_control_flow.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/integration/test_openclaw_integration_spine.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T513
+- task_id: T515
+  title: 完成 051 整体验证并回写 backlog / formal memory
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`docs/project-backlog.zh-CN.md`'
+  - '`specs/051-high-coupling-test-hardening/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/runtime.yaml`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/051-high-coupling-test-hardening/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T514
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T511
+  status: completed
+  started_at: '2026-04-16T09:01:35Z'
+  completed_at: '2026-04-16T09:01:35Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T512
+  status: completed
+  started_at: '2026-04-16T09:01:35Z'
+  completed_at: '2026-04-16T09:09:32Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T513
+  status: completed
+  started_at: '2026-04-16T09:09:32Z'
+  completed_at: '2026-04-16T09:09:32Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T514
+  status: completed
+  started_at: '2026-04-16T09:09:32Z'
+  completed_at: '2026-04-16T09:09:32Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T515
+  status: completed
+  started_at: '2026-04-16T09:09:32Z'
+  completed_at: '2026-04-16T09:09:32Z'
+current_batch: 5

@@ -57,7 +57,7 @@
 ### Task 30.3 接入 policy / orchestrator 的 pre-command write barrier
 
 - **任务编号**：T303
-- **状态**：进行中（2026-04-12 校准）
+- **状态**：已完成（2026-04-12 校准，2026-04-16 对齐 completed lifecycle）
 - **依赖**：T302
 - **文件**：
   - `src/watchdog/services/session_service/service.py`

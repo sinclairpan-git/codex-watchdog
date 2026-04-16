@@ -1,0 +1,142 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T521
+  title: 冻结 052 owner 边界与 formal docs
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/architecture/coverage-audit-closeout-execution-design.md`'
+  - '`docs/framework-defect-backlog.zh-CN.md`'
+  - '`README.md`'
+  - '`specs/052-framework-defect-gate-and-path-discipline/spec.md`'
+  - '`specs/052-framework-defect-gate-and-path-discipline/plan.md`'
+  - '`specs/052-framework-defect-gate-and-path-discipline/tasks.md`'
+  - '`specs/052-framework-defect-gate-and-path-discipline/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/runtime.yaml`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T522
+  title: 写失败测试锁定 repo-local CLI、backlog contract 与 canonical path classifier
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_ai_sdlc_repo_cli.py`'
+  - '`tests/test_framework_contracts.py`'
+  - '`docs/framework-defect-backlog.zh-CN.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T521
+- task_id: T523
+  title: 实现最小 validator、classifier 与 repo-local ai_sdlc 入口
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`ai_sdlc/__init__.py`'
+  - '`ai_sdlc/__main__.py`'
+  - '`ai_sdlc/cli.py`'
+  - '`src/watchdog/validation/framework_contracts.py`'
+  - '`src/watchdog/validation/__init__.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T522
+- task_id: T524
+  title: 收敛 repo 文档并完成 targeted / smoke 验证
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`docs/framework-defect-backlog.zh-CN.md`'
+  - '`README.md`'
+  - '`tests/test_ai_sdlc_repo_cli.py`'
+  - '`tests/test_framework_contracts.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T523
+- task_id: T525
+  title: 完成 052 整体验证并回写 formal memory
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`docs/framework-defect-backlog.zh-CN.md`'
+  - '`specs/052-framework-defect-gate-and-path-discipline/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/runtime.yaml`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T524
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T521
+  status: completed
+  started_at: '2026-04-16T09:16:15Z'
+  completed_at: '2026-04-16T09:16:15Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T522
+  status: completed
+  started_at: '2026-04-16T09:16:15Z'
+  completed_at: '2026-04-16T09:22:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T523
+  status: completed
+  started_at: '2026-04-16T09:22:00Z'
+  completed_at: '2026-04-16T09:22:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T524
+  status: completed
+  started_at: '2026-04-16T09:22:00Z'
+  completed_at: '2026-04-16T09:22:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T525
+  status: completed
+  started_at: '2026-04-16T09:22:00Z'
+  completed_at: '2026-04-16T09:22:00Z'
+current_batch: 5

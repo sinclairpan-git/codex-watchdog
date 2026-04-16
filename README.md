@@ -331,3 +331,9 @@ pytest -q
 python -m ai_sdlc verify constraints
 python -m ai_sdlc status
 ```
+
+当前 release entry docs 固定为 `v0.6.0`：
+
+- Windows offline bundle: `ai-sdlc-offline-0.6.0.zip`
+- macOS / Linux offline bundle: `ai-sdlc-offline-0.6.0.tar.gz`
+- Release notes: `docs/releases/v0.6.0.md`

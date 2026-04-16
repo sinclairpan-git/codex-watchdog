@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T561
+  title: 冻结 056 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T562
+  title: 写失败测试锁定 superseded snapshot contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T561
+- task_id: T563
+  title: 实现最小 validator、文档入口与矩阵标记修复
+  status: completed
+  phase: 3
+  depends_on:
+  - T562
+- task_id: T564
+  title: 完成 targeted / smoke 验证
+  status: completed
+  phase: 4
+  depends_on:
+  - T563
+- task_id: T565
+  title: 完成 056 整体验证并回写 formal memory
+  status: completed
+  phase: 5
+  depends_on:
+  - T564
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T561
+  status: completed
+  started_at: '2026-04-16T10:08:00Z'
+  completed_at: '2026-04-16T10:10:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T562
+  status: completed
+  started_at: '2026-04-16T10:10:00Z'
+  completed_at: '2026-04-16T10:12:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T563
+  status: completed
+  started_at: '2026-04-16T10:12:00Z'
+  completed_at: '2026-04-16T10:14:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T564
+  status: completed
+  started_at: '2026-04-16T10:14:00Z'
+  completed_at: '2026-04-16T10:16:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T565
+  status: completed
+  started_at: '2026-04-16T10:16:00Z'
+  completed_at: '2026-04-16T10:20:00Z'
+current_batch: 5

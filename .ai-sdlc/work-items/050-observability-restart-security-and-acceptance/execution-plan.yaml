@@ -1,0 +1,143 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T501
+  title: 冻结 050 owner 边界与 formal docs
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`openclaw-codex-watchdog-prd.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/050-observability-restart-security-and-acceptance/spec.md`'
+  - '`specs/050-observability-restart-security-and-acceptance/plan.md`'
+  - '`specs/050-observability-restart-security-and-acceptance/tasks.md`'
+  - '`specs/050-observability-restart-security-and-acceptance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T502
+  title: 写失败测试锁定 observability / acceptance contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/observability/metrics_export.py`'
+  - '`src/watchdog/services/a_client/client.py`'
+  - '`src/watchdog/services/feishu_control/service.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/test_a_control_agent.py`'
+  - '`tests/test_watchdog_release_gate.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T501
+- task_id: T503
+  title: 实现 observability / health / metrics evidence
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/observability/metrics_export.py`'
+  - '`tests/test_watchdog_ops.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T502
+- task_id: T504
+  title: 实现 restart / security / reliability closeout
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/services/a_client/client.py`'
+  - '`src/watchdog/services/session_spine/service.py`'
+  - '`src/watchdog/services/feishu_control/service.py`'
+  - '`tests/test_a_control_agent.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/test_watchdog_release_gate.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T503
+- task_id: T505
+  title: 完成 050 整体验证并交接 WI-051
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/050-observability-restart-security-and-acceptance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T504
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T501
+  status: completed
+  started_at: '2026-04-16T08:21:16Z'
+  completed_at: '2026-04-16T08:21:16Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T502
+  status: completed
+  started_at: '2026-04-16T08:21:16Z'
+  completed_at: '2026-04-16T08:52:24Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T503
+  status: completed
+  started_at: '2026-04-16T08:52:24Z'
+  completed_at: '2026-04-16T08:52:24Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T504
+  status: completed
+  started_at: '2026-04-16T08:52:24Z'
+  completed_at: '2026-04-16T08:52:24Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T505
+  status: completed
+  started_at: '2026-04-16T08:52:24Z'
+  completed_at: '2026-04-16T08:52:24Z'
+current_batch: 5

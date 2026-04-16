@@ -729,6 +729,97 @@
   - `git add src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/session_spine/event_gate_payload_contract.py tests/test_watchdog_session_spine_runtime.py docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md specs/046-session-event-gate-payload-write-contract`
   - `git commit -m "feat: formalize session event gate payload contract"`
 
+### Task 18: 修复 AI-SDLC 状态真值并建立 coverage audit owner ledger
+
+**Canonical execution work item:** `specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/`
+
+**Files:**
+- Modify/Add: `src/watchdog/validation/ai_sdlc_reconciliation.py`
+- Modify/Add: `tests/test_ai_sdlc_reconciliation.py`
+- Modify/Add: `scripts/reconcile_ai_sdlc_state.py`
+- Modify: `.ai-sdlc/state/checkpoint.yml`
+- Modify: `.ai-sdlc/project/config/project-state.yaml`
+- Modify/Add: `.ai-sdlc/work-items/*`
+- Modify/Add: `specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/*`
+
+- [ ] **Step 1: 冻结 WI-047 formal docs、缺失镜像 inventory 与 deterministic seq 规则**
+  - 明确 `WI-047` 只负责 AI-SDLC state reconciliation、mirror backfill、framework gate repair 与 row-level owner ledger。
+  - 固定 `next_work_item_seq = max(specs, work-items) + 1` 的单一算法。
+  - 列出当前缺失 `.ai-sdlc/work-items/` 镜像的 `006, 010-021, 024-029` 清单。
+
+- [ ] **Step 2: 写失败测试，锁定 reconciliation inventory、sequence rule 与 owner ledger contract**
+  - Run: `uv run pytest tests/test_ai_sdlc_reconciliation.py -q`
+  - Expected: 因当前仓库尚无统一 reconciliation helper / owner ledger contract，测试失败。
+
+- [ ] **Step 3: 实现最小 reconciliation helper、artifact generator 与 state repair**
+  - 新增 shared reconciliation module，统一计算已知 WI 集合、缺失镜像、`next_work_item_seq` 与 owner ledger。
+  - 新增生成 reconciliation inventory / owner ledger 的正式脚本入口。
+  - 补齐缺失 `.ai-sdlc/work-items/` 镜像，并把顶层 checkpoint / project-state 对齐到新的 active WI。
+  - 不修改任何产品运行时语义，不关闭非 `WI-047` owner 的矩阵行。
+
+- [ ] **Step 4: 运行测试确认通过**
+  - Run: `uv run pytest tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py -q`
+  - Expected: deterministic seq、缺失镜像、owner ledger 与顶层 state repair 均通过机器校验。
+
+- [ ] **Step 5: 提交**
+  - `git add src/watchdog/validation/ai_sdlc_reconciliation.py tests/test_ai_sdlc_reconciliation.py scripts/reconcile_ai_sdlc_state.py .ai-sdlc/state/checkpoint.yml .ai-sdlc/project/config/project-state.yaml .ai-sdlc/work-items specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
+  - `git commit -m "feat: reconcile ai-sdlc canonical state"`
+
+### Task 19: 补齐 runtime semantics 与 stable action surface
+
+**Canonical execution work item:** `specs/048-missing-runtime-semantics-and-action-surface/`
+
+**Files:**
+- Modify: `src/watchdog/services/session_spine/task_state.py`
+- Modify: `src/a_control_agent/storage/tasks_store.py`
+- Modify: `src/a_control_agent/services/codex/client.py`
+- Modify: `src/watchdog/services/action_executor/steer.py`
+- Modify: `src/watchdog/contracts/session_spine/enums.py`
+- Modify: `src/watchdog/services/session_spine/actions.py`
+- Modify: `src/watchdog/api/session_spine_actions.py`
+- Modify: `src/a_control_agent/risk/classifier.py`
+- Modify: `src/a_control_agent/services/codex/app_server_bridge.py`
+- Modify: `src/watchdog/services/memory_hub/service.py`
+- Modify: `src/watchdog/services/session_spine/recovery.py`
+- Modify: `src/watchdog/services/brain/service.py`
+- Create: `tests/test_watchdog_runtime_semantics.py`
+- Modify: `tests/test_watchdog_action_execution.py`
+- Modify: `tests/test_watchdog_steer.py`
+- Modify: `tests/test_a_control_agent.py`
+- Modify: `tests/test_watchdog_memory_hub.py`
+- Modify: `tests/test_watchdog_memory_degradation.py`
+
+- [ ] **Step 1: 写失败测试，冻结 048 runtime semantics contract**
+  - 覆盖 canonical task status / phase 必须能从 legacy `waiting_human / approval / done / coding` 等值稳定归一化到 PRD 枚举；
+  - 覆盖 `continue / pause / resume / summarize / force_handoff / retry_with_conservative_path` 必须具备稳定 action code、alias route、effect 与 receipt 语义；
+  - 覆盖 `soft steer`、`waiting-for-direction steer`、`break-loop steer`、`handoff summary prompt` 与 severe-threshold takeover 必须进入统一模板注册表；
+  - 覆盖 risk boundary 必须按 workspace/network/system/credential/destructive/publish 六类 fail closed，而不是继续依赖 substring-only heuristic；
+  - 覆盖 `Memory Hub` 必须进入 recovery/decision input 的最小 hot path，且不可用/冲突必须写入 canonical degrade path。
+
+- [ ] **Step 2: 运行测试确认正确失败**
+  - Run: `uv run pytest -q tests/test_watchdog_runtime_semantics.py tests/test_watchdog_action_execution.py tests/test_watchdog_steer.py tests/test_a_control_agent.py tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_degradation.py`
+  - Expected: 因 canonical state normalize、stable action surface、risk fail-closed 与 memory hot-path semantics 尚未正式落地而失败。
+
+- [ ] **Step 3: 实现 canonical state normalization、steer registry 与 stable action surface**
+  - 通过 normalize/compatibility layer 吸收 legacy task status / phase，而不是要求现有 raw payload 一次性改写；
+  - 把 `continue / pause / resume / summarize / force_handoff / retry_with_conservative_path` 收敛到正式 action code 与 alias route；
+  - 让 unclear-goal human decision、break-loop conservative retry、severe-threshold takeover、handoff/resume 进入正式 runtime path；
+  - 保持 048 只交付 runtime semantics baseline，不直接补飞书/OpenClaw/natural-language 入口。
+
+- [ ] **Step 4: 实现 fail-closed approval boundary 与 Memory Hub hot-path semantics**
+  - 把 workspace/network/system/credential/destructive/publish 六类边界写成显式 risk contract，并让未知输入默认升级到人工 gate；
+  - 把禁止事项落实为 hard-block 或 human gate，而不是继续停留在说明文档；
+  - 让 recovery / decision input 真实消费 `Memory Hub` 的 project facts、recovery cases、skills metadata 与 archive refs；
+  - 保持 `Session Service + Goal Contract` 为唯一真源，`Memory Hub` 只提供 advisory retrieval / packet inputs。
+
+- [ ] **Step 5: 运行测试确认通过**
+  - Run: `uv run pytest -q tests/test_watchdog_runtime_semantics.py tests/test_watchdog_action_execution.py tests/test_watchdog_steer.py tests/test_a_control_agent.py tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_degradation.py`
+  - Expected: 048 owner 行的 runtime semantics / action surface / fail-closed boundary / memory hot-path semantics 都通过正式 contract 与回归验证。
+
+- [ ] **Step 6: 提交**
+  - `git add src/watchdog/services/session_spine/task_state.py src/a_control_agent/storage/tasks_store.py src/a_control_agent/services/codex/client.py src/watchdog/services/action_executor/steer.py src/watchdog/contracts/session_spine/enums.py src/watchdog/services/session_spine/actions.py src/watchdog/api/session_spine_actions.py src/a_control_agent/risk/classifier.py src/a_control_agent/services/codex/app_server_bridge.py src/watchdog/services/memory_hub/service.py src/watchdog/services/session_spine/recovery.py src/watchdog/services/brain/service.py tests/test_watchdog_runtime_semantics.py tests/test_watchdog_action_execution.py tests/test_watchdog_steer.py tests/test_a_control_agent.py tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_degradation.py .ai-sdlc/work-items specs/048-missing-runtime-semantics-and-action-surface docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
+  - `git commit -m "feat: add canonical runtime semantics and action surface"`
+
 ## 风险控制
 
 - 所有阶段都必须维持现有 stable read contract，不允许一次性拆掉全部兼容层。

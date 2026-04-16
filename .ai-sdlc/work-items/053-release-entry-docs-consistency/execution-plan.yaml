@@ -1,0 +1,139 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T531
+  title: 冻结 053 owner 边界与 formal docs
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/architecture/coverage-audit-closeout-execution-design.md`'
+  - '`README.md`'
+  - '`specs/053-release-entry-docs-consistency/spec.md`'
+  - '`specs/053-release-entry-docs-consistency/plan.md`'
+  - '`specs/053-release-entry-docs-consistency/tasks.md`'
+  - '`specs/053-release-entry-docs-consistency/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/runtime.yaml`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T532
+  title: 写失败测试锁定 release docs validator 与 repo-local CLI
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_release_docs_contracts.py`'
+  - '`tests/test_ai_sdlc_repo_cli.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T531
+- task_id: T533
+  title: 实现最小 release docs validator 并接入 repo-local ai_sdlc
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/validation/release_docs_contracts.py`'
+  - '`src/watchdog/validation/__init__.py`'
+  - '`ai_sdlc/cli.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T532
+- task_id: T534
+  title: 补齐 release entry docs 并完成 smoke 验证
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`README.md`'
+  - '`docs/releases/v0.6.0.md`'
+  - '`USER_GUIDE.zh-CN.md`'
+  - '`packaging/offline/README.md`'
+  - '`docs/框架自迭代开发与发布约定.md`'
+  - '`docs/pull-request-checklist.zh.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T533
+- task_id: T535
+  title: 完成 053 整体验证并回写 formal memory
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/053-release-entry-docs-consistency/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/runtime.yaml`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/053-release-entry-docs-consistency/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T534
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T531
+  status: completed
+  started_at: '2026-04-16T09:32:25Z'
+  completed_at: '2026-04-16T09:32:25Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T532
+  status: completed
+  started_at: '2026-04-16T09:32:25Z'
+  completed_at: '2026-04-16T09:35:24Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T533
+  status: completed
+  started_at: '2026-04-16T09:35:24Z'
+  completed_at: '2026-04-16T09:35:24Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T534
+  status: completed
+  started_at: '2026-04-16T09:35:24Z'
+  completed_at: '2026-04-16T09:35:24Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T535
+  status: completed
+  started_at: '2026-04-16T09:35:24Z'
+  completed_at: '2026-04-16T09:35:24Z'
+current_batch: 5

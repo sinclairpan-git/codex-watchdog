@@ -1,6 +1,6 @@
 # Framework Defect Backlog
 
-## FD-2026-04-05-001 宿主执行链未在用户明确要求后回切到仓库文档先行真值
+## FD-2026-04-05-001 | 宿主执行链未在用户明确要求后回切到仓库文档先行真值
 - 现象: 用户明确要求“先归档到项目文档，再拆解、设计、任务拆分，最后才能 coding”后，执行流仍继续推进到实现准备，并把计划写到非 canonical 路径。
 - 触发场景: 在本仓库讨论 Codex 对接方案并收到流程硬约束后，宿主仍按 superpowers 的 planning / execution workflow 推进，先发生实施准备，随后又把计划落到 docs/superpowers/plans 一类技能默认位置。
 - 影响范围: 破坏 design / decompose -> verify -> execute 的法定顺序，误导用户认为计划已获得实施授权，并把文档写到非仓库真值路径。
@@ -16,8 +16,9 @@
 - 风险等级: 高
 - 可验证成功标准: 同类场景下首次写入即落到 canonical 文档目录，且在用户未显式授权 execute 前不会编辑产品代码。
 - 是否需要回归测试补充: 需要
+- 当前状态: 已由 `WI-052` 在仓库内补齐 repo-local `ai_sdlc` 入口、canonical path classifier 与回归测试。
 
-## FD-2026-04-05-002 Framework backlog 发现与缺省校验存在漏斗
+## FD-2026-04-05-002 | Framework backlog 发现与缺省校验存在漏斗
 - 现象: 排查框架违约时，最初没有直接定位到 canonical framework backlog，并错误创建了 docs/backlog.md；同时 `python -m ai_sdlc verify constraints` 对缺少 docs/framework-defect-backlog.zh-CN.md 不报 BLOCKER。
 - 触发场景: 仓库已经完成 `.ai-sdlc` formal bootstrap，但尚未存在 canonical framework backlog 文件；代理按通用“backlog”直觉搜索，而不是先按框架真值定位主 backlog。
 - 影响范围: 框架违约可能被写到错误文件名并绕过主 backlog，导致历史问题不可追踪、校验不拦截、用户需要反复提醒。
@@ -33,8 +34,9 @@
 - 风险等级: 高
 - 可验证成功标准: 在同类仓库首次记录框架违约时，系统总是创建并写入 docs/framework-defect-backlog.zh-CN.md，且 verify 输出能显式发现缺省文件问题。
 - 是否需要回归测试补充: 需要
+- 当前状态: 已由 `WI-052` 在 repo-local `verify constraints` 中补齐 canonical backlog 缺省与字段完备性校验。
 
-## FD-2026-04-07-003 已知 canonical 文档路径存在时仍回退到 skill 默认 spec 目录
+## FD-2026-04-07-003 | 已知 canonical 文档路径存在时仍回退到 skill 默认 spec 目录
 - 现象: 在已经确认本仓库的跨 work-item 总设计应落到 `docs/architecture/`、单 work item formal 文档应落到 `specs/<work-item>/` 之后，宿主仍再次口头提出把总设计写入 `docs/superpowers/specs/2026-04-07-full-product-loop-design.md`。
 - 触发场景: 讨论“完整产品闭环”的总设计冻结结论后，宿主沿用 `brainstorming` skill 的默认保存路径来描述下一步设计文档落点，而没有先按仓库既有 canonical 结构做路径归一化。
 - 影响范围: 即使尚未真正写文件，也会再次把项目真值目录说错，制造“总设计到底写在 skill 默认目录还是项目架构目录”的歧义；用户需要反复纠偏，且会削弱此前违约记录的约束力。
@@ -57,8 +59,6 @@
   - 仓库已存在 `docs/architecture/` 与 `specs/`，用户追问“为什么又写到 superpowers”时，代理必须给出 canonical 路径并记录违约，而不是再次沿用 skill 默认路径。
   - 同一线程中已被用户纠偏过一次后，后续回答不得再次提出 `docs/superpowers/specs` 作为正式落点。
 - 风险等级: 高
-- 可验证成功标准:
-  - 在同类仓库里，涉及“总设计”“架构冻结”“正式 spec”的文件提案时，输出路径始终落到 `docs/architecture/` 或 `specs/<work-item>/`。
-  - 即使 skill 默认说明仍指向 `docs/superpowers/specs`，宿主输出也不会复述该路径为项目正式落点。
-  - 当用户指出“这个问题已经出现过很多次”时，系统能直接关联既有 defect 条目并输出根因与杜绝方案，而不是再次发生同类路径漂移。
+- 可验证成功标准: 在同类仓库里，涉及“总设计”“架构冻结”“正式 spec”的文件提案时，输出路径始终落到 `docs/architecture/` 或 `specs/<work-item>/`；即使 skill 默认说明仍指向 `docs/superpowers/specs`，宿主输出也不会复述该路径为项目正式落点；当用户指出“这个问题已经出现过很多次”时，系统能直接关联既有 defect 条目并输出根因与杜绝方案，而不是再次发生同类路径漂移。
 - 是否需要回归测试补充: 需要
+- 当前状态: 已由 `WI-052` 补齐 formal path classifier、forbidden-path 校验与 `docs/superpowers/*` 回归测试。

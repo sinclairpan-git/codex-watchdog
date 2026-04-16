@@ -1,0 +1,15 @@
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T525
+current_branch: codex/052-framework-defect-gate-and-path-discipline
+docs_baseline_ref: 470c389ec8356d88cdf8f4d958244607033959e87a2fe164ac9ec60fb764d2bd
+docs_baseline_at: '2026-04-16T09:23:37Z'
+review_approval_status: pending
+review_approved_by: []
+ai_decisions_count: 0
+execution_mode: auto
+started_at: '2026-04-16T09:16:15Z'
+last_updated: '2026-04-16T09:23:37Z'
+debug_rounds: {}
+consecutive_halts: 0

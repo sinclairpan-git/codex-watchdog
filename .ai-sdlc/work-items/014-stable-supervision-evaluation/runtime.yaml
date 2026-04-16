@@ -1,0 +1,14 @@
+current_stage: archived
+current_batch: 0
+current_task: ''
+last_committed_task: ''
+current_branch: ''
+ai_decisions_count: 0
+execution_mode: backfill
+started_at: 2026-04-16T07:02:24Z
+last_updated: 2026-04-16T07:02:24Z
+debug_rounds: {}
+consecutive_halts: 0
+mirror_status: spec_backfill
+source_spec_dir: specs/014-stable-supervision-evaluation
+backfilled_at: 2026-04-16T07:02:24Z

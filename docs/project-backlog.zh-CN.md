@@ -7,7 +7,7 @@
 > - 框架违约仍统一记录在 `docs/framework-defect-backlog.zh-CN.md`。
 
 ## BL-2026-04-06-001 前端强化后执行测试模块强化
-- 状态: deferred
+- 状态: completed
 - 优先级: 高
 - 进入时机: 当前前端 / OpenClaw-facing 交互面强化完成并合入主线后，再启动独立 work item；在此之前不与前端改动并行推进。
 - 背景: 023 合入过程中，`Codex bridge -> approval callback -> restart restore -> session spine` 这条高耦合接缝的问题不是一次性在本地暴露，而是通过多轮 review 才逐步暴露，说明测试虽然已经补强，但仍需要一次专门的体系化强化，而不是继续依赖“来一条问题补一条回归”。
