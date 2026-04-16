@@ -74,7 +74,7 @@ def _build_delivery_client(
     openclaw_endpoint_store: OpenClawWebhookEndpointStore,
 ):
     transport = str(settings.delivery_transport or "").strip()
-    if transport == "feishu-app":
+    if transport in {"feishu", "feishu-app"}:
         return FeishuAppDeliveryClient(settings=settings)
     if transport == "openclaw":
         return OpenClawDeliveryClient(

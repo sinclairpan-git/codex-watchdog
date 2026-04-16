@@ -1,0 +1,15 @@
+work_item:
+  id: 070-feishu-delivery-transport-alias
+  spec_dir: specs/070-feishu-delivery-transport-alias
+  branch: codex/070-feishu-delivery-transport-alias
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-070 and advance next work item
+artifacts:
+  - specs/070-feishu-delivery-transport-alias/spec.md
+  - specs/070-feishu-delivery-transport-alias/plan.md
+  - specs/070-feishu-delivery-transport-alias/tasks.md
+  - .ai-sdlc/work-items/070-feishu-delivery-transport-alias/execution-plan.yaml
+docs_baseline_ref: 4594fe5362517a593ff27c4574fc632e011ac81b67331b28d3415896ebfe9a1b
+timestamp: '2026-04-16T14:31:00Z'

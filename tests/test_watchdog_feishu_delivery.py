@@ -112,6 +112,23 @@ def test_create_app_uses_feishu_delivery_client_when_transport_configured(tmp_pa
     assert isinstance(app.state.delivery_client, FeishuAppDeliveryClient)
 
 
+def test_create_app_accepts_documented_feishu_transport_alias(tmp_path: Path) -> None:
+    app = create_app(
+        settings=Settings(
+            api_token="watchdog-token",
+            data_dir=str(tmp_path),
+            delivery_transport="feishu",
+            feishu_base_url="https://open.feishu.cn",
+            feishu_app_id="cli_test_app_id",
+            feishu_app_secret="test-app-secret",
+            feishu_receive_id="oc_test_chat_id",
+            feishu_receive_id_type="chat_id",
+        )
+    )
+
+    assert isinstance(app.state.delivery_client, FeishuAppDeliveryClient)
+
+
 def test_create_app_keeps_openclaw_delivery_client_by_default(tmp_path: Path) -> None:
     app = create_app(
         settings=Settings(
