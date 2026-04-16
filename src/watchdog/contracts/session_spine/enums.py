@@ -69,6 +69,11 @@ class EventCode(str, Enum):
 
 class ActionCode(str, Enum):
     CONTINUE_SESSION = "continue_session"
+    PAUSE_SESSION = "pause_session"
+    RESUME_SESSION = "resume_session"
+    SUMMARIZE_SESSION = "summarize_session"
+    FORCE_HANDOFF = "force_handoff"
+    RETRY_WITH_CONSERVATIVE_PATH = "retry_with_conservative_path"
     POST_OPERATOR_GUIDANCE = "post_operator_guidance"
     APPROVE_APPROVAL = "approve_approval"
     REJECT_APPROVAL = "reject_approval"
@@ -90,6 +95,10 @@ class Effect(str, Enum):
     NOOP = "noop"
     ADVISORY_ONLY = "advisory_only"
     STEER_POSTED = "steer_posted"
+    SESSION_PAUSED = "session_paused"
+    SESSION_RESUMED = "session_resumed"
+    SUMMARY_GENERATED = "summary_generated"
+    CONSERVATIVE_RETRY_REQUESTED = "conservative_retry_requested"
     APPROVAL_DECIDED = "approval_decided"
     HANDOFF_TRIGGERED = "handoff_triggered"
     HANDOFF_AND_RESUME = "handoff_and_resume"

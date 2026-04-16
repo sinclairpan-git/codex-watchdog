@@ -408,7 +408,7 @@ def build_ops_summary(
 
     alerts.sort(key=lambda item: item.alert_code)
     return OpsSummary(
-        status="degraded" if alerts else "ok",
+        status="degraded" if alerts or release_gate_blockers else "ok",
         active_alerts=len(alerts),
         alerts=alerts,
         release_gate_blockers=release_gate_blockers,

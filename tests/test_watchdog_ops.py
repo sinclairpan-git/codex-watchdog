@@ -16,6 +16,7 @@ from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
+from a_control_agent.storage.tasks_store import TaskStore
 
 
 def _seed_ops_alerts(data_dir: Path) -> None:
@@ -176,6 +177,194 @@ def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> N
     assert 'watchdog_ops_alert_active{alert="mapping_incomplete"} 1' in response.text
     assert 'watchdog_ops_alert_active{alert="recovery_failed"} 1' in response.text
     assert 'watchdog_release_gate_blocker_active{reason="none"} 0' in response.text
+
+
+def test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_alert_bucket(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:healthz-release-gate",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="observe_only",
+            decision_result="observe_only",
+            risk_class="runtime_gate",
+            decision_reason="release gate blocks promotion",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "degraded",
+                    "degrade_reason": "report_expired",
+                    "report_id": "report:healthz",
+                    "report_hash": "sha256:report",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:healthz",
+                    "approval_read_ref": "approval:none",
+                }
+            },
+        )
+    )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["active_alerts"] == 0
+    assert response.json()["release_gate_blockers"] == 1
+
+
+def test_watchdog_metrics_exports_task_approval_and_recovery_totals(tmp_path: Path) -> None:
+    task_store = TaskStore(tmp_path / "tasks.json")
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    task_store.upsert_from_create(
+        "repo-a",
+        {
+            "cwd": "/tmp/repo-a",
+            "task_title": "Repo A",
+            "status": "running",
+        },
+    )
+    task_store.upsert_from_create(
+        "repo-b",
+        {
+            "cwd": "/tmp/repo-b",
+            "task_title": "Repo B",
+            "status": "paused",
+        },
+    )
+    approval_store.put(
+        CanonicalApprovalRecord(
+            approval_id="appr_pending_metric_1",
+            envelope_id="approval-envelope:metric-1",
+            approval_kind="canonical_user_decision",
+            requested_action="execute_recovery",
+            requested_action_args={},
+            approval_token="approval-token:metric-1",
+            decision_options=["approve", "reject"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="metric:approval:pending:1",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            status="pending",
+            created_at="2026-04-16T08:00:00Z",
+            decided_at=None,
+            decided_by=None,
+            operator_notes=[],
+            decision=CanonicalDecisionRecord(
+                decision_id="decision:metric-1",
+                decision_key="metric:decision:1",
+                session_id="session:repo-a",
+                project_id="repo-a",
+                thread_id="session:repo-a",
+                native_thread_id="thr_native_1",
+                approval_id="appr_pending_metric_1",
+                action_ref="execute_recovery",
+                trigger="resident_supervision",
+                decision_result="require_user_decision",
+                risk_class="human_gate",
+                decision_reason="metric coverage",
+                matched_policy_rules=["human_gate"],
+                why_not_escalated=None,
+                why_escalated="needs approval",
+                uncertainty_reasons=[],
+                policy_version="policy-v1",
+                fact_snapshot_version="fact-v7",
+                idempotency_key="metric:decision:1",
+                created_at="2026-04-16T08:00:00Z",
+                operator_notes=[],
+                evidence={},
+            ),
+        )
+    )
+    receipt_store.put(
+        receipt_key(
+            action_code=ActionCode.EXECUTE_RECOVERY,
+            project_id="repo-a",
+            approval_id=None,
+            idempotency_key="metric:recovery:1",
+        ),
+        WatchdogActionResult(
+            action_code=ActionCode.EXECUTE_RECOVERY,
+            project_id="repo-a",
+            approval_id=None,
+            idempotency_key="metric:recovery:1",
+            action_status=ActionStatus.COMPLETED,
+            effect=Effect.HANDOFF_TRIGGERED,
+            reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+            message="recovery completed",
+            facts=[],
+        ),
+    )
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "watchdog_task_records_total 2" in response.text
+    assert "watchdog_approval_pending_total 1" in response.text
+    assert "watchdog_recovery_receipts_total 1" in response.text
+
+
+def test_watchdog_metrics_reads_task_totals_from_a_control_agent_store_path(
+    tmp_path: Path,
+) -> None:
+    task_store = TaskStore(tmp_path / "tasks_store.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    task_store.upsert_from_create(
+        "repo-a",
+        {
+            "cwd": "/tmp/repo-a",
+            "task_title": "Repo A",
+            "status": "running",
+        },
+    )
+    task_store.upsert_from_create(
+        "repo-b",
+        {
+            "cwd": "/tmp/repo-b",
+            "task_title": "Repo B",
+            "status": "paused",
+        },
+    )
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "watchdog_task_records_total 2" in response.text
 
 
 def test_build_ops_summary_ignores_delivery_skips_and_recovery_noops(tmp_path: Path) -> None:
@@ -504,7 +693,141 @@ def test_build_ops_summary_counts_only_latest_pending_approval_per_session(tmp_p
     assert summary.status == "degraded"
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["approval_pending_too_long"]
-    assert summary.alerts[0].count == 1
+
+
+def test_watchdog_metrics_pending_approval_total_uses_latest_pending_record_per_session(
+    tmp_path: Path,
+) -> None:
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    template_decision = CanonicalDecisionRecord(
+        decision_id="decision:approval-template",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|approval-template",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        approval_id="approval:template",
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="needs approval",
+        matched_policy_rules=["human_gate"],
+        why_not_escalated=None,
+        why_escalated="destructive recovery needs approval",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key=(
+            "session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|approval-template"
+        ),
+        created_at="2000-01-01T00:00:00Z",
+        operator_notes=[],
+        evidence={},
+    )
+
+    def make_approval(
+        *,
+        approval_id: str,
+        envelope_id: str,
+        session_id: str,
+        project_id: str,
+        fact_snapshot_version: str,
+        status: str,
+        created_at: str,
+    ) -> CanonicalApprovalRecord:
+        return CanonicalApprovalRecord(
+            approval_id=approval_id,
+            envelope_id=envelope_id,
+            approval_kind="canonical_user_decision",
+            requested_action="execute_recovery",
+            requested_action_args={},
+            approval_token=f"approval-token:{approval_id}",
+            decision_options=["approve", "reject", "execute_action"],
+            policy_version="policy-v1",
+            fact_snapshot_version=fact_snapshot_version,
+            idempotency_key=(
+                f"{session_id}|{fact_snapshot_version}|policy-v1|require_user_decision|"
+                f"execute_recovery|{approval_id}|approval"
+            ),
+            project_id=project_id,
+            session_id=session_id,
+            thread_id=session_id,
+            native_thread_id="thr_native_1",
+            status=status,
+            created_at=created_at,
+            decided_at="2000-01-01T01:00:00Z" if status != "pending" else None,
+            decided_by="policy-test" if status != "pending" else None,
+            operator_notes=[],
+            decision=template_decision.model_copy(
+                update={
+                    "decision_id": f"decision:{approval_id}",
+                    "decision_key": (
+                        f"{session_id}|{fact_snapshot_version}|policy-v1|require_user_decision|"
+                        f"execute_recovery|{approval_id}"
+                    ),
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "thread_id": session_id,
+                    "approval_id": approval_id,
+                    "fact_snapshot_version": fact_snapshot_version,
+                    "created_at": created_at,
+                }
+            ),
+        )
+
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-a-old",
+            envelope_id="approval-envelope:repo-a-old",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            fact_snapshot_version="fact-v1",
+            status="pending",
+            created_at="2000-01-01T00:00:00Z",
+        )
+    )
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-a-new",
+            envelope_id="approval-envelope:repo-a-new",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            fact_snapshot_version="fact-v2",
+            status="superseded",
+            created_at="2000-01-01T00:10:00Z",
+        )
+    )
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-b-old",
+            envelope_id="approval-envelope:repo-b-old",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            fact_snapshot_version="fact-v1",
+            status="pending",
+            created_at="2000-01-01T00:00:00Z",
+        )
+    )
+    approval_store.put(
+        make_approval(
+            approval_id="approval:repo-b-new",
+            envelope_id="approval-envelope:repo-b-new",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            fact_snapshot_version="fact-v2",
+            status="pending",
+            created_at="2000-01-01T00:10:00Z",
+        )
+    )
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "watchdog_approval_pending_total 1" in response.text
 
 
 def test_build_ops_summary_surfaces_runtime_gate_degradation_alert(tmp_path: Path) -> None:

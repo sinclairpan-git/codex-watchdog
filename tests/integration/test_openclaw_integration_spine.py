@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import importlib.util
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
+from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -23,6 +25,37 @@ def _load_template_client_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_A_CLIENT_CONTRACT_METHODS = (
+    "get_envelope",
+    "get_envelope_by_thread",
+    "list_tasks",
+    "list_approvals",
+    "decide_approval",
+    "trigger_pause",
+    "trigger_handoff",
+    "trigger_resume",
+    "get_workspace_activity_envelope",
+)
+
+
+def _assert_a_client_signature_compatibility(fake_client_cls: type[object]) -> None:
+    for method_name in _A_CLIENT_CONTRACT_METHODS:
+        assert hasattr(fake_client_cls, method_name), f"{fake_client_cls.__name__} missing {method_name}"
+        fake_signature = inspect.signature(getattr(fake_client_cls, method_name))
+        real_signature = inspect.signature(getattr(AControlAgentClient, method_name))
+        assert tuple(fake_signature.parameters) == tuple(
+            real_signature.parameters
+        ), f"{fake_client_cls.__name__}.{method_name} parameter names drifted"
+        for name, real_parameter in real_signature.parameters.items():
+            fake_parameter = fake_signature.parameters[name]
+            assert (
+                fake_parameter.kind == real_parameter.kind
+            ), f"{fake_client_cls.__name__}.{method_name} parameter kind drifted for {name}"
+            assert (
+                fake_parameter.default == real_parameter.default
+            ), f"{fake_client_cls.__name__}.{method_name} default drifted for {name}"
 
 
 class FakeAClient:
@@ -38,6 +71,7 @@ class FakeAClient:
         self._approvals = [dict(approval) for approval in approvals or []]
         self.decision_calls: list[tuple[str, str, str, str]] = []
         self.handoff_calls: list[tuple[str, str]] = []
+        self.pause_calls: list[str] = []
         self.resume_calls: list[tuple[str, str, str]] = []
         self.workspace_activity_calls: list[tuple[str, int]] = []
 
@@ -104,6 +138,13 @@ class FakeAClient:
             "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
         }
 
+    def trigger_pause(self, project_id: str) -> dict[str, object]:
+        self.pause_calls.append(project_id)
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "paused"},
+        }
+
     def trigger_resume(
         self,
         project_id: str,
@@ -166,6 +207,9 @@ class BrokenAClient:
         _ = (status, project_id, decided_by, callback_status)
         return []
 
+    def list_tasks(self) -> list[dict[str, object]]:
+        raise httpx.ConnectError("refused", request=httpx.Request("GET", "http://a.test/tasks"))
+
     def decide_approval(
         self,
         approval_id: str,
@@ -176,6 +220,37 @@ class BrokenAClient:
     ) -> dict[str, object]:
         _ = (approval_id, decision, operator, note)
         return {"success": False, "error": {"code": "CONTROL_LINK_ERROR", "message": "broken"}}
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        _ = (project_id, reason)
+        return {"success": False, "error": {"code": "CONTROL_LINK_ERROR", "message": "broken"}}
+
+    def trigger_pause(self, project_id: str) -> dict[str, object]:
+        _ = project_id
+        return {"success": False, "error": {"code": "CONTROL_LINK_ERROR", "message": "broken"}}
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        _ = (project_id, mode, handoff_summary)
+        return {"success": False, "error": {"code": "CONTROL_LINK_ERROR", "message": "broken"}}
+
+
+def test_integration_fake_a_client_matches_a_control_agent_client_core_signature_contract() -> None:
+    _assert_a_client_signature_compatibility(FakeAClient)
+
+
+def test_integration_fake_a_client_broken_stub_matches_a_control_agent_client_core_signature_contract() -> None:
+    _assert_a_client_signature_compatibility(BrokenAClient)
 
 
 def _adapter(tmp_path: Path, client) -> OpenClawAdapter:
@@ -223,6 +298,45 @@ def test_integration_continue_session_success(tmp_path: Path) -> None:
     assert steer_mock.call_count == 1
     assert reply.reply_code == "action_result"
     assert reply.message == "continue request accepted"
+
+
+def test_integration_openclaw_message_route_supports_native_thread_and_pause(
+    tmp_path: Path,
+) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    adapter = _adapter(tmp_path, client)
+
+    session_reply = adapter.handle_message(
+        "任务状态",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+    pause_reply = adapter.handle_message(
+        "暂停",
+        arguments={"native_thread_id": "thr_native_1"},
+        idempotency_key="idem-pause-native-1",
+    )
+
+    assert session_reply.reply_code == "session_projection"
+    assert session_reply.session is not None
+    assert session_reply.session.project_id == "repo-a"
+    assert pause_reply.reply_code == "action_result"
+    assert pause_reply.action_result is not None
+    assert pause_reply.action_result.effect == "session_paused"
+    assert client.pause_calls == ["repo-a"]
 
 
 def test_integration_openclaw_template_routes_progress_stuck_and_continue(

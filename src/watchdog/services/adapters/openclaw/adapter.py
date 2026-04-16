@@ -12,7 +12,10 @@ from watchdog.contracts.session_spine.models import (
     WatchdogAction,
 )
 from watchdog.services.a_client.client import AControlAgentClient
-from watchdog.services.adapters.openclaw.intents import READ_INTENTS, WRITE_INTENT_TO_ACTION
+from watchdog.services.adapters.openclaw.intents import (
+    READ_INTENTS,
+    WRITE_INTENT_TO_ACTION,
+)
 from watchdog.services.adapters.openclaw.reply_model import (
     build_action_not_available_reply,
     build_action_reply,
@@ -28,6 +31,10 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_stuck_explanation_reply,
     build_unsupported_intent_reply,
     build_workspace_activity_reply,
+)
+from watchdog.services.entrypoints.command_routing import (
+    resolve_entry_message,
+    resolve_entry_route,
 )
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.services.session_spine.events import (
@@ -172,6 +179,55 @@ class OpenClawAdapter:
                 intent_code,
                 str(exc.error.get("message") or "control link error"),
             )
+
+    def handle_message(
+        self,
+        message: str,
+        *,
+        project_id: str | None = None,
+        native_thread_id: str | None = None,
+        operator: str = "openclaw",
+        idempotency_key: str | None = None,
+        approval_id: str | None = None,
+        note: str = "",
+        arguments: dict[str, Any] | None = None,
+    ) -> ReplyModel:
+        intent_code = resolve_entry_message(message)
+        if intent_code is None:
+            return build_unsupported_intent_reply(str(message or ""))
+        routed_intent = intent_code
+        try:
+            routed_intent, resolved_project_id, routed_arguments = resolve_entry_route(
+                client=self._client,
+                intent_code=intent_code,
+                project_id=project_id,
+                native_thread_id=native_thread_id,
+                arguments=arguments,
+            )
+        except SessionSpineUpstreamError as exc:
+            return build_control_link_error_reply(
+                intent_code,
+                str(exc.error.get("message") or "control link error"),
+            )
+        resolved_idempotency_key = idempotency_key
+        if resolved_idempotency_key is None and routed_intent not in READ_INTENTS:
+            resolved_idempotency_key = (
+                "message:"
+                f"{resolved_project_id or routed_arguments.get('native_thread_id') or 'global'}:"
+                f"{operator}:{intent_code}:{str(message or '').strip()}"
+            )
+        reply = self.handle_intent(
+            routed_intent,
+            project_id=resolved_project_id,
+            operator=operator,
+            idempotency_key=resolved_idempotency_key,
+            approval_id=approval_id,
+            note=note,
+            arguments=routed_arguments,
+        )
+        if reply.intent_code != intent_code:
+            return reply.model_copy(update={"intent_code": intent_code})
+        return reply
 
     def list_session_events(self, project_id: str) -> list[SessionEvent]:
         return list_projected_session_events(self._client, project_id)

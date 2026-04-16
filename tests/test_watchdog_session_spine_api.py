@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,7 @@ from watchdog.settings import Settings
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.envelopes import build_envelopes_for_decision
 from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.session_spine.facts import build_fact_records
 from watchdog.services.session_spine.projection import (
@@ -20,6 +22,37 @@ from watchdog.services.session_spine.projection import (
     stable_thread_id_for_project,
 )
 from watchdog.services.session_spine.service import evaluate_session_policy_from_persisted_spine
+
+
+_A_CLIENT_CONTRACT_METHODS = (
+    "get_envelope",
+    "get_envelope_by_thread",
+    "list_tasks",
+    "list_approvals",
+    "decide_approval",
+    "trigger_pause",
+    "trigger_handoff",
+    "trigger_resume",
+    "get_workspace_activity_envelope",
+)
+
+
+def _assert_a_client_signature_compatibility(fake_client_cls: type[object]) -> None:
+    for method_name in _A_CLIENT_CONTRACT_METHODS:
+        assert hasattr(fake_client_cls, method_name), f"{fake_client_cls.__name__} missing {method_name}"
+        fake_signature = inspect.signature(getattr(fake_client_cls, method_name))
+        real_signature = inspect.signature(getattr(AControlAgentClient, method_name))
+        assert tuple(fake_signature.parameters) == tuple(
+            real_signature.parameters
+        ), f"{fake_client_cls.__name__}.{method_name} parameter names drifted"
+        for name, real_parameter in real_signature.parameters.items():
+            fake_parameter = fake_signature.parameters[name]
+            assert (
+                fake_parameter.kind == real_parameter.kind
+            ), f"{fake_client_cls.__name__}.{method_name} parameter kind drifted for {name}"
+            assert (
+                fake_parameter.default == real_parameter.default
+            ), f"{fake_client_cls.__name__}.{method_name} default drifted for {name}"
 
 
 class FakeAClient:
@@ -34,6 +67,7 @@ class FakeAClient:
         self._tasks = [dict(row) for row in tasks or [task]]
         self._approvals = [dict(approval) for approval in approvals or []]
         self.list_approvals_calls: list[dict[str, object | None]] = []
+        self.pause_calls: list[str] = []
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
         self.workspace_activity_calls: list[tuple[str, int]] = []
@@ -96,6 +130,13 @@ class FakeAClient:
                 "operator": operator,
                 "note": note,
             },
+        }
+
+    def trigger_pause(self, project_id: str) -> dict[str, object]:
+        self.pause_calls.append(project_id)
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "paused"},
         }
 
     def trigger_handoff(
@@ -186,6 +227,60 @@ class BrokenAClient:
             }
         )
         raise RuntimeError("a-side temporarily unavailable")
+
+    def list_tasks(self) -> list[dict[str, object]]:
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def decide_approval(
+        self,
+        approval_id: str,
+        *,
+        decision: str,
+        operator: str,
+        note: str = "",
+    ) -> dict[str, object]:
+        _ = (approval_id, decision, operator, note)
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def trigger_pause(self, project_id: str) -> dict[str, object]:
+        _ = project_id
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, object]:
+        _ = (project_id, reason)
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+    ) -> dict[str, object]:
+        _ = (project_id, mode, handoff_summary)
+        raise RuntimeError("a-side temporarily unavailable")
+
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        _ = (project_id, recent_minutes)
+        raise RuntimeError("a-side temporarily unavailable")
+
+
+def test_fake_a_client_matches_a_control_agent_client_core_signature_contract() -> None:
+    _assert_a_client_signature_compatibility(FakeAClient)
+
+
+def test_fake_a_client_broken_stub_matches_a_control_agent_client_core_signature_contract() -> None:
+    _assert_a_client_signature_compatibility(BrokenAClient)
 
 
 def _decision_record(
@@ -2083,6 +2178,295 @@ def test_session_spine_receipt_query_routes_share_same_stable_reply_without_reex
     assert canonical.json()["data"]["action_result"]["effect"] == "steer_posted"
 
 
+def test_watchdog_restart_preserves_pending_approvals_on_stable_read_surfaces(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    first_app = create_app(settings, a_client=BrokenAClient())
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "waiting for recovery approval",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 1,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    first_app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=session,
+        progress=progress,
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-05T05:25:00Z",
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v10"),
+        approval_store=first_app.state.canonical_approval_store,
+    )
+
+    restarted = create_app(settings, a_client=BrokenAClient())
+    c = TestClient(restarted)
+
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+    inbox_resp = c.get(
+        "/api/v1/watchdog/approval-inbox?project_id=repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    assert inbox_resp.status_code == 200
+    assert session_resp.json()["data"]["session"]["pending_approval_count"] == 1
+    assert [item["approval_id"] for item in approvals_resp.json()["data"]["approvals"]] == [
+        approval.approval_id
+    ]
+    assert [item["approval_id"] for item in inbox_resp.json()["data"]["approvals"]] == [
+        approval.approval_id
+    ]
+
+
+def test_watchdog_restart_preserves_action_receipt_lookup_without_reexecution(tmp_path: Path) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    first_app = create_app(
+        settings,
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    first_client = TestClient(first_app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        create_receipt = first_client.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-restart-receipt-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert create_receipt.status_code == 200
+    assert create_receipt.json()["success"] is True
+
+    restarted = create_app(settings, a_client=BrokenAClient())
+    c = TestClient(restarted)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as query_steer_mock:
+        response = c.get(
+            "/api/v1/watchdog/action-receipts",
+            params={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "idempotency_key": "idem-restart-receipt-1",
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["reply_code"] == "action_receipt"
+    assert response.json()["data"]["action_result"]["effect"] == "steer_posted"
+    assert query_steer_mock.call_count == 0
+
+
+def test_seam_smoke_deferred_approval_delivery_survives_restart_and_updates_stable_reads(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    first_app = create_app(settings, a_client=BrokenAClient())
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "waiting for callback replay",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 1,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    first_app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=session,
+        progress=progress,
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-05T05:25:00Z",
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v13"),
+        approval_store=first_app.state.canonical_approval_store,
+    )
+    first_client = TestClient(first_app)
+
+    pending_before = first_client.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+    assert pending_before.status_code == 200
+    assert [item["approval_id"] for item in pending_before.json()["data"]["approvals"]] == [
+        approval.approval_id
+    ]
+
+    first_app.state.canonical_approval_store.update(
+        approval.model_copy(
+            update={
+                "status": "approved",
+                "decided_at": "2026-04-12T01:02:00Z",
+                "decided_by": "operator-1",
+            }
+        )
+    )
+    first_app.state.session_service.record_event(
+        event_type="approval_approved",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id=f"corr:approval:{approval.approval_id}",
+        causation_id=approval.decision.decision_id,
+        related_ids={
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
+            "response_id": "approval-response:smoke",
+        },
+        payload={
+            "response_action": "approve",
+            "approval_status": "approved",
+            "operator": "operator-1",
+            "note": "callback retry delivered",
+        },
+        occurred_at="2026-04-12T01:02:00Z",
+    )
+    first_app.state.session_service.record_event(
+        event_type="human_override_recorded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:override:approval-response:smoke",
+        causation_id="approval-response:smoke",
+        related_ids={
+            "approval_id": approval.approval_id,
+            "decision_id": approval.decision.decision_id,
+            "response_id": "approval-response:smoke",
+            "envelope_id": approval.envelope_id,
+        },
+        payload={
+            "response_action": "approve",
+            "approval_status": "approved",
+            "operator": "operator-1",
+            "note": "callback retry delivered",
+            "requested_action": approval.requested_action,
+            "execution_status": "completed",
+            "execution_effect": "handoff_triggered",
+        },
+        occurred_at="2026-04-12T01:03:00Z",
+    )
+    first_app.state.session_service.record_event(
+        event_type="notification_receipt_recorded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id=f"corr:notification:{approval.envelope_id}:receipt:receipt:smoke",
+        causation_id=approval.envelope_id,
+        related_ids={
+            "envelope_id": approval.envelope_id,
+            "notification_kind": "approval_result",
+            "receipt_id": "receipt:smoke",
+        },
+        payload={
+            "delivery_status": "delivered",
+            "delivery_attempt": 1,
+            "receipt_id": "receipt:smoke",
+            "received_at": "2026-04-12T01:03:30Z",
+        },
+        occurred_at="2026-04-12T01:04:00Z",
+    )
+
+    restarted = create_app(settings, a_client=BrokenAClient())
+    c = TestClient(restarted)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert approvals_response.status_code == 200
+    assert facts_response.status_code == 200
+    assert session_response.json()["data"]["session"]["pending_approval_count"] == 0
+    assert approvals_response.json()["data"]["approvals"] == []
+    assert [fact["fact_code"] for fact in facts_response.json()["data"]["facts"]] == [
+        "human_override_recorded",
+        "notification_receipt_recorded",
+    ]
+
+
 def test_session_spine_receipt_query_route_returns_stable_not_found_reply(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
@@ -2151,6 +2535,240 @@ def test_session_spine_execute_recovery_canonical_and_alias_share_the_same_resul
     assert canonical.json()["data"] == alias.json()["data"]
     assert canonical.json()["data"]["effect"] == "handoff_triggered"
     assert canonical.json()["data"]["reply_code"] == "recovery_execution_result"
+
+
+def test_session_spine_pause_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=client,
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "pause_session",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-pause-1",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/pause",
+        json={"operator": "openclaw", "idempotency_key": "idem-pause-1"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert client.pause_calls == ["repo-a"]
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "session_paused"
+
+
+def test_session_spine_resume_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "paused",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "waiting for resume",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "medium",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=client,
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "resume_session",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-resume-1",
+            "arguments": {"handoff_summary": "resume from saved handoff"},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/resume",
+        json={
+            "operator": "openclaw",
+            "idempotency_key": "idem-resume-1",
+            "handoff_summary": "resume from saved handoff",
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "resume from saved handoff")]
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "session_resumed"
+
+
+def test_session_spine_summarize_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py", "tests/test_example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "summarize_session",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-summarize-1",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/summarize",
+        json={"operator": "openclaw", "idempotency_key": "idem-summarize-1"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "summary_generated"
+    assert canonical.json()["data"]["message"] == "editing files"
+
+
+def test_session_spine_force_handoff_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "looping on the same failure",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "high",
+            "stuck_level": 3,
+            "failure_count": 4,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=client,
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "force_handoff",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": "idem-force-handoff-1",
+            "arguments": {},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/force-handoff",
+        json={"operator": "openclaw", "idempotency_key": "idem-force-handoff-1"},
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert client.handoff_calls == [("repo-a", "force_handoff")]
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "handoff_triggered"
+
+
+def test_session_spine_retry_conservative_canonical_and_alias_share_the_same_result(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "repeating the same failing command",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "medium",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        canonical = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "retry_with_conservative_path",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-retry-conservative-1",
+                "arguments": {},
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+        alias = c.post(
+            "/api/v1/watchdog/sessions/repo-a/actions/retry-with-conservative-path",
+            json={"operator": "openclaw", "idempotency_key": "idem-retry-conservative-1"},
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert canonical.status_code == 200
+    assert alias.status_code == 200
+    assert steer_mock.call_count == 1
+    assert canonical.json()["data"] == alias.json()["data"]
+    assert canonical.json()["data"]["effect"] == "conservative_retry_requested"
 
 
 def test_session_spine_evaluate_supervision_canonical_and_alias_share_the_same_result(tmp_path) -> None:
@@ -2247,6 +2865,42 @@ def test_legacy_routes_remain_registered_and_basic_behaviour_is_compatible(tmp_p
     assert recover.json()["data"]["action"] == "noop"
     assert events.status_code == 200
     assert events.headers["content-type"].startswith("text/event-stream")
+
+
+def test_legacy_approvals_proxy_fails_closed_on_runtime_error(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app, raise_server_exceptions=False)
+
+    with patch("watchdog.api.approvals_proxy.httpx.Client") as approvals_http:
+        approvals_http.return_value.__enter__.side_effect = RuntimeError("upstream bootstrap failed")
+        response = c.get("/api/v1/watchdog/approvals", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "CONTROL_LINK_ERROR"
+
+
+def test_legacy_approval_decision_proxy_fails_closed_on_runtime_error(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    c = TestClient(app, raise_server_exceptions=False)
+
+    with patch("watchdog.api.approvals_proxy.httpx.Client") as approvals_http:
+        approvals_http.return_value.__enter__.side_effect = RuntimeError("upstream bootstrap failed")
+        response = c.post(
+            "/api/v1/watchdog/approvals/appr_001/decision",
+            headers={"Authorization": "Bearer wt"},
+            json={"decision": "approve", "operator": "operator-1"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "CONTROL_LINK_ERROR"
 
 
 def test_bootstrap_openclaw_webhook_persists_latest_public_endpoint(tmp_path: Path) -> None:

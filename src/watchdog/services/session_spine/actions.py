@@ -11,7 +11,11 @@ from watchdog.contracts.session_spine.enums import (
     ReplyCode,
 )
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
-from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
+from watchdog.services.action_executor.steer import (
+    SOFT_STEER_MESSAGE,
+    post_steer,
+    steer_template_registry,
+)
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.recovery import perform_recovery_execution
@@ -20,7 +24,7 @@ from watchdog.services.session_spine.service import (
     build_session_read_bundle,
 )
 from watchdog.services.session_spine.supervision import execute_supervision_evaluation
-from watchdog.services.session_spine.task_state import is_terminal_task
+from watchdog.services.session_spine.task_state import is_terminal_task, validate_action_transition
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
@@ -117,13 +121,14 @@ def _execute_continue(
             message="session is awaiting human approval",
             facts=bundle.facts,
         )
+    soft = steer_template_registry()["soft"]
     try:
         steer_body = post_steer(
             settings.a_agent_base_url,
             settings.a_agent_token,
             action.project_id,
-            message=SOFT_STEER_MESSAGE,
-            reason="openclaw_continue_session",
+            message=soft.message or SOFT_STEER_MESSAGE,
+            reason=soft.reason_code or "openclaw_continue_session",
             stuck_level=int(bundle.task.get("stuck_level", 0) or 0),
             timeout=settings.http_timeout_s,
         )
@@ -138,6 +143,186 @@ def _execute_continue(
         effect=Effect.STEER_POSTED,
         reply_code=ReplyCode.ACTION_RESULT,
         message="continue request accepted",
+        facts=bundle.facts,
+    )
+
+
+def _rejected_transition(
+    action: WatchdogAction,
+    *,
+    message: str,
+    facts: list[Any] | None = None,
+) -> WatchdogActionResult:
+    return _result(
+        action,
+        action_status=ActionStatus.REJECTED,
+        effect=Effect.NOOP,
+        reply_code=ReplyCode.ACTION_NOT_AVAILABLE,
+        message=message,
+        facts=facts,
+    )
+
+
+def _execute_pause(
+    action: WatchdogAction,
+    *,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    bundle = build_session_read_bundle(client, action.project_id)
+    verdict = validate_action_transition("pause", task=bundle.task)
+    if not verdict["allowed"]:
+        return _rejected_transition(action, message="pause is not allowed from current state", facts=bundle.facts)
+    try:
+        body = client.trigger_pause(action.project_id)
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "pause 调用失败：无法连接 A-Control-Agent"}
+        ) from exc
+    if not body.get("success"):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise SessionSpineUpstreamError(dict(error))
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "pause 调用失败"}
+        )
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.SESSION_PAUSED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="pause request accepted",
+        facts=bundle.facts,
+    )
+
+
+def _execute_resume_session(
+    action: WatchdogAction,
+    *,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    bundle = build_session_read_bundle(client, action.project_id)
+    handoff_summary = str(action.arguments.get("handoff_summary") or "")
+    verdict = validate_action_transition(
+        "resume",
+        task=bundle.task,
+        has_continuation=bool(handoff_summary),
+    )
+    if not verdict["allowed"]:
+        return _rejected_transition(action, message="resume is not allowed from current state", facts=bundle.facts)
+    mode = str(action.arguments.get("mode") or "resume_or_new_thread")
+    try:
+        body = client.trigger_resume(
+            action.project_id,
+            mode=mode,
+            handoff_summary=handoff_summary,
+        )
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "resume 调用失败：无法连接 A-Control-Agent"}
+        ) from exc
+    if not body.get("success"):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise SessionSpineUpstreamError(dict(error))
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "resume 调用失败"}
+        )
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.SESSION_RESUMED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="resume request accepted",
+        facts=bundle.facts,
+    )
+
+
+def _execute_summarize(
+    action: WatchdogAction,
+    *,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    bundle = build_session_read_bundle(client, action.project_id)
+    summary = str((bundle.task or {}).get("last_summary") or "").strip() or "no summary available"
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.SUMMARY_GENERATED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message=summary,
+        facts=bundle.facts,
+    )
+
+
+def _execute_force_handoff(
+    action: WatchdogAction,
+    *,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    bundle = build_session_read_bundle(client, action.project_id)
+    verdict = validate_action_transition("force_handoff", task=bundle.task)
+    if not verdict["allowed"]:
+        return _rejected_transition(action, message="force_handoff is not allowed from current state", facts=bundle.facts)
+    reason = str(action.arguments.get("reason") or "force_handoff")
+    try:
+        body = client.trigger_handoff(action.project_id, reason=reason)
+    except (httpx.RequestError, RuntimeError, OSError) as exc:
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "handoff 调用失败：无法连接 A-Control-Agent"}
+        ) from exc
+    if not body.get("success"):
+        error = body.get("error")
+        if isinstance(error, dict):
+            raise SessionSpineUpstreamError(dict(error))
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "handoff 调用失败"}
+        )
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.HANDOFF_TRIGGERED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="handoff triggered",
+        facts=bundle.facts,
+    )
+
+
+def _execute_retry_with_conservative_path(
+    action: WatchdogAction,
+    *,
+    settings: Settings,
+    client: AControlAgentClient,
+) -> WatchdogActionResult:
+    bundle = build_session_read_bundle(client, action.project_id)
+    verdict = validate_action_transition("retry_with_conservative_path", task=bundle.task)
+    if not verdict["allowed"]:
+        return _rejected_transition(
+            action,
+            message="retry_with_conservative_path is not allowed from current state",
+            facts=bundle.facts,
+        )
+    template = steer_template_registry()["break_loop"]
+    try:
+        steer_body = post_steer(
+            settings.a_agent_base_url,
+            settings.a_agent_token,
+            action.project_id,
+            message=template.message,
+            reason=template.reason_code,
+            stuck_level=int((bundle.task or {}).get("stuck_level", 0) or 0),
+            timeout=settings.http_timeout_s,
+        )
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise SessionSpineUpstreamError(
+            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
+        ) from exc
+    _validate_steer_response_or_raise(steer_body)
+    return _result(
+        action,
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.CONSERVATIVE_RETRY_REQUESTED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="conservative retry requested",
         facts=bundle.facts,
     )
 
@@ -299,6 +484,16 @@ def execute_watchdog_action(
     def _execute() -> WatchdogActionResult:
         if action.action_code == ActionCode.CONTINUE_SESSION:
             return _execute_continue(action, settings=settings, client=client)
+        if action.action_code == ActionCode.PAUSE_SESSION:
+            return _execute_pause(action, client=client)
+        if action.action_code == ActionCode.RESUME_SESSION:
+            return _execute_resume_session(action, client=client)
+        if action.action_code == ActionCode.SUMMARIZE_SESSION:
+            return _execute_summarize(action, client=client)
+        if action.action_code == ActionCode.FORCE_HANDOFF:
+            return _execute_force_handoff(action, client=client)
+        if action.action_code == ActionCode.RETRY_WITH_CONSERVATIVE_PATH:
+            return _execute_retry_with_conservative_path(action, settings=settings, client=client)
         if action.action_code == ActionCode.POST_OPERATOR_GUIDANCE:
             return _execute_operator_guidance(action, settings=settings, client=client)
         if action.action_code == ActionCode.REQUEST_RECOVERY:

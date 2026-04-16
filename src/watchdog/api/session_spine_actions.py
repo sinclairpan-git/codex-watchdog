@@ -175,6 +175,174 @@ def continue_session_alias(
 
 
 @router.post(
+    "/sessions/{project_id}/actions/pause",
+    summary="Alias: pause session",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=pause_session and reuses the canonical handler."
+    ),
+)
+def pause_session_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.PAUSE_SESSION,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/resume",
+    summary="Alias: resume session",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=resume_session and folds top-level mode/handoff_summary "
+        "fields into canonical action arguments."
+    ),
+)
+def resume_session_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.RESUME_SESSION,
+        project_id=project_id,
+        body=body,
+        top_level_argument_keys=("mode", "handoff_summary"),
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/summarize",
+    summary="Alias: summarize session",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=summarize_session and reuses the canonical handler."
+    ),
+)
+def summarize_session_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.SUMMARIZE_SESSION,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/force-handoff",
+    summary="Alias: force handoff",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=force_handoff and reuses the canonical handler."
+    ),
+)
+def force_handoff_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.FORCE_HANDOFF,
+        project_id=project_id,
+        body=body,
+        top_level_argument_keys=("reason",),
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/retry-with-conservative-path",
+    summary="Alias: retry with conservative path",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=retry_with_conservative_path and reuses the canonical handler."
+    ),
+)
+def retry_with_conservative_path_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: AControlAgentClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.RETRY_WITH_CONSERVATIVE_PATH,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+    )
+
+
+@router.post(
     "/sessions/{project_id}/actions/request-recovery",
     summary="Alias: request recovery availability",
     description=(

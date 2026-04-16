@@ -10,6 +10,11 @@ class _BrainModel(BaseModel):
 class DecisionIntent(_BrainModel):
     intent: str = Field(min_length=1)
     rationale: str | None = None
+    provider: str = Field(default="resident_orchestrator", min_length=1)
+    model: str = Field(default="rule-based-brain", min_length=1)
+    prompt_schema_ref: str = Field(default="prompt:none", min_length=1)
+    output_schema_ref: str = Field(default="schema:decision-trace-v1", min_length=1)
+    provider_request_id: str | None = None
 
 
 class DecisionPacketInput(_BrainModel):
@@ -66,4 +71,3 @@ class FutureWorkerTraceRef(_BrainModel):
     retrieval_handles: list[str] = Field(default_factory=list)
     distilled_summary_ref: str = Field(min_length=1)
     decision_trace_ref: str = Field(min_length=1)
-

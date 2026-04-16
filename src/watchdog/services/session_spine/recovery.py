@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+from watchdog.services.memory_hub.models import ContextQualitySnapshot
+from watchdog.services.memory_hub.service import MemoryHubService
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
@@ -29,6 +31,7 @@ class RecoveryExecutionOutcome:
     handoff: dict[str, Any] | None = None
     resume: dict[str, Any] | None = None
     resume_error: str | None = None
+    memory_advisory_context: dict[str, Any] | None = None
 
 
 def _control_link_error(message: str) -> SessionSpineUpstreamError:
@@ -72,22 +75,134 @@ def _load_task_or_raise(
     raise _control_link_error("数据格式异常")
 
 
+def _memory_quality_snapshot() -> ContextQualitySnapshot:
+    return ContextQualitySnapshot(
+        key_fact_recall=0.8,
+        irrelevant_summary_precision=0.8,
+        token_budget_utilization=0.4,
+        expansion_miss_rate=0.1,
+    )
+
+
+def _memory_source_ref(payload: dict[str, Any]) -> str | None:
+    packet_inputs = payload.get("packet_inputs")
+    if isinstance(packet_inputs, dict):
+        refs = packet_inputs.get("refs")
+        if isinstance(refs, list):
+            for ref in refs:
+                if not isinstance(ref, dict):
+                    continue
+                source_ref = str(ref.get("source_ref") or "").strip()
+                if source_ref:
+                    return source_ref
+    skills = payload.get("skills")
+    if isinstance(skills, list):
+        for skill in skills:
+            if not isinstance(skill, dict):
+                continue
+            source_ref = str(skill.get("source_ref") or "").strip()
+            if source_ref:
+                return source_ref
+    return None
+
+
+def _session_truth(
+    *,
+    project_id: str,
+    session_id: str,
+    task: dict[str, Any],
+    session_service: SessionService | None,
+) -> dict[str, object]:
+    truth: dict[str, object] = {
+        "status": str(task.get("status") or ""),
+        "activity_phase": str(task.get("phase") or ""),
+    }
+    if session_service is None:
+        return truth
+    contracts = GoalContractService(session_service)
+    contract = contracts.get_current_contract(
+        project_id=project_id,
+        session_id=session_id,
+    )
+    if contract is not None and contract.current_phase_goal:
+        truth["current_phase_goal"] = contract.current_phase_goal
+    return truth
+
+
+def _build_memory_advisory_context(
+    *,
+    project_id: str,
+    task: dict[str, Any],
+    session_service: SessionService | None,
+    memory_hub_service: MemoryHubService | None,
+) -> dict[str, Any] | None:
+    session_id = f"session:{project_id}"
+    service = memory_hub_service or MemoryHubService()
+    try:
+        payload = service.build_runtime_advisory_context(
+            query=f"resume {project_id}",
+            project_id=project_id,
+            session_id=session_id,
+            limit=4,
+            quality=_memory_quality_snapshot(),
+            session_truth=_session_truth(
+                project_id=project_id,
+                session_id=session_id,
+                task=task,
+                session_service=session_service,
+            ),
+        )
+    except Exception:
+        if session_service is not None:
+            session_service.record_memory_unavailable_degraded(
+                project_id=project_id,
+                session_id=session_id,
+                memory_scope="project",
+                fallback_mode="session_service_runtime_snapshot",
+                degradation_reason="memory_hub_unreachable",
+            )
+        return None
+    degradation = payload.get("degradation")
+    if (
+        session_service is not None
+        and isinstance(degradation, dict)
+        and str(degradation.get("reason_code") or "") == "memory_conflict_detected"
+    ):
+        session_service.record_memory_conflict_detected(
+            project_id=project_id,
+            session_id=session_id,
+            memory_scope="project",
+            conflict_reason="runtime_advisory_conflict",
+            resolution=str(degradation.get("resolution") or "session_service_truth"),
+            source_ref=_memory_source_ref(payload),
+        )
+    return payload
+
+
 def perform_recovery_execution(
     project_id: str,
     *,
     settings: Settings,
     client: AControlAgentClient,
     session_service: SessionService | None = None,
+    memory_hub_service: MemoryHubService | None = None,
 ) -> RecoveryExecutionOutcome:
     task = _load_task_or_raise(client, project_id)
     facts = build_fact_records(project_id=project_id, task=task, approvals=[])
     context_pressure = str(task.get("context_pressure") or "unknown")
+    memory_advisory_context = _build_memory_advisory_context(
+        project_id=project_id,
+        task=task,
+        session_service=session_service,
+        memory_hub_service=memory_hub_service,
+    )
     if context_pressure != "critical":
         return RecoveryExecutionOutcome(
             project_id=project_id,
             context_pressure=context_pressure,
             action="noop",
             facts=facts,
+            memory_advisory_context=memory_advisory_context,
         )
 
     try:
@@ -105,6 +220,7 @@ def perform_recovery_execution(
             action="handoff_triggered",
             facts=facts,
             handoff=handoff,
+            memory_advisory_context=memory_advisory_context,
         )
         _record_recovery_truth(
             project_id=project_id,
@@ -129,6 +245,7 @@ def perform_recovery_execution(
             facts=facts,
             handoff=handoff,
             resume_error="resume_call_failed",
+            memory_advisory_context=memory_advisory_context,
         )
         _record_recovery_truth(
             project_id=project_id,
@@ -147,6 +264,7 @@ def perform_recovery_execution(
             facts=facts,
             handoff=handoff,
             resume_error="resume_call_failed",
+            memory_advisory_context=memory_advisory_context,
         )
         _record_recovery_truth(
             project_id=project_id,
@@ -166,6 +284,7 @@ def perform_recovery_execution(
             facts=facts,
             handoff=handoff,
             resume_error="resume_call_failed",
+            memory_advisory_context=memory_advisory_context,
         )
         _record_recovery_truth(
             project_id=project_id,
@@ -183,6 +302,7 @@ def perform_recovery_execution(
         facts=facts,
         handoff=handoff,
         resume=dict(resume),
+        memory_advisory_context=memory_advisory_context,
     )
     _record_recovery_truth(
         project_id=project_id,

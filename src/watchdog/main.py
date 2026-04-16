@@ -29,6 +29,7 @@ from watchdog.services.approvals.service import (
     expire_pending_canonical_approvals,
 )
 from watchdog.services.delivery.http_client import OpenClawDeliveryClient
+from watchdog.services.delivery.feishu_client import FeishuAppDeliveryClient
 from watchdog.services.delivery.openclaw_webhook_store import (
     OpenClawWebhookEndpointStore,
     openclaw_webhook_endpoint_state_path,
@@ -36,6 +37,14 @@ from watchdog.services.delivery.openclaw_webhook_store import (
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
+from watchdog.services.brain.service import BrainDecisionService
+from watchdog.services.memory_hub.ingest_queue import (
+    MemoryIngestEnqueuer,
+    MemoryIngestEnqueueFailureStore,
+    MemoryIngestQueueStore,
+)
+from watchdog.services.memory_hub.ingest_worker import MemoryIngestWorker
+from watchdog.services.memory_hub.service import MemoryHubService
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_service import SessionService, SessionServiceStore
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
@@ -56,6 +65,22 @@ def _run_background_step(step_name: str, fn, /, *args, **kwargs):
     except Exception:
         logger.exception("watchdog background step failed: %s", step_name)
         return None
+
+
+def _build_delivery_client(
+    *,
+    settings: Settings,
+    openclaw_endpoint_store: OpenClawWebhookEndpointStore,
+):
+    transport = str(settings.delivery_transport or "").strip()
+    if transport == "feishu-app":
+        return FeishuAppDeliveryClient(settings=settings)
+    if transport == "openclaw":
+        return OpenClawDeliveryClient(
+            settings=settings,
+            endpoint_store=openclaw_endpoint_store,
+        )
+    raise ValueError(f"unsupported delivery_transport: {transport or '<empty>'}")
 
 
 async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
@@ -115,6 +140,11 @@ def _drain_delivery_outbox(app: FastAPI, *, now: datetime | None = None) -> None
             break
 
 
+def _drain_memory_ingest_queue(app: FastAPI) -> None:
+    while app.state.memory_ingest_worker.process_next():
+        continue
+
+
 async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
     interval_seconds = max(
         float(app.state.settings.session_spine_refresh_interval_seconds),
@@ -137,6 +167,20 @@ async def _run_delivery_loop(app: FastAPI) -> None:
         await _run_background_step_async(
             "delivery_drain_outbox",
             _drain_delivery_outbox,
+            app,
+        )
+        await asyncio.sleep(interval_seconds)
+
+
+async def _run_memory_ingest_loop(app: FastAPI) -> None:
+    interval_seconds = max(
+        float(app.state.settings.memory_ingest_worker_interval_seconds),
+        0.01,
+    )
+    while True:
+        await _run_background_step_async(
+            "memory_ingest_drain_queue",
+            _drain_memory_ingest_queue,
             app,
         )
         await asyncio.sleep(interval_seconds)
@@ -175,6 +219,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         session_spine_loop_task: asyncio.Task[None] | None = None
         resident_orchestrator_task: asyncio.Task[None] | None = None
+        memory_ingest_loop_task: asyncio.Task[None] | None = None
         delivery_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
             await _run_background_step_async(
@@ -186,7 +231,17 @@ def create_app(
                 "session_spine_runtime.refresh_all",
                 app.state.session_spine_runtime.refresh_all,
             )
+            await _run_background_step_async(
+                "memory_ingest_queue.recover_inflight",
+                app.state.memory_ingest_queue_store.recover_inflight,
+            )
+            await _run_background_step_async(
+                "memory_ingest_drain_queue",
+                _drain_memory_ingest_queue,
+                app,
+            )
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
+            memory_ingest_loop_task = asyncio.create_task(_run_memory_ingest_loop(app))
             now = datetime.now(UTC)
             await _run_background_step_async(
                 "resident_orchestrator.orchestrate_all",
@@ -212,6 +267,10 @@ def create_app(
                 resident_orchestrator_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await resident_orchestrator_task
+            if memory_ingest_loop_task is not None:
+                memory_ingest_loop_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await memory_ingest_loop_task
             if delivery_loop_task is not None:
                 delivery_loop_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -238,8 +297,26 @@ def create_app(
     app.state.session_spine_store = SessionSpineStore(
         Path(settings.data_dir) / "session_spine.json"
     )
+    app.state.memory_hub_service = MemoryHubService.from_data_dir(settings.data_dir)
+    app.state.memory_ingest_queue_store = MemoryIngestQueueStore(
+        Path(settings.data_dir) / "memory_ingest_queue.json"
+    )
+    app.state.memory_ingest_enqueue_failure_store = MemoryIngestEnqueueFailureStore(
+        Path(settings.data_dir) / "memory_ingest_enqueue_failures.json"
+    )
+    app.state.memory_ingest_enqueuer = MemoryIngestEnqueuer(
+        queue_store=app.state.memory_ingest_queue_store,
+        failure_store=app.state.memory_ingest_enqueue_failure_store,
+    )
     app.state.session_service = SessionService(
-        SessionServiceStore(Path(settings.data_dir) / "session_service.json")
+        SessionServiceStore(Path(settings.data_dir) / "session_service.json"),
+        event_listeners=[app.state.memory_ingest_enqueuer.enqueue_event],
+    )
+    app.state.memory_ingest_worker = MemoryIngestWorker(
+        store=app.state.memory_ingest_queue_store,
+        memory_hub_service=app.state.memory_hub_service,
+        max_attempts=settings.memory_ingest_max_attempts,
+        initial_backoff_seconds=settings.memory_ingest_initial_backoff_seconds,
     )
     app.state.command_lease_store = CommandLeaseStore(
         Path(settings.data_dir) / "command_leases.json",
@@ -251,9 +328,9 @@ def create_app(
     app.state.openclaw_webhook_endpoint_store = OpenClawWebhookEndpointStore(
         openclaw_webhook_endpoint_state_path(settings)
     )
-    app.state.delivery_client = OpenClawDeliveryClient(
+    app.state.delivery_client = _build_delivery_client(
         settings=settings,
-        endpoint_store=app.state.openclaw_webhook_endpoint_store,
+        openclaw_endpoint_store=app.state.openclaw_webhook_endpoint_store,
     )
     app.state.delivery_worker = DeliveryWorker(
         store=app.state.delivery_outbox_store,
@@ -281,6 +358,11 @@ def create_app(
         state_store=app.state.resident_orchestration_state_store,
         session_service=app.state.session_service,
         future_worker_service=app.state.future_worker_service,
+        brain_service=BrainDecisionService(
+            settings=settings,
+            memory_hub_service=app.state.memory_hub_service,
+            session_service=app.state.session_service,
+        ),
     )
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(events_proxy_routes.router, prefix="/api/v1")
@@ -305,6 +387,7 @@ def create_app(
         return {
             "status": summary.status,
             "active_alerts": summary.active_alerts,
+            "release_gate_blockers": len(summary.release_gate_blockers),
         }
 
     return app

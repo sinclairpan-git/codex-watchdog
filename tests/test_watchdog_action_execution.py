@@ -328,3 +328,13 @@ def test_create_app_recovery_execution_preserves_handoff_provenance(
     frozen_events = app.state.session_service.list_events(event_type="handoff_packet_frozen")
     assert len(frozen_events) == 1
     assert frozen_events[0].related_ids["source_packet_id"] == "packet:handoff-v9"
+
+
+def test_runtime_action_extensions_are_stable() -> None:
+    from watchdog.contracts.session_spine.enums import ActionCode
+
+    assert ActionCode.PAUSE_SESSION == "pause_session"
+    assert ActionCode.RESUME_SESSION == "resume_session"
+    assert ActionCode.SUMMARIZE_SESSION == "summarize_session"
+    assert ActionCode.FORCE_HANDOFF == "force_handoff"
+    assert ActionCode.RETRY_WITH_CONSERVATIVE_PATH == "retry_with_conservative_path"

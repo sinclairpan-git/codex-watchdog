@@ -27,6 +27,7 @@ class FakeAClient:
         self._tasks = [dict(row) for row in tasks or [task]]
         self._approvals = [dict(approval) for approval in approvals or []]
         self.handoff_calls: list[tuple[str, str]] = []
+        self.pause_calls: list[str] = []
         self.resume_calls: list[tuple[str, str, str]] = []
         self.workspace_activity_calls: list[tuple[str, int]] = []
 
@@ -92,6 +93,13 @@ class FakeAClient:
         return {
             "success": True,
             "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    def trigger_pause(self, project_id: str) -> dict[str, object]:
+        self.pause_calls.append(project_id)
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "paused"},
         }
 
     def trigger_resume(
@@ -768,6 +776,102 @@ def test_adapter_returns_unsupported_intent_for_unknown_request(tmp_path: Path) 
     reply = adapter.handle_intent("summon_supervisor", project_id="repo-a")
 
     assert reply.reply_code == "unsupported_intent"
+
+
+def test_adapter_routes_natural_language_progress_message_to_canonical_reply(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_message(
+        "现在进展",
+        project_id="repo-a",
+    )
+
+    assert reply.intent_code == "get_progress"
+    assert reply.reply_code == "task_progress_view"
+    assert reply.progress is not None
+    assert reply.progress.project_id == "repo-a"
+
+
+def test_adapter_routes_natural_language_pause_message_to_canonical_action(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_message(
+        "暂停",
+        project_id="repo-a",
+        idempotency_key="idem-pause-1",
+    )
+
+    assert reply.intent_code == "pause_session"
+    assert reply.reply_code == "action_result"
+    assert reply.action_result is not None
+    assert reply.action_result.effect == "session_paused"
+    assert adapter._client.pause_calls == ["repo-a"]
+
+
+def test_adapter_routes_natural_language_message_by_native_thread(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_message(
+        "任务状态",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+
+    assert reply.intent_code == "get_session"
+    assert reply.reply_code == "session_projection"
+    assert reply.session is not None
+    assert reply.session.project_id == "repo-a"
+    assert reply.session.native_thread_id == "thr_native_1"
 
 
 def test_adapter_lists_stable_session_events(tmp_path: Path) -> None:

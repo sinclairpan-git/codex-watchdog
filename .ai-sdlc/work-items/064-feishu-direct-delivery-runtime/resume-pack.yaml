@@ -1,0 +1,15 @@
+work_item:
+  id: 064-feishu-direct-delivery-runtime
+  spec_dir: specs/064-feishu-direct-delivery-runtime
+  branch: codex/064-feishu-direct-delivery-runtime
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: open next residual work item after final expert review
+artifacts:
+  - specs/064-feishu-direct-delivery-runtime/spec.md
+  - specs/064-feishu-direct-delivery-runtime/plan.md
+  - specs/064-feishu-direct-delivery-runtime/tasks.md
+  - .ai-sdlc/work-items/064-feishu-direct-delivery-runtime/execution-plan.yaml
+docs_baseline_ref: 4ea5aa0aff927bab628826b2dec7d89a2d1cef2ea423d46e8c3e1ab7153eb464
+timestamp: '2026-04-16T12:23:57Z'

@@ -9,12 +9,14 @@ from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.store import DeliveryOutboxRecord
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.settings import Settings
+from watchdog.storage.action_receipts import receipt_key
 
 
 class FakeAClient:
     def __init__(self) -> None:
         self.decision_calls: list[tuple[str, str, str, str]] = []
         self.handoff_calls: list[tuple[str, str]] = []
+        self.pause_calls: list[str] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         return {
@@ -33,6 +35,35 @@ class FakeAClient:
                 "last_progress_at": "2026-04-07T00:10:00Z",
             },
         }
+
+    def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+        return {
+            "success": True,
+            "data": {
+                "project_id": "repo-a",
+                "thread_id": thread_id,
+                "status": "running",
+                "phase": "approval",
+                "pending_approval": True,
+                "last_summary": "waiting for approval",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-07T00:10:00Z",
+            },
+        }
+
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ):
+        _ = (status, project_id, decided_by, callback_status)
+        return []
 
     def decide_approval(
         self,
@@ -63,6 +94,13 @@ class FakeAClient:
         return {
             "success": True,
             "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    def trigger_pause(self, project_id: str) -> dict[str, object]:
+        self.pause_calls.append(project_id)
+        return {
+            "success": True,
+            "data": {"project_id": project_id, "status": "paused"},
         }
 
     def trigger_resume(
@@ -333,3 +371,107 @@ def test_feishu_control_rejects_superseded_context_and_audits_it(tmp_path: Path)
         session_id=approval.session_id,
         event_type="human_override_recorded",
     ) == []
+
+
+def test_feishu_control_command_request_routes_progress_query_to_canonical_reply(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-1",
+                "interaction_family_id": "family-command-1",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-1",
+                "project_id": "repo-a",
+                "command_text": "现在进展",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["intent_code"] == "get_progress"
+    assert response.json()["data"]["reply_code"] == "task_progress_view"
+    assert response.json()["data"]["progress"]["project_id"] == "repo-a"
+
+
+def test_feishu_control_command_request_routes_pause_and_persists_receipt(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-2",
+                "interaction_family_id": "family-command-2",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-2",
+                "project_id": "repo-a",
+                "command_text": "暂停",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["intent_code"] == "pause_session"
+    assert response.json()["data"]["action_result"]["effect"] == "session_paused"
+    assert a_client.pause_calls == ["repo-a"]
+    stored = app.state.action_receipt_store.get(
+        receipt_key(
+            action_code="pause_session",
+            project_id="repo-a",
+            idempotency_key="feishu:req-feishu-command-2",
+        )
+    )
+    assert stored is not None
+    assert stored.effect == "session_paused"
+
+
+def test_feishu_control_command_request_can_route_by_native_thread(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-3",
+                "interaction_family_id": "family-command-3",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-3",
+                "native_thread_id": "thr_native_1",
+                "command_text": "任务状态",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["intent_code"] == "get_session"
+    assert response.json()["data"]["reply_code"] == "session_projection"
+    assert response.json()["data"]["session"]["project_id"] == "repo-a"
+    assert response.json()["data"]["session"]["native_thread_id"] == "thr_native_1"

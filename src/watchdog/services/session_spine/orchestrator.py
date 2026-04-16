@@ -132,7 +132,9 @@ class ResidentOrchestrator:
         self._state_store = state_store
         self._session_service = session_service
         self._future_worker_service = future_worker_service
-        self._brain_service = brain_service or BrainDecisionService()
+        self._brain_service = brain_service or BrainDecisionService(
+            session_service=self._session_service,
+        )
         self._replay_service = replay_service or DecisionReplayService()
         self._decision_validator = decision_validator or DecisionValidator()
         self._release_gate_evaluator = release_gate_evaluator or ReleaseGateEvaluator()
@@ -772,7 +774,7 @@ class ResidentOrchestrator:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
         decision_trace = self._decision_trace_for_intent(
             record,
-            brain_intent=brain_intent.intent,
+            brain_intent=brain_intent,
             action_ref=action_ref,
             goal_contract_version=self._goal_contract_version_for_record(record),
         )
@@ -949,7 +951,7 @@ class ResidentOrchestrator:
         self,
         record: PersistedSessionRecord,
         *,
-        brain_intent: str,
+        brain_intent: DecisionIntent,
         action_ref: str,
         goal_contract_version: str,
     ) -> DecisionTrace:
@@ -963,7 +965,7 @@ class ResidentOrchestrator:
             "project_id": record.project_id,
             "session_id": record.thread_id,
             "fact_snapshot_version": record.fact_snapshot_version,
-            "brain_intent": brain_intent,
+            "brain_intent": brain_intent.intent,
             "action_ref": action_ref,
             "goal_contract_version": goal_contract_version,
             "session_event_cursor": event_cursor,
@@ -977,10 +979,10 @@ class ResidentOrchestrator:
             policy_ruleset_hash=f"sha256:{hashlib.sha256(b'policy-v1').hexdigest()[:16]}",
             memory_packet_input_ids=[],
             memory_packet_input_hashes=[],
-            provider="resident_orchestrator",
-            model="rule-based-brain",
-            prompt_schema_ref="prompt:none",
-            output_schema_ref="schema:decision-trace-v1",
+            provider=brain_intent.provider,
+            model=brain_intent.model,
+            prompt_schema_ref=brain_intent.prompt_schema_ref,
+            output_schema_ref=brain_intent.output_schema_ref,
             approval_read=self._approval_read_snapshot_for_session(record),
         )
 

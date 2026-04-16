@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from watchdog.services.session_service.models import (
     RecoveryTransactionRecord,
@@ -18,6 +19,7 @@ _TERMINAL_RECOVERY_TRANSACTION_STATUSES = {
     "failed_retryable",
     "failed_manual",
 }
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:
@@ -59,8 +61,14 @@ class RecordedRecoveryExecution:
 
 
 class SessionService:
-    def __init__(self, store: SessionServiceStore) -> None:
+    def __init__(
+        self,
+        store: SessionServiceStore,
+        *,
+        event_listeners: list[Callable[[SessionEventRecord], None]] | None = None,
+    ) -> None:
         self._store = store
+        self._event_listeners = list(event_listeners or [])
 
     @classmethod
     def from_data_dir(cls, data_dir: str | Path) -> SessionService:
@@ -646,7 +654,7 @@ class SessionService:
         payload: dict[str, Any],
     ) -> SessionEventRecord:
         event_id = _stable_id("event", correlation_id, session_id, event_type)
-        return self._store.append_event(
+        record = self._store.append_event(
             SessionEventRecord(
                 event_id=event_id,
                 project_id=project_id,
@@ -660,6 +668,12 @@ class SessionService:
                 payload=payload,
             )
         )
+        for listener in self._event_listeners:
+            try:
+                listener(record)
+            except Exception:
+                logger.exception("session event listener failed: %s", event_type)
+        return record
 
     def _assert_no_conflicting_active_recovery_transaction(
         self,

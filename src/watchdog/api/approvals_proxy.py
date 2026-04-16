@@ -20,6 +20,10 @@ def _a_headers(settings: Settings) -> dict[str, str]:
     return {"Authorization": f"Bearer {settings.a_agent_token}"}
 
 
+def _a_client(settings: Settings) -> httpx.Client:
+    return httpx.Client(timeout=settings.http_timeout_s, trust_env=False)
+
+
 @router.get("/approvals")
 def list_approvals_watchdog(
     request: Request,
@@ -33,10 +37,10 @@ def list_approvals_watchdog(
     if status:
         params["status"] = status
     try:
-        with httpx.Client(timeout=settings.http_timeout_s) as client:
+        with _a_client(settings) as client:
             r = client.get(url, headers=_a_headers(settings), params=params)
             body = r.json()
-    except httpx.RequestError:
+    except (httpx.RequestError, RuntimeError, OSError):
         return err(
             rid,
             {
@@ -62,10 +66,10 @@ def decision_watchdog(
     rid = request.headers.get("x-request-id")
     url = f"{settings.a_agent_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
     try:
-        with httpx.Client(timeout=settings.http_timeout_s) as client:
+        with _a_client(settings) as client:
             r = client.post(url, json=body, headers=_a_headers(settings))
             out = r.json()
-    except httpx.RequestError:
+    except (httpx.RequestError, RuntimeError, OSError):
         return err(
             rid,
             {

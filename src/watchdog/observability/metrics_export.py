@@ -2,12 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from a_control_agent.storage.tasks_store import TaskStore
 from a_control_agent.observability.audit_aggregate import aggregate_watchdog_audit_actions
 from a_control_agent.observability.prometheus_render import render_gauge, render_labeled_counter
-from watchdog.api.ops import build_ops_summary
+from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus
+from watchdog.api.ops import _latest_approval_records, build_ops_summary
+from watchdog.services.approvals.service import CanonicalApprovalStore
 from watchdog.settings import Settings
+from watchdog.storage.action_receipts import ActionReceiptStore
 
 PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def _task_store_for_metrics(data_dir: Path) -> TaskStore:
+    canonical_path = data_dir / "tasks_store.json"
+    if canonical_path.exists():
+        return TaskStore(canonical_path)
+    return TaskStore(data_dir / "tasks.json")
 
 
 def _render_labeled_gauge(name: str, help_text: str, *, label_key: str, values: dict[str, float]) -> str:
@@ -34,9 +45,29 @@ def build_watchdog_metrics_text(
     release_gate_blocker_vals: dict[str, float] = {}
     future_worker_status_vals: dict[str, float] = {}
     future_worker_blocked_vals: dict[str, float] = {}
+    task_records_total = 0.0
+    pending_approval_total = 0.0
+    recovery_receipts_total = 0.0
     if data_dir is not None and settings is not None:
         summary = build_ops_summary(data_dir=data_dir, settings=settings)
         alert_vals = {item.alert_code: float(item.count) for item in summary.alerts}
+        task_records_total = float(_task_store_for_metrics(data_dir).count_tasks())
+        approvals = CanonicalApprovalStore(data_dir / "canonical_approvals.json").list_records()
+        pending_approval_total = float(
+            sum(
+                1
+                for approval in _latest_approval_records(approvals)
+                if approval.status == "pending"
+            )
+        )
+        recovery_receipts_total = float(
+            sum(
+                1
+                for _, result in ActionReceiptStore(data_dir / "action_receipts.json").list_items()
+                if result.action_code == ActionCode.EXECUTE_RECOVERY
+                and result.action_status == ActionStatus.COMPLETED
+            )
+        )
         for blocker in summary.release_gate_blockers:
             release_gate_blocker_vals[blocker.reason] = (
                 release_gate_blocker_vals.get(blocker.reason, 0.0) + 1.0
@@ -59,6 +90,21 @@ def build_watchdog_metrics_text(
             "watchdog_auto_steer_total",
             "Automatic steer injections from Watchdog (action steer_injected).",
             float(counts.get("steer_injected", 0)),
+        ),
+        render_gauge(
+            "watchdog_task_records_total",
+            "Persisted task records visible to Watchdog observability.",
+            task_records_total,
+        ),
+        render_gauge(
+            "watchdog_approval_pending_total",
+            "Pending canonical approvals visible to Watchdog observability.",
+            pending_approval_total,
+        ),
+        render_gauge(
+            "watchdog_recovery_receipts_total",
+            "Completed execute_recovery receipts visible to Watchdog observability.",
+            recovery_receipts_total,
         ),
         _render_labeled_gauge(
             "watchdog_ops_alert_active",

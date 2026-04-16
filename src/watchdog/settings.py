@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
     openclaw_webhook_token: str = "dev-token-change-me"
     openclaw_webhook_endpoint_state_file: str | None = None
+    delivery_transport: str = "openclaw"
+    feishu_base_url: str = "https://open.feishu.cn"
+    feishu_app_id: str | None = None
+    feishu_app_secret: str | None = None
+    feishu_receive_id: str | None = None
+    feishu_receive_id_type: str = "chat_id"
+    memory_ingest_initial_backoff_seconds: float = 5.0
+    memory_ingest_max_attempts: int = 3
+    memory_ingest_worker_interval_seconds: float = 5.0
     delivery_worker_interval_seconds: float = 5.0
     delivery_initial_backoff_seconds: float = 5.0
     delivery_max_attempts: int = 3
@@ -38,6 +47,10 @@ class Settings(BaseSettings):
     release_gate_memory_provider_adapter_hash: str = "memory:abc"
     release_gate_certification_packet_corpus_ref: str = "tests/fixtures/release_gate_packets.jsonl"
     release_gate_shadow_decision_ledger_ref: str = "tests/fixtures/release_gate_shadow_runs.jsonl"
+    brain_provider_name: str = "resident_orchestrator"
+    brain_provider_base_url: str | None = None
+    brain_provider_api_key: str | None = None
+    brain_provider_model: str | None = None
 
     def build_runtime_contract(
         self,

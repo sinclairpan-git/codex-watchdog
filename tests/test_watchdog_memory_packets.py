@@ -113,3 +113,151 @@ def test_skill_registry_prefers_local_source_and_preview_contracts_stay_disabled
     assert [item.source_ref for item in metadata] == ["skill:local:python-debugging"]
     assert metadata[0].read_only is False
     assert all(contract.enabled is False for contract in preview_contracts.values())
+
+
+def test_ai_autosdlc_cursor_preview_returns_stage_aware_packet_when_enabled() -> None:
+    models = importlib.import_module("watchdog.services.memory_hub.models")
+    service_module = importlib.import_module("watchdog.services.memory_hub.service")
+    skills_module = importlib.import_module("watchdog.services.memory_hub.skills")
+
+    class FakeIndexer:
+        def search(
+            self,
+            query: str,
+            *,
+            project_id: str | None = None,
+            session_id: str | None = None,
+            limit: int | None = None,
+        ):
+            assert query == "补齐 release gate"
+            assert project_id == "repo-a"
+            assert session_id is None
+            assert limit == 4
+            return [
+                models.PacketInputRef(
+                    ref_id="ref-1",
+                    summary="recent release gate recovery",
+                    source_ref="archive:repo-a:release-gate-1",
+                )
+            ]
+
+    registry = skills_module.SkillRegistry(
+        records=[
+            skills_module.SkillMetadata(
+                name="pytest",
+                short_description="python test runner",
+                trust_level="trusted",
+                security_verdict="pass",
+                content_hash="hash:pytest-v1",
+                installed_version="8.0.0",
+                last_scanned_at="2026-04-15T00:00:00Z",
+                source_ref="skill:local:pytest",
+                source_kind="local",
+            )
+        ]
+    )
+    service = service_module.MemoryHubService(
+        indexer=FakeIndexer(),
+        skill_registry=registry,
+        preview_contract_overrides={"ai-autosdlc-cursor": True},
+    )
+    service.upsert_resident_memory(
+        project_id="repo-a",
+        memory_key="goal.current",
+        summary="补齐 release gate",
+        source_ref="session:event:goal-1",
+        source_scope="project-local",
+        source_runtime="watchdog",
+    )
+
+    response = service.ai_autosdlc_cursor(
+        request=models.AIAutoSDLCCursorRequest(
+            project_id="repo-a",
+            repo_fingerprint="fingerprint:repo-a",
+            stage="verification",
+            task_kind="closeout",
+            capability_request="release-gate",
+            active_goal="补齐 release gate",
+            current_phase_goal="补齐 release gate",
+            requested_packet_kind="stage-aware",
+        ),
+        quality=models.ContextQualitySnapshot(
+            key_fact_recall=0.9,
+            irrelevant_summary_precision=0.8,
+            token_budget_utilization=0.4,
+            expansion_miss_rate=0.1,
+        ),
+    )
+
+    assert response.enabled is True
+    assert response.goal_alignment.status == "aligned"
+    assert response.goal_alignment.mode == "advisory"
+    assert response.packet_inputs["refs"][0]["source_ref"] == "archive:repo-a:release-gate-1"
+    assert response.resident_capsule[0]["summary"] == "补齐 release gate"
+    assert response.skills[0]["name"] == "pytest"
+
+
+def test_ai_autosdlc_cursor_preview_downgrades_conflicting_stage_goal_to_reference_only() -> None:
+    models = importlib.import_module("watchdog.services.memory_hub.models")
+    service_module = importlib.import_module("watchdog.services.memory_hub.service")
+
+    service = service_module.MemoryHubService(
+        preview_contract_overrides={"ai-autosdlc-cursor": True},
+    )
+
+    response = service.ai_autosdlc_cursor(
+        request=models.AIAutoSDLCCursorRequest(
+            project_id="repo-a",
+            repo_fingerprint="fingerprint:repo-a",
+            stage="implementation",
+            task_kind="feature",
+            capability_request="brain-runtime",
+            active_goal="直接去改 Brain provider",
+            current_phase_goal="先补 release gate 红测",
+            requested_packet_kind="stage-aware",
+        ),
+        quality=models.ContextQualitySnapshot(
+            key_fact_recall=0.9,
+            irrelevant_summary_precision=0.8,
+            token_budget_utilization=0.4,
+            expansion_miss_rate=0.1,
+        ),
+    )
+
+    assert response.enabled is True
+    assert response.goal_alignment.status == "conflict"
+    assert response.goal_alignment.mode == "reference_only"
+    assert "直接去改 Brain provider" in response.goal_alignment.summary
+
+
+def test_ai_autosdlc_cursor_preview_without_current_goal_stays_reference_only() -> None:
+    models = importlib.import_module("watchdog.services.memory_hub.models")
+    service_module = importlib.import_module("watchdog.services.memory_hub.service")
+
+    service = service_module.MemoryHubService(
+        preview_contract_overrides={"ai-autosdlc-cursor": True},
+    )
+
+    response = service.ai_autosdlc_cursor(
+        request=models.AIAutoSDLCCursorRequest(
+            project_id="repo-a",
+            repo_fingerprint="fingerprint:repo-a",
+            stage="design",
+            task_kind="spec",
+            capability_request="memory-hub",
+            active_goal="补齐 memory hub capability",
+            current_phase_goal=None,
+            requested_packet_kind="stage-aware",
+        ),
+        quality=models.ContextQualitySnapshot(
+            key_fact_recall=0.9,
+            irrelevant_summary_precision=0.8,
+            token_budget_utilization=0.4,
+            expansion_miss_rate=0.1,
+        ),
+    )
+
+    assert response.enabled is True
+    assert response.goal_alignment.status == "missing_goal_contract"
+    assert response.goal_alignment.mode == "reference_only"
+    assert "current_phase_goal missing" in response.goal_alignment.summary

@@ -171,6 +171,28 @@ class AControlAgentClient:
                 return body
             raise RuntimeError("invalid_envelope_shape")
 
+    def trigger_pause(self, project_id: str) -> dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/pause"
+        with httpx.Client(**self._client_kwargs()) as client:
+            try:
+                resp = client.post(
+                    url,
+                    headers=self._auth_headers(),
+                    json={},
+                )
+                resp.raise_for_status()
+            except httpx.RequestError as exc:
+                raise exc
+            except httpx.HTTPError as exc:
+                raise RuntimeError("pause_http_error") from exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if isinstance(body, dict):
+                return body
+            raise RuntimeError("invalid_envelope_shape")
+
     def trigger_resume(
         self,
         project_id: str,

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.services.approvals.service import (
     ApprovalResponseStore,
     CanonicalApprovalRecord,
@@ -51,8 +52,10 @@ class FeishuControlRequest(BaseModel):
     client_request_id: str = Field(min_length=1)
     note: str = ""
     project_id: str | None = None
+    native_thread_id: str | None = None
     session_id: str | None = None
     goal_message: str | None = None
+    command_text: str | None = None
 
 
 class FeishuControlService:
@@ -83,6 +86,8 @@ class FeishuControlService:
             return self.handle_approval_response(request)
         if request.event_type == "goal_contract_bootstrap":
             return self.handle_goal_contract_bootstrap(request)
+        if request.event_type == "command_request":
+            return self.handle_command_request(request)
         raise FeishuControlError(f"unsupported event_type: {request.event_type}")
 
     def handle_approval_response(
@@ -156,6 +161,29 @@ class FeishuControlService:
             "session_id": session_id,
             "goal_contract_version": contract.version,
         }
+
+    def handle_command_request(
+        self,
+        request: FeishuControlRequest,
+    ):
+        self._assert_dm_channel(request)
+        command_text = self._require_field(request.command_text, "command_text")
+        project_id = str(request.project_id or "").strip() or None
+        native_thread_id = str(request.native_thread_id or "").strip() or None
+        if project_id is None and native_thread_id is None:
+            raise FeishuControlError("project_id or native_thread_id is required")
+        adapter = OpenClawAdapter(
+            settings=self._settings,
+            client=self._client,
+            receipt_store=self._receipt_store,
+        )
+        return adapter.handle_message(
+            command_text,
+            project_id=project_id,
+            native_thread_id=native_thread_id,
+            operator="feishu",
+            idempotency_key=f"feishu:{request.client_request_id}",
+        )
 
     def _validate_approval_contract(
         self,

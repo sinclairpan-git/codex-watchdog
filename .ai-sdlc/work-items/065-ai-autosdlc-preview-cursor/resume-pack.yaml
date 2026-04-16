@@ -1,0 +1,15 @@
+work_item:
+  id: 065-ai-autosdlc-preview-cursor
+  spec_dir: specs/065-ai-autosdlc-preview-cursor
+  branch: codex/065-ai-autosdlc-preview-cursor
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: open next residual work item after preview cursor closeout
+artifacts:
+  - specs/065-ai-autosdlc-preview-cursor/spec.md
+  - specs/065-ai-autosdlc-preview-cursor/plan.md
+  - specs/065-ai-autosdlc-preview-cursor/tasks.md
+  - .ai-sdlc/work-items/065-ai-autosdlc-preview-cursor/execution-plan.yaml
+docs_baseline_ref: 02cd902b85a0b26711a10b195331453a5064f8bce8aa72fb7f97a38dd127630d
+timestamp: '2026-04-16T12:31:58Z'

@@ -20,6 +20,11 @@ RECEIPT_INTENTS = {"get_action_receipt"}
 
 WRITE_INTENT_TO_ACTION = {
     "continue_session": ActionCode.CONTINUE_SESSION,
+    "pause_session": ActionCode.PAUSE_SESSION,
+    "resume_session": ActionCode.RESUME_SESSION,
+    "summarize_session": ActionCode.SUMMARIZE_SESSION,
+    "force_handoff": ActionCode.FORCE_HANDOFF,
+    "retry_with_conservative_path": ActionCode.RETRY_WITH_CONSERVATIVE_PATH,
     "post_operator_guidance": ActionCode.POST_OPERATOR_GUIDANCE,
     "request_recovery": ActionCode.REQUEST_RECOVERY,
     "execute_recovery": ActionCode.EXECUTE_RECOVERY,
@@ -29,3 +34,31 @@ WRITE_INTENT_TO_ACTION = {
 }
 
 ALL_SUPPORTED_INTENTS = READ_INTENTS.union(RECEIPT_INTENTS, WRITE_INTENT_TO_ACTION)
+
+NATURAL_LANGUAGE_TO_INTENT = {
+    "现在进展": "get_progress",
+    "任务进展": "get_progress",
+    "任务状态": "get_session",
+    "为什么卡住": "why_stuck",
+    "卡在哪里": "explain_blocker",
+    "审批列表": "list_pending_approvals",
+    "继续": "continue_session",
+    "暂停": "pause_session",
+    "恢复": "resume_session",
+    "总结": "summarize_session",
+    "转人工": "force_handoff",
+    "保守重试": "retry_with_conservative_path",
+    "progress": "get_progress",
+    "status": "get_session",
+    "continue": "continue_session",
+    "pause": "pause_session",
+    "resume": "resume_session",
+    "summarize": "summarize_session",
+}
+
+
+def resolve_message_to_intent(message: str) -> str | None:
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return None
+    return NATURAL_LANGUAGE_TO_INTENT.get(normalized)

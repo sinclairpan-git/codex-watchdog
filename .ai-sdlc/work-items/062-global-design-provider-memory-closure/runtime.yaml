@@ -1,0 +1,14 @@
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T625
+docs_baseline_ref: abdc78abf376ff45d7d196f08a4f858fabd2a1c63830ae050a40f5feb50dcee0
+docs_baseline_at: '2026-04-16T11:56:47Z'
+review_approval_status: pending
+review_approved_by: []
+ai_decisions_count: 2
+execution_mode: auto
+started_at: '2026-04-16T11:30:00Z'
+last_updated: '2026-04-16T11:56:47Z'
+debug_rounds: {}
+consecutive_halts: 0
