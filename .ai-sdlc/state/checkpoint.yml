@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-16T14:36:00Z'
+pipeline_last_updated: '2026-04-16T16:14:52Z'
 current_stage: completed
 feature:
-  id: 070-feishu-delivery-transport-alias
-  spec_dir: specs/070-feishu-delivery-transport-alias
-  design_branch: design/070-feishu-delivery-transport-alias
-  feature_branch: feature/070-feishu-delivery-transport-alias
-  current_branch: codex/070-feishu-delivery-transport-alias
-  docs_baseline_ref: 4594fe5362517a593ff27c4574fc632e011ac81b67331b28d3415896ebfe9a1b
-  docs_baseline_at: '2026-04-16T14:31:00Z'
+  id: 071-memory-hub-ai-autosdlc-preview-api
+  spec_dir: specs/071-memory-hub-ai-autosdlc-preview-api
+  design_branch: design/071-memory-hub-ai-autosdlc-preview-api
+  feature_branch: feature/071-memory-hub-ai-autosdlc-preview-api
+  current_branch: codex/071-memory-hub-ai-autosdlc-preview-api
+  docs_baseline_ref: 66d73e5d43b1aa6acde9cfc21ac1183bbb89ca4c514ecdd2f5e05a91cfb4f310
+  docs_baseline_at: '2026-04-16T16:14:52Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -34,8 +34,8 @@ completed_stages:
     completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 50
+ai_decisions_count: 54
 execution_mode: auto
-linked_wi_id: 070-feishu-delivery-transport-alias
+linked_wi_id: 071-memory-hub-ai-autosdlc-preview-api
 linked_plan_uri: null
-last_synced_at: '2026-04-16T14:36:00Z'
+last_synced_at: '2026-04-16T16:14:52Z'

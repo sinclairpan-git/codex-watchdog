@@ -68,8 +68,16 @@ class MemoryHubService:
         }
 
     @classmethod
-    def from_data_dir(cls, data_dir: str | Path) -> MemoryHubService:
-        return cls(store=MemoryHubStore(Path(data_dir) / "memory_hub.json"))
+    def from_data_dir(
+        cls,
+        data_dir: str | Path,
+        *,
+        preview_contract_overrides: dict[MemoryPreviewContractName, bool] | None = None,
+    ) -> MemoryHubService:
+        return cls(
+            store=MemoryHubStore(Path(data_dir) / "memory_hub.json"),
+            preview_contract_overrides=preview_contract_overrides,
+        )
 
     def supported_operations(self) -> tuple[MemoryProviderOperation, ...]:
         return ("search", "store", "manage")

@@ -1,5 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from watchdog.services.memory_hub.contracts import MemoryPreviewContractName
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WATCHDOG_")
@@ -37,6 +39,7 @@ class Settings(BaseSettings):
     delivery_worker_interval_seconds: float = 5.0
     delivery_initial_backoff_seconds: float = 5.0
     delivery_max_attempts: int = 3
+    memory_preview_ai_autosdlc_cursor_enabled: bool = False
     approval_expiration_seconds: float = 0.0
     ops_blocked_too_long_seconds: float = 900.0
     ops_approval_pending_too_long_seconds: float = 900.0
@@ -53,6 +56,11 @@ class Settings(BaseSettings):
     brain_provider_base_url: str | None = None
     brain_provider_api_key: str | None = None
     brain_provider_model: str | None = None
+
+    def build_memory_preview_contract_overrides(self) -> dict[MemoryPreviewContractName, bool]:
+        return {
+            "ai-autosdlc-cursor": bool(self.memory_preview_ai_autosdlc_cursor_enabled),
+        }
 
     def build_runtime_contract(
         self,

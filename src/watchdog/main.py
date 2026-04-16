@@ -13,6 +13,7 @@ from watchdog.api import approvals_proxy as approvals_proxy_routes
 from watchdog.api import events_proxy as events_proxy_routes
 from watchdog.api import feishu_control as feishu_control_routes
 from watchdog.api import feishu_ingress as feishu_ingress_routes
+from watchdog.api import memory_hub_preview as memory_hub_preview_routes
 from watchdog.api import metrics as metrics_routes
 from watchdog.api import openclaw_bootstrap as openclaw_bootstrap_routes
 from watchdog.api import openclaw_responses as openclaw_response_routes
@@ -298,7 +299,10 @@ def create_app(
     app.state.session_spine_store = SessionSpineStore(
         Path(settings.data_dir) / "session_spine.json"
     )
-    app.state.memory_hub_service = MemoryHubService.from_data_dir(settings.data_dir)
+    app.state.memory_hub_service = MemoryHubService.from_data_dir(
+        settings.data_dir,
+        preview_contract_overrides=settings.build_memory_preview_contract_overrides(),
+    )
     app.state.memory_ingest_queue_store = MemoryIngestQueueStore(
         Path(settings.data_dir) / "memory_ingest_queue.json"
     )
@@ -369,6 +373,7 @@ def create_app(
     app.include_router(events_proxy_routes.router, prefix="/api/v1")
     app.include_router(feishu_control_routes.router, prefix="/api/v1")
     app.include_router(feishu_ingress_routes.router, prefix="/api/v1")
+    app.include_router(memory_hub_preview_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
     app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
     app.include_router(openclaw_bootstrap_routes.router, prefix="/api/v1")
