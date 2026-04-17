@@ -25,6 +25,8 @@ formal WI，不扩主链路 product semantics。
 3. OpenAI-compatible provider 配置是否完整，且 provider wiring 仍指向既有 runtime；
 4. Memory Hub preview route 是否启用、是否返回符合 preview contract 的响应；
 5. 失败时能否快速定位是环境缺失、入口不可达，还是 contract 漂移。
+6. 在 operator 明确提供 project binding 时，Feishu official ingress 是否还能把 `/goal ...`
+   文本事件归一到 `goal_contract_bootstrap`。
 
 ## 非目标
 
@@ -85,6 +87,7 @@ uv run python scripts/watchdog_external_integration_smoke.py
   - `WATCHDOG_API_TOKEN`
 - 按能力面启用的可选输入：
   - Feishu：`WATCHDOG_FEISHU_VERIFICATION_TOKEN`
+  - Feishu callback smoke：`WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`、`WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`
   - OpenAI-compatible：`WATCHDOG_BRAIN_PROVIDER_NAME`、`WATCHDOG_BRAIN_PROVIDER_BASE_URL`、`WATCHDOG_BRAIN_PROVIDER_API_KEY`、`WATCHDOG_BRAIN_PROVIDER_MODEL`
   - Memory Hub preview：`WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED`
 
@@ -93,10 +96,12 @@ uv run python scripts/watchdog_external_integration_smoke.py
 - `all`
 - `health`
 - `feishu`
+- `feishu-control`
 - `provider`
 - `memory`
 
-目标选择用命令行参数，而不是新增环境变量。
+目标选择用命令行参数；仅 `feishu-control` 这一可选 callback smoke 会额外读取 project binding
+相关环境变量，其余 target 继续只依赖既有运行时变量。
 
 ### 3. 检查模型
 
@@ -133,6 +138,33 @@ uv run python scripts/watchdog_external_integration_smoke.py
 
 断言返回 `200` 且响应体包含原始 `challenge`。该检查只验证 Watchdog 侧 callback contract，
 不尝试模拟完整 Feishu 平台签名或真实消息流。
+
+#### 4.2.1 Feishu callback goal bootstrap smoke
+
+当 operator 显式提供：
+
+- `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`
+- `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`
+
+时，脚本允许额外执行 `feishu-control` target。该 target 仍然只调用既有入口：
+
+- `POST /api/v1/watchdog/feishu/events`
+
+但请求体改为构造一条最小的 `im.message.receive_v1` 文本事件，消息内容固定为：
+
+- `repo:<project_id> /goal <goal_message>`
+
+断言响应满足：
+
+- `accepted == true`
+- `event_type == "goal_contract_bootstrap"`
+- `data.project_id` 与输入绑定一致
+- `data.session_id` 非空；若显式提供 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`，则必须匹配
+- `data.goal_contract_version` 非空
+
+该 target 的目的，是补一条 repo-local、可回归的 callback contract smoke，验证 official ingress
+仍能把文本 DM 事件归一为正式 control request；它不是组织级真实 E2E，也不要求真实 Feishu
+后台投递消息。
 
 #### 4.3 Provider wiring smoke
 
@@ -215,6 +247,7 @@ token 做脱敏，避免把完整 secret 打到终端。
 6. provider 显式启用但配置缺失时的失败语义；
 7. Memory Hub preview 在 disabled/enabled 两种模式下的断言；
 8. 汇总输出与退出码映射。
+9. `all` 与可选 `feishu-control` target 的组合语义。
 
 测试应优先使用可注入的 HTTP client 或 transport stub，避免依赖真实网络与真实服务进程。
 

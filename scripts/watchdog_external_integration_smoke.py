@@ -27,7 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--target",
         action="append",
-        choices=("all", "health", "feishu", "provider", "memory"),
+        choices=("all", "health", "feishu", "feishu-control", "provider", "memory"),
         default=None,
         help="Select a specific smoke target. May be passed multiple times.",
     )
@@ -39,6 +39,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         data_dir=os.getenv("WATCHDOG_DATA_DIR", ".data/watchdog").strip(),
         http_timeout_s=float(os.getenv("WATCHDOG_HTTP_TIMEOUT_S", "3.0")),
         feishu_verification_token=_optional_env("WATCHDOG_FEISHU_VERIFICATION_TOKEN"),
+        feishu_control_project_id=_optional_env("WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID"),
+        feishu_control_goal_message=_optional_env("WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE"),
+        feishu_control_expected_session_id=_optional_env(
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID"
+        ),
+        feishu_control_actor_open_id=os.getenv(
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_ACTOR_OPEN_ID",
+            "ou_watchdog_smoke",
+        ).strip(),
         brain_provider_name=os.getenv(
             "WATCHDOG_BRAIN_PROVIDER_NAME",
             "resident_orchestrator",

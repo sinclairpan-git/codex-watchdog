@@ -148,6 +148,15 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         ),
     ),
     DocContractCheck(
+        name="env_example_covers_feishu_control_smoke",
+        path=WATCHDOG_ENV_EXAMPLE,
+        must_contain=(
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID",
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE",
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID",
+        ),
+    ),
+    DocContractCheck(
         name="getting_started_covers_feishu_official_ingress",
         path=GETTING_STARTED_DOC,
         must_contain=(
@@ -183,6 +192,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "scripts/watchdog_external_integration_smoke.py",
             "uv run python scripts/watchdog_external_integration_smoke.py",
             "--target feishu",
+            "--target feishu-control",
             "--target provider",
             "--target memory",
         ),
@@ -195,6 +205,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "uv run python scripts/watchdog_external_integration_smoke.py",
             "WATCHDOG_BASE_URL",
             "WATCHDOG_API_TOKEN",
+            "--target feishu-control",
         ),
     ),
     DocContractCheck(

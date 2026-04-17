@@ -63,12 +63,27 @@ def _record_compatibility_receipt(
     approval,
     session_service,
 ) -> None:
+    correlation_id = (
+        f"corr:notification:{approval.envelope_id}:receipt:{request.client_request_id}"
+    )
+    existing = [
+        event
+        for event in session_service.list_events(
+            session_id=approval.session_id,
+            event_type="notification_receipt_recorded",
+        )
+        if event.correlation_id == correlation_id
+    ]
+    if existing:
+        return
+    received_at = utc_now_iso()
     session_service.record_event(
         event_type="notification_receipt_recorded",
         project_id=approval.project_id,
         session_id=approval.session_id,
-        correlation_id=f"corr:notification:{approval.envelope_id}:receipt:{request.client_request_id}",
+        correlation_id=correlation_id,
         causation_id=request.client_request_id,
+        occurred_at=received_at,
         related_ids={
             "approval_id": approval.approval_id,
             "decision_id": approval.decision.decision_id,
@@ -80,7 +95,7 @@ def _record_compatibility_receipt(
             "channel_kind": "compatibility_openclaw",
             "channel_ref": request.channel_ref,
             "receipt_id": f"openclaw-receipt:{request.client_request_id}",
-            "received_at": utc_now_iso(),
+            "received_at": received_at,
             "delivery_status": "user_replied",
             "operator": request.operator.strip() or "openclaw",
         },

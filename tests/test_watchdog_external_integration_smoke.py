@@ -41,7 +41,25 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
             return httpx.Response(200, json={"ok": True})
         if request.method == "POST" and request.url.path == "/api/v1/watchdog/feishu/events":
             payload = json.loads(request.content.decode("utf-8"))
-            return httpx.Response(200, json={"challenge": payload["challenge"]})
+            if payload.get("type") == "url_verification":
+                return httpx.Response(200, json={"challenge": payload["challenge"]})
+            assert payload["schema"] == "2.0"
+            assert payload["header"]["event_type"] == "im.message.receive_v1"
+            content = json.loads(payload["event"]["message"]["content"])
+            assert content["text"] == "repo:repo-a /goal 继续补齐 Feishu 控制面验收"
+            return httpx.Response(
+                200,
+                json={
+                    "accepted": True,
+                    "event_type": "goal_contract_bootstrap",
+                    "data": {
+                        "event_type": "goal_contract_bootstrap",
+                        "project_id": "repo-a",
+                        "session_id": "session:repo-a",
+                        "goal_contract_version": "goal-contract:v1",
+                    },
+                },
+            )
         if (
             request.method == "POST"
             and request.url.path == "/api/v1/watchdog/memory/preview/ai-autosdlc-cursor"
@@ -139,18 +157,106 @@ def test_remote_health_feishu_and_memory_checks_pass(tmp_path: Path) -> None:
         api_token="wt",
         data_dir=str(tmp_path),
         feishu_verification_token="verify-token",
+        feishu_control_project_id="repo-a",
+        feishu_control_goal_message="继续补齐 Feishu 控制面验收",
         memory_preview_ai_autosdlc_cursor_enabled=True,
     )
 
     results = run_smoke_checks(
         config=config,
-        targets=("health", "feishu", "memory"),
+        targets=("health", "feishu", "feishu-control", "memory"),
         remote_transport=_remote_transport(memory_enabled=True),
     )
 
-    assert [result.check_name for result in results] == ["health", "feishu", "memory"]
+    assert [result.check_name for result in results] == ["health", "feishu", "memory", "feishu-control"]
     assert all(result.status == "passed" for result in results)
     assert exit_code_for_results(results) == 0
+
+
+def test_feishu_control_check_skips_when_project_binding_not_configured(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-control",),
+        remote_transport=_remote_transport(),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-control"
+    assert results[0].status == "skipped"
+    assert results[0].reason == "feature_not_configured"
+
+
+def test_feishu_control_check_verifies_goal_bootstrap_contract(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        content = json.loads(payload["event"]["message"]["content"])
+        assert content["text"] == "repo:repo-a /goal 继续补齐 Feishu 控制面验收"
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "event_type": "goal_contract_bootstrap",
+                "data": {
+                    "event_type": "goal_contract_bootstrap",
+                    "project_id": "repo-a",
+                    "session_id": "session:repo-a",
+                    "goal_contract_version": "goal-contract:v1",
+                },
+            },
+        )
+
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+        feishu_control_project_id="repo-a",
+        feishu_control_goal_message="继续补齐 Feishu 控制面验收",
+        feishu_control_expected_session_id="session:repo-a",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-control",),
+        remote_transport=httpx.MockTransport(handler),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-control"
+    assert results[0].status == "passed"
+    assert results[0].evidence["goal_contract_version"] == "goal-contract:v1"
+
+
+def test_all_target_can_be_extended_with_optional_feishu_control(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+        feishu_control_project_id="repo-a",
+        feishu_control_goal_message="继续补齐 Feishu 控制面验收",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("all", "feishu-control"),
+        remote_transport=_remote_transport(),
+    )
+
+    assert [result.check_name for result in results] == [
+        "health",
+        "feishu",
+        "provider",
+        "memory",
+        "feishu-control",
+    ]
 
 
 def test_provider_check_skips_when_external_provider_not_enabled(tmp_path: Path) -> None:

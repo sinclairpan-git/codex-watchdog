@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
+from uuid import uuid4
 
 import httpx
 
@@ -16,8 +18,10 @@ from watchdog.settings import Settings
 
 SmokeStatus = Literal["passed", "failed", "skipped"]
 
-REMOTE_TARGETS = frozenset({"health", "feishu", "memory"})
-ALL_TARGETS = ("health", "feishu", "provider", "memory")
+DEFAULT_TARGETS = ("health", "feishu", "provider", "memory")
+OPTIONAL_TARGETS = ("feishu-control",)
+SUPPORTED_TARGETS = DEFAULT_TARGETS + OPTIONAL_TARGETS
+REMOTE_TARGETS = frozenset({"health", "feishu", "feishu-control", "memory"})
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,10 @@ class ExternalIntegrationSmokeConfig:
     data_dir: str
     http_timeout_s: float = 3.0
     feishu_verification_token: str | None = None
+    feishu_control_project_id: str | None = None
+    feishu_control_goal_message: str | None = None
+    feishu_control_expected_session_id: str | None = None
+    feishu_control_actor_open_id: str = "ou_watchdog_smoke"
     brain_provider_name: str = "resident_orchestrator"
     brain_provider_base_url: str | None = None
     brain_provider_api_key: str | None = None
@@ -82,7 +90,7 @@ def run_smoke_checks(
         )
 
     try:
-        for target in ALL_TARGETS:
+        for target in SUPPORTED_TARGETS:
             if target not in normalized_targets:
                 continue
             if target == "health":
@@ -90,6 +98,12 @@ def run_smoke_checks(
                 health_ok = result.status == "passed"
             elif target == "feishu":
                 result = _run_feishu_check(
+                    config=config,
+                    client=remote_client,
+                    health_ok=health_ok,
+                )
+            elif target == "feishu-control":
+                result = _run_feishu_control_check(
                     config=config,
                     client=remote_client,
                     health_ok=health_ok,
@@ -130,8 +144,8 @@ def exit_code_for_results(results: Sequence[SmokeCheckResult]) -> int:
 def _normalize_targets(targets: Sequence[str]) -> set[str]:
     normalized = {str(target).strip().lower() for target in targets if str(target).strip()}
     if not normalized or "all" in normalized:
-        return set(ALL_TARGETS)
-    unknown = normalized.difference(ALL_TARGETS)
+        return set(DEFAULT_TARGETS).union(normalized.intersection(OPTIONAL_TARGETS))
+    unknown = normalized.difference(SUPPORTED_TARGETS)
     if unknown:
         raise ValueError(f"unsupported targets: {', '.join(sorted(unknown))}")
     return normalized
@@ -222,6 +236,127 @@ def _run_feishu_check(
         status="passed",
         reason="ok",
         evidence={"challenge": body["challenge"]},
+    )
+
+
+def _run_feishu_control_check(
+    *,
+    config: ExternalIntegrationSmokeConfig,
+    client: httpx.Client | None,
+    health_ok: bool,
+) -> SmokeCheckResult:
+    if not health_ok:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="service_unreachable",
+            evidence={"blocked_by": "health"},
+        )
+    if not str(config.feishu_verification_token or "").strip():
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="missing_required_env",
+            evidence={"missing_fields": ["feishu_verification_token"]},
+        )
+    missing_fields = [
+        field_name
+        for field_name, value in (
+            ("feishu_control_project_id", config.feishu_control_project_id),
+            ("feishu_control_goal_message", config.feishu_control_goal_message),
+        )
+        if not str(value or "").strip()
+    ]
+    if missing_fields:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="skipped",
+            reason="feature_not_configured",
+            evidence={"missing_fields": missing_fields},
+        )
+    assert client is not None
+    body = _feishu_control_body(config)
+    try:
+        response = client.post("/api/v1/watchdog/feishu/events", json=body)
+    except httpx.HTTPError as exc:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="service_unreachable",
+            evidence={"error": str(exc)},
+        )
+    if response.status_code != 200:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="unexpected_http_status",
+            evidence={"status_code": response.status_code},
+        )
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if payload.get("accepted") is not True or payload.get("event_type") != "goal_contract_bootstrap":
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    if not isinstance(data, Mapping):
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    if data.get("project_id") != config.feishu_control_project_id:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={
+                "expected_project_id": config.feishu_control_project_id,
+                "response": payload,
+            },
+        )
+    session_id = str(data.get("session_id") or "").strip()
+    if not session_id:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    if (
+        str(config.feishu_control_expected_session_id or "").strip()
+        and session_id != config.feishu_control_expected_session_id
+    ):
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={
+                "expected_session_id": config.feishu_control_expected_session_id,
+                "actual_session_id": session_id,
+            },
+        )
+    goal_contract_version = str(data.get("goal_contract_version") or "").strip()
+    if not goal_contract_version:
+        return SmokeCheckResult(
+            check_name="feishu-control",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    return SmokeCheckResult(
+        check_name="feishu-control",
+        status="passed",
+        reason="ok",
+        evidence={
+            "project_id": data.get("project_id"),
+            "session_id": session_id,
+            "goal_contract_version": goal_contract_version,
+            "replayed": bool(data.get("replayed")),
+        },
     )
 
 
@@ -443,6 +578,35 @@ def _memory_preview_body() -> dict[str, object]:
             "irrelevant_summary_precision": 0.8,
             "token_budget_utilization": 0.4,
             "expansion_miss_rate": 0.1,
+        },
+    }
+
+
+def _feishu_control_body(config: ExternalIntegrationSmokeConfig) -> dict[str, object]:
+    event_id = f"evt-feishu-smoke-{uuid4().hex}"
+    message_id = f"om_feishu_smoke_{uuid4().hex}"
+    create_time = str(int(datetime.now(tz=UTC).timestamp() * 1000))
+    text = f"repo:{str(config.feishu_control_project_id).strip()} /goal {str(config.feishu_control_goal_message).strip()}"
+    return {
+        "schema": "2.0",
+        "header": {
+            "event_id": event_id,
+            "event_type": "im.message.receive_v1",
+            "create_time": create_time,
+            "token": config.feishu_verification_token,
+            "app_id": "cli_watchdog_smoke",
+            "tenant_key": "watchdog-smoke",
+        },
+        "event": {
+            "message": {
+                "message_id": message_id,
+                "chat_type": "p2p",
+                "message_type": "text",
+                "content": json.dumps({"text": text}, ensure_ascii=False),
+            },
+            "sender": {
+                "sender_id": {"open_id": config.feishu_control_actor_open_id},
+            },
         },
     }
 

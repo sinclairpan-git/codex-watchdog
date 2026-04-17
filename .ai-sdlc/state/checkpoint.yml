@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T03:24:46Z'
+pipeline_last_updated: '2026-04-17T03:36:57Z'
 current_stage: completed
 feature:
-  id: 075-external-integration-smoke-harness-closeout
-  spec_dir: specs/075-external-integration-smoke-harness-closeout
-  design_branch: design/075-external-integration-smoke-harness-closeout
-  feature_branch: feature/075-external-integration-smoke-harness-closeout
-  current_branch: codex/075-external-integration-smoke-harness-closeout
-  docs_baseline_ref: f714d313d44ea233f0d8eb2875f57aa0ffd35394
-  docs_baseline_at: '2026-04-17T03:22:59Z'
+  id: 076-feishu-callback-contract-smoke
+  spec_dir: specs/076-feishu-callback-contract-smoke
+  design_branch: design/076-feishu-callback-contract-smoke
+  feature_branch: feature/076-feishu-callback-contract-smoke
+  current_branch: codex/076-feishu-callback-contract-smoke
+  docs_baseline_ref: 52fefcfad6e08196de0ee213a7efb5405fbd7532
+  docs_baseline_at: '2026-04-17T03:36:57Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -36,6 +36,6 @@ completed_stages:
       - tasks.md
 ai_decisions_count: 58
 execution_mode: auto
-linked_wi_id: 075-external-integration-smoke-harness-closeout
+linked_wi_id: 076-feishu-callback-contract-smoke
 linked_plan_uri: null
-last_synced_at: '2026-04-17T03:24:46Z'
+last_synced_at: '2026-04-17T03:36:57Z'

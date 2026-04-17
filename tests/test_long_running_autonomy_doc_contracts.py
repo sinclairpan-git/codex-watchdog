@@ -22,6 +22,7 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "env_example_covers_feishu_ingress_and_delivery" in names
     assert "env_example_covers_openai_compatible_provider" in names
     assert "env_example_covers_ai_autosdlc_preview_cursor_toggle" in names
+    assert "env_example_covers_feishu_control_smoke" in names
     assert "getting_started_covers_feishu_official_ingress" in names
     assert "getting_started_covers_openai_compatible_provider" in names
     assert "getting_started_covers_ai_autosdlc_preview_cursor" in names

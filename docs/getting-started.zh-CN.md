@@ -493,6 +493,7 @@ export WATCHDOG_BASE_URL=http://127.0.0.1:8720
 export WATCHDOG_API_TOKEN=dev-token-change-me
 uv run python scripts/watchdog_external_integration_smoke.py
 uv run python scripts/watchdog_external_integration_smoke.py --target feishu
+uv run python scripts/watchdog_external_integration_smoke.py --target feishu-control
 uv run python scripts/watchdog_external_integration_smoke.py --target provider
 uv run python scripts/watchdog_external_integration_smoke.py --target memory
 ```
@@ -501,6 +502,8 @@ uv run python scripts/watchdog_external_integration_smoke.py --target memory
 
 - 默认会跑 `health`、`feishu`、`provider`、`memory` 四类检查；
 - `feishu` 会验证 `POST /api/v1/watchdog/feishu/events` 的 `url_verification` 合约；
+- `feishu-control` 是额外的 repo-local callback contract smoke，会发送一条 `im.message.receive_v1` 的 DM 文本事件，内容固定为 `repo:<project_id> /goal <goal_message>`，验证官方入口能否真正落到 `goal_contract_bootstrap`；
+- 运行 `feishu-control` 前至少要配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；如果还希望锁定具体 session，可额外配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`；
 - `provider` 会验证 `WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible` 时的外部模型接线，以及 provider 请求失败后的回退路径；
 - `memory` 会验证 `POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor` 的 preview contract；
 - 某项能力未启用时允许返回 `skipped`；若能力已启用但配置缺失、返回字段不匹配或回退语义异常，则应视为阻断问题。
