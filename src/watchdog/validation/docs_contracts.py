@@ -6,6 +6,7 @@ from pathlib import Path
 ARCHITECTURE_DOC = Path("docs/architecture/codex-long-running-autonomy-design.md")
 IMPLEMENTATION_PLAN_DOC = Path("docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md")
 GETTING_STARTED_DOC = Path("docs/getting-started.zh-CN.md")
+README_DOC = Path("README.md")
 WATCHDOG_ENV_EXAMPLE = Path("config/examples/watchdog.env.example")
 
 
@@ -174,6 +175,32 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "enabled=false",
             "contract_name=ai-autosdlc-cursor",
         ),
+    ),
+    DocContractCheck(
+        name="getting_started_covers_external_integration_smoke_harness",
+        path=GETTING_STARTED_DOC,
+        must_contain=(
+            "scripts/watchdog_external_integration_smoke.py",
+            "uv run python scripts/watchdog_external_integration_smoke.py",
+            "--target feishu",
+            "--target provider",
+            "--target memory",
+        ),
+    ),
+    DocContractCheck(
+        name="readme_covers_external_integration_smoke_harness",
+        path=README_DOC,
+        must_contain=(
+            "scripts/watchdog_external_integration_smoke.py",
+            "uv run python scripts/watchdog_external_integration_smoke.py",
+            "WATCHDOG_BASE_URL",
+            "WATCHDOG_API_TOKEN",
+        ),
+    ),
+    DocContractCheck(
+        name="readme_covers_watchdog_runtime_factory",
+        path=README_DOC,
+        must_contain=("watchdog.main:create_runtime_app", "--factory"),
     ),
 )
 

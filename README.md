@@ -38,6 +38,19 @@ uv run uvicorn watchdog.main:create_runtime_app --host 127.0.0.1 --port 8720 --f
 
 配置样例：`config/examples/*.env.example`。
 
+外部集成 smoke 验收：
+
+```bash
+export WATCHDOG_BASE_URL=http://127.0.0.1:8720
+export WATCHDOG_API_TOKEN=dev-token-change-me
+uv run python scripts/watchdog_external_integration_smoke.py
+uv run python scripts/watchdog_external_integration_smoke.py --target feishu
+uv run python scripts/watchdog_external_integration_smoke.py --target provider
+uv run python scripts/watchdog_external_integration_smoke.py --target memory
+```
+
+这组检查会统一验证 `GET /healthz`、飞书 `url_verification`、OpenAI-compatible provider 接线与失败回退、以及 Memory Hub preview route。未启用的可选能力会返回 `skipped`，已启用但契约不一致会直接返回失败，便于在接入控制面前先做一次集中验收。
+
 若需要常驻与开机自启，仓库已提供：
 
 - `scripts/start_watchdog.sh`

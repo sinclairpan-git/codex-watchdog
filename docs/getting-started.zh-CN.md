@@ -484,6 +484,29 @@ curl -X POST "http://127.0.0.1:8720/api/v1/watchdog/memory/preview/ai-autosdlc-c
 3. 确认启用后 `enabled=true`，且 `packet` 中包含当前 stage-aware cursor 内容；
 4. 再把开关切回 `false`，确认 route 仍可调用但响应退回 `enabled=false` 的 preview 语义。
 
+### 3.5 统一外部集成 smoke 验收
+
+在本地或 staging 把 Watchdog 拉起后，建议先跑一次统一 smoke，确认外部控制面真正会用到的几个集成面都对齐：
+
+```bash
+export WATCHDOG_BASE_URL=http://127.0.0.1:8720
+export WATCHDOG_API_TOKEN=dev-token-change-me
+uv run python scripts/watchdog_external_integration_smoke.py
+uv run python scripts/watchdog_external_integration_smoke.py --target feishu
+uv run python scripts/watchdog_external_integration_smoke.py --target provider
+uv run python scripts/watchdog_external_integration_smoke.py --target memory
+```
+
+说明：
+
+- 默认会跑 `health`、`feishu`、`provider`、`memory` 四类检查；
+- `feishu` 会验证 `POST /api/v1/watchdog/feishu/events` 的 `url_verification` 合约；
+- `provider` 会验证 `WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible` 时的外部模型接线，以及 provider 请求失败后的回退路径；
+- `memory` 会验证 `POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor` 的 preview contract；
+- 某项能力未启用时允许返回 `skipped`；若能力已启用但配置缺失、返回字段不匹配或回退语义异常，则应视为阻断问题。
+
+排障时仍可继续使用上面的 `curl` 手工调用；这个脚本的目标是把健康检查、飞书入口、外部 provider、Memory Hub preview 收拢成一条统一的 operator 验收路径。
+
 仓库已经直接提供可复用脚本与模板：
 
 - `scripts/start_watchdog.sh`

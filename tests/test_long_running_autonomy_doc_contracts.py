@@ -25,6 +25,9 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "getting_started_covers_feishu_official_ingress" in names
     assert "getting_started_covers_openai_compatible_provider" in names
     assert "getting_started_covers_ai_autosdlc_preview_cursor" in names
+    assert "getting_started_covers_external_integration_smoke_harness" in names
+    assert "readme_covers_external_integration_smoke_harness" in names
+    assert "readme_covers_watchdog_runtime_factory" in names
 
 
 def test_long_running_autonomy_doc_validator_reports_missing_files(tmp_path) -> None:
