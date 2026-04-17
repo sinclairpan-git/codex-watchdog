@@ -50,10 +50,19 @@ class SessionServiceStore:
         self._path = path
         self._lock = _path_lock(path)
         self._lock_path = path.with_name(f".{path.name}.lock")
+        self._cache: _SessionServiceStoreFile | None = None
+        self._cache_signature: tuple[int, int] | None = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._guard_io():
             if not self._path.exists():
                 self._write(_SessionServiceStoreFile())
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        try:
+            stat = self._path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
 
     @contextmanager
     def _guard_io(self):
@@ -68,16 +77,25 @@ class SessionServiceStore:
                 os.close(fd)
 
     def _read(self) -> _SessionServiceStoreFile:
+        signature = self._file_signature()
+        if signature is not None and signature == self._cache_signature and self._cache is not None:
+            return self._cache
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
-            return _SessionServiceStoreFile()
-        return _SessionServiceStoreFile.model_validate_json(raw)
+            data = _SessionServiceStoreFile()
+        else:
+            data = _SessionServiceStoreFile.model_validate_json(raw)
+        self._cache = data
+        self._cache_signature = self._file_signature()
+        return data
 
     def _write(self, data: _SessionServiceStoreFile) -> None:
         tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            tmp.write_text(data.model_dump_json(indent=2), encoding="utf-8")
+            tmp.write_text(data.model_dump_json(), encoding="utf-8")
             tmp.replace(self._path)
+            self._cache = data
+            self._cache_signature = self._file_signature()
         finally:
             with suppress(FileNotFoundError):
                 tmp.unlink()
@@ -168,21 +186,20 @@ class SessionServiceStore:
         correlation_id: str | None = None,
     ) -> list[SessionEventRecord]:
         with self._guard_io():
-            data = self._read()
-        records = data.events
-        if session_id is not None:
-            records = [record for record in records if record.session_id == session_id]
-        if event_type is not None:
-            records = [record for record in records if record.event_type == event_type]
-        if correlation_id is not None:
-            records = [record for record in records if record.correlation_id == correlation_id]
-        if related_id_key is not None:
-            records = [
-                record
-                for record in records
-                if record.related_ids.get(related_id_key) == related_id_value
-            ]
-        return list(records)
+            records = self._read().events
+            if session_id is not None:
+                records = [record for record in records if record.session_id == session_id]
+            if event_type is not None:
+                records = [record for record in records if record.event_type == event_type]
+            if correlation_id is not None:
+                records = [record for record in records if record.correlation_id == correlation_id]
+            if related_id_key is not None:
+                records = [
+                    record
+                    for record in records
+                    if record.related_ids.get(related_id_key) == related_id_value
+                ]
+            return list(records)
 
     def list_lineage(
         self,
@@ -192,19 +209,18 @@ class SessionServiceStore:
         recovery_transaction_id: str | None = None,
     ) -> list[SessionLineageRecord]:
         with self._guard_io():
-            data = self._read()
-        records = data.lineage
-        if parent_session_id is not None:
-            records = [record for record in records if record.parent_session_id == parent_session_id]
-        if child_session_id is not None:
-            records = [record for record in records if record.child_session_id == child_session_id]
-        if recovery_transaction_id is not None:
-            records = [
-                record
-                for record in records
-                if record.recovery_transaction_id == recovery_transaction_id
-            ]
-        return list(records)
+            records = self._read().lineage
+            if parent_session_id is not None:
+                records = [record for record in records if record.parent_session_id == parent_session_id]
+            if child_session_id is not None:
+                records = [record for record in records if record.child_session_id == child_session_id]
+            if recovery_transaction_id is not None:
+                records = [
+                    record
+                    for record in records
+                    if record.recovery_transaction_id == recovery_transaction_id
+                ]
+            return list(records)
 
     def list_recovery_transactions(
         self,
@@ -215,21 +231,20 @@ class SessionServiceStore:
         status: str | None = None,
     ) -> list[RecoveryTransactionRecord]:
         with self._guard_io():
-            data = self._read()
-        records = data.recovery_transactions
-        if parent_session_id is not None:
-            records = [record for record in records if record.parent_session_id == parent_session_id]
-        if child_session_id is not None:
-            records = [record for record in records if record.child_session_id == child_session_id]
-        if recovery_transaction_id is not None:
-            records = [
-                record
-                for record in records
-                if record.recovery_transaction_id == recovery_transaction_id
-            ]
-        if status is not None:
-            records = [record for record in records if record.status == status]
-        return list(records)
+            records = self._read().recovery_transactions
+            if parent_session_id is not None:
+                records = [record for record in records if record.parent_session_id == parent_session_id]
+            if child_session_id is not None:
+                records = [record for record in records if record.child_session_id == child_session_id]
+            if recovery_transaction_id is not None:
+                records = [
+                    record
+                    for record in records
+                    if record.recovery_transaction_id == recovery_transaction_id
+                ]
+            if status is not None:
+                records = [record for record in records if record.status == status]
+            return list(records)
 
     def get_latest_recovery_transaction(
         self,

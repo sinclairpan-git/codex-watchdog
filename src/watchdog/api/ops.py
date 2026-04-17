@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -15,7 +16,7 @@ from watchdog.services.brain.release_gate_read_contract import (
     read_release_gate_decision_evidence,
 )
 from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
-from watchdog.services.delivery.store import DeliveryOutboxStore
+from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.session_service.service import SessionService
 from watchdog.settings import Settings
@@ -110,6 +111,18 @@ class OpsSummary(BaseModel):
     future_workers: list[OpsFutureWorkerStatus] = Field(default_factory=list)
 
 
+class OpsDeliveryRequeueReceipt(BaseModel):
+    accepted: bool = True
+    requeued: int
+    reason: str
+    updated_at: str
+    envelope_ids: list[str] = Field(default_factory=list)
+
+
+def _iso_z(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _parse_iso8601(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -151,6 +164,37 @@ def _latest_approval_records(
         existing = latest_by_session.get(key)
         if existing is None or _approval_recency_key(record) > _approval_recency_key(existing):
             latest_by_session[key] = record
+    return list(latest_by_session.values())
+
+
+def _latest_approval_row_by_session(
+    approval_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    latest_by_session: dict[tuple[str, str], dict[str, object]] = {}
+    for row in approval_rows:
+        session_id = str(row.get("session_id") or "").strip()
+        project_id = str(row.get("project_id") or "").strip()
+        if not session_id or not project_id:
+            continue
+        key = (session_id, project_id)
+        existing = latest_by_session.get(key)
+        created_at = _parse_iso8601(str(row.get("created_at") or ""))
+        recency = (
+            _fact_snapshot_order(str(row.get("fact_snapshot_version") or "")),
+            created_at or datetime.min.replace(tzinfo=UTC),
+            str(row.get("approval_id") or ""),
+        )
+        if existing is None:
+            latest_by_session[key] = row
+            continue
+        existing_created_at = _parse_iso8601(str(existing.get("created_at") or ""))
+        existing_recency = (
+            _fact_snapshot_order(str(existing.get("fact_snapshot_version") or "")),
+            existing_created_at or datetime.min.replace(tzinfo=UTC),
+            str(existing.get("approval_id") or ""),
+        )
+        if recency > existing_recency:
+            latest_by_session[key] = row
     return list(latest_by_session.values())
 
 
@@ -249,6 +293,87 @@ def _future_worker_blocking_reason(event) -> str | None:
     return None
 
 
+def _record_notification_requeued(
+    service: SessionService,
+    record: DeliveryOutboxRecord,
+    *,
+    reason: str,
+    previous_failure_code: str | None,
+) -> None:
+    payload = dict(record.envelope_payload)
+    if payload.get("envelope_type") != "notification":
+        return
+    mirrored: dict[str, Any] = {
+        "outbox_seq": record.outbox_seq,
+        "delivery_status": record.delivery_status,
+        "delivery_attempt": record.delivery_attempt,
+        "reason": reason,
+    }
+    if previous_failure_code:
+        mirrored["failure_code"] = previous_failure_code
+    next_retry_at = record.next_retry_at
+    if next_retry_at is not None:
+        mirrored["next_retry_at"] = next_retry_at
+    for field in (
+        "event_id",
+        "notification_kind",
+        "severity",
+        "title",
+        "summary",
+        "occurred_at",
+        "decision_result",
+        "action_name",
+        "interaction_context_id",
+        "interaction_family_id",
+        "actor_id",
+        "channel_kind",
+        "action_window_expires_at",
+    ):
+        value = payload.get(field)
+        if value is not None:
+            mirrored[field] = value
+    service.record_event(
+        event_type="notification_requeued",
+        project_id=record.project_id,
+        session_id=record.session_id,
+        occurred_at=record.updated_at,
+        correlation_id=f"corr:notification:{record.envelope_id}:requeue:{reason}",
+        causation_id=str(payload.get("event_id") or record.envelope_id),
+        related_ids={
+            "envelope_id": record.envelope_id,
+            **(
+                {"notification_event_id": payload["event_id"]}
+                if isinstance(payload.get("event_id"), str) and payload.get("event_id")
+                else {}
+            ),
+            **(
+                {"notification_kind": payload["notification_kind"]}
+                if isinstance(payload.get("notification_kind"), str)
+                and payload.get("notification_kind")
+                else {}
+            ),
+            **(
+                {"interaction_context_id": payload["interaction_context_id"]}
+                if isinstance(payload.get("interaction_context_id"), str)
+                and payload.get("interaction_context_id")
+                else {}
+            ),
+            **(
+                {"interaction_family_id": payload["interaction_family_id"]}
+                if isinstance(payload.get("interaction_family_id"), str)
+                and payload.get("interaction_family_id")
+                else {}
+            ),
+            **(
+                {"actor_id": payload["actor_id"]}
+                if isinstance(payload.get("actor_id"), str) and payload.get("actor_id")
+                else {}
+            ),
+        },
+        payload=mirrored,
+    )
+
+
 def _future_worker_statuses(*, data_dir: Path) -> list[OpsFutureWorkerStatus]:
     session_service = SessionService.from_data_dir(data_dir)
     grouped_events: dict[tuple[str, str, str], list[object]] = {}
@@ -298,13 +423,22 @@ def build_ops_summary(
     data_dir: Path,
     settings: Settings,
     now: datetime | None = None,
+    decision_store: PolicyDecisionStore | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
+    delivery_store: DeliveryOutboxStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
 ) -> OpsSummary:
     now = now or datetime.now(UTC)
 
-    decisions = PolicyDecisionStore(data_dir / "policy_decisions.json").list_records()
-    approvals = CanonicalApprovalStore(data_dir / "canonical_approvals.json").list_records()
-    deliveries = DeliveryOutboxStore(data_dir / "delivery_outbox.json").list_records()
-    receipt_items = ActionReceiptStore(data_dir / "action_receipts.json").list_items()
+    decision_store = decision_store or PolicyDecisionStore(data_dir / "policy_decisions.json")
+    approval_store = approval_store or CanonicalApprovalStore(data_dir / "canonical_approvals.json")
+    delivery_store = delivery_store or DeliveryOutboxStore(data_dir / "delivery_outbox.json")
+    receipt_store = receipt_store or ActionReceiptStore(data_dir / "action_receipts.json")
+
+    decisions = decision_store.list_records()
+    approvals = approval_store.list_records()
+    deliveries = delivery_store.list_records()
+    receipt_items = receipt_store.list_items()
 
     blocked_too_long = sum(
         1
@@ -416,6 +550,108 @@ def build_ops_summary(
     )
 
 
+def build_ops_health_summary(
+    *,
+    data_dir: Path,
+    settings: Settings,
+    now: datetime | None = None,
+    decision_store: PolicyDecisionStore | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
+    delivery_store: DeliveryOutboxStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+) -> dict[str, int | str]:
+    now = now or datetime.now(UTC)
+    decision_store = decision_store or PolicyDecisionStore(data_dir / "policy_decisions.json")
+    approval_store = approval_store or CanonicalApprovalStore(data_dir / "canonical_approvals.json")
+    delivery_store = delivery_store or DeliveryOutboxStore(data_dir / "delivery_outbox.json")
+    receipt_store = receipt_store or ActionReceiptStore(data_dir / "action_receipts.json")
+
+    decision_rows = decision_store.snapshot_rows()
+    approval_rows = approval_store.snapshot_rows()
+    delivery_rows = delivery_store.snapshot_rows()
+    receipt_rows = receipt_store.snapshot_rows()
+
+    blocked_too_long = sum(
+        1
+        for row in decision_rows
+        if str(row.get("decision_result") or "") == "block_and_alert"
+        and _is_older_than(
+            str(row.get("created_at") or ""),
+            now=now,
+            threshold_seconds=settings.ops_blocked_too_long_seconds,
+        )
+    )
+    approval_pending_too_long = sum(
+        1
+        for row in _latest_approval_row_by_session(approval_rows)
+        if str(row.get("status") or "") == "pending"
+        and _is_older_than(
+            str(row.get("created_at") or ""),
+            now=now,
+            threshold_seconds=settings.ops_approval_pending_too_long_seconds,
+        )
+    )
+    delivery_failed = sum(
+        1
+        for row in delivery_rows
+        if row.delivery_status == "delivery_failed"
+        and str(row.failure_code or "") not in _NON_ALERTING_DELIVERY_FAILURE_CODES
+        and _is_recent_enough(
+            row.updated_at or row.created_at,
+            now=now,
+            threshold_seconds=settings.ops_delivery_failed_alert_window_seconds,
+        )
+    )
+    mapping_incomplete = sum(
+        1
+        for row in decision_rows
+        if "mapping_incomplete" in list(row.get("uncertainty_reasons") or [])
+    )
+    runtime_gate_reason_counts: dict[str, int] = {}
+    release_gate_blockers = 0
+    for row in decision_rows:
+        matched_policy_rules = list(row.get("matched_policy_rules") or [])
+        if any(rule in _RUNTIME_GATE_ALERT_RULES for rule in matched_policy_rules):
+            reasons = [
+                str(item).strip()
+                for item in list(row.get("uncertainty_reasons") or [])
+                if str(item).strip()
+            ]
+            normalized = normalize_runtime_gate_reason(reasons[0] if reasons else "")
+            runtime_gate_reason_counts[normalized] = runtime_gate_reason_counts.get(normalized, 0) + 1
+        release_gate = read_release_gate_decision_evidence(
+            row.get("evidence") if isinstance(row.get("evidence"), dict) else None
+        )
+        verdict = release_gate.verdict
+        if verdict is not None and verdict.status != "pass":
+            release_gate_blockers += 1
+    recovery_failed = sum(
+        1
+        for _, row in receipt_rows
+        if str(row.get("action_code") or "") == ActionCode.EXECUTE_RECOVERY
+        and str(row.get("action_status") or "")
+        not in {ActionStatus.COMPLETED, ActionStatus.NOOP}
+    )
+
+    active_alerts = sum(
+        1
+        for value in (
+            approval_pending_too_long,
+            blocked_too_long,
+            delivery_failed,
+            mapping_incomplete,
+            recovery_failed,
+        )
+        if value
+    ) + sum(1 for count in runtime_gate_reason_counts.values() if count)
+
+    return {
+        "status": "degraded" if active_alerts or release_gate_blockers else "ok",
+        "active_alerts": active_alerts,
+        "release_gate_blockers": release_gate_blockers,
+    }
+
+
 @router.get("/alerts")
 def get_ops_alerts(
     request: Request,
@@ -424,6 +660,10 @@ def get_ops_alerts(
     summary = build_ops_summary(
         data_dir=Path(request.app.state.settings.data_dir),
         settings=request.app.state.settings,
+        decision_store=request.app.state.policy_decision_store,
+        approval_store=request.app.state.canonical_approval_store,
+        delivery_store=request.app.state.delivery_outbox_store,
+        receipt_store=request.app.state.action_receipt_store,
     )
     return ok(
         request.headers.get("x-request-id"),
@@ -438,4 +678,39 @@ def get_ops_alerts(
                 item.model_dump(mode="json") for item in summary.future_workers
             ],
         },
+    )
+
+
+@router.post("/delivery/requeue-transport-failures")
+def post_ops_requeue_transport_failures(
+    request: Request,
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    updated_at = _iso_z(datetime.now(UTC))
+    reason = "manual_transport_recovered"
+    delivery_store = request.app.state.delivery_outbox_store
+    failed_codes = {
+        record.envelope_id: str(record.failure_code or "").strip() or None
+        for record in delivery_store.list_records()
+        if record.delivery_status == "delivery_failed"
+    }
+    requeued = delivery_store.requeue_transport_failures(
+        reason=reason,
+        updated_at=updated_at,
+    )
+    for record in requeued:
+        _record_notification_requeued(
+            request.app.state.session_service,
+            record,
+            reason=reason,
+            previous_failure_code=failed_codes.get(record.envelope_id),
+        )
+    return ok(
+        request.headers.get("x-request-id"),
+        OpsDeliveryRequeueReceipt(
+            requeued=len(requeued),
+            reason=reason,
+            updated_at=updated_at,
+            envelope_ids=[record.envelope_id for record in requeued],
+        ).model_dump(mode="json"),
     )

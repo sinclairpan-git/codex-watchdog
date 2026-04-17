@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,13 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _fact_snapshot_order(value: str) -> tuple[int, str]:
+    match = re.fullmatch(r"fact-v(\d+)", value)
+    if match is None:
+        return (2**31 - 1, value)
+    return (int(match.group(1)), value)
 
 
 class FeishuControlError(ValueError):
@@ -57,9 +65,27 @@ class FeishuControlRequest(BaseModel):
     session_id: str | None = None
     goal_message: str | None = None
     command_text: str | None = None
+    receive_id: str | None = None
+    receive_id_type: str | None = None
 
 
 class FeishuControlService:
+    _APPROVAL_ACTIONS = {
+        "批准": "approve",
+        "同意": "approve",
+        "可以": "approve",
+        "approve": "approve",
+        "拒绝": "reject",
+        "不同意": "reject",
+        "不批准": "reject",
+        "reject": "reject",
+        "直接执行": "execute_action",
+        "执行": "execute_action",
+        "马上执行": "execute_action",
+        "execute": "execute_action",
+        "execute_action": "execute_action",
+    }
+
     def __init__(
         self,
         *,
@@ -142,19 +168,22 @@ class FeishuControlService:
             if not isinstance(contract_payload, dict):
                 raise FeishuControlError("existing goal contract replay payload is invalid")
             contract = GoalContractSnapshot.model_validate(contract_payload)
+            if self._normalize_goal_text(contract.current_phase_goal) != self._normalize_goal_text(
+                goal_message
+            ):
+                raise FeishuControlError(
+                    "goal bootstrap replay payload drifted from existing contract"
+                )
             return {
                 "event_type": request.event_type,
                 "project_id": project_id,
                 "session_id": session_id,
                 "goal_contract_version": contract.version,
+                "superseded_approval_count": 0,
                 "replayed": True,
             }
         current = service.get_current_contract(project_id=project_id, session_id=session_id)
-        related_ids = {
-            "feishu_event_id": request.client_request_id,
-            "feishu_message_id": request.interaction_context_id,
-            "feishu_actor_id": request.actor_id,
-        }
+        related_ids = self._goal_bootstrap_related_ids(request)
         if current is None:
             contract = service.bootstrap_contract(
                 project_id=project_id,
@@ -174,6 +203,7 @@ class FeishuControlService:
                 project_id=project_id,
                 session_id=session_id,
                 expected_version=current.version,
+                current=current,
                 current_phase_goal=goal_message,
                 explicit_deliverables=current.explicit_deliverables or [goal_message],
                 completion_signals=current.completion_signals
@@ -181,11 +211,18 @@ class FeishuControlService:
                 causation_id=request.client_request_id,
                 related_ids=related_ids,
             )
+        superseded = self._supersede_pending_approvals_for_goal_bootstrap(
+            request=request,
+            project_id=project_id,
+            session_id=session_id,
+            contract=contract,
+        )
         return {
             "event_type": request.event_type,
             "project_id": project_id,
             "session_id": session_id,
             "goal_contract_version": contract.version,
+            "superseded_approval_count": len(superseded),
         }
 
     def handle_command_request(
@@ -196,6 +233,31 @@ class FeishuControlService:
         command_text = self._require_field(request.command_text, "command_text")
         project_id = str(request.project_id or "").strip() or None
         native_thread_id = str(request.native_thread_id or "").strip() or None
+        session_id = str(request.session_id or "").strip() or None
+        approval_response_action = self._approval_response_action_from_text(command_text)
+        if approval_response_action is not None:
+            approval = self._find_latest_pending_approval(
+                project_id=project_id,
+                session_id=session_id,
+                native_thread_id=native_thread_id,
+            )
+            if approval is None:
+                raise FeishuControlError("no pending approval matches this reply")
+            return self.handle_approval_response(
+                request.model_copy(
+                    update={
+                        "event_type": "approval_response",
+                        "envelope_id": approval.envelope_id,
+                        "approval_id": approval.approval_id,
+                        "decision_id": approval.decision.decision_id,
+                        "response_action": approval_response_action,
+                        "response_token": approval.approval_token,
+                        "project_id": approval.project_id,
+                        "session_id": approval.session_id,
+                        "native_thread_id": approval.native_thread_id,
+                    }
+                )
+            )
         if project_id is None and native_thread_id is None:
             raise FeishuControlError("project_id or native_thread_id is required")
         adapter = OpenClawAdapter(
@@ -210,6 +272,126 @@ class FeishuControlService:
             operator="feishu",
             idempotency_key=f"feishu:{request.client_request_id}",
         )
+
+    @classmethod
+    def _approval_response_action_from_text(cls, command_text: str) -> str | None:
+        normalized = " ".join(str(command_text or "").strip().lower().split())
+        if not normalized:
+            return None
+        return cls._APPROVAL_ACTIONS.get(normalized)
+
+    @staticmethod
+    def _approval_recency_key(
+        record: CanonicalApprovalRecord,
+    ) -> tuple[tuple[int, str], datetime, str]:
+        created_at = _parse_timestamp(record.created_at)
+        return (_fact_snapshot_order(record.fact_snapshot_version), created_at, record.approval_id)
+
+    def _find_latest_pending_approval(
+        self,
+        *,
+        project_id: str | None,
+        session_id: str | None,
+        native_thread_id: str | None,
+    ) -> CanonicalApprovalRecord | None:
+        normalized_project_id = str(project_id or "").strip() or None
+        normalized_session_id = str(session_id or "").strip() or None
+        normalized_native_thread_id = str(native_thread_id or "").strip() or None
+        if normalized_project_id is None:
+            normalized_project_id = str(self._settings.default_project_id or "").strip() or None
+        candidates: list[CanonicalApprovalRecord] = []
+        for record in self._approval_store.list_records():
+            if record.status != "pending":
+                continue
+            if normalized_project_id is not None and record.project_id != normalized_project_id:
+                continue
+            if normalized_session_id is not None and record.session_id != normalized_session_id:
+                continue
+            if (
+                normalized_native_thread_id is not None
+                and str(record.native_thread_id or "").strip() != normalized_native_thread_id
+            ):
+                continue
+            candidates.append(record)
+        if not candidates:
+            return None
+        return max(candidates, key=self._approval_recency_key)
+
+    @staticmethod
+    def _goal_bootstrap_related_ids(request: FeishuControlRequest) -> dict[str, str]:
+        related_ids = {
+            "feishu_event_id": request.client_request_id,
+            "feishu_message_id": request.interaction_context_id,
+            "feishu_actor_id": request.actor_id,
+            "interaction_context_id": request.interaction_context_id,
+            "interaction_family_id": request.interaction_family_id,
+        }
+        receive_id = str(request.receive_id or "").strip()
+        receive_id_type = str(request.receive_id_type or "").strip()
+        if receive_id and receive_id_type:
+            related_ids["feishu_receive_id"] = receive_id
+            related_ids["feishu_receive_id_type"] = receive_id_type
+            if receive_id_type == "chat_id":
+                related_ids["feishu_chat_id"] = receive_id
+        return related_ids
+
+    def _supersede_pending_approvals_for_goal_bootstrap(
+        self,
+        *,
+        request: FeishuControlRequest,
+        project_id: str,
+        session_id: str,
+        contract: GoalContractSnapshot,
+    ) -> list[CanonicalApprovalRecord]:
+        reason = (
+            "approval_superseded_by_goal_contract_bootstrap "
+            f"goal_contract_version={contract.version} "
+            f"feishu_event_id={request.client_request_id}"
+        )
+        superseded = self._approval_store.supersede_pending_records_for_goal_contract_transition(
+            session_id=session_id,
+            project_id=project_id,
+            active_goal_contract_version=contract.version,
+            reason=reason,
+            decided_by="feishu-goal-bootstrap",
+        )
+        if not superseded:
+            return []
+        self._delivery_outbox_store.supersede_records(
+            envelope_reasons={
+                record.envelope_id: reason
+                for record in superseded
+            },
+            updated_at=request.occurred_at,
+        )
+        recorder = (
+            self._session_service.record_event_once
+            if hasattr(self._session_service, "record_event_once")
+            else self._session_service.record_event
+        )
+        recorder(
+            event_type="approval_superseded_by_goal_contract_bootstrap",
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=(
+                "corr:approval-superseded-by-goal-bootstrap:"
+                f"{session_id}:{request.client_request_id}"
+            ),
+            causation_id=request.client_request_id,
+            related_ids={
+                "goal_contract_version": contract.version,
+                "feishu_event_id": request.client_request_id,
+                "feishu_message_id": request.interaction_context_id,
+            },
+            occurred_at=request.occurred_at,
+            payload={
+                "goal_contract_version": contract.version,
+                "superseded_approval_count": len(superseded),
+                "approval_ids": [record.approval_id for record in superseded],
+                "envelope_ids": [record.envelope_id for record in superseded],
+            },
+        )
+        return superseded
 
     def _find_existing_goal_contract_event(
         self,
@@ -254,6 +436,10 @@ class FeishuControlService:
     def _assert_dm_channel(request: FeishuControlRequest) -> None:
         if request.channel_kind.strip().lower() != "dm":
             raise FeishuControlError("high-risk approval responses require dm channel")
+
+    @staticmethod
+    def _normalize_goal_text(value: str | None) -> str:
+        return " ".join(str(value or "").split()).strip()
 
     def _assert_not_expired(
         self,

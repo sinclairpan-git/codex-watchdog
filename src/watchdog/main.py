@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
@@ -56,7 +57,7 @@ from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
-from watchdog.api.ops import build_ops_summary
+from watchdog.api.ops import build_ops_health_summary
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,25 @@ def _run_background_step(step_name: str, fn, /, *args, **kwargs):
     except Exception:
         logger.exception("watchdog background step failed: %s", step_name)
         return None
+
+
+def _resident_orchestrator_call_kwargs(orchestrate_all) -> dict[str, object]:
+    try:
+        signature = inspect.signature(orchestrate_all)
+    except (TypeError, ValueError):
+        return {}
+    if "continue_on_error" in signature.parameters:
+        return {"continue_on_error": True}
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return {"continue_on_error": True}
+    return {}
+
+
+def _run_resident_orchestrator_step(orchestrate_all, *, now: datetime):
+    return orchestrate_all(now=now, **_resident_orchestrator_call_kwargs(orchestrate_all))
 
 
 def _build_delivery_client(
@@ -89,6 +109,15 @@ async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
     return await asyncio.to_thread(_run_background_step, step_name, fn, *args, **kwargs)
 
 
+def _delivery_run_lock(app: FastAPI) -> asyncio.Lock:
+    existing = getattr(app.state, "delivery_run_lock", None)
+    if existing is not None:
+        return existing
+    created = asyncio.Lock()
+    app.state.delivery_run_lock = created
+    return created
+
+
 def _reconcile_stale_pending_approvals(app: FastAPI) -> int:
     reconciled = app.state.canonical_approval_store.reconcile_pending_records_against_decisions(
         app.state.policy_decision_store.list_records(),
@@ -97,13 +126,18 @@ def _reconcile_stale_pending_approvals(app: FastAPI) -> int:
     deduped = app.state.canonical_approval_store.reconcile_duplicate_pending_records_by_approval_id(
         decided_by="policy-startup-approval-id-reconcile",
     )
+    deduped_by_action_signature = (
+        app.state.canonical_approval_store.reconcile_duplicate_pending_records_by_action_signature(
+            decided_by="policy-startup-action-signature-reconcile",
+        )
+    )
     expired = expire_pending_canonical_approvals(
         approval_store=app.state.canonical_approval_store,
         session_service=app.state.session_service,
         now=datetime.now(UTC),
         expiration_seconds=float(app.state.settings.approval_expiration_seconds),
     )
-    reconciled_records = [*reconciled, *deduped, *expired]
+    reconciled_records = [*reconciled, *deduped, *deduped_by_action_signature, *expired]
     if reconciled_records:
         updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         app.state.delivery_outbox_store.supersede_records(
@@ -122,9 +156,10 @@ def _reconcile_stale_pending_approvals(app: FastAPI) -> int:
             updated_at=updated_at,
         )
         logger.info(
-            "watchdog startup reconciled approvals: stale=%s duplicate=%s expired=%s",
+            "watchdog startup reconciled approvals: stale=%s duplicate=%s action_signature=%s expired=%s",
             len(reconciled),
             len(deduped),
+            len(deduped_by_action_signature),
             len(expired),
         )
     return len(reconciled_records)
@@ -166,11 +201,7 @@ async def _run_delivery_loop(app: FastAPI) -> None:
         0.01,
     )
     while True:
-        await _run_background_step_async(
-            "delivery_drain_outbox",
-            _drain_delivery_outbox,
-            app,
-        )
+        await _run_delivery_drain_once(app)
         await asyncio.sleep(interval_seconds)
 
 
@@ -195,12 +226,37 @@ async def _run_resident_orchestrator_loop(app: FastAPI) -> None:
     )
     while True:
         await asyncio.sleep(interval_seconds)
-        now = datetime.now(UTC)
-        await _run_background_step_async(
+        await _run_resident_orchestrator_once(app, now=datetime.now(UTC))
+
+
+async def _run_startup_orchestrator_once(app: FastAPI) -> None:
+    await _run_resident_orchestrator_once(app, now=datetime.now(UTC))
+
+
+async def _run_resident_orchestrator_once(
+    app: FastAPI,
+    *,
+    now: datetime,
+) -> None:
+    async with app.state.resident_orchestrator_run_lock:
+        outcomes = await _run_background_step_async(
             "resident_orchestrator.orchestrate_all",
+            _run_resident_orchestrator_step,
             app.state.resident_orchestrator.orchestrate_all,
             now=now,
         )
+        if outcomes is None:
+            logger.error("resident orchestrator step failed; skipping delivery drain")
+            return
+        await _run_delivery_drain_once(app, now=now)
+
+
+async def _run_delivery_drain_once(
+    app: FastAPI,
+    *,
+    now: datetime | None = None,
+) -> None:
+    async with _delivery_run_lock(app):
         await _run_background_step_async(
             "delivery_drain_outbox",
             _drain_delivery_outbox,
@@ -220,6 +276,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         session_spine_loop_task: asyncio.Task[None] | None = None
+        startup_orchestrator_task: asyncio.Task[None] | None = None
         resident_orchestrator_task: asyncio.Task[None] | None = None
         memory_ingest_loop_task: asyncio.Task[None] | None = None
         delivery_loop_task: asyncio.Task[None] | None = None
@@ -244,11 +301,8 @@ def create_app(
             )
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
             memory_ingest_loop_task = asyncio.create_task(_run_memory_ingest_loop(app))
-            now = datetime.now(UTC)
-            await _run_background_step_async(
-                "resident_orchestrator.orchestrate_all",
-                app.state.resident_orchestrator.orchestrate_all,
-                now=now,
+            startup_orchestrator_task = asyncio.create_task(
+                _run_startup_orchestrator_once(app)
             )
             resident_orchestrator_task = asyncio.create_task(_run_resident_orchestrator_loop(app))
             delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
@@ -265,6 +319,10 @@ def create_app(
                 session_spine_loop_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await session_spine_loop_task
+            if startup_orchestrator_task is not None:
+                startup_orchestrator_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await startup_orchestrator_task
             if resident_orchestrator_task is not None:
                 resident_orchestrator_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -369,6 +427,8 @@ def create_app(
             session_service=app.state.session_service,
         ),
     )
+    app.state.resident_orchestrator_run_lock = asyncio.Lock()
+    app.state.delivery_run_lock = asyncio.Lock()
     app.include_router(progress_routes.router, prefix="/api/v1")
     app.include_router(events_proxy_routes.router, prefix="/api/v1")
     app.include_router(feishu_control_routes.router, prefix="/api/v1")
@@ -387,15 +447,14 @@ def create_app(
 
     @app.get("/healthz")
     def healthz() -> dict[str, int | str]:
-        summary = build_ops_summary(
+        return build_ops_health_summary(
             data_dir=Path(app.state.settings.data_dir),
             settings=app.state.settings,
+            decision_store=app.state.policy_decision_store,
+            approval_store=app.state.canonical_approval_store,
+            delivery_store=app.state.delivery_outbox_store,
+            receipt_store=app.state.action_receipt_store,
         )
-        return {
-            "status": summary.status,
-            "active_alerts": summary.active_alerts,
-            "release_gate_blockers": len(summary.release_gate_blockers),
-        }
 
     return app
 

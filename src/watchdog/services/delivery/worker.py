@@ -89,6 +89,8 @@ class DeliveryWorker:
             "title",
             "summary",
             "reason",
+            "audit_ref",
+            "created_at",
             "occurred_at",
             "decision_result",
             "action_name",
@@ -97,6 +99,43 @@ class DeliveryWorker:
             "actor_id",
             "channel_kind",
             "action_window_expires_at",
+            "facts",
+            "recommended_actions",
+        ):
+            value = payload.get(field)
+            if value is not None:
+                mirrored[field] = value
+        return mirrored
+
+    @staticmethod
+    def _notification_announcement_payload_fields(
+        record: DeliveryOutboxRecord,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        mirrored: dict[str, Any] = {
+            "outbox_seq": record.outbox_seq,
+            "delivery_status": "pending",
+            "delivery_attempt": 0,
+        }
+        for field in (
+            "event_id",
+            "notification_kind",
+            "severity",
+            "title",
+            "summary",
+            "reason",
+            "audit_ref",
+            "created_at",
+            "occurred_at",
+            "decision_result",
+            "action_name",
+            "interaction_context_id",
+            "interaction_family_id",
+            "actor_id",
+            "channel_kind",
+            "action_window_expires_at",
+            "facts",
+            "recommended_actions",
         ):
             value = payload.get(field)
             if value is not None:
@@ -113,10 +152,16 @@ class DeliveryWorker:
         causation_id: str | None = None,
         related_ids: dict[str, str] | None = None,
         event_payload: dict[str, Any] | None = None,
+        replay_safe: bool = False,
     ) -> None:
         if self._session_service is None:
             return
-        self._session_service.record_event(
+        recorder = (
+            self._session_service.record_event_once
+            if replay_safe and hasattr(self._session_service, "record_event_once")
+            else self._session_service.record_event
+        )
+        recorder(
             event_type=event_type,
             project_id=record.project_id,
             session_id=record.session_id,
@@ -144,6 +189,8 @@ class DeliveryWorker:
             payload=payload,
             correlation_id=f"corr:notification:{record.envelope_id}:announce",
             causation_id=str(payload.get("event_id") or record.envelope_id),
+            event_payload=self._notification_announcement_payload_fields(record, payload),
+            replay_safe=True,
         )
 
     def _record_notification_delivery_result(
@@ -177,6 +224,7 @@ class DeliveryWorker:
             correlation_id=f"corr:notification:{record.envelope_id}:attempt:{attempt}",
             causation_id=str(payload.get("event_id") or record.envelope_id),
             event_payload=outcome_payload,
+            replay_safe=True,
         )
         if result.receipt_id:
             receipt_payload = self._notification_payload_fields(record, payload)
@@ -191,6 +239,7 @@ class DeliveryWorker:
                 causation_id=str(payload.get("event_id") or record.envelope_id),
                 related_ids={"receipt_id": result.receipt_id},
                 event_payload=receipt_payload,
+                replay_safe=True,
             )
 
     def _record_notification_requeued(
@@ -216,6 +265,7 @@ class DeliveryWorker:
             correlation_id=f"corr:notification:{record.envelope_id}:requeue:{retry_point}",
             causation_id=str(payload.get("event_id") or record.envelope_id),
             event_payload=requeue_payload,
+            replay_safe=True,
         )
 
     def _next_ready_record(
@@ -415,6 +465,155 @@ class DeliveryWorker:
             return None
         return (str(last_local_manual_activity_at), age_seconds, _iso_z(next_retry))
 
+    def _apply_dynamic_delivery_route(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        now: datetime,
+    ) -> DeliveryOutboxRecord:
+        if self._session_service is None:
+            return record
+        transport = str(self._settings.delivery_transport or "").strip().lower()
+        if transport not in {"feishu", "feishu-app"}:
+            return record
+        if str(self._settings.feishu_receive_id or "").strip():
+            return record
+        payload = dict(record.envelope_payload)
+        existing_receive_id = str(payload.get("receive_id") or "").strip()
+        existing_receive_id_type = str(payload.get("receive_id_type") or "").strip()
+        if existing_receive_id and existing_receive_id_type:
+            return record
+        resolved = self._resolve_dynamic_delivery_route(record)
+        if resolved is None:
+            return record
+        receive_id, receive_id_type, source_event_id = resolved
+        payload["receive_id"] = receive_id
+        payload["receive_id_type"] = receive_id_type
+        notes = list(record.operator_notes)
+        notes.append(
+            "delivery_route_resolved "
+            f"source_event_id={source_event_id} "
+            f"receive_id_type={receive_id_type}"
+        )
+        updated = record.model_copy(
+            update={
+                "envelope_payload": payload,
+                "operator_notes": notes,
+                "updated_at": _iso_z(now),
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
+    def _resolve_dynamic_delivery_route(
+        self,
+        record: DeliveryOutboxRecord,
+    ) -> tuple[str, str, str] | None:
+        if self._session_service is None:
+            return None
+        events = [
+            event
+            for event in self._session_service.list_events(session_id=record.session_id)
+            if event.project_id == record.project_id
+        ]
+        if not events:
+            return None
+        scoped_events = self._scope_dynamic_route_candidate_events(events=events, record=record)
+        return self._resolve_dynamic_route_candidate_set(scoped_events)
+
+    @staticmethod
+    def _scope_dynamic_route_candidate_events(
+        *,
+        events: list,
+        record: DeliveryOutboxRecord,
+    ) -> list:
+        payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+        interaction_family_id = str(payload.get("interaction_family_id") or "").strip()
+        if interaction_family_id:
+            family_events = [
+                event
+                for event in events
+                if str(
+                    (
+                        event.related_ids if isinstance(event.related_ids, dict) else {}
+                    ).get("interaction_family_id")
+                    or ""
+                ).strip()
+                == interaction_family_id
+            ]
+            if family_events:
+                return family_events
+        actor_id = str(payload.get("actor_id") or "").strip()
+        if actor_id:
+            actor_events = [
+                event
+                for event in events
+                if str(
+                    (
+                        event.related_ids if isinstance(event.related_ids, dict) else {}
+                    ).get("feishu_actor_id")
+                    or ""
+                ).strip()
+                == actor_id
+            ]
+            if actor_events:
+                return actor_events
+        return events
+
+    @staticmethod
+    def _resolve_dynamic_route_candidate_set(
+        events: list,
+    ) -> tuple[str, str, str] | None:
+        for candidate in (
+            DeliveryWorker._unique_route_candidate(
+                events=events,
+                value_key="feishu_receive_id",
+                type_key="feishu_receive_id_type",
+                default_type=None,
+            ),
+            DeliveryWorker._unique_route_candidate(
+                events=events,
+                value_key="feishu_chat_id",
+                type_key=None,
+                default_type="chat_id",
+            ),
+            DeliveryWorker._unique_route_candidate(
+                events=events,
+                value_key="feishu_actor_id",
+                type_key=None,
+                default_type="open_id",
+            ),
+        ):
+            if candidate is not None:
+                return candidate
+        return None
+
+    @staticmethod
+    def _unique_route_candidate(
+        *,
+        events: list,
+        value_key: str,
+        type_key: str | None,
+        default_type: str | None,
+    ) -> tuple[str, str, str] | None:
+        candidate_by_route: dict[tuple[str, str], str] = {}
+        for event in reversed(events):
+            related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
+            receive_id = str(related_ids.get(value_key) or "").strip()
+            if not receive_id:
+                continue
+            receive_id_type = (
+                str(related_ids.get(type_key) or "").strip() if type_key is not None else ""
+            )
+            if not receive_id_type:
+                receive_id_type = str(default_type or "").strip()
+            if not receive_id_type:
+                continue
+            candidate_by_route.setdefault((receive_id, receive_id_type), event.event_id)
+        if len(candidate_by_route) != 1:
+            return None
+        (receive_id, receive_id_type), source_event_id = next(iter(candidate_by_route.items()))
+        return (receive_id, receive_id_type, source_event_id)
+
     def process_next_ready(
         self,
         *,
@@ -444,6 +643,8 @@ class DeliveryWorker:
                 next_retry_at=next_retry_at,
                 now=now,
             )
+        record = self._apply_dynamic_delivery_route(record=record, now=now)
+        notification_payload = self._notification_payload(record)
         if notification_payload is not None:
             self._record_notification_announced(record=record, payload=notification_payload)
         result = self._delivery_client.deliver_record(record)

@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
-
 import httpx
 
 from watchdog.services.delivery.envelopes import (
@@ -44,8 +42,6 @@ class FeishuAppDeliveryClient:
                 str(self._settings.feishu_base_url or "").strip(),
                 str(self._settings.feishu_app_id or "").strip(),
                 str(self._settings.feishu_app_secret or "").strip(),
-                str(self._settings.feishu_receive_id or "").strip(),
-                str(self._settings.feishu_receive_id_type or "").strip(),
             ]
         )
 
@@ -72,6 +68,14 @@ class FeishuAppDeliveryClient:
         envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
     ) -> DeliveryAttemptResult:
         if not self.configured():
+            return DeliveryAttemptResult(
+                envelope_id=envelope.envelope_id,
+                delivery_status="delivery_failed",
+                accepted=False,
+                failure_code="feishu_not_configured",
+            )
+        receive_id, receive_id_type = self._resolve_receive_target(envelope)
+        if not receive_id or not receive_id_type:
             return DeliveryAttemptResult(
                 envelope_id=envelope.envelope_id,
                 delivery_status="delivery_failed",
@@ -112,7 +116,7 @@ class FeishuAppDeliveryClient:
             "/open-apis/im/v1/messages"
         )
         body = {
-            "receive_id": str(self._settings.feishu_receive_id),
+            "receive_id": receive_id,
             "msg_type": "text",
             "content": json.dumps(
                 {"text": self._render_text(envelope)},
@@ -128,7 +132,7 @@ class FeishuAppDeliveryClient:
             ) as client:
                 response = client.post(
                     url,
-                    params={"receive_id_type": str(self._settings.feishu_receive_id_type)},
+                    params={"receive_id_type": receive_id_type},
                     headers={
                         "Authorization": f"Bearer {tenant_token}",
                         "Content-Type": "application/json; charset=utf-8",
@@ -191,6 +195,22 @@ class FeishuAppDeliveryClient:
             expires_at=now + timedelta(seconds=max(expire_seconds, 60)),
         )
         return token
+
+    def _resolve_receive_target(
+        self,
+        envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
+    ) -> tuple[str | None, str | None]:
+        receive_id = str(
+            getattr(envelope, "receive_id", None) or self._settings.feishu_receive_id or ""
+        ).strip()
+        receive_id_type = str(
+            getattr(envelope, "receive_id_type", None)
+            or self._settings.feishu_receive_id_type
+            or ""
+        ).strip()
+        if not receive_id or not receive_id_type:
+            return (None, None)
+        return (receive_id, receive_id_type)
 
     @staticmethod
     def _classify_http_status_failure(
@@ -259,33 +279,153 @@ class FeishuAppDeliveryClient:
             status_code=response.status_code,
         )
 
-    @staticmethod
+    @classmethod
     def _render_text(
+        cls,
         envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
     ) -> str:
-        lines: list[str] = [
-            f"[watchdog] {envelope.envelope_type}",
-            f"project={envelope.project_id}",
-            f"session={envelope.session_id}",
-        ]
-        title = str(getattr(envelope, "title", "") or "").strip()
-        summary = str(getattr(envelope, "summary", "") or "").strip()
-        reason = str(getattr(envelope, "reason", "") or "").strip()
-        if title:
-            lines.append(f"title={title}")
-        if summary:
-            lines.append(f"summary={summary}")
-        if reason:
-            lines.append(f"reason={reason}")
-        if isinstance(envelope, DecisionEnvelope):
-            lines.append(f"decision={envelope.decision_result}")
-            lines.append(f"action={envelope.action_name}")
         if isinstance(envelope, ApprovalEnvelope):
-            lines.append(f"approval_id={envelope.approval_id}")
-            lines.append(f"requested_action={envelope.requested_action}")
-            lines.append(f"options={','.join(envelope.decision_options)}")
-        if isinstance(envelope, NotificationEnvelope):
-            lines.append(f"notification_kind={envelope.notification_kind}")
-            lines.append(f"severity={envelope.severity}")
-        lines.append(f"envelope_id={envelope.envelope_id}")
+            return cls._render_approval_text(envelope)
+        if isinstance(envelope, DecisionEnvelope):
+            return cls._render_decision_text(envelope)
+        if envelope.notification_kind == "decision_result":
+            return cls._render_decision_notification_text(envelope)
+        return cls._render_notification_text(envelope)
+
+    @staticmethod
+    def _display_session_id(session_id: str) -> str:
+        normalized = str(session_id or "").strip()
+        return normalized.removeprefix("session:") or normalized
+
+    @staticmethod
+    def _base_lines(
+        envelope: DecisionEnvelope | NotificationEnvelope | ApprovalEnvelope,
+    ) -> list[str]:
+        return [
+            f"项目：{envelope.project_id}",
+            f"会话：{FeishuAppDeliveryClient._display_session_id(envelope.session_id)}",
+        ]
+
+    @staticmethod
+    def _humanize_action(action_name: str | None) -> str:
+        normalized = str(action_name or "").strip()
+        action_labels = {
+            "continue_session": "继续当前任务",
+            "execute_recovery": "执行恢复流程",
+            "request_recovery": "查看恢复建议",
+            "pause_session": "暂停当前任务",
+            "resume_session": "恢复当前任务",
+            "summarize_session": "生成任务摘要",
+            "force_handoff": "人工接管当前任务",
+            "handoff_to_human": "人工接管当前任务",
+            "retry_with_conservative_path": "按保守路径重试",
+        }
+        if not normalized:
+            return "当前操作"
+        return action_labels.get(normalized, normalized.replace("_", " "))
+
+    @classmethod
+    def _humanize_decision_result(cls, decision_result: str, action_name: str | None) -> str:
+        action_label = cls._humanize_action(action_name)
+        normalized = str(decision_result or "").strip()
+        decision_labels = {
+            "auto_execute_and_notify": f"已自动执行「{action_label}」",
+            "require_user_decision": f"需要人工确认后再执行「{action_label}」",
+            "block_and_alert": f"已阻断「{action_label}」并发出提醒",
+        }
+        return decision_labels.get(normalized, f"{normalized or '已更新'}「{action_label}」")
+
+    @staticmethod
+    def _humanize_reason(reason: str | None) -> str:
+        normalized = str(reason or "").strip()
+        if not normalized:
+            return ""
+        phrase_map = {
+            "session requires explicit human decision": "当前会话需要人工明确确认。",
+            "recovery execution requires explicit human decision": "恢复操作需要人工明确确认。",
+            "registered action and complete evidence": "动作已登记，且证据完整。",
+        }
+        if normalized in phrase_map:
+            return phrase_map[normalized]
+        parts: list[str] = []
+        label_map = {
+            "phase": "当前处于 {value} 阶段",
+            "context": "上下文压力为 {value}",
+            "stuck": "卡点等级为 {value}",
+            "files": "涉及文件 {value}",
+        }
+        for raw_part in normalized.split(";"):
+            part = raw_part.strip()
+            if not part:
+                continue
+            key, separator, value = part.partition("=")
+            if not separator:
+                parts.append(part)
+                continue
+            template = label_map.get(key.strip())
+            if template is None:
+                parts.append(part)
+                continue
+            parts.append(template.format(value=value.strip()))
+        if parts:
+            return "；".join(parts)
+        return normalized
+
+    @classmethod
+    def _render_approval_text(cls, envelope: ApprovalEnvelope) -> str:
+        lines = [
+            "Watchdog 需要你确认一项操作",
+            *cls._base_lines(envelope),
+            f"待确认操作：{cls._humanize_action(envelope.requested_action)}",
+        ]
+        summary = str(envelope.summary or "").strip()
+        if summary:
+            lines.append(f"背景说明：{summary}")
+        reason = cls._humanize_reason(envelope.reason or envelope.why_escalated)
+        if reason:
+            lines.append(f"原因：{reason}")
+        lines.append('你现在可以这样干预：回复“批准”、“拒绝”或“直接执行”')
+        return "\n".join(lines)
+
+    @classmethod
+    def _render_decision_text(cls, envelope: DecisionEnvelope) -> str:
+        lines = [
+            "Watchdog 自动决策更新",
+            *cls._base_lines(envelope),
+            f"自动决策：{cls._humanize_decision_result(envelope.decision_result, envelope.action_name)}",
+        ]
+        decision_reason = str(envelope.decision_reason or envelope.reason or "").strip()
+        if decision_reason:
+            lines.append(f"决策依据：{decision_reason}")
+        lines.append('你现在可以这样干预：回复“状态”查看详情，或回复“人工接管”')
+        return "\n".join(lines)
+
+    @classmethod
+    def _render_decision_notification_text(cls, envelope: NotificationEnvelope) -> str:
+        lines = [
+            "Watchdog 自动决策更新",
+            *cls._base_lines(envelope),
+            f"自动决策：{cls._humanize_decision_result(envelope.decision_result or '', envelope.action_name)}",
+        ]
+        reason = str(envelope.reason or "").strip()
+        if reason:
+            lines.append(f"决策依据：{reason}")
+        lines.append('你现在可以这样干预：回复“状态”查看详情，或回复“人工接管”')
+        return "\n".join(lines)
+
+    @classmethod
+    def _render_notification_text(cls, envelope: NotificationEnvelope) -> str:
+        kind_titles = {
+            "progress_summary": "Watchdog 任务进展更新",
+        }
+        lines = [
+            kind_titles.get(envelope.notification_kind, "Watchdog 通知"),
+            *cls._base_lines(envelope),
+        ]
+        summary = str(envelope.summary or "").strip()
+        if summary:
+            lines.append(f"发生了什么：{summary}")
+        reason = cls._humanize_reason(envelope.reason)
+        if reason:
+            lines.append(f"系统参考：{reason}")
         return "\n".join(lines)

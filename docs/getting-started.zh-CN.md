@@ -298,6 +298,7 @@ mkdir -p "$APP_DIR/bin" "$HOME/Library/LaunchAgents"
 | `WATCHDOG_OPENCLAW_WEBHOOK_BASE_URL` | Watchdog 主动回调 OpenClaw 的根 URL；实际投递路径固定为 `/openclaw/v1/watchdog/envelopes` |
 | `WATCHDOG_OPENCLAW_WEBHOOK_TOKEN` | Watchdog 调 OpenClaw webhook 时使用的 Bearer token |
 | `WATCHDOG_DELIVERY_TRANSPORT` | 当前 delivery transport；默认 `openclaw`，切到 Feishu 主控制面时设为 `feishu` |
+| `WATCHDOG_FEISHU_EVENT_INGRESS_MODE` / `WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE` | Feishu 入站模式；默认 `callback`，本地无公网域名时建议都设为 `long_connection` |
 | `WATCHDOG_FEISHU_APP_ID` / `WATCHDOG_FEISHU_APP_SECRET` | Feishu 自建应用凭据；启用 Feishu direct delivery 时必填 |
 | `WATCHDOG_FEISHU_VERIFICATION_TOKEN` | Feishu 官方 event subscription / URL verification 使用的 verification token |
 | `WATCHDOG_FEISHU_RECEIVE_ID` / `WATCHDOG_FEISHU_RECEIVE_ID_TYPE` | Watchdog 出站消息默认投递目标，例如 `chat_id` 或其他 Feishu receive id |
@@ -367,15 +368,19 @@ WATCHDOG_BRAIN_PROVIDER_NAME=resident_orchestrator
 - 当前仓库还新增了 resident orchestrator：后台会持续执行 `session spine refresh -> policy evaluate -> auto recovery / approval materialize -> enqueue delivery -> call OpenClaw`，并对普通进展变化按 `progress_summary` 做节流主动推送；OpenClaw 不需要记住流程状态。
 - 如果 B 机自己的公网 envelope webhook 地址会变化，A 机还提供 `POST /api/v1/watchdog/bootstrap/openclaw-webhook`。B 机只要带 `Authorization: Bearer <WATCHDOG_API_TOKEN>` 回传 `event_type=openclaw_webhook_base_url_changed`、`openclaw_webhook_base_url`、`changed_at`、`source`，A 机就会把最新地址持久化到 `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE`，后续 delivery 自动切换到新地址。
 
-### 3.2 切到 Feishu 主控制面（official ingress + direct delivery）
+### 3.2 切到 Feishu 主控制面（长连接优先，保留 HTTP fallback）
 
-如果你已经有可用的 Feishu 自建应用，但此前 `.env.w` 仍走 OpenClaw compatibility delivery，那么切到 Feishu 正式主控制面时至少要补以下变量：
+如果你已经有可用的 Feishu 自建应用，但本地没有公网域名，建议把 Feishu 的事件配置和回调配置都切成长连接模式。仓库内的 HTTP callback `POST /api/v1/watchdog/feishu/events` 继续保留，作为 repo-local smoke、回归测试与 fallback contract，不需要从飞书控制台删除。
+
+最小环境变量建议如下：
 
 ```bash
-WATCHDOG_DELIVERY_TRANSPORT=feishu
+WATCHDOG_FEISHU_EVENT_INGRESS_MODE=long_connection
+WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE=long_connection
 WATCHDOG_FEISHU_APP_ID=<Feishu app id>
 WATCHDOG_FEISHU_APP_SECRET=<Feishu app secret>
 WATCHDOG_FEISHU_VERIFICATION_TOKEN=<Feishu verification token>
+WATCHDOG_DELIVERY_TRANSPORT=feishu
 WATCHDOG_FEISHU_RECEIVE_ID=<默认 chat_id 或 open_id>
 WATCHDOG_FEISHU_RECEIVE_ID_TYPE=chat_id
 WATCHDOG_FEISHU_INTERACTION_WINDOW_SECONDS=900
@@ -383,20 +388,35 @@ WATCHDOG_FEISHU_INTERACTION_WINDOW_SECONDS=900
 
 说明：
 
+- `WATCHDOG_FEISHU_EVENT_INGRESS_MODE=long_connection` 与 `WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE=long_connection` 会启用仓库内的长连接 bridge；
+- 长连接 bridge 是独立脚本 `scripts/watchdog_feishu_long_connection.py`，不挂到 Watchdog 主服务的 lifespan 中；
 - `WATCHDOG_DELIVERY_TRANSPORT=feishu` 会把 Watchdog 出站通知切到 Feishu direct delivery；
-- `WATCHDOG_FEISHU_VERIFICATION_TOKEN` 同时用于官方 `URL verification` 与 `event subscription` ingress 校验；
-- Feishu 官方回调地址应指向 Watchdog 的 `POST /api/v1/watchdog/feishu/events`；
+- `WATCHDOG_FEISHU_VERIFICATION_TOKEN` 仍作为长连接事件与 callback 的 token 校验真值；
+- 若 `WATCHDOG_FEISHU_RECEIVE_ID` 还没拿到，可以先保持 `WATCHDOG_DELIVERY_TRANSPORT=openclaw`，先把 Feishu 入站控制面联通；
 - 本仓库负责 Watchdog 这一侧的 callback contract，不负责 Feishu 自建应用本身的创建、安装与组织级开关。
 
 最小验收顺序：
 
 1. 保持 `GET /healthz` 正常；
-2. 让 Feishu 后台对 `POST /api/v1/watchdog/feishu/events` 发起 URL verification；
-3. 确认 callback 能收到 `{"challenge": ...}` 响应；
-4. 在 Feishu DM 里发送显式 `repo:<project_id> pause` 或 `/goal ...`，确认 Watchdog 收到 official ingress 并产生对应 canonical event；
-5. 触发一条 approval/progress/notification，确认 delivery 走的是 Feishu 而不是 OpenClaw webhook。
+2. 用同一份 `.env.w` 启动 Watchdog 主服务；
+3. 单独启动长连接 bridge：
 
-如果你想先做本地 smoke test，可以直接模拟 URL verification：
+```bash
+set -a
+source .env.w
+set +a
+uv run python scripts/watchdog_feishu_long_connection.py
+```
+
+4. 在飞书后台把“事件配置”改为“使用长连接接收事件”，bridge 在线后点击“验证”；
+5. 在“事件配置”里显式添加至少两条订阅事件：`im.message.receive_v1`（接收消息 v2.0）与 `im.chat.access_event.bot_p2p_chat_entered_v1`（控制台文案通常对应机器人进入单聊）；前者负责 DM 指令入口，后者负责首聊建链与拿到 `chat_id`；
+6. 把“回调配置”也改成长连接模式；这条路径无需公网域名、无需额外加密回调地址；
+7. 确认机器人相关权限与可用范围已经发布到你当前测试账号；如果这里只完成“长连接验证”而没有完成事件订阅或权限发布，DM 不会投递到本地 bridge；
+8. 在 Feishu DM 里发送显式 `repo:<project_id> pause` 或 `/goal ...`，确认 Watchdog 收到 official ingress 并产生对应 canonical event；
+9. 若本地 bridge 没有出现 `feishu long-connection message received: chat_id=...` 日志，先去飞书开发者后台的“日志检索 > 事件日志检索”确认平台是否真的推送了 `im.message.receive_v1`，不要先怀疑仓库内解析层；
+10. 若已经补齐 `WATCHDOG_FEISHU_RECEIVE_ID`，再触发一条 approval/progress/notification，确认 delivery 走的是 Feishu；否则把这一步延后，不要口头声称出站已经就绪。
+
+如果你想先做 repo-local fallback smoke，可以直接模拟 HTTP callback 的 `url_verification`：
 
 ```bash
 curl -X POST "http://127.0.0.1:8720/api/v1/watchdog/feishu/events" \
@@ -413,6 +433,8 @@ curl -X POST "http://127.0.0.1:8720/api/v1/watchdog/feishu/events" \
 ```json
 {"challenge":"challenge-123"}
 ```
+
+这条 HTTP route 仍然保留，只是它现在承担的是 fallback / smoke contract，而不是“本地无公网域名时飞书控制台必须直连的正式入口”。
 
 ### 3.3 切到 OpenAI-compatible Brain provider
 
@@ -504,7 +526,7 @@ uv run python scripts/watchdog_external_integration_smoke.py --target provider -
 - 默认会跑 `health`、`feishu`、`provider`、`memory` 四类检查；
 - `feishu` 会验证 `POST /api/v1/watchdog/feishu/events` 的 `url_verification` 合约；
 - `feishu-control` 是额外的 repo-local callback contract smoke，会发送一条 `im.message.receive_v1` 的 DM 文本事件，内容固定为 `repo:<project_id> /goal <goal_message>`，验证官方入口能否真正落到 `goal_contract_bootstrap`；
-- 运行 `feishu-control` 前至少要配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；如果还希望锁定具体 session，可额外配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`；
+- 运行 `feishu-control` 前至少要配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；如果还希望锁定具体 session，可额外配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`；若真实数据量较大导致 repo-local callback contract 超过默认 3 秒，可单独设置 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S` 放宽这一项窗口；
 - `provider` 会验证 `WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible` 时的外部模型接线，以及 provider 请求失败后的回退路径；
 - `memory` 会验证 `POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor` 的 preview contract；
 - 某项能力未启用时允许返回 `skipped`；若能力已启用但配置缺失、返回字段不匹配或回退语义异常，则应视为阻断问题。

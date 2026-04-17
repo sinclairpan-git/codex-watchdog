@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib
 import json
+import threading
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -33,7 +34,11 @@ from watchdog.services.policy.decisions import (
     build_canonical_decision_record,
 )
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
-from watchdog.services.session_spine.orchestrator import ResidentOrchestrator, _parse_iso
+from watchdog.services.session_spine.orchestrator import (
+    ResidentOrchestrationOutcome,
+    ResidentOrchestrator,
+    _parse_iso,
+)
 from watchdog.services.session_spine.service import build_approval_inbox_bundle, build_session_read_bundle
 from watchdog.settings import Settings
 
@@ -131,6 +136,47 @@ class RecoveringResidentAClient(FakeResidentAClient):
             "success": True,
             "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
+
+
+class MultiProjectResidentAClient:
+    def __init__(
+        self,
+        *,
+        tasks: list[dict[str, object]],
+        approvals: list[dict[str, object]],
+    ) -> None:
+        self._tasks = [dict(task) for task in tasks]
+        self._approvals = [dict(approval) for approval in approvals]
+        self.list_approvals_calls: list[tuple[str | None, str | None, str | None]] = []
+
+    def list_tasks(self) -> list[dict[str, object]]:
+        return [dict(task) for task in self._tasks]
+
+    def get_envelope(self, project_id: str) -> dict[str, object]:
+        for task in self._tasks:
+            if task.get("project_id") == project_id:
+                return {"success": True, "data": dict(task)}
+        raise AssertionError(f"unexpected project_id: {project_id}")
+
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        self.list_approvals_calls.append((status, project_id, callback_status))
+        rows = [dict(approval) for approval in self._approvals]
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        if project_id:
+            rows = [row for row in rows if row.get("project_id") == project_id]
+        if decided_by:
+            rows = [row for row in rows if row.get("decided_by") == decided_by]
+        if callback_status:
+            rows = [row for row in rows if row.get("callback_status") == callback_status]
+        return rows
 
 
 def _runtime_gate_pass_kwargs() -> dict[str, dict[str, object]]:
@@ -712,6 +758,769 @@ def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_
     assert app.state.delivery_outbox_store.list_records() == []
 
 
+def test_approval_read_snapshot_uses_session_projection_instead_of_full_approval_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    app.state.session_service.record_event_once(
+        event_type="approval_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:test:approval:appr_001",
+        related_ids={"approval_id": "appr_001"},
+        payload={
+            "requested_action": "uv run pytest",
+            "fact_snapshot_version": "fact-v99",
+            "goal_contract_version": "goal-contract:v2",
+            "expires_at": "2026-04-05T06:21:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    def _fail_if_full_store_scanned():
+        raise AssertionError("approval store list_records should not be used")
+
+    monkeypatch.setattr(app.state.canonical_approval_store, "list_records", _fail_if_full_store_scanned)
+
+    snapshot = app.state.resident_orchestrator._approval_read_snapshot_for_session(record)
+
+    assert snapshot is not None
+    assert snapshot.approval_id == "appr_001"
+    assert snapshot.approval_event_id.startswith("event:")
+    assert snapshot.requested_action == "uv run pytest"
+    assert snapshot.fact_snapshot_version == "fact-v99"
+    assert snapshot.goal_contract_version == "goal-contract:v2"
+    assert snapshot.expires_at == "2026-04-05T06:21:00Z"
+    assert snapshot.log_seq is not None
+
+
+def test_approval_read_snapshot_ignores_locally_superseded_projected_approval(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    app.state.session_service.record_event_once(
+        event_type="approval_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:test:approval:appr_001",
+        related_ids={"approval_id": "appr_001"},
+        payload={
+            "requested_action": "uv run pytest",
+            "fact_snapshot_version": "fact-v99",
+            "goal_contract_version": "goal-contract:v2",
+            "expires_at": "2026-04-05T06:21:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    stale_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v99:require_user_decision",
+        decision_key="session:repo-a|fact-v99|policy-v1|require_user_decision|continue_session|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="stale approval should be ignored locally",
+        matched_policy_rules=["brain_requires_approval"],
+        why_not_escalated=None,
+        why_escalated="brain intent requires explicit human approval",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v99",
+        idempotency_key="session:repo-a|fact-v99|policy-v1|require_user_decision|continue_session|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "continue_session",
+                "approval_id": "appr_001",
+            }
+        },
+    )
+    stale_approval = materialize_canonical_approval(
+        stale_decision,
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.canonical_approval_store.update(
+        stale_approval.model_copy(
+            update={
+                "status": "superseded",
+                "decided_at": "2026-04-05T05:22:00Z",
+                "decided_by": "policy-test",
+            }
+        )
+    )
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    snapshot = app.state.resident_orchestrator._approval_read_snapshot_for_session(record)
+
+    assert snapshot is None
+
+
+def test_approval_read_snapshot_uses_locally_pending_canonical_approval_when_projection_empty(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "waiting for local canonical approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    stale_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision:local-only",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="execute_recovery",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="local canonical approval should remain visible",
+        matched_policy_rules=["recovery_human_gate"],
+        why_not_escalated=None,
+        why_escalated="recovery execution requires explicit human decision",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": "appr_001",
+            },
+            "goal_contract_version": "goal-contract:unknown",
+        },
+    )
+    approval = materialize_canonical_approval(
+        stale_decision,
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    assert record.approval_queue == []
+
+    snapshot = app.state.resident_orchestrator._approval_read_snapshot_for_session(record)
+
+    assert snapshot is not None
+    assert snapshot.approval_id == approval.approval_id
+    assert snapshot.requested_action == "execute_recovery"
+    assert snapshot.fact_snapshot_version == "fact-v1"
+
+
+def test_resident_orchestrator_filters_locally_superseded_projection_before_policy_decision(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.session_spine_runtime.refresh_all()
+    stale_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="stale approval should be ignored locally",
+        matched_policy_rules=["brain_requires_approval"],
+        why_not_escalated=None,
+        why_escalated="brain intent requires explicit human approval",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "continue_session",
+                "approval_id": "appr_001",
+            }
+        },
+    )
+    stale_approval = materialize_canonical_approval(
+        stale_decision,
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.canonical_approval_store.update(
+        stale_approval.model_copy(
+            update={
+                "status": "superseded",
+                "decided_at": "2026-04-05T05:22:00Z",
+                "decided_by": "policy-test",
+            }
+        )
+    )
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    decisions = app.state.policy_decision_store.list_records()
+    approvals = app.state.canonical_approval_store.list_records()
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    assert len(decisions) == 1
+    assert decisions[0].decision_result == "block_and_alert"
+    assert decisions[0].approval_id is None
+    assert len(approvals) == 1
+    assert approvals[0].approval_id == "appr_001"
+    assert approvals[0].status == "superseded"
+
+
+def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_projection_missing(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "needs explicit recovery approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    prior_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision:local-only",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="execute_recovery",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="existing local approval should be refreshed in place",
+        matched_policy_rules=["recovery_human_gate"],
+        why_not_escalated=None,
+        why_escalated="recovery execution requires explicit human decision",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": "appr_001",
+            },
+            "goal_contract_version": "goal-contract:unknown",
+        },
+    )
+    prior_approval = materialize_canonical_approval(
+        prior_decision,
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    approvals = app.state.canonical_approval_store.list_records()
+    decisions = app.state.policy_decision_store.list_records()
+
+    assert [outcome.action_ref for outcome in outcomes] == ["execute_recovery"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert len(decisions) == 1
+    assert decisions[0].approval_id == prior_approval.approval_id
+    assert len(approvals) == 1
+    assert approvals[0].approval_id == prior_approval.approval_id
+    assert approvals[0].status == "pending"
+    assert approvals[0].fact_snapshot_version == decisions[0].fact_snapshot_version
+    assert decisions[0].decision_id != prior_decision.decision_id
+    approval_events = app.state.session_service.list_events(
+        session_id=prior_approval.session_id,
+        event_type="approval_requested",
+    )
+    assert len(approval_events) == 1
+
+
+def test_resident_orchestrator_remints_approval_when_projected_command_conflicts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "old recovery approval is still projected",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "execute_recovery",
+                "reason": "recover manually",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
+    app.state.session_spine_runtime.refresh_all()
+    prior_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision:stale-recovery",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="execute_recovery",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="old recovery approval should not leak into continue-session gate",
+        matched_policy_rules=["recovery_human_gate"],
+        why_not_escalated=None,
+        why_escalated="recovery execution requires explicit human decision",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": "appr_001",
+            },
+            "goal_contract_version": "goal-contract:unknown",
+        },
+    )
+    materialize_canonical_approval(
+        prior_decision,
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+        session_service=app.state.session_service,
+    )
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    decisions = app.state.policy_decision_store.list_records()
+    approvals = sorted(
+        app.state.canonical_approval_store.list_records(),
+        key=lambda approval: approval.created_at,
+    )
+    outbox = sorted(
+        app.state.delivery_outbox_store.list_records(),
+        key=lambda record: record.outbox_seq,
+    )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert len(decisions) == 1
+    assert decisions[0].approval_id is None
+    assert decisions[0].action_ref == "continue_session"
+    assert decisions[0].evidence["decision_trace"]["approval_read"] is None
+    assert len(approvals) == 2
+    assert approvals[0].approval_id == "appr_001"
+    assert approvals[0].requested_action == "execute_recovery"
+    assert approvals[0].status == "superseded"
+    assert approvals[1].approval_id != "appr_001"
+    assert approvals[1].requested_action == "continue_session"
+    assert approvals[1].status == "pending"
+    assert len(outbox) == 2
+    assert outbox[0].envelope_id == approvals[0].envelope_id
+    assert outbox[0].delivery_status == "superseded"
+    assert outbox[1].envelope_id == approvals[1].envelope_id
+    assert outbox[1].delivery_status == "pending"
+    approval_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="approval_requested",
+    )
+    assert len(approval_events) == 2
+
+
+def test_resident_orchestrator_remints_approval_when_projected_goal_contract_drifts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "old recovery approval has stale goal truth",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "execute_recovery",
+                "reason": "recover manually",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+    prior_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision:stale-goal-contract",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="execute_recovery",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="old recovery approval predates current goal contract truth",
+        matched_policy_rules=["recovery_human_gate"],
+        why_not_escalated=None,
+        why_escalated="recovery execution requires explicit human decision",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": "appr_001",
+            }
+        },
+    )
+    materialize_canonical_approval(
+        prior_decision,
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+        session_service=app.state.session_service,
+    )
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    decisions = app.state.policy_decision_store.list_records()
+    approvals = sorted(
+        app.state.canonical_approval_store.list_records(),
+        key=lambda approval: approval.created_at,
+    )
+    outbox = sorted(
+        app.state.delivery_outbox_store.list_records(),
+        key=lambda record: record.outbox_seq,
+    )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["execute_recovery"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert len(decisions) == 1
+    assert decisions[0].approval_id is None
+    assert decisions[0].action_ref == "execute_recovery"
+    assert decisions[0].evidence["decision_trace"]["approval_read"] is None
+    assert len(approvals) == 2
+    assert approvals[0].approval_id == "appr_001"
+    assert approvals[0].goal_contract_version is None
+    assert approvals[0].status == "superseded"
+    assert approvals[1].approval_id != "appr_001"
+    assert approvals[1].requested_action == "execute_recovery"
+    assert approvals[1].goal_contract_version == "goal-contract:unknown"
+    assert approvals[1].status == "pending"
+    assert len(outbox) == 2
+    assert outbox[0].envelope_id == approvals[0].envelope_id
+    assert outbox[0].delivery_status == "superseded"
+    assert outbox[1].envelope_id == approvals[1].envelope_id
+    assert outbox[1].delivery_status == "pending"
+    approval_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="approval_requested",
+    )
+    assert len(approval_events) == 2
+
+
+def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = MultiProjectResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval a",
+                "files_touched": ["src/a.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval b",
+                "files_touched": ["src/b.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:01:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest repo-a",
+                "reason": "verify repo-a",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2099-01-01T00:00:30Z",
+            },
+            {
+                "approval_id": "appr_002",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L2",
+                "command": "uv run pytest repo-b",
+                "reason": "verify repo-b",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2099-01-01T00:01:30Z",
+            },
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    app.state.session_spine_runtime.refresh_all()
+
+    records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+
+    assert sorted(a_client.list_approvals_calls) == [
+        ("approved", None, "deferred"),
+        ("pending", None, None),
+    ]
+    assert sorted(records) == ["repo-a", "repo-b"]
+    assert [approval.approval_id for approval in records["repo-a"].approval_queue] == ["appr_001"]
+    assert [approval.approval_id for approval in records["repo-b"].approval_queue] == ["appr_002"]
+
+
 def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
     tmp_path: Path,
 ) -> None:
@@ -1262,6 +2071,344 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
         session_events[1].payload["decision_trace"]["trace_id"]
     )
     assert session_events[2].related_ids["command_id"] == command_id
+
+
+def test_resident_orchestrator_reuses_existing_decision_lifecycle_events_on_identical_replay(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    app.state.resident_orchestrator._record_decision_lifecycle(decision)
+
+    session_events = app.state.session_service.list_events(
+        session_id=decision.session_id,
+        correlation_id=f"corr:decision:{decision.decision_id}",
+    )
+
+    assert [event.event_type for event in session_events] == [
+        "decision_proposed",
+        "decision_validated",
+        "command_created",
+    ]
+    assert session_events[1].payload["validator_verdict"]["reason"] == "schema_and_risk_ok"
+
+
+def test_resident_orchestrator_preserves_existing_lifecycle_trace_when_refreshing_legacy_decision(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "completed",
+            "phase": "done",
+            "pending_approval": False,
+            "last_summary": "finished",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    original_trace = decision.evidence["decision_trace"]["trace_id"]
+    regenerated = decision.model_copy(
+        update={
+            "evidence": {
+                **decision.evidence,
+                "goal_contract_version": "goal-contract:test-refresh",
+                "decision_trace": {
+                    **decision.evidence["decision_trace"],
+                    "trace_id": "trace:regenerated",
+                },
+            }
+        }
+    )
+
+    stored = app.state.resident_orchestrator._record_and_store_decision(regenerated)
+
+    assert stored.evidence["decision_trace"]["trace_id"] == original_trace
+    assert stored.evidence["goal_contract_version"] == "goal-contract:test-refresh"
+    persisted = app.state.policy_decision_store.get(decision.decision_key)
+    assert persisted is not None
+    assert persisted.evidence["decision_trace"]["trace_id"] == original_trace
+    assert persisted.evidence["goal_contract_version"] == "goal-contract:test-refresh"
+
+    session_events = app.state.session_service.list_events(
+        session_id=decision.session_id,
+        correlation_id=f"corr:decision:{decision.decision_id}",
+    )
+    assert [event.event_type for event in session_events] == [
+        "decision_proposed",
+        "decision_validated",
+    ]
+    assert session_events[0].payload["decision_trace_ref"] == original_trace
+    assert session_events[1].payload["decision_trace"]["trace_id"] == original_trace
+
+
+def test_resident_orchestrator_backfills_missing_decision_store_from_existing_lifecycle_events(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "completed",
+            "phase": "done",
+            "pending_approval": False,
+            "last_summary": "finished",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    correlation_id = f"corr:decision:{decision.decision_id}"
+    session_events = app.state.session_service.list_events(
+        session_id=decision.session_id,
+        correlation_id=correlation_id,
+    )
+    assert [event.event_type for event in session_events] == [
+        "decision_proposed",
+        "decision_validated",
+    ]
+
+    decision_store_path = tmp_path / "policy_decisions.json"
+    decision_store_payload = json.loads(decision_store_path.read_text(encoding="utf-8"))
+    decision_store_payload.pop(decision.decision_key)
+    decision_store_path.write_text(
+        json.dumps(decision_store_payload, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    assert app.state.policy_decision_store.get(decision.decision_key) is None
+
+    regenerated = decision.model_copy(
+        update={
+            "evidence": {
+                **decision.evidence,
+                "goal_contract_version": "goal-contract:test-backfill",
+            }
+        }
+    )
+
+    stored = app.state.resident_orchestrator._record_and_store_decision(regenerated)
+
+    assert stored.decision_key == decision.decision_key
+    assert stored.evidence["goal_contract_version"] == "goal-contract:test-backfill"
+    persisted = app.state.policy_decision_store.get(decision.decision_key)
+    assert persisted is not None
+    assert persisted.evidence["goal_contract_version"] == "goal-contract:test-backfill"
+
+    session_events = app.state.session_service.list_events(
+        session_id=decision.session_id,
+        correlation_id=correlation_id,
+    )
+    assert [event.event_type for event in session_events] == [
+        "decision_proposed",
+        "decision_validated",
+    ]
+
+
+def test_resident_orchestrator_raises_on_decision_lifecycle_payload_drift(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    mutated_decision = decision.model_copy(
+        update={
+            "why_not_escalated": "policy_requires_recheck",
+            "uncertainty_reasons": ["mapping_incomplete", "release_gate_bundle_changed"],
+            "evidence": {
+                **decision.evidence,
+                "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                    report_id="report-seed",
+                    report_hash="sha256:report-rechecked",
+                    input_hash="sha256:input-seed",
+                ),
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="conflicting session event for idempotency key"):
+        app.state.resident_orchestrator._record_decision_lifecycle(mutated_decision)
+
+    session_events = app.state.session_service.list_events(
+        session_id=decision.session_id,
+        correlation_id=f"corr:decision:{decision.decision_id}",
+    )
+    assert [event.event_type for event in session_events] == [
+        "decision_proposed",
+        "decision_validated",
+        "command_created",
+    ]
+    assert session_events[1].payload["why_not_escalated"] == "policy_allows_auto_execution"
+    assert session_events[1].payload["uncertainty_reasons"] == []
+    assert session_events[1].payload["release_gate_evidence_fingerprint"] is None
+    assert session_events[1].payload["validator_verdict"]["reason"] == "schema_and_risk_ok"
+
+
+def test_resident_orchestrator_raises_on_command_created_payload_drift(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    decision = app.state.policy_decision_store.put(
+        _with_formal_release_gate_bundle(
+            evaluate_persisted_session_policy(
+                record,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                **_runtime_gate_pass_kwargs(),
+            )
+        )
+    )
+    command_id = f"command:{decision.decision_id}"
+
+    app.state.resident_orchestrator._record_command_created(
+        decision,
+        command_id=command_id,
+    )
+    mutated_decision = decision.model_copy(
+        update={
+            "evidence": {
+                **decision.evidence,
+                "requested_action_args": {"mode": "safe"},
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="conflicting session event for idempotency key"):
+        app.state.resident_orchestrator._record_command_created(
+            mutated_decision,
+            command_id=command_id,
+        )
+
+    session_events = app.state.session_service.list_events(
+        session_id=decision.session_id,
+        correlation_id=f"corr:decision:{decision.decision_id}",
+    )
+    assert [event.event_type for event in session_events] == ["command_created"]
+    assert session_events[0].payload["action_args"] == {}
 
 
 def test_resident_orchestrator_replay_reads_future_worker_events_by_decision_trace(
@@ -1851,6 +2998,11 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
                     "report_hash": "sha256:report",
                     "input_hash": "sha256:input",
                 },
+                "release_gate_evidence_bundle": _formal_release_gate_bundle(
+                    report_id="report-1",
+                    report_hash="sha256:report",
+                    input_hash="sha256:input",
+                ),
             },
         )
 
@@ -1877,6 +3029,7 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
     assert session_events[1].payload["validator_verdict"]["status"] == "pass"
     assert session_events[1].payload["release_gate_verdict"]["decision_trace_ref"] == "trace:1"
     assert session_events[1].payload["release_gate_verdict"]["approval_read_ref"] == "approval:event:1"
+    assert session_events[1].payload["release_gate_evidence_fingerprint"].startswith("sha256:")
     assert "release_gate_evidence_bundle" not in session_events[1].payload
     assert helper_mock.call_count >= 1
 
@@ -2546,6 +3699,82 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
     assert state.claim_seq == 1
 
 
+def test_resident_orchestrator_treats_claim_race_as_nonfatal_skip(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    decision = app.state.policy_decision_store.put(
+        _with_formal_release_gate_bundle(
+            evaluate_persisted_session_policy(
+                record,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                **_runtime_gate_pass_kwargs(),
+            )
+        )
+    )
+    command_id = f"command:{decision.decision_id}"
+    original_claim_command = app.state.command_lease_store.claim_command
+
+    def _racing_claim_command(*, command_id, session_id, worker_id, claimed_at, lease_expires_at):
+        original_claim_command(
+            command_id=command_id,
+            session_id=session_id,
+            worker_id="worker:other",
+            claimed_at=claimed_at,
+            lease_expires_at=lease_expires_at,
+        )
+        raise ValueError(f"command {command_id} is already claimed")
+
+    with (
+        patch.object(
+            app.state.command_lease_store,
+            "claim_command",
+            side_effect=_racing_claim_command,
+        ),
+        patch("watchdog.services.session_spine.orchestrator.execute_canonical_decision") as execute_mock,
+    ):
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    execute_mock.assert_not_called()
+    state = app.state.command_lease_store.get_command(command_id)
+    assert state is not None
+    assert state.status == "claimed"
+    assert state.worker_id == "worker:other"
+    events = app.state.command_lease_store.list_events(command_id=command_id)
+    assert [event.event_type for event in events] == ["command_claimed"]
+
+
 def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_command(
     tmp_path: Path,
 ) -> None:
@@ -2629,6 +3858,76 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
     ]
     assert [event.related_ids["claim_seq"] for event in session_events] == ["1", "1"]
     assert session_events[-1].payload["lease_expires_at"] == "2026-04-07T01:10:00Z"
+
+
+def test_resident_orchestrator_continue_on_error_skips_failed_record(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    good_record = app.state.session_spine_store.get("repo-a")
+    assert good_record is not None
+    bad_record = good_record.model_copy(
+        update={
+            "project_id": "repo-b",
+            "thread_id": "thr_native_2",
+        }
+    )
+
+    def _orchestrate_record(record, *, now):
+        _ = now
+        if record.project_id == "repo-b":
+            raise RuntimeError("synthetic resident orchestrator failure")
+        return ResidentOrchestrationOutcome(
+            project_id=record.project_id,
+            action_ref=None,
+            decision_result=None,
+            emitted_progress_summary=False,
+        )
+
+    caplog.set_level("ERROR", logger="watchdog.services.session_spine.orchestrator")
+
+    with (
+        patch.object(
+            app.state.session_spine_store,
+            "list_records",
+            return_value=[bad_record, good_record],
+        ),
+        patch.object(
+            app.state.resident_orchestrator,
+            "_orchestrate_record",
+            side_effect=_orchestrate_record,
+        ),
+    ):
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC),
+            continue_on_error=True,
+        )
+
+    assert [outcome.project_id for outcome in outcomes] == ["repo-a"]
+    assert "resident orchestrator record failed: project=repo-b session=thr_native_2" in caplog.text
 
 
 def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command(
@@ -3441,3 +4740,131 @@ async def test_startup_does_not_wait_for_full_delivery_drain(
             startup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_does_not_wait_for_initial_orchestrator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+
+    def blocking_orchestrate(*, now=None):
+        _ = now
+        time.sleep(0.2)
+        return []
+
+    monkeypatch.setattr(
+        app.state.resident_orchestrator,
+        "orchestrate_all",
+        blocking_orchestrate,
+    )
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+
+    try:
+        await asyncio.wait_for(startup_task, timeout=0.05)
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_and_periodic_orchestrator_runs_do_not_overlap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=0.01,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+
+    state_lock = threading.Lock()
+    active_calls = 0
+    max_active_calls = 0
+    total_calls = 0
+
+    def slow_orchestrate(*, now=None):
+        nonlocal active_calls, max_active_calls, total_calls
+        _ = now
+        with state_lock:
+            active_calls += 1
+            total_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+        try:
+            time.sleep(0.03)
+            return []
+        finally:
+            with state_lock:
+                active_calls -= 1
+
+    monkeypatch.setattr(
+        app.state.resident_orchestrator,
+        "orchestrate_all",
+        slow_orchestrate,
+    )
+    monkeypatch.setattr(
+        "watchdog.main._drain_delivery_outbox",
+        lambda _app, *, now=None: None,
+    )
+
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+
+    try:
+        await asyncio.sleep(0.09)
+    finally:
+        await lifespan.__aexit__(None, None, None)
+
+    assert total_calls >= 2
+    assert max_active_calls == 1

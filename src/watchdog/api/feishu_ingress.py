@@ -15,6 +15,7 @@ from watchdog.services.feishu_ingress.service import (
     FeishuMessageCallback,
     FeishuURLVerificationRequest,
 )
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -50,6 +51,10 @@ def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
 
 
+def get_session_spine_store(request: Request) -> SessionSpineStore:
+    return request.app.state.session_spine_store
+
+
 def _bad_request(message: str, *, status_code: int = 400) -> HTTPException:
     return HTTPException(status_code=status_code, detail=message)
 
@@ -67,8 +72,13 @@ def post_feishu_events(
     response_store: ApprovalResponseStore = Depends(get_response_store),
     delivery_outbox_store: DeliveryOutboxStore = Depends(get_delivery_outbox_store),
     session_service: SessionService = Depends(get_session_service),
+    session_spine_store: SessionSpineStore = Depends(get_session_spine_store),
 ) -> dict[str, object]:
-    ingress = FeishuIngressNormalizationService(settings=settings, client=client)
+    ingress = FeishuIngressNormalizationService(
+        settings=settings,
+        client=client,
+        session_spine_store=session_spine_store,
+    )
     if body.get("type") == "url_verification":
         try:
             contract = FeishuURLVerificationRequest.model_validate(body)

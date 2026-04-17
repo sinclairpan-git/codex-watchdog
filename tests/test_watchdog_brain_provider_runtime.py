@@ -9,6 +9,7 @@ from watchdog.main import create_app
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.contracts.session_spine.models import SessionProjection, TaskProgressView
 from watchdog.services.brain.models import DecisionIntent
+from watchdog.services.brain.provider_runtime import OpenAICompatibleBrainProvider
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
@@ -146,6 +147,120 @@ def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_pa
     assert intent.intent == "candidate_closure"
     assert intent.provider == "resident_orchestrator"
     assert intent.model == "rule-based-brain"
+
+
+def test_provider_runtime_uses_provider_specific_timeout(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, *, timeout, transport, trust_env: bool) -> None:
+            captured["timeout"] = timeout
+            captured["transport"] = transport
+            captured["trust_env"] = trust_env
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def post(self, url: str, *, json: dict[str, object], headers: dict[str, str]) -> httpx.Response:
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["payload"] = json
+            request = httpx.Request("POST", url, json=json, headers=headers)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": "chatcmpl-timeout-1",
+                    "choices": [
+                        {
+                            "message": {
+                                "content": __import__("json").dumps(
+                                    {
+                                        "session_decision": "active",
+                                        "execution_advice": "auto_execute",
+                                        "reason_short": "continue",
+                                    }
+                                )
+                            }
+                        }
+                    ],
+                },
+            )
+
+    monkeypatch.setattr("watchdog.services.brain.provider_runtime.httpx.Client", FakeClient)
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+            brain_provider_http_timeout_s=27.5,
+        )
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "active", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+    )
+
+    assert captured["timeout"] == 27.5
+    assert captured["trust_env"] is False
+    assert captured["url"] == "https://provider.example/v1/chat/completions"
+    assert intent.provider_request_id == "chatcmpl-timeout-1"
+    assert intent.provider == "openai-compatible"
+
+
+def test_provider_runtime_parses_think_and_fenced_json(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-think-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "<think>\ninternal reasoning\n</think>\n\n"
+                                "```json\n"
+                                "{\n"
+                                '  "session_decision": "active",\n'
+                                '  "execution_advice": "auto_execute",\n'
+                                '  "reason_short": "continue"\n'
+                                "}\n"
+                                "```"
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "active", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+    )
+
+    assert intent.intent == "propose_execute"
+    assert intent.provider == "openai-compatible"
+    assert intent.provider_request_id == "chatcmpl-think-1"
 
 
 def test_resident_orchestrator_decision_trace_uses_provider_metadata(tmp_path: Path) -> None:

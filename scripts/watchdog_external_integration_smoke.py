@@ -19,6 +19,7 @@ from watchdog.validation.external_integration_smoke import (  # noqa: E402
     render_results,
     run_smoke_checks,
 )
+from watchdog.secrets import resolve_secret_value  # noqa: E402
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -41,10 +42,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = ExternalIntegrationSmokeConfig(
+        brain_provider_name=os.getenv(
+            "WATCHDOG_BRAIN_PROVIDER_NAME",
+            "resident_orchestrator",
+        ).strip(),
+        brain_provider_base_url=_optional_env("WATCHDOG_BRAIN_PROVIDER_BASE_URL"),
+        brain_provider_api_key=resolve_secret_value(
+            explicit_value=_optional_env("WATCHDOG_BRAIN_PROVIDER_API_KEY"),
+            keychain_service=_optional_env(
+                "WATCHDOG_BRAIN_PROVIDER_API_KEY_KEYCHAIN_SERVICE"
+            ),
+            keychain_account=_optional_env(
+                "WATCHDOG_BRAIN_PROVIDER_API_KEY_KEYCHAIN_ACCOUNT"
+            ),
+        ),
+        brain_provider_model=_optional_env("WATCHDOG_BRAIN_PROVIDER_MODEL"),
         base_url=os.getenv("WATCHDOG_BASE_URL", "").strip(),
         api_token=os.getenv("WATCHDOG_API_TOKEN", "").strip(),
         data_dir=os.getenv("WATCHDOG_DATA_DIR", ".data/watchdog").strip(),
         http_timeout_s=float(os.getenv("WATCHDOG_HTTP_TIMEOUT_S", "3.0")),
+        feishu_control_http_timeout_s=float(
+            os.getenv("WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S", "15.0")
+        ),
+        feishu_event_ingress_mode=os.getenv(
+            "WATCHDOG_FEISHU_EVENT_INGRESS_MODE",
+            "callback",
+        ).strip(),
+        feishu_callback_ingress_mode=os.getenv(
+            "WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE",
+            "callback",
+        ).strip(),
+        feishu_app_id=_optional_env("WATCHDOG_FEISHU_APP_ID"),
+        feishu_app_secret=_optional_env("WATCHDOG_FEISHU_APP_SECRET"),
         feishu_verification_token=_optional_env("WATCHDOG_FEISHU_VERIFICATION_TOKEN"),
         feishu_control_project_id=_optional_env("WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID"),
         feishu_control_goal_message=_optional_env("WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE"),
@@ -55,13 +84,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "WATCHDOG_SMOKE_FEISHU_CONTROL_ACTOR_OPEN_ID",
             "ou_watchdog_smoke",
         ).strip(),
-        brain_provider_name=os.getenv(
-            "WATCHDOG_BRAIN_PROVIDER_NAME",
-            "resident_orchestrator",
-        ).strip(),
-        brain_provider_base_url=_optional_env("WATCHDOG_BRAIN_PROVIDER_BASE_URL"),
-        brain_provider_api_key=_optional_env("WATCHDOG_BRAIN_PROVIDER_API_KEY"),
-        brain_provider_model=_optional_env("WATCHDOG_BRAIN_PROVIDER_MODEL"),
         memory_preview_ai_autosdlc_cursor_enabled=_parse_bool_env(
             "WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED"
         ),

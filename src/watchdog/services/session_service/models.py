@@ -22,6 +22,7 @@ CONTROLLED_SESSION_EVENT_TYPES = (
     "approval_approved",
     "approval_rejected",
     "approval_expired",
+    "approval_superseded_by_goal_contract_bootstrap",
     "notification_announced",
     "notification_delivery_succeeded",
     "notification_delivery_failed",

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from watchdog.main import create_app
 from watchdog.services.memory_hub.ingest_queue import (
     MemoryIngestEnqueuer,
@@ -317,6 +319,48 @@ def test_memory_ingest_queue_dedupes_session_events_by_event_id(tmp_path: Path) 
     assert records[0].event_id == event.event_id
     assert duplicate.event_id == event.event_id
     assert queue_store.list_pending()[0].status == "pending"
+
+
+def test_memory_ingest_queue_store_reuses_cached_snapshot_until_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue_path = tmp_path / "memory_ingest_queue.json"
+    queue_store = MemoryIngestQueueStore(queue_path)
+    session_service = SessionService(
+        SessionServiceStore(tmp_path / "session_service.json"),
+        event_listeners=[queue_store.enqueue_event],
+    )
+
+    event = session_service.record_event(
+        event_type="goal_contract_revised",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:goal:cache",
+        payload={"current_phase_goal": "ship feishu control plane"},
+        related_ids={"source_ref": "goal-contract:v-cache"},
+        occurred_at="2026-04-16T01:00:00Z",
+    )
+
+    original_read_text = Path.read_text
+    read_calls = 0
+
+    def counting_read_text(self: Path, *args, **kwargs):
+        nonlocal read_calls
+        if self == queue_path:
+            read_calls += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    assert queue_store.list_records()[0].event_id == event.event_id
+    assert queue_store.list_pending()[0].event_id == event.event_id
+    assert read_calls == 0
+
+    queue_path.write_text(original_read_text(queue_path, encoding="utf-8") + "\n", encoding="utf-8")
+
+    assert queue_store.list_records()[0].event_id == event.event_id
+    assert read_calls == 1
 
 
 def test_memory_ingest_worker_marks_failure_without_blocking_session_truth(tmp_path: Path) -> None:

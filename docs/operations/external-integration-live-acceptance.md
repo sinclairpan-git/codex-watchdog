@@ -15,7 +15,7 @@
 
 1. Watchdog 已部署，并且 `GET /healthz` 可达。
 2. 真实环境的 `WATCHDOG_API_TOKEN` 已配置完成，且可用于受保护接口。
-3. 若要验收 Feishu 官方入口，外部自建应用、事件订阅 URL、verification token 与 receive id 已在平台侧配置。
+3. 若要验收 Feishu 官方入口，外部自建应用、verification token 已在平台侧配置；若本地无公网域名，则事件配置与回调配置应切到长连接模式。
 4. 若要验收 OpenAI-compatible provider，`base_url`、`api_key`、`model` 已在真实环境中完成注入。
 5. 若要验收 Memory Hub preview，调用方已明确接受它仍是 preview contract，而非 runtime source of truth。
 
@@ -30,6 +30,8 @@
 
 ### Feishu official ingress and direct delivery
 
+- `WATCHDOG_FEISHU_EVENT_INGRESS_MODE=long_connection|callback`
+- `WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE=long_connection|callback`
 - `WATCHDOG_DELIVERY_TRANSPORT=feishu`
 - `WATCHDOG_FEISHU_APP_ID`
 - `WATCHDOG_FEISHU_APP_SECRET`
@@ -53,6 +55,7 @@
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`
+- `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`（可选；真实数据量较大时可单独放宽 DM synthetic smoke 的超时窗口，默认 15 秒）
 
 ## Acceptance Flow
 
@@ -75,15 +78,39 @@ uv run python scripts/watchdog_external_integration_smoke.py --target health
 - smoke `health` 返回 `passed`；
 - 若这里失败，后续 Feishu / provider / memory 验收一律不成立。
 
-### 2. Feishu official callback verification
+### 2. Feishu long-connection ingress / callback verification
 
-先验证官方事件入口 `POST /api/v1/watchdog/feishu/events` 的 `url_verification` 契约：
+若真实环境没有公网域名，先把 Watchdog 主服务启动好，再单独启动 Feishu 长连接 bridge：
+
+```bash
+set -a
+source .env.w
+set +a
+uv run python scripts/watchdog_feishu_long_connection.py
+```
+
+然后在飞书控制台完成：
+
+1. “事件配置”选择“使用长连接接收事件”；
+2. 在“事件配置”里添加 `im.message.receive_v1`（接收消息 v2.0）；
+3. 同时添加 `im.chat.access_event.bot_p2p_chat_entered_v1`（控制台文案通常对应机器人进入单聊），用于首聊建链与捕获 `chat_id`；
+4. “回调配置”也选择长连接模式；
+5. 点击“验证”，确认 bridge 在线；
+6. 确认机器人相关权限、应用可用范围与当前测试用户已发布生效；如果这里只保存了长连接，但事件或权限未发布，平台不会投递 DM。
+
+随后执行仓库内的 Feishu smoke：
 
 ```bash
 uv run python scripts/watchdog_external_integration_smoke.py --target feishu
 ```
 
-必要时可手工复验：
+这一步在长连接模式下会验证：
+
+- 必需凭证存在；
+- `lark-oapi` 已安装；
+- 仓库内长连接 bridge 所需配置闭环成立。
+
+HTTP callback fallback 仍然保留。必要时可手工复验 repo-local 的 `url_verification` 契约：
 
 ```bash
 curl -X POST "${WATCHDOG_BASE_URL}/api/v1/watchdog/feishu/events" \
@@ -97,9 +124,11 @@ curl -X POST "${WATCHDOG_BASE_URL}/api/v1/watchdog/feishu/events" \
 
 通过标准：
 
-- 响应回显 `challenge`；
-- 验证 token 正确时不出现 schema drift；
-- 若 Feishu 平台侧仍未安装或回调地址未生效，应标记为外部平台 blocker，而不是仓库功能缺失。
+- 长连接 bridge 成功连上后，飞书控制台“验证”通过；
+- smoke 返回 `passed`；
+- HTTP fallback 的 `url_verification` 仍能回显 `challenge`；
+- 若用户私聊机器人后，本地没有 `feishu long-connection message received: chat_id=...`，应先到飞书后台“日志检索 > 事件日志检索”核对 `im.message.receive_v1` 是否被平台实际推送；
+- 若飞书平台侧仍未安装或长连接未生效，应标记为外部平台 blocker，而不是仓库功能缺失。
 
 ### 3. Feishu control-plane DM contract
 
@@ -119,8 +148,11 @@ repo:<project_id> /goal <goal_message>
 
 - 结果不是 `skipped` 时，必须落成 `goal_contract_bootstrap`；
 - 若设置了 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`，返回 session id 必须一致；
+- 若 callback contract 在真实数据量下超过默认公共 HTTP 窗口，可仅调整 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`，不要顺手放大全局 `WATCHDOG_HTTP_TIMEOUT_S`；
 - 如果变量未配置而出现 `skipped`，这只能说明真实 DM smoke 尚未执行，不能当作控制面已验收完成；
-- 若真实用户在 Feishu 中直接发送同格式 DM，也应触发相同 contract，而不是另一套私有入口。
+- 若真实用户在 Feishu 中直接发送同格式 DM，也应触发相同 contract，而不是另一套私有入口；
+- 无公网域名场景下，这条 DM 应通过长连接 bridge 进入系统，而不是要求外部回调地址可达。
+- 如果 synthetic smoke 通过、但真实 DM 仍无日志，归因应收敛为飞书控制台事件订阅/权限/发布状态，而不是仓库内 control contract 缺失。
 
 ### 4. OpenAI-compatible provider wiring
 

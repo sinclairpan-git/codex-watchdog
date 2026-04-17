@@ -35,6 +35,17 @@ def _stable_id(prefix: str, *parts: object) -> str:
     return f"{prefix}:{_stable_digest(*parts)}"
 
 
+def _is_legacy_subset(existing: Any, incoming: Any) -> bool:
+    if isinstance(existing, dict):
+        if not isinstance(incoming, dict):
+            return False
+        return all(
+            key in incoming and value == incoming[key]
+            for key, value in existing.items()
+        )
+    return existing == incoming
+
+
 def _infer_memory_reason_code(reason: str) -> str:
     normalized = reason.strip().lower()
     if normalized in {"memory_hub_unreachable", "provider_timeout", "provider_unavailable"}:
@@ -133,6 +144,50 @@ class SessionService:
             correlation_id=correlation_id,
             related_ids=dict(related_ids or {}),
             payload=dict(payload),
+        )
+
+    def record_event_once(
+        self,
+        *,
+        event_type: str,
+        project_id: str,
+        session_id: str,
+        correlation_id: str,
+        payload: dict[str, Any],
+        causation_id: str | None = None,
+        related_ids: dict[str, str] | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        normalized_related_ids = dict(related_ids or {})
+        normalized_payload = dict(payload)
+        event_id = _stable_id("event", correlation_id, session_id, event_type)
+        existing = self._store.list_events(
+            session_id=session_id,
+            event_type=event_type,
+            correlation_id=correlation_id,
+        )
+        for record in existing:
+            if record.event_id != event_id:
+                continue
+            if (
+                record.project_id != project_id
+                or record.causation_id != causation_id
+                or not _is_legacy_subset(record.related_ids, normalized_related_ids)
+                or not _is_legacy_subset(record.payload, normalized_payload)
+            ):
+                raise ValueError(
+                    f"conflicting session event for idempotency key: idem:event:{event_id}"
+                )
+            return record
+        return self.record_event(
+            event_type=event_type,
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=correlation_id,
+            payload=normalized_payload,
+            causation_id=causation_id,
+            related_ids=normalized_related_ids,
+            occurred_at=occurred_at,
         )
 
     def record_memory_unavailable_degraded(

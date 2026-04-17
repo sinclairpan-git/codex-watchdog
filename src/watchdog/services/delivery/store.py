@@ -69,6 +69,8 @@ class DeliveryOutboxStore:
         self._path = path
         self._lock = _path_lock(path)
         self._lock_path = path.with_name(f".{path.name}.lock")
+        self._cache: _DeliveryStoreFile | None = None
+        self._cache_signature: tuple[int, int] | None = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._guard_io():
             if not self._path.exists():
@@ -87,19 +89,34 @@ class DeliveryOutboxStore:
                 os.close(fd)
 
     def _read(self) -> _DeliveryStoreFile:
+        signature = self._file_signature()
+        if self._cache is not None and signature == self._cache_signature:
+            return self._cache
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
-            return _DeliveryStoreFile()
-        return _DeliveryStoreFile.model_validate_json(raw)
+            data = _DeliveryStoreFile()
+        else:
+            data = _DeliveryStoreFile.model_validate_json(raw)
+        self._cache = data
+        self._cache_signature = self._file_signature()
+        return data
 
     def _write(self, data: _DeliveryStoreFile) -> None:
         tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
         try:
             tmp.write_text(data.model_dump_json(indent=2), encoding="utf-8")
             tmp.replace(self._path)
+            self._cache = data
+            self._cache_signature = self._file_signature()
         finally:
             with suppress(FileNotFoundError):
                 tmp.unlink()
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        with suppress(FileNotFoundError):
+            stat = self._path.stat()
+            return (stat.st_mtime_ns, stat.st_size)
+        return None
 
     def enqueue_envelopes(
         self,
@@ -154,6 +171,10 @@ class DeliveryOutboxStore:
             data.delivery_outbox[record.envelope_id] = record
             self._write(data)
         return record
+
+    def snapshot_rows(self) -> list[DeliveryOutboxRecord]:
+        with self._guard_io():
+            return list(self._read().delivery_outbox.values())
 
     def list_records(self) -> list[DeliveryOutboxRecord]:
         with self._guard_io():

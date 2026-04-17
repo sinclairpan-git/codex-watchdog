@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import threading
+import uuid
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,6 +14,20 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from watchdog.services.session_spine.store import PersistedSessionRecord
+
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _path_lock(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _PATH_LOCKS_GUARD:
+        existing = _PATH_LOCKS.get(key)
+        if existing is not None:
+            return existing
+        created = threading.Lock()
+        _PATH_LOCKS[key] = created
+        return created
 
 
 def _utc_now_iso() -> str:
@@ -250,30 +268,68 @@ def build_brain_intent_decision_record(
 class PolicyDecisionStore:
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._lock = threading.Lock()
+        self._lock = _path_lock(path)
+        self._lock_path = path.with_name(f".{path.name}.lock")
+        self._cache: dict[str, dict[str, Any]] | None = None
+        self._cache_signature: tuple[int, int] | None = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists():
-            self._write({})
+        with self._guard_io():
+            if not self._path.exists():
+                self._write({})
+
+    @contextmanager
+    def _guard_io(self):
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
 
     def _read(self) -> dict[str, dict[str, Any]]:
+        signature = self._file_signature()
+        if self._cache is not None and signature == self._cache_signature:
+            return self._cache
         raw = self._path.read_text(encoding="utf-8")
         data = json.loads(raw) if raw.strip() else {}
-        return data if isinstance(data, dict) else {}
+        normalized = data if isinstance(data, dict) else {}
+        self._cache = normalized
+        self._cache_signature = self._file_signature()
+        return normalized
 
     def _write(self, data: dict[str, dict[str, Any]]) -> None:
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self._path)
+        tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(self._path)
+            self._cache = data
+            self._cache_signature = self._file_signature()
+        finally:
+            with suppress(FileNotFoundError):
+                tmp.unlink()
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        with suppress(FileNotFoundError):
+            stat = self._path.stat()
+            return (stat.st_mtime_ns, stat.st_size)
+        return None
 
     def get(self, decision_key: str) -> CanonicalDecisionRecord | None:
-        with self._lock:
+        with self._guard_io():
             row = self._read().get(decision_key)
         if not isinstance(row, dict):
             return None
         return CanonicalDecisionRecord.model_validate(row)
 
+    def snapshot_rows(self) -> list[dict[str, Any]]:
+        with self._guard_io():
+            return list(self._read().values())
+
     def put(self, record: CanonicalDecisionRecord) -> CanonicalDecisionRecord:
-        with self._lock:
+        with self._guard_io():
             data = self._read()
             existing = data.get(record.decision_key)
             if isinstance(existing, dict):
@@ -283,13 +339,13 @@ class PolicyDecisionStore:
         return record
 
     def update(self, record: CanonicalDecisionRecord) -> CanonicalDecisionRecord:
-        with self._lock:
+        with self._guard_io():
             data = self._read()
             data[record.decision_key] = record.model_dump(mode="json")
             self._write(data)
         return record
 
     def list_records(self) -> list[CanonicalDecisionRecord]:
-        with self._lock:
+        with self._guard_io():
             data = self._read()
         return [CanonicalDecisionRecord.model_validate(row) for row in data.values()]

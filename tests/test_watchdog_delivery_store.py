@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -73,3 +74,34 @@ def test_delivery_outbox_store_serializes_concurrent_updates_across_instances(
     assert errors == []
     reparsed = DeliveryOutboxStore(store_path).list_records()
     assert [record.envelope_id for record in reparsed] == ["decision-envelope:test"]
+
+
+def test_delivery_outbox_store_reuses_cached_snapshot_until_file_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store_path = tmp_path / "delivery_outbox.json"
+    store = DeliveryOutboxStore(store_path)
+    record = _record(note="seed", attempt=0)
+    store.update_delivery_record(record)
+
+    original_read_text = Path.read_text
+    read_calls = 0
+
+    def counting_read_text(self: Path, *args, **kwargs) -> str:
+        nonlocal read_calls
+        if self == store_path:
+            read_calls += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    assert store.get_delivery_record(record.envelope_id) == record
+    assert store.list_records() == [record]
+    assert read_calls == 0
+
+    raw = json.loads(original_read_text(store_path, encoding="utf-8"))
+    store_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    assert store.get_delivery_record(record.envelope_id) == record
+    assert read_calls == 1

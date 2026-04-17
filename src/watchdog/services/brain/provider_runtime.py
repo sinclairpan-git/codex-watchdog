@@ -99,7 +99,7 @@ class OpenAICompatibleBrainProvider:
             "Content-Type": "application/json",
         }
         with httpx.Client(
-            timeout=self.settings.http_timeout_s,
+            timeout=self.settings.brain_provider_http_timeout_s,
             transport=self.transport,
             trust_env=False,
         ) as client:
@@ -133,7 +133,27 @@ class OpenAICompatibleBrainProvider:
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise ValueError("provider response missing content")
-        return content
+        return OpenAICompatibleBrainProvider._normalize_json_content(content)
+
+    @staticmethod
+    def _normalize_json_content(content: str) -> str:
+        normalized = content.strip()
+        if "</think>" in normalized:
+            normalized = normalized.split("</think>", 1)[1].strip()
+        if normalized.startswith("```"):
+            lines = normalized.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            normalized = "\n".join(lines).strip()
+        if normalized.startswith("{") and normalized.endswith("}"):
+            return normalized
+        start = normalized.find("{")
+        end = normalized.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return normalized[start : end + 1]
+        raise ValueError("provider response missing JSON object")
 
     @staticmethod
     def _map_intent(structured: dict[str, object]) -> str:

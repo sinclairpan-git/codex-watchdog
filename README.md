@@ -51,7 +51,19 @@ uv run python scripts/watchdog_external_integration_smoke.py --target memory
 uv run python scripts/watchdog_external_integration_smoke.py --target provider --markdown-report artifacts/watchdog-live-acceptance.md
 ```
 
-这组检查默认统一验证 `GET /healthz`、飞书 `url_verification`、OpenAI-compatible provider 接线与失败回退、以及 Memory Hub preview route。`--target feishu-control` 额外补一条 repo-local 的 Feishu callback contract smoke：它会向 `/api/v1/watchdog/feishu/events` 发送 `im.message.receive_v1` 的 DM 文本事件，内容为 `repo:<project_id> /goal <goal_message>`，借此确认官方事件入口能被归一成 `goal_contract_bootstrap`。该检查需要先配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；若未配置会返回 `skipped`，若已配置但契约不一致则直接失败。若需要沉淀验收材料，可追加 `--markdown-report <path>` 生成脱敏后的 Markdown 记录。
+这组检查默认统一验证 `GET /healthz`、飞书 `url_verification`、OpenAI-compatible provider 接线与失败回退、以及 Memory Hub preview route。`--target feishu-control` 额外补一条 repo-local 的 Feishu callback contract smoke：它会向 `/api/v1/watchdog/feishu/events` 发送 `im.message.receive_v1` 的 DM 文本事件，内容为 `repo:<project_id> /goal <goal_message>`，借此确认官方事件入口能被归一成 `goal_contract_bootstrap`。该检查需要先配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；若未配置会返回 `skipped`，若已配置但契约不一致则直接失败。若真实数据量较大导致 callback contract 超过默认 3 秒，可单独设置 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S` 放宽这一项的烟测窗口，而不影响其余 target。若需要沉淀验收材料，可追加 `--markdown-report <path>` 生成脱敏后的 Markdown 记录。
+
+如果本地没有公网域名，而飞书控制面要改成长连接模式，保持 Watchdog 主服务启动后，再单独起一个桥接进程：
+
+```bash
+export WATCHDOG_FEISHU_EVENT_INGRESS_MODE=long_connection
+export WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE=long_connection
+uv run python scripts/watchdog_feishu_long_connection.py
+```
+
+这个脚本只负责 Feishu 长连接 transport 适配，收到事件后仍复用仓内既有 `/api/v1/watchdog/feishu/events` 对应的 canonical normalization / control service。HTTP callback fallback 继续保留，供 repo-local smoke、文档契约和回归测试使用。
+
+飞书控制台侧至少还要补两类订阅事件：`im.message.receive_v1` 用于接收 DM 指令，`im.chat.access_event.bot_p2p_chat_entered_v1`（控制台文案通常对应机器人进入单聊）用于首聊建链与拿到 `chat_id`。如果长连接“验证”已通过，但本地仍看不到 `feishu long-connection message received: chat_id=...`，先去飞书后台“日志检索 > 事件日志检索”确认平台是否实际推送了 `im.message.receive_v1`，不要直接判断为仓库代码缺陷。
 
 真实环境的正式联调与验收口径见 `docs/operations/external-integration-live-acceptance.md`；README 只保留最小命令入口，不把外部组织安装、凭证发放或域名接线误写成仓库已自动闭环。
 

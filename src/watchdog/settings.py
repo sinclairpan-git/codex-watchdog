@@ -1,5 +1,8 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from watchdog.secrets import resolve_secret_value
 from watchdog.services.memory_hub.contracts import MemoryPreviewContractName
 
 
@@ -24,9 +27,12 @@ class Settings(BaseSettings):
     local_manual_activity_quiet_window_seconds: float = 600.0
     openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
     openclaw_webhook_token: str = "dev-token-change-me"
+    default_project_id: str | None = None
     openclaw_webhook_endpoint_state_file: str | None = None
     delivery_transport: str = "openclaw"
     feishu_base_url: str = "https://open.feishu.cn"
+    feishu_event_ingress_mode: Literal["callback", "long_connection"] = "callback"
+    feishu_callback_ingress_mode: Literal["callback", "long_connection"] = "callback"
     feishu_app_id: str | None = None
     feishu_app_secret: str | None = None
     feishu_verification_token: str | None = None
@@ -55,12 +61,28 @@ class Settings(BaseSettings):
     brain_provider_name: str = "resident_orchestrator"
     brain_provider_base_url: str | None = None
     brain_provider_api_key: str | None = None
+    brain_provider_api_key_keychain_service: str | None = None
+    brain_provider_api_key_keychain_account: str | None = None
     brain_provider_model: str | None = None
+    brain_provider_http_timeout_s: float = 30.0
+
+    def model_post_init(self, __context: object) -> None:
+        self.brain_provider_api_key = resolve_secret_value(
+            explicit_value=self.brain_provider_api_key,
+            keychain_service=self.brain_provider_api_key_keychain_service,
+            keychain_account=self.brain_provider_api_key_keychain_account,
+        )
 
     def build_memory_preview_contract_overrides(self) -> dict[MemoryPreviewContractName, bool]:
         return {
             "ai-autosdlc-cursor": bool(self.memory_preview_ai_autosdlc_cursor_enabled),
         }
+
+    def feishu_long_connection_enabled(self) -> bool:
+        return (
+            self.feishu_event_ingress_mode == "long_connection"
+            or self.feishu_callback_ingress_mode == "long_connection"
+        )
 
     def build_runtime_contract(
         self,

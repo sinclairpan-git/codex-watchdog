@@ -120,6 +120,7 @@ class GoalContractService:
         project_id: str,
         session_id: str,
         expected_version: str,
+        current: GoalContractSnapshot | None = None,
         current_phase_goal: str | None = None,
         explicit_deliverables: list[str] | None = None,
         completion_signals: list[str] | None = None,
@@ -131,7 +132,7 @@ class GoalContractService:
         causation_id: str | None = None,
         related_ids: dict[str, str] | None = None,
     ) -> GoalContractSnapshot:
-        current = self.get_current_contract(project_id=project_id, session_id=session_id)
+        current = current or self.get_current_contract(project_id=project_id, session_id=session_id)
         if current is None:
             raise ValueError(f"goal contract not found for session: {session_id}")
         if current.version != expected_version:

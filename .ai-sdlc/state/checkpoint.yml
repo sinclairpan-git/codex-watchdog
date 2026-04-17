@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T03:36:57Z'
+pipeline_last_updated: '2026-04-17T15:26:02Z'
 current_stage: completed
 feature:
-  id: 076-feishu-callback-contract-smoke
-  spec_dir: specs/076-feishu-callback-contract-smoke
-  design_branch: design/076-feishu-callback-contract-smoke
-  feature_branch: feature/076-feishu-callback-contract-smoke
-  current_branch: codex/076-feishu-callback-contract-smoke
-  docs_baseline_ref: 52fefcfad6e08196de0ee213a7efb5405fbd7532
-  docs_baseline_at: '2026-04-17T03:36:57Z'
+  id: 077-feishu-long-connection-control-ops-hardening
+  spec_dir: specs/077-feishu-long-connection-control-ops-hardening
+  design_branch: design/077-feishu-long-connection-control-ops-hardening
+  feature_branch: feature/077-feishu-long-connection-control-ops-hardening
+  current_branch: codex/077-feishu-long-connection-control-ops-hardening
+  docs_baseline_ref: e790404e1ac3a8586f0c3c3d9506f718c31516b4
+  docs_baseline_at: '2026-04-17T15:26:02Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -36,6 +36,6 @@ completed_stages:
       - tasks.md
 ai_decisions_count: 58
 execution_mode: auto
-linked_wi_id: 076-feishu-callback-contract-smoke
+linked_wi_id: 077-feishu-long-connection-control-ops-hardening
 linked_plan_uri: null
-last_synced_at: '2026-04-17T03:36:57Z'
+last_synced_at: '2026-04-17T15:26:02Z'

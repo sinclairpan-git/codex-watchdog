@@ -237,6 +237,82 @@ def test_feishu_control_check_verifies_goal_bootstrap_contract(tmp_path: Path) -
     assert results[0].evidence["goal_contract_version"] == "goal-contract:v1"
 
 
+def test_feishu_control_check_uses_dedicated_request_timeout(tmp_path: Path) -> None:
+    seen_timeout: dict[str, float] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeout = request.extensions["timeout"]
+        seen_timeout.update(timeout)
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "event_type": "goal_contract_bootstrap",
+                "data": {
+                    "event_type": "goal_contract_bootstrap",
+                    "project_id": "repo-a",
+                    "session_id": "session:repo-a",
+                    "goal_contract_version": "goal-contract:v1",
+                },
+            },
+        )
+
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        http_timeout_s=20.0,
+        feishu_control_http_timeout_s=11.0,
+        feishu_verification_token="verify-token",
+        feishu_control_project_id="repo-a",
+        feishu_control_goal_message="继续补齐 Feishu 控制面验收",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-control",),
+        remote_transport=httpx.MockTransport(handler),
+    )
+
+    assert results[0].status == "passed"
+    assert seen_timeout == {
+        "connect": 11.0,
+        "read": 11.0,
+        "write": 11.0,
+        "pool": 11.0,
+    }
+
+
+def test_feishu_check_passes_in_long_connection_mode_without_http_callback(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_event_ingress_mode="long_connection",
+        feishu_callback_ingress_mode="long_connection",
+        feishu_app_id="cli_long_connection",
+        feishu_app_secret="secret-long-connection",
+        feishu_verification_token="verify-token",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("health", "feishu"),
+        remote_transport=httpx.MockTransport(handler),
+    )
+
+    assert [result.check_name for result in results] == ["health", "feishu"]
+    assert results[1].status == "passed"
+    assert results[1].evidence["ingress_mode"] == "long_connection"
+
+
 def test_all_target_can_be_extended_with_optional_feishu_control(tmp_path: Path) -> None:
     config = ExternalIntegrationSmokeConfig(
         base_url="https://watchdog.example",
@@ -403,6 +479,7 @@ def test_render_markdown_report_redacts_secret_values_and_includes_status(tmp_pa
     assert "# Watchdog External Integration Smoke Report" in rendered
     assert "- Overall Status: `passed`" in rendered
     assert "- Selected Targets: `provider`" in rendered
+    assert '"feishu_control_http_timeout_s": 15.0' in rendered
     assert "sk-provider" not in rendered
     assert '"brain_provider_api_key": "<redacted>"' in rendered
 
@@ -423,3 +500,58 @@ def test_cli_can_write_markdown_report_artifact(tmp_path: Path, monkeypatch: pyt
     contents = report_path.read_text(encoding="utf-8")
     assert "# Watchdog External Integration Smoke Report" in contents
     assert "- Selected Targets: `provider`" in contents
+
+
+def test_cli_reads_feishu_control_timeout_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_script_module()
+    captured: dict[str, object] = {}
+
+    def fake_run_smoke_checks(*, config, targets, **_: object):
+        captured["config"] = config
+        captured["targets"] = targets
+        return []
+
+    monkeypatch.setenv("WATCHDOG_BASE_URL", "https://watchdog.example")
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DATA_DIR", "/tmp/watchdog-smoke")
+    monkeypatch.setenv("WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S", "21.5")
+    monkeypatch.setattr(module, "run_smoke_checks", fake_run_smoke_checks)
+
+    exit_code = module.main(["--target", "feishu-control"])
+
+    assert exit_code == 0
+    assert captured["targets"] == ("feishu-control",)
+    assert captured["config"].feishu_control_http_timeout_s == 21.5
+
+
+def test_cli_resolves_provider_api_key_from_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_script_module()
+    captured: dict[str, object] = {}
+
+    def fake_run_smoke_checks(*, config, targets, **_: object):
+        captured["config"] = config
+        captured["targets"] = targets
+        return []
+
+    monkeypatch.setenv("WATCHDOG_BASE_URL", "https://watchdog.example")
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DATA_DIR", "/tmp/watchdog-smoke")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_NAME", "openai-compatible")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_MODEL", "minimax-m2.7")
+    monkeypatch.setenv(
+        "WATCHDOG_BRAIN_PROVIDER_API_KEY_KEYCHAIN_SERVICE",
+        "watchdog.brain-provider",
+    )
+    monkeypatch.setenv(
+        "WATCHDOG_BRAIN_PROVIDER_API_KEY_KEYCHAIN_ACCOUNT",
+        "default",
+    )
+    monkeypatch.setattr(module, "run_smoke_checks", fake_run_smoke_checks)
+    monkeypatch.setattr(module, "resolve_secret_value", lambda **_: "sk-keychain")
+
+    exit_code = module.main(["--target", "provider"])
+
+    assert exit_code == 0
+    assert captured["targets"] == ("provider",)
+    assert captured["config"].brain_provider_api_key == "sk-keychain"

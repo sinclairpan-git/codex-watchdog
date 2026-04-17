@@ -176,6 +176,40 @@ def test_goal_contract_incomplete_contract_stays_observe_only(tmp_path) -> None:
     ]
 
 
+def test_goal_contract_revise_contract_can_reuse_prefetched_snapshot(tmp_path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    class SpyGoalContractService(GoalContractService):
+        def get_current_contract(self, *, project_id: str, session_id: str):
+            raise AssertionError("prefetched current contract should be reused")
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    seed_service = GoalContractService(session_service)
+    created = seed_service.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续飞书联调",
+        task_prompt="把控制链路跑通",
+        last_user_instruction="继续飞书联调",
+        phase="implementation",
+        last_summary="正在收敛 goal contract 写面",
+        explicit_deliverables=["飞书控制链路通过冒烟"],
+        completion_signals=["相关 pytest 通过"],
+    )
+
+    service = SpyGoalContractService(session_service)
+    revised = service.revise_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        expected_version=created.version,
+        current=created,
+        current_phase_goal="把飞书私聊 goal bootstrap 压到时限内",
+    )
+
+    assert revised.version == "goal-v2"
+    assert revised.current_phase_goal == "把飞书私聊 goal bootstrap 压到时限内"
+
+
 def test_goal_contract_bootstrap_without_explicit_evidence_stays_observe_only(tmp_path) -> None:
     from watchdog.services.goal_contract.service import GoalContractService
 

@@ -163,6 +163,79 @@ def test_watchdog_ops_alerts_and_healthz_report_degraded_status(tmp_path: Path) 
     ]
 
 
+def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:historical-failed",
+            envelope_type="notification",
+            correlation_id="corr:historical-failed",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:historical-failed",
+            audit_ref="audit:historical-failed",
+            created_at="2099-01-01T00:20:00Z",
+            updated_at="2099-01-01T00:21:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            failure_code="transport_error",
+            operator_notes=["delivery_failed failure_code=transport_error attempts=3"],
+            envelope_payload={
+                "envelope_type": "notification",
+                "event_id": "event:historical-failed",
+                "notification_kind": "decision_result",
+                "severity": "warning",
+                "title": "decision update",
+                "summary": "historical failed notification",
+                "occurred_at": "2099-01-01T00:20:00Z",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["requeued"] == 1
+    assert payload["data"]["envelope_ids"] == ["notification-envelope:historical-failed"]
+
+    updated = app.state.delivery_outbox_store.get_delivery_record(
+        "notification-envelope:historical-failed"
+    )
+    assert updated is not None
+    assert updated.delivery_status == "pending"
+    assert updated.failure_code is None
+    assert updated.operator_notes[-1].startswith(
+        "delivery_requeued reason=manual_transport_recovered"
+    )
+
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value="notification-envelope:historical-failed",
+    )
+    assert [event.event_type for event in events] == ["notification_requeued"]
+
+    summary = build_ops_summary(
+        data_dir=tmp_path,
+        settings=Settings(api_token="wt", data_dir=str(tmp_path)),
+        approval_store=app.state.canonical_approval_store,
+        delivery_store=app.state.delivery_outbox_store,
+        receipt_store=app.state.action_receipt_store,
+        decision_store=app.state.policy_decision_store,
+    )
+    assert summary.active_alerts == 0
+
+
 def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> None:
     _seed_ops_alerts(tmp_path)
 
@@ -1582,3 +1655,59 @@ def test_build_ops_summary_preserves_completed_state_after_duplicate_completion_
     assert summary.future_workers[0].status == "completed"
     assert summary.future_workers[0].last_event_type == "future_worker_transition_rejected"
     assert summary.future_workers[0].blocking_reason == "invalid_transition:completed->completed"
+
+
+def test_build_ops_summary_can_reuse_injected_store_instances(tmp_path: Path) -> None:
+    settings = Settings(data_dir=str(tmp_path))
+    decision = CanonicalDecisionRecord(
+        decision_id="decision:injected",
+        decision_key="session:repo-a|fact-v1|policy-v1|block_and_alert|execute_recovery|",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        approval_id=None,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        decision_result="block_and_alert",
+        risk_class="hard_block",
+        decision_reason="mapping incomplete",
+        matched_policy_rules=["hard_block"],
+        why_not_escalated="controlled uncertainty",
+        why_escalated=None,
+        uncertainty_reasons=["mapping_incomplete"],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="idem:decision:injected",
+        created_at="2000-01-01T00:00:00Z",
+        operator_notes=[],
+        evidence={},
+    )
+
+    class _InjectedDecisionStore:
+        def list_records(self) -> list[CanonicalDecisionRecord]:
+            return [decision]
+
+    class _InjectedApprovalStore:
+        def list_records(self) -> list[CanonicalApprovalRecord]:
+            return []
+
+    class _InjectedDeliveryStore:
+        def list_records(self) -> list[DeliveryOutboxRecord]:
+            return []
+
+    class _InjectedReceiptStore:
+        def list_items(self) -> list[tuple[str, WatchdogActionResult]]:
+            return []
+
+    summary = build_ops_summary(
+        data_dir=tmp_path / "missing-data-dir",
+        settings=settings,
+        decision_store=_InjectedDecisionStore(),
+        approval_store=_InjectedApprovalStore(),
+        delivery_store=_InjectedDeliveryStore(),
+        receipt_store=_InjectedReceiptStore(),
+    )
+
+    assert summary.status == "degraded"
+    assert summary.active_alerts == 2

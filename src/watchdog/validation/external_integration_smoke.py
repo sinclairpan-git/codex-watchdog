@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -30,6 +31,11 @@ class ExternalIntegrationSmokeConfig:
     api_token: str
     data_dir: str
     http_timeout_s: float = 3.0
+    feishu_control_http_timeout_s: float = 15.0
+    feishu_event_ingress_mode: str = "callback"
+    feishu_callback_ingress_mode: str = "callback"
+    feishu_app_id: str | None = None
+    feishu_app_secret: str | None = None
     feishu_verification_token: str | None = None
     feishu_control_project_id: str | None = None
     feishu_control_goal_message: str | None = None
@@ -148,6 +154,12 @@ def render_markdown_report(
     config_snapshot = _redact_payload(
         {
             "base_url": config.base_url,
+            "http_timeout_s": config.http_timeout_s,
+            "feishu_control_http_timeout_s": config.feishu_control_http_timeout_s,
+            "feishu_event_ingress_mode": config.feishu_event_ingress_mode,
+            "feishu_callback_ingress_mode": config.feishu_callback_ingress_mode,
+            "feishu_app_id": config.feishu_app_id,
+            "feishu_app_secret": config.feishu_app_secret,
             "brain_provider_name": config.brain_provider_name,
             "brain_provider_base_url": config.brain_provider_base_url,
             "brain_provider_api_key": config.brain_provider_api_key,
@@ -252,6 +264,41 @@ def _run_feishu_check(
             reason="service_unreachable",
             evidence={"blocked_by": "health"},
         )
+    if _feishu_uses_long_connection(config):
+        missing_fields = [
+            field_name
+            for field_name, value in (
+                ("feishu_app_id", config.feishu_app_id),
+                ("feishu_app_secret", config.feishu_app_secret),
+                ("feishu_verification_token", config.feishu_verification_token),
+            )
+            if not str(value or "").strip()
+        ]
+        if missing_fields:
+            return SmokeCheckResult(
+                check_name="feishu",
+                status="failed",
+                reason="missing_required_env",
+                evidence={"missing_fields": missing_fields},
+            )
+        sdk_available = importlib.util.find_spec("lark_oapi") is not None
+        if not sdk_available:
+            return SmokeCheckResult(
+                check_name="feishu",
+                status="failed",
+                reason="sdk_not_installed",
+                evidence={"required_package": "lark-oapi"},
+            )
+        return SmokeCheckResult(
+            check_name="feishu",
+            status="passed",
+            reason="ok",
+            evidence={
+                "ingress_mode": "long_connection",
+                "callback_mode": config.feishu_callback_ingress_mode,
+                "required_package": "lark-oapi",
+            },
+        )
     if not str(config.feishu_verification_token or "").strip():
         return SmokeCheckResult(
             check_name="feishu",
@@ -334,8 +381,13 @@ def _run_feishu_control_check(
         )
     assert client is not None
     body = _feishu_control_body(config)
+    request_timeout_s = float(config.feishu_control_http_timeout_s)
     try:
-        response = client.post("/api/v1/watchdog/feishu/events", json=body)
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=body,
+            timeout=request_timeout_s,
+        )
     except httpx.HTTPError as exc:
         return SmokeCheckResult(
             check_name="feishu-control",
@@ -715,15 +767,23 @@ def _overall_status(results: Sequence[SmokeCheckResult]) -> SmokeStatus:
     return "passed"
 
 
+def _feishu_uses_long_connection(config: ExternalIntegrationSmokeConfig) -> bool:
+    return (
+        str(config.feishu_event_ingress_mode).strip().lower() == "long_connection"
+        or str(config.feishu_callback_ingress_mode).strip().lower() == "long_connection"
+    )
+
+
 def _redact_payload(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, nested in value.items():
             normalized_key = key.lower()
             if (
-                normalized_key in {"api_key", "token", "authorization"}
+                normalized_key in {"api_key", "token", "authorization", "secret"}
                 or normalized_key.endswith("_api_key")
                 or normalized_key.endswith("_token")
+                or normalized_key.endswith("_secret")
             ) and nested not in (None, ""):
                 redacted[key] = "<redacted>"
             else:

@@ -8,7 +8,7 @@ import pytest
 
 from watchdog.main import create_app
 from watchdog.services.delivery.http_client import OpenClawDeliveryClient
-from watchdog.services.delivery.envelopes import build_envelopes_for_decision
+from watchdog.services.delivery.envelopes import NotificationEnvelope, build_envelopes_for_decision
 from watchdog.services.delivery.feishu_client import FeishuAppDeliveryClient
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.settings import Settings
@@ -103,6 +103,53 @@ def test_feishu_app_delivery_client_uses_tenant_token_then_sends_message(
 
     assert result.delivery_status == "delivered"
     assert result.receipt_id == "om_feishu_message_1"
+    assert len(calls) == 2
+
+
+def test_feishu_app_delivery_client_uses_envelope_receive_target_when_static_target_missing(
+    tmp_path: Path,
+) -> None:
+    envelope = build_envelopes_for_decision(_decision())[1].model_copy(
+        update={"receive_id": "ou_dynamic_operator", "receive_id_type": "open_id"}
+    )
+    settings = _settings(tmp_path).model_copy(update={"feishu_receive_id": None})
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        calls.append((str(request.url), body))
+        if request.url.path == "/open-apis/auth/v3/tenant_access_token/internal":
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "msg": "success",
+                    "tenant_access_token": "tenant-token-dynamic",
+                    "expire": 7200,
+                },
+            )
+        assert request.url.path == "/open-apis/im/v1/messages"
+        assert request.url.params["receive_id_type"] == "open_id"
+        assert request.headers["Authorization"] == "Bearer tenant-token-dynamic"
+        assert body["receive_id"] == "ou_dynamic_operator"
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "msg": "success",
+                "data": {"message_id": "om_feishu_message_dynamic"},
+            },
+        )
+
+    client = FeishuAppDeliveryClient(
+        settings=settings,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.deliver_envelope(envelope)
+
+    assert result.delivery_status == "delivered"
+    assert result.receipt_id == "om_feishu_message_dynamic"
     assert len(calls) == 2
 
 
@@ -218,3 +265,116 @@ def test_feishu_app_delivery_client_treats_malformed_2xx_body_as_retryable_proto
 
     assert result.delivery_status == "retryable_failure"
     assert result.failure_code == "protocol_incomplete"
+
+
+def test_feishu_render_text_formats_progress_update_for_human_reading(tmp_path: Path) -> None:
+    envelope = NotificationEnvelope(
+        envelope_id="notification-envelope:progress-readable",
+        envelope_type="notification",
+        event_id="event:progress-readable",
+        correlation_id="corr:progress-readable",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        notification_kind="progress_summary",
+        severity="info",
+        title="progress update",
+        summary="正在补齐飞书通知文案。",
+        reason=(
+            "phase=coding; context=critical; stuck=4; "
+            "files=src/watchdog/services/delivery/feishu_client.py"
+        ),
+        occurred_at="2026-04-16T12:30:00Z",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v8",
+        idempotency_key="idem:progress-readable",
+        audit_ref="audit:progress-readable",
+        created_at="2026-04-16T12:30:00Z",
+    )
+
+    rendered = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "Watchdog 任务进展更新" in rendered
+    assert "发生了什么：正在补齐飞书通知文案。" in rendered
+    assert (
+        "系统参考：当前处于 coding 阶段；上下文压力为 critical；"
+        "卡点等级为 4；涉及文件 src/watchdog/services/delivery/feishu_client.py"
+    ) in rendered
+    assert "phase=" not in rendered
+    assert "context=" not in rendered
+    assert "stuck=" not in rendered
+
+
+def test_feishu_render_text_formats_approval_for_human_reading(tmp_path: Path) -> None:
+    envelope = build_envelopes_for_decision(
+        _decision().model_copy(
+            update={
+                "decision_result": "require_user_decision",
+                "risk_class": "human_gate",
+                "approval_id": "appr_001",
+                "action_ref": "continue_session",
+                "decision_reason": "session requires explicit human decision",
+                "why_not_escalated": None,
+                "why_escalated": "human gate matched",
+            }
+        )
+    )[0]
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "Watchdog 需要你确认一项操作" in text
+    assert "项目：repo-a" in text
+    assert "会话：repo-a" in text
+    assert "待确认操作：继续当前任务" in text
+    assert "你现在可以这样干预：回复“批准”、“拒绝”或“直接执行”" in text
+    assert "project=" not in text
+    assert "session=" not in text
+    assert "requested_action=" not in text
+    assert "options=" not in text
+
+
+def test_feishu_render_text_formats_decision_notification_for_human_reading(
+    tmp_path: Path,
+) -> None:
+    envelope = build_envelopes_for_decision(_decision())[1]
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "Watchdog 自动决策更新" in text
+    assert "自动决策：已自动执行「执行恢复流程」" in text
+    assert "决策依据：frozen feishu delivery test" in text
+    assert "你现在可以这样干预：回复“状态”查看详情，或回复“人工接管”" in text
+    assert "decision=" not in text
+    assert "action=" not in text
+    assert "notification_kind=" not in text
+
+
+def test_feishu_render_text_humanizes_progress_reason_key_values(tmp_path: Path) -> None:
+    envelope = NotificationEnvelope(
+        envelope_id="notification-envelope:test-progress",
+        correlation_id="corr:test-progress",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v8",
+        idempotency_key="idem:test-progress",
+        audit_ref="audit:test-progress",
+        created_at="2026-04-17T12:20:00Z",
+        event_id="event:test-progress",
+        severity="warning",
+        notification_kind="progress_summary",
+        occurred_at="2026-04-17T12:20:00Z",
+        title="progress update for repo-a",
+        summary="正在补齐飞书通知文案。",
+        reason="phase=coding; context=critical; stuck=4; files=src/watchdog/services/delivery/feishu_client.py",
+    )
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "Watchdog 任务进展更新" in text
+    assert "发生了什么：正在补齐飞书通知文案。" in text
+    assert "系统参考：当前处于 coding 阶段；上下文压力为 critical；卡点等级为 4；涉及文件 src/watchdog/services/delivery/feishu_client.py" in text
+    assert "phase=" not in text
+    assert "context=" not in text
+    assert "stuck=" not in text

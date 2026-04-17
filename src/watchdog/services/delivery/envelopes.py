@@ -182,6 +182,8 @@ class EnvelopeBase(BaseModel):
     actor_id: str | None = None
     channel_kind: str | None = None
     action_window_expires_at: str | None = None
+    receive_id: str | None = None
+    receive_id_type: str | None = None
 
 
 class DecisionEnvelope(EnvelopeBase):

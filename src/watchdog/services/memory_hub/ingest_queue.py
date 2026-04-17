@@ -87,10 +87,19 @@ class MemoryIngestQueueStore:
         self._path = path
         self._lock = _path_lock(path)
         self._lock_path = path.with_name(f".{path.name}.lock")
+        self._cache: _MemoryIngestQueueFile | None = None
+        self._cache_signature: tuple[int, int] | None = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._guard_io():
             if not self._path.exists():
                 self._write(_MemoryIngestQueueFile())
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        try:
+            stat = self._path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
 
     @contextmanager
     def _guard_io(self):
@@ -105,16 +114,25 @@ class MemoryIngestQueueStore:
                 os.close(fd)
 
     def _read(self) -> _MemoryIngestQueueFile:
+        signature = self._file_signature()
+        if signature is not None and signature == self._cache_signature and self._cache is not None:
+            return self._cache
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
-            return _MemoryIngestQueueFile()
-        return _MemoryIngestQueueFile.model_validate_json(raw)
+            data = _MemoryIngestQueueFile()
+        else:
+            data = _MemoryIngestQueueFile.model_validate_json(raw)
+        self._cache = data
+        self._cache_signature = self._file_signature()
+        return data
 
     def _write(self, data: _MemoryIngestQueueFile) -> None:
         tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            tmp.write_text(data.model_dump_json(indent=2), encoding="utf-8")
+            tmp.write_text(data.model_dump_json(), encoding="utf-8")
             tmp.replace(self._path)
+            self._cache = data
+            self._cache_signature = self._file_signature()
         finally:
             with suppress(FileNotFoundError):
                 tmp.unlink()

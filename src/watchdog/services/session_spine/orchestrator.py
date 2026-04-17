@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
-from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
-from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionTrace
+from watchdog.contracts.session_spine.models import ApprovalProjection, FactRecord, WatchdogActionResult
+from watchdog.services.brain.models import ApprovalReadSnapshot, DecisionIntent, DecisionTrace
 from watchdog.services.brain.release_gate import (
     ReleaseGateEvaluator,
-    ReleaseGateReport,
     ReleaseGateVerdict,
 )
 from watchdog.services.brain.release_gate_loading import load_release_gate_artifacts
@@ -37,7 +37,12 @@ from watchdog.services.actions.executor import (
     build_watchdog_action_from_decision,
     execute_canonical_decision,
 )
-from watchdog.services.approvals.service import CanonicalApprovalStore, materialize_canonical_approval
+from watchdog.services.approvals.service import (
+    CanonicalApprovalRecord,
+    CanonicalApprovalStore,
+    materialize_canonical_approval,
+    requested_action_args_from_decision,
+)
 from watchdog.services.delivery.envelopes import (
     build_envelopes_for_decision,
     build_progress_summary_envelope,
@@ -48,12 +53,13 @@ from watchdog.services.future_worker.models import FutureWorkerExecutionRequest
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.models import GoalContractReadiness
 from watchdog.services.goal_contract.service import GoalContractService
-from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.policy.rules import (
     DECISION_AUTO_EXECUTE_AND_NOTIFY,
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
+    POLICY_VERSION,
 )
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
@@ -63,6 +69,9 @@ from watchdog.services.session_spine.store import PersistedSessionRecord, Sessio
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
+
+logger = logging.getLogger(__name__)
+_CANONICAL_APPROVAL_DECISION_OPTIONS = ["approve", "reject", "execute_action"]
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -83,6 +92,25 @@ def _decision_facts(decision) -> list[FactRecord]:
     if not isinstance(facts, list):
         return []
     return [FactRecord.model_validate(fact) for fact in facts if isinstance(fact, dict)]
+
+
+def _json_fingerprint(payload: object) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def _fact_snapshot_order(value: str | None) -> tuple[int, str]:
+    if not value:
+        return (-1, "")
+    match = re.fullmatch(r"fact-v(\d+)", value)
+    if match is None:
+        return (2**31 - 1, str(value))
+    return (int(match.group(1)), str(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +194,7 @@ class ResidentOrchestrator:
         correlation_id = self._decision_correlation_id(decision)
         decision_evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         decision_trace = decision_evidence.get("decision_trace")
-        self._session_service.record_event(
+        self._session_service.record_event_once(
             event_type="decision_proposed",
             project_id=decision.project_id,
             session_id=decision.session_id,
@@ -184,7 +212,7 @@ class ResidentOrchestrator:
                 ),
             },
         )
-        self._session_service.record_event(
+        self._session_service.record_event_once(
             event_type="decision_validated",
             project_id=decision.project_id,
             session_id=decision.session_id,
@@ -198,7 +226,15 @@ class ResidentOrchestrator:
                 "risk_class": decision.risk_class,
                 "decision_reason": decision.decision_reason,
                 "matched_policy_rules": list(decision.matched_policy_rules),
+                "why_not_escalated": decision.why_not_escalated,
+                "why_escalated": decision.why_escalated,
+                "uncertainty_reasons": list(decision.uncertainty_reasons),
                 "decision_trace": decision_trace,
+                "release_gate_evidence_fingerprint": (
+                    _json_fingerprint(decision_evidence.get("release_gate_evidence_bundle"))
+                    if decision_evidence.get("release_gate_evidence_bundle") is not None
+                    else None
+                ),
                 **build_session_event_gate_payload(
                     evidence=decision_evidence,
                     include_validator=True,
@@ -210,17 +246,7 @@ class ResidentOrchestrator:
     def _record_command_created(self, decision, *, command_id: str) -> None:
         if self._session_service is None:
             return
-        existing = self._session_service.list_events(
-            session_id=decision.session_id,
-            event_type="command_created",
-        )
-        if any(
-            event.related_ids.get("decision_id") == decision.decision_id
-            and event.related_ids.get("command_id") == command_id
-            for event in existing
-        ):
-            return
-        self._session_service.record_event(
+        self._session_service.record_event_once(
             event_type="command_created",
             project_id=decision.project_id,
             session_id=decision.session_id,
@@ -230,7 +256,10 @@ class ResidentOrchestrator:
             payload={
                 "command_id": command_id,
                 "action_ref": decision.action_ref,
+                "action_args": requested_action_args_from_decision(decision),
                 "decision_result": decision.decision_result,
+                "policy_version": decision.policy_version,
+                "fact_snapshot_version": decision.fact_snapshot_version,
             },
         )
 
@@ -249,16 +278,30 @@ class ResidentOrchestrator:
         command_id = self._command_id_for_decision(decision)
         current = self._command_lease_store.get_command(command_id)
         if current is None or current.status == "requeued":
-            claim = self._command_lease_store.claim_command(
-                command_id=command_id,
-                session_id=decision.session_id,
-                worker_id="resident_orchestrator",
-                claimed_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
-                    "+00:00",
-                    "Z",
-                ),
-                lease_expires_at=self._lease_expires_at(now=now),
-            )
+            try:
+                claim = self._command_lease_store.claim_command(
+                    command_id=command_id,
+                    session_id=decision.session_id,
+                    worker_id="resident_orchestrator",
+                    claimed_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                        "+00:00",
+                        "Z",
+                    ),
+                    lease_expires_at=self._lease_expires_at(now=now),
+                )
+            except ValueError:
+                conflicted = self._recover_command_conflict_state(
+                    command_id=command_id,
+                    session_id=decision.session_id,
+                )
+                if conflicted is None:
+                    raise
+                return AutoExecuteCommandPlan(
+                    command_id=command_id,
+                    claim_seq=None,
+                    should_execute=False,
+                    current_status=conflicted.status,
+                )
             return AutoExecuteCommandPlan(
                 command_id=command_id,
                 claim_seq=claim.claim_seq,
@@ -266,22 +309,44 @@ class ResidentOrchestrator:
                 current_status="claimed",
             )
         if current.status == "claimed" and current.worker_id == "resident_orchestrator":
-            self._command_lease_store.renew_lease(
-                command_id=command_id,
-                worker_id="resident_orchestrator",
-                claim_seq=current.claim_seq,
-                renewed_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
-                    "+00:00",
-                    "Z",
-                ),
-                lease_expires_at=self._lease_expires_at(now=now),
-            )
+            try:
+                self._command_lease_store.renew_lease(
+                    command_id=command_id,
+                    worker_id="resident_orchestrator",
+                    claim_seq=current.claim_seq,
+                    renewed_at=now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+                        "+00:00",
+                        "Z",
+                    ),
+                    lease_expires_at=self._lease_expires_at(now=now),
+                )
+            except ValueError:
+                conflicted = self._recover_command_conflict_state(
+                    command_id=command_id,
+                    session_id=decision.session_id,
+                )
+                if conflicted is None:
+                    raise
+                return AutoExecuteCommandPlan(
+                    command_id=command_id,
+                    claim_seq=None,
+                    should_execute=False,
+                    current_status=conflicted.status,
+                )
         return AutoExecuteCommandPlan(
             command_id=command_id,
             claim_seq=None,
             should_execute=False,
             current_status=current.status,
         )
+
+    def _recover_command_conflict_state(self, *, command_id: str, session_id: str):
+        current = self._command_lease_store.get_command(command_id)
+        if current is None:
+            return None
+        if current.session_id != session_id:
+            return None
+        return current
 
     def _record_command_terminal_result(
         self,
@@ -790,7 +855,10 @@ class ResidentOrchestrator:
                 event_type="memory_unavailable_degraded",
             ),
         )
-        approval_read = self._approval_read_snapshot_for_session(record)
+        approval_read = self._approval_read_snapshot_for_session(
+            record,
+            allow_canonical_fallback=False,
+        )
         report = None
         loaded_artifacts = None
         verdict = None
@@ -838,14 +906,36 @@ class ResidentOrchestrator:
     def _record_and_store_decision(self, decision):
         existing = self._decision_store.get(decision.decision_key)
         if existing is not None:
+            has_canonical_events = self._has_canonical_decision_events(existing)
             if not self._decision_has_runtime_gate(existing):
-                self._record_decision_lifecycle(decision)
-                return self._decision_store.update(decision)
-            if not self._has_canonical_decision_events(existing):
+                updated = decision
+                if has_canonical_events:
+                    updated = self._merge_existing_lifecycle_evidence(existing, decision)
+                else:
+                    self._record_decision_lifecycle(decision)
+                return self._decision_store.update(updated)
+            if not has_canonical_events:
                 self._record_decision_lifecycle(existing)
             return existing
+        if self._has_canonical_decision_events(decision):
+            return self._decision_store.put(decision)
         self._record_decision_lifecycle(decision)
         return self._decision_store.put(decision)
+
+    @staticmethod
+    def _merge_existing_lifecycle_evidence(existing, regenerated):
+        existing_evidence = existing.evidence if isinstance(existing.evidence, dict) else {}
+        regenerated_evidence = (
+            regenerated.evidence if isinstance(regenerated.evidence, dict) else {}
+        )
+        merged_evidence = {
+            **existing_evidence,
+            **regenerated_evidence,
+        }
+        for key in ("decision_trace", "validator_verdict", "release_gate_verdict"):
+            if key in existing_evidence:
+                merged_evidence[key] = existing_evidence[key]
+        return existing.model_copy(update={"evidence": merged_evidence})
 
     @staticmethod
     def _pass_verdict_requires_bundle(release_gate_verdict: ReleaseGateVerdict) -> bool:
@@ -904,19 +994,402 @@ class ResidentOrchestrator:
         )
         return bool(events)
 
-    def _approval_read_snapshot_for_session(
+    def _projected_approval_is_locally_pending(
+        self,
+        *,
+        approval_id: str,
+        session_id: str,
+        project_id: str,
+    ) -> bool:
+        records = self._approval_store.records_for_approval_id(
+            approval_id,
+            session_id=session_id,
+            project_id=project_id,
+        )
+        if not records:
+            return True
+        return any(record.status == "pending" for record in records)
+
+    def _active_projected_approvals(
         self,
         record: PersistedSessionRecord,
-    ) -> ApprovalReadSnapshot | None:
+    ) -> list[ApprovalProjection]:
         approvals = sorted(
             (
                 approval
-                for approval in self._approval_store.list_records()
-                if approval.session_id == record.thread_id
+                for approval in record.approval_queue
+                if approval.thread_id == record.thread_id
                 and approval.project_id == record.project_id
                 and approval.status == "pending"
             ),
-            key=lambda approval: approval.created_at,
+            key=lambda approval: approval.requested_at,
+        )
+        return [
+            approval
+            for approval in approvals
+            if self._projected_approval_is_locally_pending(
+                approval_id=approval.approval_id,
+                session_id=record.thread_id,
+                project_id=record.project_id,
+            )
+        ]
+
+    @staticmethod
+    def _approval_projection_order(
+        approval: ApprovalProjection,
+    ) -> tuple[bool, str, str]:
+        requested_at = str(approval.requested_at or "")
+        return (requested_at == "", requested_at, approval.approval_id)
+
+    def _canonical_pending_approval_projections(
+        self,
+        record: PersistedSessionRecord,
+    ) -> list[ApprovalProjection]:
+        pending_records = sorted(
+            (
+                approval
+                for approval in self._approval_store.list_records()
+                if approval.project_id == record.project_id
+                and approval.session_id == record.thread_id
+                and approval.status == "pending"
+            ),
+            key=lambda approval: (
+                str(approval.created_at or "") == "",
+                str(approval.created_at or ""),
+                approval.approval_id,
+            ),
+        )
+        return [
+            ApprovalProjection(
+                approval_id=approval.approval_id,
+                project_id=record.project_id,
+                thread_id=record.thread_id,
+                native_thread_id=approval.native_thread_id or record.native_thread_id,
+                risk_level=approval.decision.risk_class,
+                command=approval.requested_action,
+                reason=approval.decision.decision_reason,
+                alternative="",
+                status=approval.status,
+                requested_at=approval.created_at,
+                decided_at=approval.decided_at,
+                decided_by=approval.decided_by,
+            )
+            for approval in pending_records
+        ]
+
+    def _active_approvals(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        include_canonical_fallback: bool = True,
+    ) -> list[ApprovalProjection]:
+        projected_approvals = self._active_projected_approvals(record)
+        if projected_approvals:
+            return projected_approvals
+        if not include_canonical_fallback:
+            return []
+        approvals_by_id: dict[str, ApprovalProjection] = {}
+        for approval in self._canonical_pending_approval_projections(record):
+            approvals_by_id.setdefault(approval.approval_id, approval)
+        return sorted(
+            approvals_by_id.values(),
+            key=self._approval_projection_order,
+        )
+
+    def _record_with_local_approval_overlay(
+        self,
+        record: PersistedSessionRecord,
+    ) -> PersistedSessionRecord:
+        active_approvals = self._active_approvals(record)
+        approval_fact_codes = {"approval_pending", "awaiting_human_direction"}
+        facts = (
+            [fact for fact in record.facts if fact.fact_code not in approval_fact_codes]
+            if not active_approvals
+            else list(record.facts)
+        )
+        session = (
+            record.session.model_copy(update={"pending_approval_count": len(active_approvals)})
+            if record.session.pending_approval_count != len(active_approvals)
+            else record.session
+        )
+        if (
+            active_approvals == record.approval_queue
+            and facts == record.facts
+            and session == record.session
+        ):
+            return record
+        return record.model_copy(
+            update={
+                "approval_queue": active_approvals,
+                "facts": facts,
+                "session": session,
+            }
+        )
+
+    def _requested_action_args_for_intent(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        brain_intent: str,
+    ) -> dict[str, Any]:
+        if brain_intent == "candidate_closure":
+            return self._candidate_closure_action_args(record)
+        return {}
+
+    @staticmethod
+    def _approval_record_matches_intent(
+        *,
+        approval_record,
+        action_ref: str,
+        requested_action_args: dict[str, Any],
+        goal_contract_version: str | None,
+        policy_version: str,
+        fact_snapshot_version: str,
+    ) -> bool:
+        if approval_record.requested_action != action_ref:
+            return False
+        if dict(approval_record.requested_action_args) != dict(requested_action_args):
+            return False
+        if approval_record.goal_contract_version != goal_contract_version:
+            return False
+        if approval_record.policy_version != policy_version:
+            return False
+        if list(approval_record.decision_options) != _CANONICAL_APPROVAL_DECISION_OPTIONS:
+            return False
+        if _fact_snapshot_order(approval_record.fact_snapshot_version) > _fact_snapshot_order(
+            fact_snapshot_version
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _approval_event_matches_intent(
+        event,
+        *,
+        action_ref: str,
+        requested_action_args: dict[str, Any],
+        goal_contract_version: str | None,
+        policy_version: str,
+        fact_snapshot_version: str,
+    ) -> bool:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("requested_action") != action_ref:
+            return False
+        if payload.get("requested_action_args", {}) != dict(requested_action_args):
+            return False
+        if payload.get("goal_contract_version") != goal_contract_version:
+            return False
+        if payload.get("policy_version") != policy_version:
+            return False
+        if payload.get("decision_options") != _CANONICAL_APPROVAL_DECISION_OPTIONS:
+            return False
+        existing_snapshot = payload.get("fact_snapshot_version")
+        if isinstance(existing_snapshot, str) and _fact_snapshot_order(
+            existing_snapshot
+        ) > _fact_snapshot_order(fact_snapshot_version):
+            return False
+        return True
+
+    def _approval_projection_is_trustworthy_for_intent(
+        self,
+        approval: ApprovalProjection,
+        *,
+        record: PersistedSessionRecord,
+        action_ref: str,
+        requested_action_args: dict[str, Any],
+        goal_contract_version: str | None,
+        policy_version: str,
+    ) -> bool:
+        if approval.command != action_ref:
+            return False
+        approval_records = self._approval_store.records_for_approval_id(
+            approval.approval_id,
+            session_id=record.thread_id,
+            project_id=record.project_id,
+        )
+        for approval_record in approval_records:
+            if not self._approval_record_matches_intent(
+                approval_record=approval_record,
+                action_ref=action_ref,
+                requested_action_args=requested_action_args,
+                goal_contract_version=goal_contract_version,
+                policy_version=policy_version,
+                fact_snapshot_version=record.fact_snapshot_version,
+            ):
+                return False
+        if self._session_service is None:
+            return True
+        approval_events = self._session_service.list_events(
+            session_id=record.thread_id,
+            event_type="approval_requested",
+            related_id_key="approval_id",
+            related_id_value=approval.approval_id,
+        )
+        for event in approval_events:
+            if not self._approval_event_matches_intent(
+                event,
+                action_ref=action_ref,
+                requested_action_args=requested_action_args,
+                goal_contract_version=goal_contract_version,
+                policy_version=policy_version,
+                fact_snapshot_version=record.fact_snapshot_version,
+            ):
+                return False
+        return True
+
+    def _trusted_approvals_for_intent(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        action_ref: str,
+        requested_action_args: dict[str, Any],
+        goal_contract_version: str | None,
+        policy_version: str,
+    ) -> list[ApprovalProjection]:
+        active_approvals = [
+            approval
+            for approval in record.approval_queue
+            if self._approval_projection_is_trustworthy_for_intent(
+                approval,
+                record=record,
+                action_ref=action_ref,
+                requested_action_args=requested_action_args,
+                goal_contract_version=goal_contract_version,
+                policy_version=policy_version,
+            )
+        ]
+        if active_approvals:
+            return active_approvals
+        approvals_by_id: dict[str, ApprovalProjection] = {}
+        for approval in self._canonical_pending_approval_projections(record):
+            if approval.approval_id in approvals_by_id:
+                continue
+            if not self._approval_projection_is_trustworthy_for_intent(
+                approval,
+                record=record,
+                action_ref=action_ref,
+                requested_action_args=requested_action_args,
+                goal_contract_version=goal_contract_version,
+                policy_version=policy_version,
+            ):
+                continue
+            approvals_by_id[approval.approval_id] = approval
+        return sorted(
+            approvals_by_id.values(),
+            key=self._approval_projection_order,
+        )
+
+    def _record_with_trustworthy_approval_identity(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        action_ref: str,
+        requested_action_args: dict[str, Any],
+        goal_contract_version: str | None,
+        policy_version: str,
+    ) -> PersistedSessionRecord:
+        trusted_approvals = self._trusted_approvals_for_intent(
+            record,
+            action_ref=action_ref,
+            requested_action_args=requested_action_args,
+            goal_contract_version=goal_contract_version,
+            policy_version=policy_version,
+        )
+        approval_fact_codes = {"approval_pending", "awaiting_human_direction"}
+        facts = (
+            [fact for fact in record.facts if fact.fact_code not in approval_fact_codes]
+            if not trusted_approvals
+            else list(record.facts)
+        )
+        session = (
+            record.session.model_copy(update={"pending_approval_count": len(trusted_approvals)})
+            if record.session.pending_approval_count != len(trusted_approvals)
+            else record.session
+        )
+        if (
+            trusted_approvals == record.approval_queue
+            and facts == record.facts
+            and session == record.session
+        ):
+            return record
+        return record.model_copy(
+            update={
+                "approval_queue": trusted_approvals,
+                "facts": facts,
+                "session": session,
+            }
+        )
+
+    def _supersede_stale_pending_approvals(
+        self,
+        *,
+        previous_record: PersistedSessionRecord,
+        trusted_record: PersistedSessionRecord,
+        decision: CanonicalDecisionRecord,
+        now: datetime,
+    ) -> None:
+        stale_approval_ids = {
+            approval.approval_id
+            for approval in previous_record.approval_queue
+            if approval.status == "pending"
+        } - {
+            approval.approval_id
+            for approval in trusted_record.approval_queue
+            if approval.status == "pending"
+        }
+        if not stale_approval_ids:
+            return
+        updated_at = now.astimezone(UTC).replace(microsecond=0).isoformat().replace(
+            "+00:00",
+            "Z",
+        )
+        reason = (
+            "approval_superseded_by_identity_drift "
+            f"decision_id={decision.decision_id} "
+            f"action={decision.action_ref} "
+            f"snapshot={decision.fact_snapshot_version}"
+        )
+        superseded_records: list[CanonicalApprovalRecord] = []
+        for approval_id in sorted(stale_approval_ids):
+            approval_records = self._approval_store.records_for_approval_id(
+                approval_id,
+                session_id=decision.session_id,
+                project_id=decision.project_id,
+            )
+            for approval_record in approval_records:
+                if approval_record.status != "pending":
+                    continue
+                notes = list(approval_record.operator_notes)
+                notes.append(reason)
+                superseded_records.append(
+                    self._approval_store.update(
+                        approval_record.model_copy(
+                            update={
+                                "status": "superseded",
+                                "decided_at": updated_at,
+                                "decided_by": "policy-identity-drift",
+                                "operator_notes": notes,
+                            }
+                        )
+                    )
+                )
+        if superseded_records:
+            self._delivery_outbox_store.supersede_records(
+                envelope_reasons={
+                    approval.envelope_id: reason for approval in superseded_records
+                },
+                updated_at=updated_at,
+            )
+
+    def _approval_read_snapshot_for_session(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        allow_canonical_fallback: bool = True,
+    ) -> ApprovalReadSnapshot | None:
+        approvals = self._active_approvals(
+            record,
+            include_canonical_fallback=allow_canonical_fallback,
         )
         if not approvals:
             return None
@@ -933,16 +1406,21 @@ class ResidentOrchestrator:
             ),
             None,
         )
+        payload = matching_event.payload if matching_event is not None else {}
         return ApprovalReadSnapshot(
             approval_event_id=matching_event.event_id if matching_event is not None else approval.approval_id,
             approval_id=approval.approval_id,
             status=approval.status,
-            requested_action=approval.requested_action,
-            session_id=approval.session_id,
+            requested_action=str(payload.get("requested_action") or approval.command),
+            session_id=approval.thread_id,
             project_id=approval.project_id,
-            fact_snapshot_version=approval.fact_snapshot_version,
-            goal_contract_version=approval.goal_contract_version or "goal-contract:unknown",
-            expires_at=approval.expires_at or "approval:no-expiry",
+            fact_snapshot_version=str(
+                payload.get("fact_snapshot_version") or record.fact_snapshot_version
+            ),
+            goal_contract_version=str(
+                payload.get("goal_contract_version") or "goal-contract:unknown"
+            ),
+            expires_at=str(payload.get("expires_at") or "approval:no-expiry"),
             decided_by=approval.decided_by,
             log_seq=matching_event.log_seq if matching_event is not None else None,
         )
@@ -983,19 +1461,36 @@ class ResidentOrchestrator:
             model=brain_intent.model,
             prompt_schema_ref=brain_intent.prompt_schema_ref,
             output_schema_ref=brain_intent.output_schema_ref,
-            approval_read=self._approval_read_snapshot_for_session(record),
+            approval_read=self._approval_read_snapshot_for_session(
+                record,
+                allow_canonical_fallback=False,
+            ),
         )
 
-    def orchestrate_all(self, *, now: datetime | None = None) -> list[ResidentOrchestrationOutcome]:
+    def orchestrate_all(
+        self,
+        *,
+        now: datetime | None = None,
+        continue_on_error: bool = False,
+    ) -> list[ResidentOrchestrationOutcome]:
         current = now or datetime.now(UTC)
         self._command_lease_store.expire_and_requeue_expired(
             now=current.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             reason="resident_orchestrator_tick",
         )
-        return [
-            self._orchestrate_record(record, now=current)
-            for record in self._session_spine_store.list_records()
-        ]
+        outcomes: list[ResidentOrchestrationOutcome] = []
+        for record in self._session_spine_store.list_records():
+            try:
+                outcomes.append(self._orchestrate_record(record, now=current))
+            except Exception:
+                if not continue_on_error:
+                    raise
+                logger.exception(
+                    "resident orchestrator record failed: project=%s session=%s",
+                    record.project_id,
+                    record.thread_id,
+                )
+        return outcomes
 
     def _orchestrate_record(
         self,
@@ -1003,6 +1498,8 @@ class ResidentOrchestrator:
         *,
         now: datetime,
     ) -> ResidentOrchestrationOutcome:
+        record = self._record_with_local_approval_overlay(record)
+        overlay_record = record
         brain_intent = self._evaluate_brain_intent(record)
         action_ref = self._action_ref_for_brain_intent(record, brain_intent.intent)
         decision_result: str | None = None
@@ -1019,6 +1516,18 @@ class ResidentOrchestrator:
             action_ref = None
 
         if action_ref is not None:
+            requested_action_args = self._requested_action_args_for_intent(
+                record,
+                brain_intent=brain_intent.intent,
+            )
+            record = self._record_with_trustworthy_approval_identity(
+                record,
+                action_ref=action_ref,
+                requested_action_args=requested_action_args,
+                goal_contract_version=self._goal_contract_version_for_record(record),
+                policy_version=POLICY_VERSION,
+            )
+            trusted_record = record
             intent_evidence = self._decision_evidence_for_intent(
                 record,
                 brain_intent=brain_intent,
@@ -1156,6 +1665,12 @@ class ResidentOrchestrator:
                     approval_store=self._approval_store,
                     delivery_outbox_store=self._delivery_outbox_store,
                     session_service=self._session_service,
+                )
+                self._supersede_stale_pending_approvals(
+                    previous_record=overlay_record,
+                    trusted_record=trusted_record,
+                    decision=decision,
+                    now=now,
                 )
             elif decision.decision_result == DECISION_BLOCK_AND_ALERT:
                 self._delivery_outbox_store.enqueue_envelopes(build_envelopes_for_decision(decision))

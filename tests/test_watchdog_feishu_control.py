@@ -404,6 +404,51 @@ def test_feishu_control_command_request_routes_progress_query_to_canonical_reply
     assert response.json()["data"]["progress"]["project_id"] == "repo-a"
 
 
+def test_feishu_control_command_request_maps_plain_approval_reply_to_latest_pending_approval(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-1",
+                "interaction_family_id": "family-command-approval-1",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-1",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["approval_id"] == approval.approval_id
+    assert response.json()["data"]["response_action"] == "approve"
+    assert a_client.decision_calls == [(approval.approval_id, "approve", "user:carol", "")]
+    events = app.state.session_service.list_events(session_id=approval.session_id)
+    assert [event.event_type for event in events] == [
+        "approval_requested",
+        "notification_receipt_recorded",
+        "approval_approved",
+        "human_override_recorded",
+    ]
+
+
 def test_feishu_control_command_request_routes_pause_and_persists_receipt(
     tmp_path: Path,
 ) -> None:

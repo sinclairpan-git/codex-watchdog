@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 from pydantic import BaseModel, ConfigDict, Field
 
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.entrypoints.command_routing import resolve_entry_message
 from watchdog.services.feishu_control import FeishuControlRequest
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
 
@@ -51,6 +53,7 @@ class FeishuMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     message_id: str = Field(min_length=1)
+    chat_id: str | None = None
     chat_type: str = Field(min_length=1)
     message_type: str = Field(min_length=1)
     content: str = Field(min_length=1)
@@ -86,9 +89,32 @@ class FeishuMessageCallback(BaseModel):
 
 
 class FeishuIngressNormalizationService:
-    def __init__(self, *, settings: Settings, client: AControlAgentClient) -> None:
+    _APPROVAL_REPLY_TEXTS = {
+        "批准",
+        "同意",
+        "可以",
+        "approve",
+        "拒绝",
+        "不同意",
+        "不批准",
+        "reject",
+        "直接执行",
+        "执行",
+        "马上执行",
+        "execute",
+        "execute_action",
+    }
+
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        client: AControlAgentClient,
+        session_spine_store: SessionSpineStore | None = None,
+    ) -> None:
         self._settings = settings
         self._client = client
+        self._session_spine_store = session_spine_store
 
     def validate_url_verification(
         self,
@@ -107,7 +133,7 @@ class FeishuIngressNormalizationService:
         self,
         payload: FeishuMessageCallback,
     ) -> FeishuControlRequest:
-        self._validate_event_token(payload.header.token)
+        self.validate_event_token(payload.header.token)
         if payload.schema_name != "2.0":
             raise FeishuIngressError("unsupported feishu event schema")
         if payload.header.event_type != "im.message.receive_v1":
@@ -126,25 +152,28 @@ class FeishuIngressNormalizationService:
         channel_kind = "dm" if payload.event.message.chat_type == "p2p" else "group"
         if target["event_type"] == "goal_contract_bootstrap" and channel_kind != "dm":
             raise FeishuIngressError("goal bootstrap requires dm channel")
-        return FeishuControlRequest.model_validate(
-            {
-                "event_type": target["event_type"],
-                "interaction_context_id": payload.event.message.message_id,
-                "interaction_family_id": payload.event.message.message_id,
-                "actor_id": actor_id,
-                "channel_kind": channel_kind,
-                "occurred_at": occurred_at,
-                "action_window_expires_at": expires_at,
-                "client_request_id": payload.header.event_id,
-                "project_id": target.get("project_id"),
-                "native_thread_id": target.get("native_thread_id"),
-                "session_id": target.get("session_id"),
-                "goal_message": target.get("goal_message"),
-                "command_text": target.get("command_text"),
-            }
-        )
+        request_payload = {
+            "event_type": target["event_type"],
+            "interaction_context_id": payload.event.message.message_id,
+            "interaction_family_id": payload.event.message.message_id,
+            "actor_id": actor_id,
+            "channel_kind": channel_kind,
+            "occurred_at": occurred_at,
+            "action_window_expires_at": expires_at,
+            "client_request_id": payload.header.event_id,
+            "project_id": target.get("project_id"),
+            "native_thread_id": target.get("native_thread_id"),
+            "session_id": target.get("session_id"),
+            "goal_message": target.get("goal_message"),
+            "command_text": target.get("command_text"),
+        }
+        chat_id = str(payload.event.message.chat_id or "").strip()
+        if chat_id:
+            request_payload["receive_id"] = chat_id
+            request_payload["receive_id_type"] = "chat_id"
+        return FeishuControlRequest.model_validate(request_payload)
 
-    def _validate_event_token(self, token: str) -> None:
+    def validate_event_token(self, token: str) -> None:
         expected = str(self._settings.feishu_verification_token or "").strip()
         if not expected:
             raise FeishuIngressError("feishu verification token is not configured")
@@ -170,17 +199,55 @@ class FeishuIngressNormalizationService:
                 return value
         raise FeishuIngressError("sender id is required")
 
+    @classmethod
+    def _normalized_text(cls, value: str) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    @classmethod
+    def _strip_goal_prefix(cls, command_text: str) -> str | None:
+        stripped = str(command_text or "").strip()
+        lowered = stripped.lower()
+        if lowered == "/goal":
+            return ""
+        if lowered.startswith("/goal "):
+            return stripped[5:].strip()
+        for prefix in ("goal:", "goal：", "目标:", "目标："):
+            if lowered.startswith(prefix):
+                return stripped[len(prefix):].strip()
+        if stripped.startswith("目标是"):
+            return stripped.removeprefix("目标是").strip(" ：:")
+        return None
+
+    @classmethod
+    def _is_control_text(cls, command_text: str) -> bool:
+        normalized = cls._normalized_text(command_text)
+        if not normalized:
+            return False
+        if normalized in cls._APPROVAL_REPLY_TEXTS:
+            return True
+        return resolve_entry_message(command_text) is not None
+
+    @classmethod
+    def _goal_message_from_command_text(cls, command_text: str) -> str | None:
+        stripped = str(command_text or "").strip()
+        if not stripped:
+            return None
+        explicit_goal = cls._strip_goal_prefix(stripped)
+        if explicit_goal is not None:
+            return explicit_goal
+        if stripped.startswith("/"):
+            return None
+        if cls._is_control_text(stripped):
+            return None
+        return stripped
+
     def _resolve_binding(self, text: str) -> dict[str, str]:
         message = text.strip()
         lowered = message.lower()
         lookup_thread_id: str | None = None
         project_id: str | None = None
         command_text = message
-        tasks = [
-            task
-            for task in self._client.list_tasks()
-            if str(task.get("status") or "").strip() not in {"completed", "failed", "paused", "cancelled"}
-        ]
+        default_project_id = str(self._settings.default_project_id or "").strip() or None
         if lowered.startswith("repo:") or lowered.startswith("project:"):
             head, _, rest = message.partition(" ")
             project_id = head.split(":", 1)[1].strip()
@@ -189,29 +256,50 @@ class FeishuIngressNormalizationService:
             head, _, rest = message.partition(" ")
             lookup_thread_id = head.split(":", 1)[1].strip()
             command_text = rest.strip()
-        elif len(tasks) == 1:
-            task = tasks[0]
-            project_id = str(task.get("project_id") or "").strip() or None
-            lookup_thread_id = str(task.get("thread_id") or "").strip() or None
+        elif default_project_id:
+            project_id = default_project_id
         else:
-            raise FeishuIngressError("project binding is required for Feishu ingress")
+            tasks = [
+                task
+                for task in self._client.list_tasks()
+                if str(task.get("status") or "").strip()
+                not in {"completed", "failed", "paused", "cancelled"}
+            ]
+            if len(tasks) == 1:
+                task = tasks[0]
+                project_id = str(task.get("project_id") or "").strip() or None
+                lookup_thread_id = str(task.get("thread_id") or "").strip() or None
+            else:
+                raise FeishuIngressError("project binding is required for Feishu ingress")
 
+        resolved_project_id = project_id
+        resolved_thread_id = ""
+        session_id = ""
+        if project_id:
+            local_record = self._resolve_project_binding_from_store(project_id)
+            if local_record is not None:
+                resolved_project_id = local_record["project_id"]
+                resolved_thread_id = local_record["native_thread_id"]
+                session_id = local_record["session_id"]
+
+        goal_message = self._goal_message_from_command_text(command_text)
         if lookup_thread_id:
             envelope = self._client.get_envelope_by_thread(lookup_thread_id)
-        elif project_id:
-            envelope = self._client.get_envelope(project_id)
-        else:
-            raise FeishuIngressError("project binding is required for Feishu ingress")
-        data = envelope.get("data")
-        if not isinstance(data, dict):
-            raise FeishuIngressError("bound task envelope is invalid")
-        resolved_project_id = str(data.get("project_id") or project_id or "").strip()
-        resolved_thread_id = str(data.get("native_thread_id") or "").strip()
-        session_id = str(data.get("thread_id") or lookup_thread_id or "").strip()
+            resolved_project_id, resolved_thread_id, session_id = self._resolve_envelope_binding(
+                envelope,
+                project_id=project_id,
+                lookup_thread_id=lookup_thread_id,
+            )
+        elif resolved_project_id and goal_message is not None and not session_id:
+            envelope = self._client.get_envelope(resolved_project_id)
+            resolved_project_id, resolved_thread_id, session_id = self._resolve_envelope_binding(
+                envelope,
+                project_id=resolved_project_id,
+                lookup_thread_id=None,
+            )
         if not resolved_project_id:
             raise FeishuIngressError("bound project_id is missing")
-        if command_text.startswith("/goal "):
-            goal_message = command_text.removeprefix("/goal").strip()
+        if goal_message is not None:
             if not goal_message:
                 raise FeishuIngressError("goal bootstrap message is empty")
             if not session_id:
@@ -229,6 +317,35 @@ class FeishuIngressNormalizationService:
             "project_id": resolved_project_id,
             "command_text": command_text,
         }
+        if session_id:
+            payload["session_id"] = session_id
         if resolved_thread_id:
             payload["native_thread_id"] = resolved_thread_id
         return payload
+
+    def _resolve_project_binding_from_store(self, project_id: str) -> dict[str, str] | None:
+        if self._session_spine_store is None:
+            return None
+        record = self._session_spine_store.get(project_id)
+        if record is None:
+            return None
+        return {
+            "project_id": record.project_id,
+            "native_thread_id": str(record.native_thread_id or "").strip(),
+            "session_id": record.thread_id,
+        }
+
+    @staticmethod
+    def _resolve_envelope_binding(
+        envelope: dict[str, object],
+        *,
+        project_id: str | None,
+        lookup_thread_id: str | None,
+    ) -> tuple[str, str, str]:
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            raise FeishuIngressError("bound task envelope is invalid")
+        resolved_project_id = str(data.get("project_id") or project_id or "").strip()
+        resolved_thread_id = str(data.get("native_thread_id") or "").strip()
+        session_id = str(data.get("thread_id") or lookup_thread_id or "").strip()
+        return resolved_project_id, resolved_thread_id, session_id

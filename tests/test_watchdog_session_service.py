@@ -197,6 +197,46 @@ def test_session_service_store_appends_and_queries_canonical_truth_records(
     assert latest.lineage_id == "lineage:recovery-1"
 
 
+def test_session_service_store_reuses_cached_snapshot_until_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_path = tmp_path / "session_service.json"
+    store = SessionServiceStore(store_path)
+    event = store.append_event(
+        SessionEventRecord(
+            event_id="event:cached-read",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            event_type="decision_proposed",
+            occurred_at="2026-04-16T01:00:00Z",
+            correlation_id="corr:cache",
+            idempotency_key="idem:cached-read",
+            payload={"step": "cached"},
+        )
+    )
+
+    original_read_text = Path.read_text
+    read_calls = 0
+
+    def counting_read_text(self: Path, *args, **kwargs):
+        nonlocal read_calls
+        if self == store_path:
+            read_calls += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    assert store.list_events(session_id="session:repo-a")[0].event_id == event.event_id
+    assert store.list_events(event_type="decision_proposed")[0].event_id == event.event_id
+    assert read_calls == 0
+
+    store_path.write_text(original_read_text(store_path, encoding="utf-8") + "\n", encoding="utf-8")
+
+    assert store.list_events(session_id="session:repo-a")[0].event_id == event.event_id
+    assert read_calls == 1
+
+
 def test_session_service_records_recovery_truth_in_canonical_order(
     tmp_path: Path,
 ) -> None:
@@ -251,6 +291,52 @@ def test_session_service_records_recovery_truth_in_canonical_order(
     assert lineage_records[0].parent_session_id == "session:repo-a"
     assert lineage_records[0].child_session_id == recorded.child_session_id
     assert lineage_records[0].relation == "resumes_after_interruption"
+
+
+def test_session_service_record_event_once_accepts_legacy_subset_payload_during_schema_expansion(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    original = service.record_event(
+        event_type="approval_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:approval:legacy",
+        causation_id="decision:legacy",
+        related_ids={"approval_id": "appr_001", "decision_id": "decision:legacy"},
+        payload={
+            "requested_action": "execute_recovery",
+            "decision_options": ["approve", "reject", "execute_action"],
+            "fact_snapshot_version": "fact-v7",
+            "policy_version": "policy-v1",
+        },
+    )
+
+    replayed = service.record_event_once(
+        event_type="approval_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:approval:legacy",
+        causation_id="decision:legacy",
+        related_ids={"approval_id": "appr_001", "decision_id": "decision:legacy"},
+        payload={
+            "requested_action": "execute_recovery",
+            "requested_action_args": {"mode": "safe"},
+            "decision_options": ["approve", "reject", "execute_action"],
+            "fact_snapshot_version": "fact-v7",
+            "goal_contract_version": "goal-v1",
+            "policy_version": "policy-v1",
+        },
+    )
+
+    assert replayed.event_id == original.event_id
+    assert len(
+        service.list_events(
+            session_id="session:repo-a",
+            event_type="approval_requested",
+        )
+    ) == 1
 
 
 def test_session_service_records_memory_anomaly_events_with_stable_writers(

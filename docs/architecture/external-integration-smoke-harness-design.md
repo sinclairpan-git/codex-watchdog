@@ -87,7 +87,7 @@ uv run python scripts/watchdog_external_integration_smoke.py
   - `WATCHDOG_API_TOKEN`
 - 按能力面启用的可选输入：
   - Feishu：`WATCHDOG_FEISHU_VERIFICATION_TOKEN`
-  - Feishu callback smoke：`WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`、`WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`
+- Feishu callback smoke：`WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`、`WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`
   - OpenAI-compatible：`WATCHDOG_BRAIN_PROVIDER_NAME`、`WATCHDOG_BRAIN_PROVIDER_BASE_URL`、`WATCHDOG_BRAIN_PROVIDER_API_KEY`、`WATCHDOG_BRAIN_PROVIDER_MODEL`
   - Memory Hub preview：`WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED`
 
@@ -145,8 +145,9 @@ uv run python scripts/watchdog_external_integration_smoke.py
 
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`
+- `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`
 
-时，脚本允许额外执行 `feishu-control` target。该 target 仍然只调用既有入口：
+时，脚本允许额外执行 `feishu-control` target。该 target 仍然只调用既有入口；若仓内历史数据较大导致 DM synthetic smoke 超过默认公共 HTTP 窗口，只放宽 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`，不修改其余 remote target 的 timeout：
 
 - `POST /api/v1/watchdog/feishu/events`
 

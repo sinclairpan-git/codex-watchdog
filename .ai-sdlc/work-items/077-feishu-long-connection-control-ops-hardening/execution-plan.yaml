@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T771
+  title: 审查中断 WIP 并从已完成的 WI-076 中拆分出 WI-077
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T772
+  title: 冻结 Feishu long connection sidecar、smoke config 与 secrets 边界
+  status: completed
+  phase: 2
+  depends_on:
+  - T771
+- task_id: T773
+  title: 收口 ingress normalization、control reply 归一与回发语义
+  status: completed
+  phase: 3
+  depends_on:
+  - T772
+- task_id: T774
+  title: 收口 approval delivery session ops 可靠性补强与文档真值
+  status: completed
+  phase: 4
+  depends_on:
+  - T773
+- task_id: T775
+  title: 完成 targeted verification、状态同步与 closeout
+  status: completed
+  phase: 5
+  depends_on:
+  - T774
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T771
+  status: completed
+  started_at: '2026-04-17T15:10:00Z'
+  completed_at: '2026-04-17T15:14:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T772
+  status: completed
+  started_at: '2026-04-17T15:14:00Z'
+  completed_at: '2026-04-17T15:18:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T773
+  status: completed
+  started_at: '2026-04-17T15:18:00Z'
+  completed_at: '2026-04-17T15:21:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T774
+  status: completed
+  started_at: '2026-04-17T15:21:00Z'
+  completed_at: '2026-04-17T15:24:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T775
+  status: completed
+  started_at: '2026-04-17T15:24:00Z'
+  completed_at: '2026-04-17T15:26:02Z'
+current_batch: 5
