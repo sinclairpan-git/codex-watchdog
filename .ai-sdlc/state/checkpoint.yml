@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T03:18:00Z'
+pipeline_last_updated: '2026-04-17T03:24:46Z'
 current_stage: completed
 feature:
-  id: 074-approval-auto-replay-and-canonical-status
-  spec_dir: specs/074-approval-auto-replay-and-canonical-status
-  design_branch: design/074-approval-auto-replay-and-canonical-status
-  feature_branch: feature/074-approval-auto-replay-and-canonical-status
-  current_branch: codex/074-approval-auto-replay-and-canonical-status
-  docs_baseline_ref: 9a62a6b823ad74d4a30f046eb1f8858abc583065ddbbdf6fcae0d47d4d7ca523
-  docs_baseline_at: '2026-04-17T03:18:00Z'
+  id: 075-external-integration-smoke-harness-closeout
+  spec_dir: specs/075-external-integration-smoke-harness-closeout
+  design_branch: design/075-external-integration-smoke-harness-closeout
+  feature_branch: feature/075-external-integration-smoke-harness-closeout
+  current_branch: codex/075-external-integration-smoke-harness-closeout
+  docs_baseline_ref: f714d313d44ea233f0d8eb2875f57aa0ffd35394
+  docs_baseline_at: '2026-04-17T03:22:59Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -36,6 +36,6 @@ completed_stages:
       - tasks.md
 ai_decisions_count: 58
 execution_mode: auto
-linked_wi_id: 074-approval-auto-replay-and-canonical-status
+linked_wi_id: 075-external-integration-smoke-harness-closeout
 linked_plan_uri: null
-last_synced_at: '2026-04-17T03:18:00Z'
+last_synced_at: '2026-04-17T03:24:46Z'
