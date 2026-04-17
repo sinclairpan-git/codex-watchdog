@@ -214,3 +214,40 @@ def test_collect_constraint_violations_includes_completed_review_gate_mirror_dri
         "(049-feishu-and-openclaw-entrypoint-closure): "
         "runtime.yaml: review_approval_status must be removed once current_stage=completed"
     ]
+
+
+def test_collect_constraint_violations_includes_reconciliation_stale_pointers(
+    monkeypatch, tmp_path: Path
+) -> None:
+    no_violations = lambda _repo_root: []
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", no_violations)
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "collect_reconciliation_inventory",
+        lambda _repo_root: ReconciliationInventory(
+            spec_work_items=(),
+            mirrored_work_items=(),
+            missing_work_item_mirrors=(),
+            next_work_item_seq=79,
+            active_work_item_id=None,
+            stale_pointers=(
+                ".ai-sdlc/state/resume-pack.yaml: current_branch=codex/023 does not match checkpoint current_branch=codex/079",
+            ),
+        ),
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_work_item_lifecycle", lambda _work_item_root: [])
+
+    violations = ai_sdlc_cli._collect_constraint_violations(tmp_path)
+
+    assert violations == [
+        ".ai-sdlc/state/resume-pack.yaml: current_branch=codex/023 does not match checkpoint current_branch=codex/079"
+    ]

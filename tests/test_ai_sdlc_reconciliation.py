@@ -476,3 +476,77 @@ def test_collect_reconciliation_inventory_prefers_checkpoint_truth_over_older_op
 
     assert inventory.active_work_item_id == "047-ai-sdlc-state-reconciliation-and-canonical-gate-repair"
     assert inventory.stale_pointers == ()
+
+
+def test_collect_reconciliation_inventory_flags_top_level_state_resume_pack_drift(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(
+        tmp_path / "specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/spec.md",
+        "# 047\n",
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/runtime.yaml",
+        """
+        work_item_id: 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
+        current_stage: verify
+        current_batch: 2
+        current_task: T472
+        last_committed_task: T471
+        current_branch: codex/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/checkpoint.yml",
+        """
+        current_stage: verify
+        feature:
+          id: 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
+          current_branch: codex/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
+        linked_wi_id: 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/project/config/project-state.yaml",
+        """
+        status: initialized
+        next_work_item_seq: 48
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/resume-pack.yaml",
+        """
+        current_stage: execute
+        current_branch: codex/023-codex-client-openclaw-route-template
+        working_set_snapshot:
+          spec_path: specs/023-codex-client-openclaw-route-template/spec.md
+          plan_path: specs/023-codex-client-openclaw-route-template/plan.md
+          tasks_path: specs/023-codex-client-openclaw-route-template/tasks.md
+        checkpoint_path: .ai-sdlc/state/checkpoint.yml
+        checkpoint_last_updated: '2026-04-14T16:16:19+08:00'
+        """,
+    )
+
+    inventory = reconciliation.collect_reconciliation_inventory(tmp_path)
+
+    assert inventory.active_work_item_id == "047-ai-sdlc-state-reconciliation-and-canonical-gate-repair"
+    assert any(
+        ".ai-sdlc/state/resume-pack.yaml" in violation
+        and "current_stage=execute" in violation
+        and "verify" in violation
+        for violation in inventory.stale_pointers
+    )
+    assert any(
+        ".ai-sdlc/state/resume-pack.yaml" in violation
+        and "current_branch=codex/023-codex-client-openclaw-route-template" in violation
+        and "codex/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair" in violation
+        for violation in inventory.stale_pointers
+    )
+    assert any(
+        ".ai-sdlc/state/resume-pack.yaml" in violation
+        and "spec_path=specs/023-codex-client-openclaw-route-template/spec.md" in violation
+        and "specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/spec.md" in violation
+        for violation in inventory.stale_pointers
+    )

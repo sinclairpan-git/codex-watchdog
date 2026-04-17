@@ -3,30 +3,30 @@ total_batches: 5
 tasks:
 - task_id: T791
   title: 审查 WI-078 closeout 后遗留的顶层 state resume-pack 漂移并 formalize WI-079
-  status: in_progress
+  status: completed
   phase: 1
   depends_on: []
 - task_id: T792
   title: 写失败测试锁定顶层 state resume-pack stale pointer 与 CLI constraint gate
-  status: pending
+  status: completed
   phase: 2
   depends_on:
   - T791
 - task_id: T793
   title: 实现顶层 state resume-pack validator 并扩展 ai_sdlc verify constraints 覆盖范围
-  status: pending
+  status: completed
   phase: 3
   depends_on:
   - T792
 - task_id: T794
   title: 修复当前仓库的顶层 state resume-pack 漂移并同步 active truth
-  status: pending
+  status: completed
   phase: 4
   depends_on:
   - T793
 - task_id: T795
   title: 跑 targeted verification、同步状态并完成 WI-079 closeout
-  status: pending
+  status: completed
   phase: 5
   depends_on:
   - T794
@@ -35,26 +35,26 @@ batches:
   phase: 1
   tasks:
   - T791
-  status: in_progress
+  status: completed
   started_at: '2026-04-18T00:22:00Z'
 - batch_id: 2
   phase: 2
   tasks:
   - T792
-  status: pending
+  status: completed
 - batch_id: 3
   phase: 3
   tasks:
   - T793
-  status: pending
+  status: completed
 - batch_id: 4
   phase: 4
   tasks:
   - T794
-  status: pending
+  status: completed
 - batch_id: 5
   phase: 5
   tasks:
   - T795
-  status: pending
-current_batch: 1
+  status: completed
+current_batch: 5

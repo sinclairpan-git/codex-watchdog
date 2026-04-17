@@ -122,6 +122,41 @@ def collect_reconciliation_inventory(repo_root: Path | None = None) -> Reconcili
                 f"next_work_item_seq={project_next_seq}, expected {next_work_item_seq}"
             )
 
+    state_resume_path = root / ".ai-sdlc/state/resume-pack.yaml"
+    state_resume_text = _read_text_if_exists(state_resume_path)
+    checkpoint_stage = _extract_scalar(checkpoint_text, "current_stage")
+    checkpoint_branch = _extract_scalar(checkpoint_text, "current_branch")
+
+    if checkpoint_stage:
+        state_resume_stage = _extract_scalar(state_resume_text, "current_stage")
+        if state_resume_stage and state_resume_stage != checkpoint_stage:
+            stale_pointers.append(
+                ".ai-sdlc/state/resume-pack.yaml: "
+                f"current_stage={state_resume_stage} does not match checkpoint current_stage={checkpoint_stage}"
+            )
+
+    if checkpoint_branch:
+        state_resume_branch = _extract_scalar(state_resume_text, "current_branch")
+        if state_resume_branch and state_resume_branch != checkpoint_branch:
+            stale_pointers.append(
+                ".ai-sdlc/state/resume-pack.yaml: "
+                "current_branch="
+                f"{state_resume_branch} does not match checkpoint current_branch={checkpoint_branch}"
+            )
+
+    if active_work_item_id:
+        for field, expected_value in (
+            ("spec_path", f"specs/{active_work_item_id}/spec.md"),
+            ("plan_path", f"specs/{active_work_item_id}/plan.md"),
+            ("tasks_path", f"specs/{active_work_item_id}/tasks.md"),
+        ):
+            state_resume_value = _extract_scalar(state_resume_text, field)
+            if state_resume_value and state_resume_value != expected_value:
+                stale_pointers.append(
+                    ".ai-sdlc/state/resume-pack.yaml: "
+                    f"{field}={state_resume_value} does not match active truth {field}={expected_value}"
+                )
+
     return ReconciliationInventory(
         spec_work_items=spec_ids,
         mirrored_work_items=mirrored_ids,

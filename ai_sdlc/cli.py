@@ -73,6 +73,7 @@ def _collect_constraint_violations(repo_root: Path) -> list[str]:
         *validate_long_running_residual_contracts(repo_root),
     ]
     inventory = collect_reconciliation_inventory(repo_root)
+    violations.extend(inventory.stale_pointers)
     if inventory.active_work_item_id:
         work_item_root = repo_root / ".ai-sdlc/work-items" / inventory.active_work_item_id
         violations.extend(
