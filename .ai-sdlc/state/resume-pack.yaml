@@ -1,23 +1,26 @@
 current_stage: completed
 current_batch: 5
-last_committed_task: T795
+last_committed_task: T805
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/079-state-resume-pack-canonical-sync/spec.md
-  plan_path: specs/079-state-resume-pack-canonical-sync/plan.md
-  tasks_path: specs/079-state-resume-pack-canonical-sync/tasks.md
+  spec_path: specs/080-external-integration-live-acceptance-truth/spec.md
+  plan_path: specs/080-external-integration-live-acceptance-truth/plan.md
+  tasks_path: specs/080-external-integration-live-acceptance-truth/tasks.md
   active_files:
+  - '`docs/operations/external-integration-live-acceptance.md`'
+  - '`src/watchdog/validation/docs_contracts.py`'
+  - '`tests/test_long_running_autonomy_doc_contracts.py`'
   - '`docs/framework-defect-backlog.zh-CN.md`'
-  - '`specs/079-state-resume-pack-canonical-sync/spec.md`'
-  - '`specs/079-state-resume-pack-canonical-sync/plan.md`'
-  - '`specs/079-state-resume-pack-canonical-sync/tasks.md`'
-  - '`specs/079-state-resume-pack-canonical-sync/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/runtime.yaml`'
-  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/resume-pack.yaml`'
-  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/latest-summary.md`'
+  - '`specs/080-external-integration-live-acceptance-truth/spec.md`'
+  - '`specs/080-external-integration-live-acceptance-truth/plan.md`'
+  - '`specs/080-external-integration-live-acceptance-truth/tasks.md`'
+  - '`specs/080-external-integration-live-acceptance-truth/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/runtime.yaml`'
+  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/latest-summary.md`'
   - '`.ai-sdlc/state/checkpoint.yml`'
   - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
@@ -36,20 +39,22 @@ working_set_snapshot:
 
     Completed Batches: 5
 
-    Last Committed Task: T795
+    Last Committed Task: T805
 
 
     ## Notes
 
-    - `WI-079` 已把顶层 `.ai-sdlc/state/resume-pack.yaml` 的 stale pointer 收口为 repo-local contract，并把 CLI constraint gate 扩展到 stale pointer blocking。
+    - `WI-080` 已把真实环境联调 runbook 的 truth-boundary 收口为 repo-local docs contract，后续文档不得再把外部平台 blocker 写成仓库已自动闭环。
 
-    - 当前 active truth 已与 `.ai-sdlc/state/checkpoint.yml`、`.ai-sdlc/project/config/project-state.yaml` 和 `WI-079` runtime mirror 对齐。
+    - `docs/operations/external-integration-live-acceptance.md` 现已显式声明：外部组织安装、域名、证书、密钥轮换、凭证发放不会因仓库 smoke 通过而被自动宣告完成。
 
-    - `WI-079` 只修 framework state，不引入任何产品运行时变化。'
-current_branch: codex/079-state-resume-pack-canonical-sync
+    - `src/watchdog/validation/docs_contracts.py` 与 `tests/test_long_running_autonomy_doc_contracts.py` 已把“release gate + live acceptance 双成立”和“两种推荐结论口径”冻结为回归 contract。
+
+    - `docs/framework-defect-backlog.zh-CN.md` 中 `FD-004` 的状态已同步到 `WI-079` 完成态，不再保留过期的待补描述。'
+current_branch: codex/080-external-integration-live-acceptance-truth
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-17T17:41:20Z'
+timestamp: '2026-04-17T18:00:00Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-17T17:41:20Z'
-checkpoint_fingerprint: d24bc6f0f297193136c726d73b0d9282665313fedc7451c8e9c38e786a7f21f0
+checkpoint_last_updated: '2026-04-17T18:00:00Z'
+checkpoint_fingerprint: 3d57b195be942864fc6810dc6e32afdd6b37df17b2cf2503f17571b928d7915f

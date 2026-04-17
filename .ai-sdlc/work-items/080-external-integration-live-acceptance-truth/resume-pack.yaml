@@ -1,0 +1,21 @@
+work_item:
+  id: 080-external-integration-live-acceptance-truth
+  spec_dir: specs/080-external-integration-live-acceptance-truth
+  branch: codex/080-external-integration-live-acceptance-truth
+current_stage: completed
+current_batch: 5
+last_committed_task: T805
+current_branch: codex/080-external-integration-live-acceptance-truth
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: advance to the next open work item after WI-080 closure
+artifacts:
+  - specs/080-external-integration-live-acceptance-truth/spec.md
+  - specs/080-external-integration-live-acceptance-truth/plan.md
+  - specs/080-external-integration-live-acceptance-truth/tasks.md
+  - specs/080-external-integration-live-acceptance-truth/task-execution-log.md
+  - .ai-sdlc/work-items/080-external-integration-live-acceptance-truth/execution-plan.yaml
+  - .ai-sdlc/work-items/080-external-integration-live-acceptance-truth/runtime.yaml
+  - .ai-sdlc/work-items/080-external-integration-live-acceptance-truth/latest-summary.md
+timestamp: '2026-04-17T18:00:00Z'

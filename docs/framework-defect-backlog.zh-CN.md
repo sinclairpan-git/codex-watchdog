@@ -79,4 +79,4 @@
 - 风险等级: 高
 - 可验证成功标准: 当顶层 state resume pack 指向旧 WI、旧 branch 或旧 spec/tasks 路径时，repo-local verify 会失败；正常切换到下一张 work item 时，status / checkpoint / state resume pack 会共同指向同一 active truth。
 - 是否需要回归测试补充: 需要
-- 当前状态: 已由 `WI-079` 正式接管，待补 validator、CLI gate 与回归测试。
+- 当前状态: 已由 `WI-079` 完成顶层 state resume-pack validator、CLI gate 与回归测试，formal closeout 已落地。

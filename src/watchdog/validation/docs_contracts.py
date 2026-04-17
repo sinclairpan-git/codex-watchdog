@@ -253,6 +253,17 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "Fail-Closed Rules",
         ),
     ),
+    DocContractCheck(
+        name="external_integration_live_acceptance_truth_boundary",
+        path=EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC,
+        must_contain=(
+            "它不声明外部组织安装、域名、证书、密钥轮换、凭证发放已经自动完成。",
+            "release gate 与 live acceptance 必须同时成立，才能对外声称“当前接线就绪”",
+            "外部平台最终放量、组织级权限开通、正式公网入口与密钥轮换仍属于仓库外运维真值。",
+            "repo 内 contract 已落地，真实环境接线已按本 runbook 验收通过",
+            "repo 内 contract 已落地，但真实环境仍受外部平台/凭证/组织安装阻断",
+        ),
+    ),
 )
 
 

@@ -5,7 +5,7 @@
 边界固定如下：
 
 - 它不是新的 product work item，也不替代 `.ai-sdlc/` 的正式 backlog。
-- 它不声明外部组织安装、域名、凭证发放已经自动完成。
+- 它不声明外部组织安装、域名、证书、密钥轮换、凭证发放已经自动完成。
 - 它不替代 `docs/operations/release-gate-runbook.md`；release gate 与 live acceptance 必须同时成立，才能对外声称“当前接线就绪”。
 - 它不是 production acceptance gate；外部平台最终放量、组织级权限开通、正式公网入口与密钥轮换仍属于仓库外运维真值。
 

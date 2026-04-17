@@ -1,12 +1,12 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T17:41:20Z'
+pipeline_last_updated: '2026-04-17T18:00:00Z'
 current_stage: completed
 feature:
-  id: 079-state-resume-pack-canonical-sync
-  spec_dir: specs/079-state-resume-pack-canonical-sync
-  design_branch: design/079-state-resume-pack-canonical-sync
-  feature_branch: feature/079-state-resume-pack-canonical-sync
-  current_branch: codex/079-state-resume-pack-canonical-sync
+  id: 080-external-integration-live-acceptance-truth
+  spec_dir: specs/080-external-integration-live-acceptance-truth
+  design_branch: design/080-external-integration-live-acceptance-truth
+  feature_branch: feature/080-external-integration-live-acceptance-truth
+  current_branch: codex/080-external-integration-live-acceptance-truth
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
@@ -17,25 +17,25 @@ prd_source: openclaw-codex-watchdog-prd.md
 completed_stages:
   -
     stage: init
-    completed_at: '2026-04-16T13:00:00Z'
+    completed_at: '2026-04-17T17:50:00Z'
     artifacts: []
   -
     stage: refine
-    completed_at: '2026-04-16T13:05:00Z'
+    completed_at: '2026-04-17T17:50:00Z'
     artifacts:
       - spec.md
   -
     stage: design
-    completed_at: '2026-04-16T13:05:00Z'
+    completed_at: '2026-04-17T17:50:00Z'
     artifacts:
       - plan.md
   -
     stage: decompose
-    completed_at: '2026-04-16T13:05:00Z'
+    completed_at: '2026-04-17T17:50:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 60
+ai_decisions_count: 63
 execution_mode: auto
-linked_wi_id: 079-state-resume-pack-canonical-sync
+linked_wi_id: 080-external-integration-live-acceptance-truth
 linked_plan_uri: null
-last_synced_at: '2026-04-17T17:41:20Z'
+last_synced_at: '2026-04-17T18:00:00Z'

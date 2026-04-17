@@ -30,6 +30,7 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "readme_covers_external_integration_smoke_harness" in names
     assert "readme_covers_watchdog_runtime_factory" in names
     assert "external_integration_live_acceptance_covers_feishu_provider_memory" in names
+    assert "external_integration_live_acceptance_truth_boundary" in names
 
 
 def test_long_running_autonomy_doc_validator_reports_missing_files(tmp_path) -> None:
