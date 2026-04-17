@@ -503,9 +503,10 @@ cd "$APP_DIR"
 set -a
 source "$APP_DIR/.env.w"
 set +a
-exec uv run uvicorn watchdog.main:app \
+exec uv run uvicorn watchdog.main:create_runtime_app \
   --host "$WATCHDOG_HOST" \
   --port "$WATCHDOG_PORT" \
+  --factory \
   --app-dir src
 ```
 

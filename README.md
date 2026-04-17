@@ -33,7 +33,7 @@ python -m uvicorn a_control_agent.main:app --host 127.0.0.1 --port 8710 --app-di
 ```bash
 export WATCHDOG_API_TOKEN=dev-token-change-me
 export WATCHDOG_A_AGENT_TOKEN=dev-token-change-me
-uv run uvicorn watchdog.main:app --host 127.0.0.1 --port 8720 --app-dir src
+uv run uvicorn watchdog.main:create_runtime_app --host 127.0.0.1 --port 8720 --factory --app-dir src
 ```
 
 配置样例：`config/examples/*.env.example`。

@@ -50,3 +50,17 @@ def test_watchdog_launchd_scripts_and_template_are_checked_in() -> None:
     assert "<key>RunAtLoad</key>" in notifier_template_contents
     assert "<key>KeepAlive</key>" in notifier_template_contents
     assert "com.openclaw.watchdog.endpoint-notifier" in notifier_template_contents
+
+
+def test_getting_started_watchdog_manual_boot_command_matches_runtime_factory() -> None:
+    root = Path(__file__).resolve().parents[1]
+    getting_started = root / "docs" / "getting-started.zh-CN.md"
+    readme = root / "README.md"
+
+    contents = getting_started.read_text(encoding="utf-8")
+    readme_contents = readme.read_text(encoding="utf-8")
+
+    assert "watchdog.main:create_runtime_app" in contents
+    assert "--factory" in contents
+    assert "watchdog.main:create_runtime_app" in readme_contents
+    assert "--factory" in readme_contents
