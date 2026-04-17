@@ -11,6 +11,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from watchdog.validation import (  # noqa: E402
+    collect_reconciliation_inventory,
     validate_backlog_reference_sync,
     validate_checkpoint_yaml_string_compatibility,
     validate_coverage_audit_snapshot_contracts,
@@ -20,6 +21,7 @@ from watchdog.validation import (  # noqa: E402
     validate_verification_profile_surfaces,
     validate_framework_contracts,
     validate_long_running_autonomy_docs,
+    validate_work_item_lifecycle,
 )
 
 
@@ -45,6 +47,18 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_verify_constraints(repo_root: Path) -> int:
+    violations = _collect_constraint_violations(repo_root)
+    if violations:
+        print("Constraint violations")
+        for violation in violations:
+            print(f"  BLOCKER: {violation}")
+        return 1
+
+    print("Constraints OK")
+    return 0
+
+
+def _collect_constraint_violations(repo_root: Path) -> list[str]:
     violations = [
         *validate_checkpoint_yaml_string_compatibility(repo_root),
         *validate_coverage_audit_snapshot_contracts(repo_root),
@@ -56,14 +70,15 @@ def _run_verify_constraints(repo_root: Path) -> int:
         *validate_long_running_autonomy_docs(repo_root),
         *validate_long_running_residual_contracts(repo_root),
     ]
-    if violations:
-        print("Constraint violations")
-        for violation in violations:
-            print(f"  BLOCKER: {violation}")
-        return 1
+    inventory = collect_reconciliation_inventory(repo_root)
+    if inventory.active_work_item_id:
+        work_item_root = repo_root / ".ai-sdlc/work-items" / inventory.active_work_item_id
+        violations.extend(
+            f"work-item lifecycle ({inventory.active_work_item_id}): {violation}"
+            for violation in validate_work_item_lifecycle(work_item_root)
+        )
 
-    print("Constraints OK")
-    return 0
+    return violations
 
 
 def _run_status(repo_root: Path) -> int:

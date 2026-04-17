@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T731
+  title: 冻结 073 framework scope 与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T732
+  title: 写 failing tests 锁定 lifecycle gate 与动态 status 真值
+  status: completed
+  phase: 2
+  depends_on:
+  - T731
+- task_id: T733
+  title: 实现 `ai_sdlc verify constraints` active lifecycle blocker 聚合
+  status: completed
+  phase: 3
+  depends_on:
+  - T732
+- task_id: T734
+  title: 跑 targeted verification 并吸收双对抗评审
+  status: completed
+  phase: 4
+  depends_on:
+  - T733
+- task_id: T735
+  title: 完成 ai_sdlc 状态同步与 closeout
+  status: completed
+  phase: 5
+  depends_on:
+  - T734
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T731
+  status: completed
+  started_at: '2026-04-17T02:31:00Z'
+  completed_at: '2026-04-17T02:32:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T732
+  status: completed
+  started_at: '2026-04-17T02:32:00Z'
+  completed_at: '2026-04-17T02:34:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T733
+  status: completed
+  started_at: '2026-04-17T02:34:00Z'
+  completed_at: '2026-04-17T02:36:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T734
+  status: completed
+  started_at: '2026-04-17T02:36:00Z'
+  completed_at: '2026-04-17T02:39:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T735
+  status: completed
+  started_at: '2026-04-17T02:39:00Z'
+  completed_at: '2026-04-17T02:42:00Z'
+current_batch: 5

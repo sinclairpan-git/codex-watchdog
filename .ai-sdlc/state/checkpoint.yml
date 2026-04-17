@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T02:21:48Z'
+pipeline_last_updated: '2026-04-17T02:34:33Z'
 current_stage: completed
 feature:
-  id: 072-memory-hub-preview-operator-readiness-docs
-  spec_dir: specs/072-memory-hub-preview-operator-readiness-docs
-  design_branch: design/072-memory-hub-preview-operator-readiness-docs
-  feature_branch: feature/072-memory-hub-preview-operator-readiness-docs
-  current_branch: codex/072-memory-hub-preview-operator-readiness-docs
-  docs_baseline_ref: 86b76b96bb8380749015405c43c228ad1ef721dafdc5e35f85c497adde82ac52
-  docs_baseline_at: '2026-04-17T02:21:48Z'
+  id: 073-ai-sdlc-active-lifecycle-constraint-gate
+  spec_dir: specs/073-ai-sdlc-active-lifecycle-constraint-gate
+  design_branch: design/073-ai-sdlc-active-lifecycle-constraint-gate
+  feature_branch: feature/073-ai-sdlc-active-lifecycle-constraint-gate
+  current_branch: codex/073-ai-sdlc-active-lifecycle-constraint-gate
+  docs_baseline_ref: 7a0e4a6709308de713a502d97f53caffb5be8781bdffea54c6b7a74bebab9f4e
+  docs_baseline_at: '2026-04-17T02:34:33Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -34,8 +34,8 @@ completed_stages:
     completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 54
+ai_decisions_count: 56
 execution_mode: auto
-linked_wi_id: 072-memory-hub-preview-operator-readiness-docs
+linked_wi_id: 073-ai-sdlc-active-lifecycle-constraint-gate
 linked_plan_uri: null
-last_synced_at: '2026-04-17T02:21:48Z'
+last_synced_at: '2026-04-17T02:34:33Z'
