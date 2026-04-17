@@ -423,6 +423,7 @@ WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible
 WATCHDOG_BRAIN_PROVIDER_BASE_URL=https://api.openai.com/v1
 WATCHDOG_BRAIN_PROVIDER_API_KEY=<OpenAI-compatible token>
 WATCHDOG_BRAIN_PROVIDER_MODEL=<model-id>
+WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED=false
 ```
 
 说明：
@@ -437,6 +438,51 @@ WATCHDOG_BRAIN_PROVIDER_MODEL=<model-id>
 2. 保持 `release_gate_report`、approval freshness 与 risk gate 仍然有效；
 3. 触发一条低风险 Brain decision，确认 runtime contract 与 provider request 能正常生成；
 4. 再验证 provider 配置缺失或请求失败时，系统会降级而不是 silent pass。
+
+### 3.4 启用 Memory Hub AI_AutoSDLC preview cursor
+
+`WI-071` 已把 Memory Hub 的 `ai-autosdlc-cursor` preview adapter 暴露成 app-level route，但该能力仍是 **preview contract**，默认保持关闭。若你需要给外部控制面或调试脚本读取 stage-aware cursor，请在 `.env.w` 中显式设置：
+
+```bash
+WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED=true
+```
+
+说明：
+
+- route 为 `POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor`；
+- 该 route 仍受 `Authorization: Bearer <WATCHDOG_API_TOKEN>` 保护；
+- 若开关保持默认 `false`，route 依然可调用，但返回的 preview payload 会保持 `enabled=false`；
+- 这条能力只用于 preview / operator 调试，不改变 Brain、release gate 或 resident orchestrator 的主链决策语义。
+
+最小 smoke test：
+
+```bash
+curl -X POST "http://127.0.0.1:8720/api/v1/watchdog/memory/preview/ai-autosdlc-cursor" \
+  -H "Authorization: Bearer <WATCHDOG_API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {
+      "project_id": "demo-project",
+      "goal": "Close remaining repo-local operator readiness gaps",
+      "current_stage": "execute",
+      "recent_actions": ["scan docs contract", "review env sample"],
+      "latest_summary": "WI-071 landed preview route; operator docs are being closed."
+    },
+    "quality": {
+      "context_compression_ratio": 0.42,
+      "summary_freshness_seconds": 90,
+      "artifact_recall_ratio": 0.88,
+      "pending_questions": []
+    }
+  }'
+```
+
+最小验收顺序：
+
+1. 先确认 `WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED=true` 已生效；
+2. 调 `POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor`，确认响应里 `contract_name=ai-autosdlc-cursor`；
+3. 确认启用后 `enabled=true`，且 `packet` 中包含当前 stage-aware cursor 内容；
+4. 再把开关切回 `false`，确认 route 仍可调用但响应退回 `enabled=false` 的 preview 语义。
 
 仓库已经直接提供可复用脚本与模板：
 

@@ -21,8 +21,10 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "plan_risk_control_requires_stage_goal_conflict_schema" in names
     assert "env_example_covers_feishu_ingress_and_delivery" in names
     assert "env_example_covers_openai_compatible_provider" in names
+    assert "env_example_covers_ai_autosdlc_preview_cursor_toggle" in names
     assert "getting_started_covers_feishu_official_ingress" in names
     assert "getting_started_covers_openai_compatible_provider" in names
+    assert "getting_started_covers_ai_autosdlc_preview_cursor" in names
 
 
 def test_long_running_autonomy_doc_validator_reports_missing_files(tmp_path) -> None:

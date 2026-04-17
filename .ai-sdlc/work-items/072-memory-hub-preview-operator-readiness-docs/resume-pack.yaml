@@ -1,0 +1,20 @@
+work_item:
+  id: 072-memory-hub-preview-operator-readiness-docs
+  spec_dir: specs/072-memory-hub-preview-operator-readiness-docs
+  branch: codex/072-memory-hub-preview-operator-readiness-docs
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-072 and advance next work item
+artifacts:
+  - specs/072-memory-hub-preview-operator-readiness-docs/spec.md
+  - specs/072-memory-hub-preview-operator-readiness-docs/plan.md
+  - specs/072-memory-hub-preview-operator-readiness-docs/tasks.md
+  - .ai-sdlc/work-items/072-memory-hub-preview-operator-readiness-docs/execution-plan.yaml
+docs_baseline_ref: 86b76b96bb8380749015405c43c228ad1ef721dafdc5e35f85c497adde82ac52
+docs_baseline_at: '2026-04-17T02:21:48Z'
+review_approval_status: approved
+review_approved_by:
+  - Anthropic Manager Expert
+  - Hermes Agent Expert
+timestamp: '2026-04-17T02:21:48Z'

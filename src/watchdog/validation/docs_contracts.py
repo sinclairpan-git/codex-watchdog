@@ -140,6 +140,13 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         ),
     ),
     DocContractCheck(
+        name="env_example_covers_ai_autosdlc_preview_cursor_toggle",
+        path=WATCHDOG_ENV_EXAMPLE,
+        must_contain=(
+            "WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED=false",
+        ),
+    ),
+    DocContractCheck(
         name="getting_started_covers_feishu_official_ingress",
         path=GETTING_STARTED_DOC,
         must_contain=(
@@ -156,6 +163,16 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "WATCHDOG_BRAIN_PROVIDER_BASE_URL",
             "WATCHDOG_BRAIN_PROVIDER_API_KEY",
             "WATCHDOG_BRAIN_PROVIDER_MODEL",
+        ),
+    ),
+    DocContractCheck(
+        name="getting_started_covers_ai_autosdlc_preview_cursor",
+        path=GETTING_STARTED_DOC,
+        must_contain=(
+            "WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED=true",
+            "/api/v1/watchdog/memory/preview/ai-autosdlc-cursor",
+            "enabled=false",
+            "contract_name=ai-autosdlc-cursor",
         ),
     ),
 )

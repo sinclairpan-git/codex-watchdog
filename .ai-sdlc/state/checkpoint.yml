@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-16T16:14:52Z'
+pipeline_last_updated: '2026-04-17T02:21:48Z'
 current_stage: completed
 feature:
-  id: 071-memory-hub-ai-autosdlc-preview-api
-  spec_dir: specs/071-memory-hub-ai-autosdlc-preview-api
-  design_branch: design/071-memory-hub-ai-autosdlc-preview-api
-  feature_branch: feature/071-memory-hub-ai-autosdlc-preview-api
-  current_branch: codex/071-memory-hub-ai-autosdlc-preview-api
-  docs_baseline_ref: 66d73e5d43b1aa6acde9cfc21ac1183bbb89ca4c514ecdd2f5e05a91cfb4f310
-  docs_baseline_at: '2026-04-16T16:14:52Z'
+  id: 072-memory-hub-preview-operator-readiness-docs
+  spec_dir: specs/072-memory-hub-preview-operator-readiness-docs
+  design_branch: design/072-memory-hub-preview-operator-readiness-docs
+  feature_branch: feature/072-memory-hub-preview-operator-readiness-docs
+  current_branch: codex/072-memory-hub-preview-operator-readiness-docs
+  docs_baseline_ref: 86b76b96bb8380749015405c43c228ad1ef721dafdc5e35f85c497adde82ac52
+  docs_baseline_at: '2026-04-17T02:21:48Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -36,6 +36,6 @@ completed_stages:
       - tasks.md
 ai_decisions_count: 54
 execution_mode: auto
-linked_wi_id: 071-memory-hub-ai-autosdlc-preview-api
+linked_wi_id: 072-memory-hub-preview-operator-readiness-docs
 linked_plan_uri: null
-last_synced_at: '2026-04-16T16:14:52Z'
+last_synced_at: '2026-04-17T02:21:48Z'
