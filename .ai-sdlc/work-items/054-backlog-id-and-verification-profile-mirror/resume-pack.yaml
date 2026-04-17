@@ -3,8 +3,6 @@ current_batch: 5
 last_committed_task: T545
 docs_baseline_ref: c9bd96d6a5363354e864f5a6544a80d862ce3d660d3ec7c2cc82d39f78337a36
 docs_baseline_at: '2026-04-16T09:40:44Z'
-review_approval_status: pending
-review_approved_by: []
 working_set_snapshot:
   spec_path: specs/054-backlog-id-and-verification-profile-mirror/spec.md
   plan_path: specs/054-backlog-id-and-verification-profile-mirror/plan.md

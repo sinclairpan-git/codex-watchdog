@@ -234,6 +234,33 @@ def validate_work_item_lifecycle(work_item_root: Path) -> list[str]:
     return violations
 
 
+def validate_completed_review_gate_mirror_drift(repo_root: Path | None = None) -> list[str]:
+    root = repo_root or Path(__file__).resolve().parents[3]
+    violations: list[str] = []
+    work_items_root = root / ".ai-sdlc/work-items"
+
+    for item in _list_work_items(work_items_root):
+        runtime_text = _read_text_if_exists(item.path / "runtime.yaml")
+        resume_text = _read_text_if_exists(item.path / "resume-pack.yaml")
+        runtime_stage = _extract_scalar(runtime_text, "current_stage")
+        resume_stage = _extract_scalar(resume_text, "current_stage")
+
+        if runtime_stage == "completed" and _extract_scalar(runtime_text, "review_approval_status") == "pending":
+            violations.append(
+                "completed work-item review gate mirror "
+                f"({item.work_item_id}): "
+                "runtime.yaml: review_approval_status must be removed once current_stage=completed"
+            )
+        if resume_stage == "completed" and _extract_scalar(resume_text, "review_approval_status") == "pending":
+            violations.append(
+                "completed work-item review gate mirror "
+                f"({item.work_item_id}): "
+                "resume-pack.yaml: review_approval_status must be removed once current_stage=completed"
+            )
+
+    return violations
+
+
 def build_owner_ledger(rows: Sequence[MatrixGapRow]) -> list[OwnerLedgerEntry]:
     seen_ids: set[str] = set()
     ledger: list[OwnerLedgerEntry] = []

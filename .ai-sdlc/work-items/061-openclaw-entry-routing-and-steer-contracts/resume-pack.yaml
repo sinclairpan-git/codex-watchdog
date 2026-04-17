@@ -3,8 +3,6 @@ current_batch: 5
 last_committed_task: T615
 docs_baseline_ref: 74ba8aad29c572ddcbaf8d13c7ed2c1d18e25cbaf0f885ff8bcdb3f27249265e
 docs_baseline_at: '2026-04-16T11:52:00Z'
-review_approval_status: pending
-review_approved_by: []
 working_set_snapshot:
   spec_path: specs/061-openclaw-entry-routing-and-steer-contracts/spec.md
   plan_path: specs/061-openclaw-entry-routing-and-steer-contracts/plan.md

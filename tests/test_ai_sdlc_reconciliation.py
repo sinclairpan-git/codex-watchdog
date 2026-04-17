@@ -379,6 +379,48 @@ def test_validate_work_item_lifecycle_allows_completed_runtime_to_finish_cleanly
     assert reconciliation.validate_work_item_lifecycle(wi_root) == []
 
 
+def test_validate_completed_review_gate_mirror_drift_flags_pending_review_metadata(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+    wi_root = tmp_path / ".ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure"
+
+    _write(
+        wi_root / "runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 5
+        current_task: ''
+        last_committed_task: T495
+        current_branch: codex/049-feishu-and-openclaw-entrypoint-closure
+        review_approval_status: pending
+        """,
+    )
+    _write(
+        wi_root / "resume-pack.yaml",
+        """
+        current_stage: completed
+        current_batch: 5
+        current_task: ''
+        last_committed_task: T495
+        current_branch: codex/049-feishu-and-openclaw-entrypoint-closure
+        review_approval_status: pending
+        timestamp: '2026-04-18T00:00:00Z'
+        """,
+    )
+
+    violations = reconciliation.validate_completed_review_gate_mirror_drift(tmp_path)
+
+    assert violations == [
+        "completed work-item review gate mirror "
+        "(049-feishu-and-openclaw-entrypoint-closure): "
+        "runtime.yaml: review_approval_status must be removed once current_stage=completed",
+        "completed work-item review gate mirror "
+        "(049-feishu-and-openclaw-entrypoint-closure): "
+        "resume-pack.yaml: review_approval_status must be removed once current_stage=completed",
+    ]
+
+
 def test_collect_reconciliation_inventory_prefers_checkpoint_truth_over_older_open_runtime(
     tmp_path: Path,
 ) -> None:

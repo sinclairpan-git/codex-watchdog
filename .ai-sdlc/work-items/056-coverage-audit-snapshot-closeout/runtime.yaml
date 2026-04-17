@@ -5,8 +5,6 @@ last_committed_task: T565
 current_branch: codex/056-coverage-audit-snapshot-closeout
 docs_baseline_ref: 4e172fbd9b2586cd4d1746eb3d7b5de39c6bd23a80ebd29a0c3b5722a8662dd1
 docs_baseline_at: '2026-04-16T10:24:00Z'
-review_approval_status: pending
-review_approved_by: []
 ai_decisions_count: 0
 execution_mode: auto
 started_at: '2026-04-16T10:08:00Z'

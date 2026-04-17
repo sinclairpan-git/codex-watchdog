@@ -14,6 +14,7 @@ from watchdog.validation import (  # noqa: E402
     collect_reconciliation_inventory,
     validate_backlog_reference_sync,
     validate_checkpoint_yaml_string_compatibility,
+    validate_completed_review_gate_mirror_drift,
     validate_coverage_audit_snapshot_contracts,
     validate_long_running_residual_contracts,
     validate_release_docs_consistency,
@@ -61,6 +62,7 @@ def _run_verify_constraints(repo_root: Path) -> int:
 def _collect_constraint_violations(repo_root: Path) -> list[str]:
     violations = [
         *validate_checkpoint_yaml_string_compatibility(repo_root),
+        *validate_completed_review_gate_mirror_drift(repo_root),
         *validate_coverage_audit_snapshot_contracts(repo_root),
         *validate_release_docs_consistency(repo_root),
         *validate_task_doc_status_contracts(repo_root),

@@ -3,8 +3,6 @@ current_batch: 5
 last_committed_task: T565
 docs_baseline_ref: 4e172fbd9b2586cd4d1746eb3d7b5de39c6bd23a80ebd29a0c3b5722a8662dd1
 docs_baseline_at: '2026-04-16T10:24:00Z'
-review_approval_status: pending
-review_approved_by: []
 working_set_snapshot:
   spec_path: specs/056-coverage-audit-snapshot-closeout/spec.md
   plan_path: specs/056-coverage-audit-snapshot-closeout/plan.md

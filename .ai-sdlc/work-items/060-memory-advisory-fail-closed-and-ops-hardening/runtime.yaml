@@ -4,8 +4,6 @@ current_task: ''
 last_committed_task: T605
 docs_baseline_ref: abaa606cbf799b720f53a585c40c0a180c3aee9acf60022bd1a354b84d15782b
 docs_baseline_at: '2026-04-16T11:46:00Z'
-review_approval_status: pending
-review_approved_by: []
 ai_decisions_count: 0
 execution_mode: auto
 started_at: '2026-04-16T11:40:00Z'

@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T15:26:02Z'
+pipeline_last_updated: '2026-04-18T00:05:00Z'
 current_stage: completed
 feature:
-  id: 077-feishu-long-connection-control-ops-hardening
-  spec_dir: specs/077-feishu-long-connection-control-ops-hardening
-  design_branch: design/077-feishu-long-connection-control-ops-hardening
-  feature_branch: feature/077-feishu-long-connection-control-ops-hardening
-  current_branch: codex/077-feishu-long-connection-control-ops-hardening
-  docs_baseline_ref: e790404e1ac3a8586f0c3c3d9506f718c31516b4
-  docs_baseline_at: '2026-04-17T15:26:02Z'
+  id: 078-completed-review-gate-drift
+  spec_dir: specs/078-completed-review-gate-drift
+  design_branch: design/078-completed-review-gate-drift
+  feature_branch: feature/078-completed-review-gate-drift
+  current_branch: codex/078-completed-review-gate-drift
+  docs_baseline_ref: ''
+  docs_baseline_at: ''
 multi_agent:
   supported: false
   max_parallel: 1
@@ -34,8 +34,8 @@ completed_stages:
     completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 58
+ai_decisions_count: 60
 execution_mode: auto
-linked_wi_id: 077-feishu-long-connection-control-ops-hardening
+linked_wi_id: 078-completed-review-gate-drift
 linked_plan_uri: null
-last_synced_at: '2026-04-17T15:26:02Z'
+last_synced_at: '2026-04-18T00:05:00Z'

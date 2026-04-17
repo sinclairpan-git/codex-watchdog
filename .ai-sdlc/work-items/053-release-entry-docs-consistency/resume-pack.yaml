@@ -3,8 +3,6 @@ current_batch: 5
 last_committed_task: T535
 docs_baseline_ref: 990c5967eefc78656af69a93d6ae4a959bd5f9346ea382d42a0e7f64e159a69c
 docs_baseline_at: '2026-04-16T09:36:27Z'
-review_approval_status: pending
-review_approved_by: []
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md

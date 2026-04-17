@@ -6,6 +6,7 @@ from watchdog.validation.ai_sdlc_reconciliation import (
     build_owner_ledger,
     collect_reconciliation_inventory,
     parse_unlanded_matrix_rows,
+    validate_completed_review_gate_mirror_drift,
     validate_work_item_lifecycle,
 )
 from watchdog.validation.checkpoint_yaml_contracts import (
@@ -55,6 +56,7 @@ __all__ = [
     "build_owner_ledger",
     "collect_reconciliation_inventory",
     "parse_unlanded_matrix_rows",
+    "validate_completed_review_gate_mirror_drift",
     "validate_work_item_lifecycle",
     "validate_checkpoint_yaml_string_compatibility",
     "COVERAGE_AUDIT_SNAPSHOT_CONTRACTS",
