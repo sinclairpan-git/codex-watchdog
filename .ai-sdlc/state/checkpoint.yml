@@ -1,14 +1,14 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-17T02:34:33Z'
+pipeline_last_updated: '2026-04-17T03:18:00Z'
 current_stage: completed
 feature:
-  id: 073-ai-sdlc-active-lifecycle-constraint-gate
-  spec_dir: specs/073-ai-sdlc-active-lifecycle-constraint-gate
-  design_branch: design/073-ai-sdlc-active-lifecycle-constraint-gate
-  feature_branch: feature/073-ai-sdlc-active-lifecycle-constraint-gate
-  current_branch: codex/073-ai-sdlc-active-lifecycle-constraint-gate
-  docs_baseline_ref: 7a0e4a6709308de713a502d97f53caffb5be8781bdffea54c6b7a74bebab9f4e
-  docs_baseline_at: '2026-04-17T02:34:33Z'
+  id: 074-approval-auto-replay-and-canonical-status
+  spec_dir: specs/074-approval-auto-replay-and-canonical-status
+  design_branch: design/074-approval-auto-replay-and-canonical-status
+  feature_branch: feature/074-approval-auto-replay-and-canonical-status
+  current_branch: codex/074-approval-auto-replay-and-canonical-status
+  docs_baseline_ref: 9a62a6b823ad74d4a30f046eb1f8858abc583065ddbbdf6fcae0d47d4d7ca523
+  docs_baseline_at: '2026-04-17T03:18:00Z'
 multi_agent:
   supported: false
   max_parallel: 1
@@ -34,8 +34,8 @@ completed_stages:
     completed_at: '2026-04-16T13:05:00Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 56
+ai_decisions_count: 58
 execution_mode: auto
-linked_wi_id: 073-ai-sdlc-active-lifecycle-constraint-gate
+linked_wi_id: 074-approval-auto-replay-and-canonical-status
 linked_plan_uri: null
-last_synced_at: '2026-04-17T02:34:33Z'
+last_synced_at: '2026-04-17T03:18:00Z'

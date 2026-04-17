@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import re
+import shlex
+
+
+_SAFE_FILE_PERMISSIONS = {"fs.read", "fs.write"}
+_PYTEST_PATH_FLAGS = {"--rootdir", "--basetemp", "--confcutdir", "-c"}
 
 
 def _contains_command_word(command: str, marker: str) -> bool:
@@ -15,10 +20,83 @@ def _contains_command_word(command: str, marker: str) -> bool:
     )
 
 
+def _split_command(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _classify_permissions_request(command: str) -> str | None:
+    prefix = "permissions:"
+    if not command.startswith(prefix):
+        return None
+    raw_permissions = command[len(prefix) :]
+    if not raw_permissions:
+        return "L2"
+    permissions = [item.strip() for item in raw_permissions.split(",")]
+    if any(not item for item in permissions):
+        return "L2"
+    if any(item.startswith("credentials.") for item in permissions):
+        return "L3"
+    if any(item.startswith("network.") for item in permissions):
+        return "L2"
+    if all(item in _SAFE_FILE_PERMISSIONS for item in permissions):
+        return "L1"
+    return "L2"
+
+
+def _is_path_boundary_escape(arg: str) -> bool:
+    normalized = arg.strip().lower()
+    if not normalized:
+        return False
+    if normalized.startswith(("/", "~")):
+        return True
+    if re.match(r"^[a-z]:[\\/]", normalized):
+        return True
+    return normalized in {"..", "."} or normalized.startswith("../") or normalized.startswith("..\\")
+
+
+def _is_safe_local_pytest_command(command: str) -> bool:
+    tokens = _split_command(command)
+    if not tokens:
+        return False
+
+    executable = tokens[0].rsplit("/", 1)[-1].lower()
+    args: list[str]
+    if executable == "pytest":
+        args = tokens[1:]
+    elif executable in {"python", "python3"} and len(tokens) >= 3 and tokens[1] == "-m" and tokens[2] == "pytest":
+        args = tokens[3:]
+    elif executable == "uv" and len(tokens) >= 3 and tokens[1] == "run" and tokens[2] == "pytest":
+        args = tokens[3:]
+    else:
+        return False
+
+    expect_flag_value = False
+    for arg in args:
+        if expect_flag_value:
+            expect_flag_value = False
+            return False
+        if arg in _PYTEST_PATH_FLAGS:
+            expect_flag_value = True
+            continue
+        if any(arg.startswith(f"{flag}=") for flag in _PYTEST_PATH_FLAGS):
+            return False
+        if _is_path_boundary_escape(arg):
+            return False
+        if not arg.startswith("-"):
+            return False
+    return not expect_flag_value
+
+
 def classify_risk(command: str) -> str:
     c = command.lower().strip()
     if not c:
         return "L2"
+    permission_risk = _classify_permissions_request(c)
+    if permission_risk is not None:
+        return permission_risk
     parts = c.split()
     first_token = parts[0] if parts else ""
     executable = first_token.rsplit("/", 1)[-1]
@@ -139,6 +217,8 @@ def classify_risk(command: str) -> str:
         return "L1"
     if executable == "snapshot":
         return "L1"
+    if _is_safe_local_pytest_command(c):
+        return "L0"
     safe_l0_commands = {
         "pwd",
     }

@@ -154,8 +154,8 @@ def test_background_sync_refreshes_native_threads_periodically(tmp_path: Path) -
         refreshed = client.get("/api/v1/tasks/by-thread/thr_native_1", headers=headers)
 
     body = refreshed.json()["data"]
-    assert body["status"] == "waiting_human"
-    assert body["phase"] == "approval"
+    assert body["status"] == "waiting_for_approval"
+    assert body["phase"] == "planning"
     assert body["pending_approval"] is True
     assert body["approval_risk"] == "L2"
     assert body["last_summary"] == "waiting for approval"
