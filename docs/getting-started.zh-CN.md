@@ -496,6 +496,7 @@ uv run python scripts/watchdog_external_integration_smoke.py --target feishu
 uv run python scripts/watchdog_external_integration_smoke.py --target feishu-control
 uv run python scripts/watchdog_external_integration_smoke.py --target provider
 uv run python scripts/watchdog_external_integration_smoke.py --target memory
+uv run python scripts/watchdog_external_integration_smoke.py --target provider --markdown-report artifacts/watchdog-live-acceptance.md
 ```
 
 说明：
@@ -509,6 +510,7 @@ uv run python scripts/watchdog_external_integration_smoke.py --target memory
 - 某项能力未启用时允许返回 `skipped`；若能力已启用但配置缺失、返回字段不匹配或回退语义异常，则应视为阻断问题。
 
 排障时仍可继续使用上面的 `curl` 手工调用；这个脚本的目标是把健康检查、飞书入口、外部 provider、Memory Hub preview 收拢成一条统一的 operator 验收路径。
+若要沉淀验收记录，可追加 `--markdown-report <path>` 直接输出 Markdown 证据文档；脚本默认 stdout 仍保持 JSON，方便机器读取。
 
 若要把这些步骤用于 staging / production-like 环境的正式联调，请以 `docs/operations/external-integration-live-acceptance.md` 作为 canonical runbook；本节只保留快速上手与命令示例。
 

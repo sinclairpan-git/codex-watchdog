@@ -15,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
 from watchdog.validation.external_integration_smoke import (  # noqa: E402
     ExternalIntegrationSmokeConfig,
     exit_code_for_results,
+    render_markdown_report,
     render_results,
     run_smoke_checks,
 )
@@ -30,6 +31,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("all", "health", "feishu", "feishu-control", "provider", "memory"),
         default=None,
         help="Select a specific smoke target. May be passed multiple times.",
+    )
+    parser.add_argument(
+        "--markdown-report",
+        type=Path,
+        default=None,
+        help="Optional path to write a Markdown acceptance report artifact.",
     )
     args = parser.parse_args(argv)
 
@@ -59,8 +66,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED"
         ),
     )
-    results = run_smoke_checks(config=config, targets=tuple(args.target or ("all",)))
+    selected_targets = tuple(args.target or ("all",))
+    results = run_smoke_checks(config=config, targets=selected_targets)
     print(render_results(results))
+    if args.markdown_report is not None:
+        report_path = args.markdown_report
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            render_markdown_report(
+                results=results,
+                config=config,
+                targets=selected_targets,
+            ),
+            encoding="utf-8",
+        )
     return exit_code_for_results(results)
 
 

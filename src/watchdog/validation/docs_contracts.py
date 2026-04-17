@@ -194,6 +194,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         must_contain=(
             "scripts/watchdog_external_integration_smoke.py",
             "uv run python scripts/watchdog_external_integration_smoke.py",
+            "--markdown-report",
             "--target feishu",
             "--target feishu-control",
             "--target provider",
@@ -208,6 +209,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "uv run python scripts/watchdog_external_integration_smoke.py",
             "WATCHDOG_BASE_URL",
             "WATCHDOG_API_TOKEN",
+            "--markdown-report",
             "--target feishu-control",
             "docs/operations/external-integration-live-acceptance.md",
         ),
@@ -224,6 +226,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "POST /api/v1/watchdog/feishu/events",
             "WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible",
             "POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor",
+            "--markdown-report",
             "scripts/watchdog_external_integration_smoke.py --target feishu-control",
             "goal_contract_bootstrap",
             "Fail-Closed Rules",

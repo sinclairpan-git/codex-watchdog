@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import pytest
 
 from watchdog.validation.external_integration_smoke import (
     ExternalIntegrationSmokeConfig,
     exit_code_for_results,
+    render_markdown_report,
     render_results,
     run_smoke_checks,
 )
@@ -371,3 +374,52 @@ def test_render_results_redacts_secret_values(tmp_path: Path) -> None:
 
     assert "sk-provider" not in rendered
     assert '"api_key": "<redacted>"' in rendered
+
+
+def test_render_markdown_report_redacts_secret_values_and_includes_status(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        brain_provider_name="openai-compatible",
+        brain_provider_base_url="https://provider.example/v1",
+        brain_provider_api_key="sk-provider",
+        brain_provider_model="minimax-m2.7",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("provider",),
+        provider_success_transport=_provider_success_transport(),
+        provider_failure_transport=_provider_failure_transport(),
+    )
+    rendered = render_markdown_report(
+        results=results,
+        config=config,
+        targets=("provider",),
+        generated_at=datetime(2026, 4, 17, 9, 0, tzinfo=UTC),
+    )
+
+    assert "# Watchdog External Integration Smoke Report" in rendered
+    assert "- Overall Status: `passed`" in rendered
+    assert "- Selected Targets: `provider`" in rendered
+    assert "sk-provider" not in rendered
+    assert '"brain_provider_api_key": "<redacted>"' in rendered
+
+
+def test_cli_can_write_markdown_report_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_script_module()
+    report_path = tmp_path / "artifacts" / "watchdog-smoke.md"
+    monkeypatch.setenv("WATCHDOG_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_NAME", "openai-compatible")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_API_KEY", "sk-provider")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_MODEL", "minimax-m2.7")
+
+    exit_code = module.main(["--target", "provider", "--markdown-report", str(report_path)])
+
+    assert exit_code == 0
+    assert report_path.exists()
+    contents = report_path.read_text(encoding="utf-8")
+    assert "# Watchdog External Integration Smoke Report" in contents
+    assert "- Selected Targets: `provider`" in contents

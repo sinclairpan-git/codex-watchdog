@@ -188,6 +188,11 @@ uv run python scripts/watchdog_external_integration_smoke.py --target feishu
 uv run python scripts/watchdog_external_integration_smoke.py --target feishu-control
 uv run python scripts/watchdog_external_integration_smoke.py --target provider
 uv run python scripts/watchdog_external_integration_smoke.py --target memory
+uv run python scripts/watchdog_external_integration_smoke.py \
+  --target feishu-control \
+  --target provider \
+  --target memory \
+  --markdown-report artifacts/watchdog-live-acceptance.md
 ```
 
 通过标准：
@@ -203,10 +208,11 @@ uv run python scripts/watchdog_external_integration_smoke.py --target memory
 1. 执行时间、环境名、部署提交 SHA。
 2. `GET /healthz` 返回摘要。
 3. smoke 输出摘要，允许脱敏，但不能只写“通过”。
-4. Feishu 回调 URL 与 receive id 的脱敏记录。
-5. provider 的 `base_url`、`model` 与鉴权方式说明，token 必须脱敏。
-6. 若执行了 `feishu-control`，记录 `project_id`、`goal_message`、返回 session id。
-7. 若执行了 Memory preview，记录 `enabled=true|false` 与 `contract_name=ai-autosdlc-cursor`。
+4. 若使用 `--markdown-report`，保留生成出的 Markdown 验收记录。
+5. Feishu 回调 URL 与 receive id 的脱敏记录。
+6. provider 的 `base_url`、`model` 与鉴权方式说明，token 必须脱敏。
+7. 若执行了 `feishu-control`，记录 `project_id`、`goal_message`、返回 session id。
+8. 若执行了 Memory preview，记录 `enabled=true|false` 与 `contract_name=ai-autosdlc-cursor`。
 
 ## Fail-Closed Rules
 

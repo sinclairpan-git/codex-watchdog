@@ -133,6 +133,64 @@ def render_results(results: Sequence[SmokeCheckResult]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+def render_markdown_report(
+    *,
+    results: Sequence[SmokeCheckResult],
+    config: ExternalIntegrationSmokeConfig,
+    targets: Sequence[str],
+    generated_at: datetime | None = None,
+) -> str:
+    normalized_targets = tuple(
+        target for target in SUPPORTED_TARGETS if target in _normalize_targets(targets)
+    )
+    overall_status = _overall_status(results)
+    timestamp = (generated_at or datetime.now(tz=UTC)).astimezone(UTC).isoformat()
+    config_snapshot = _redact_payload(
+        {
+            "base_url": config.base_url,
+            "brain_provider_name": config.brain_provider_name,
+            "brain_provider_base_url": config.brain_provider_base_url,
+            "brain_provider_api_key": config.brain_provider_api_key,
+            "brain_provider_model": config.brain_provider_model,
+            "memory_preview_ai_autosdlc_cursor_enabled": config.memory_preview_ai_autosdlc_cursor_enabled,
+            "feishu_verification_token": config.feishu_verification_token,
+            "feishu_control_project_id": config.feishu_control_project_id,
+            "feishu_control_expected_session_id": config.feishu_control_expected_session_id,
+        }
+    )
+    lines = [
+        "# Watchdog External Integration Smoke Report",
+        "",
+        "- Scope: repo-local live acceptance evidence only; external org install, domain wiring, and secret issuance remain outside repository truth.",
+        f"- Generated At (UTC): `{timestamp}`",
+        f"- Selected Targets: `{', '.join(normalized_targets)}`",
+        f"- Overall Status: `{overall_status}`",
+        "",
+        "## Runtime Snapshot",
+        "",
+        "```json",
+        json.dumps(config_snapshot, ensure_ascii=False, indent=2, sort_keys=True),
+        "```",
+    ]
+
+    for result in results:
+        lines.extend(
+            [
+                "",
+                f"## Check `{result.check_name}`",
+                "",
+                f"- Status: `{result.status}`",
+                f"- Reason: `{result.reason}`",
+                "- Evidence:",
+                "",
+                "```json",
+                json.dumps(_redact_payload(result.evidence), ensure_ascii=False, indent=2, sort_keys=True),
+                "```",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
 def exit_code_for_results(results: Sequence[SmokeCheckResult]) -> int:
     if any(result.check_name == "config" and result.status == "failed" for result in results):
         return 2
@@ -649,11 +707,24 @@ def _default_provider_failure_transport() -> httpx.BaseTransport:
     return httpx.MockTransport(handler)
 
 
+def _overall_status(results: Sequence[SmokeCheckResult]) -> SmokeStatus:
+    if any(result.status == "failed" for result in results):
+        return "failed"
+    if results and all(result.status == "skipped" for result in results):
+        return "skipped"
+    return "passed"
+
+
 def _redact_payload(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, nested in value.items():
-            if key.lower() in {"api_key", "token", "authorization"} and nested not in (None, ""):
+            normalized_key = key.lower()
+            if (
+                normalized_key in {"api_key", "token", "authorization"}
+                or normalized_key.endswith("_api_key")
+                or normalized_key.endswith("_token")
+            ) and nested not in (None, ""):
                 redacted[key] = "<redacted>"
             else:
                 redacted[key] = _redact_payload(nested)
