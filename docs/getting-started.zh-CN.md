@@ -510,6 +510,8 @@ uv run python scripts/watchdog_external_integration_smoke.py --target memory
 
 排障时仍可继续使用上面的 `curl` 手工调用；这个脚本的目标是把健康检查、飞书入口、外部 provider、Memory Hub preview 收拢成一条统一的 operator 验收路径。
 
+若要把这些步骤用于 staging / production-like 环境的正式联调，请以 `docs/operations/external-integration-live-acceptance.md` 作为 canonical runbook；本节只保留快速上手与命令示例。
+
 仓库已经直接提供可复用脚本与模板：
 
 - `scripts/start_watchdog.sh`

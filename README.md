@@ -52,6 +52,8 @@ uv run python scripts/watchdog_external_integration_smoke.py --target memory
 
 这组检查默认统一验证 `GET /healthz`、飞书 `url_verification`、OpenAI-compatible provider 接线与失败回退、以及 Memory Hub preview route。`--target feishu-control` 额外补一条 repo-local 的 Feishu callback contract smoke：它会向 `/api/v1/watchdog/feishu/events` 发送 `im.message.receive_v1` 的 DM 文本事件，内容为 `repo:<project_id> /goal <goal_message>`，借此确认官方事件入口能被归一成 `goal_contract_bootstrap`。该检查需要先配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；若未配置会返回 `skipped`，若已配置但契约不一致则直接失败。
 
+真实环境的正式联调与验收口径见 `docs/operations/external-integration-live-acceptance.md`；README 只保留最小命令入口，不把外部组织安装、凭证发放或域名接线误写成仓库已自动闭环。
+
 若需要常驻与开机自启，仓库已提供：
 
 - `scripts/start_watchdog.sh`

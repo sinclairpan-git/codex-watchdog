@@ -8,6 +8,9 @@ IMPLEMENTATION_PLAN_DOC = Path("docs/plans/2026-04-10-long-running-autonomy-impl
 GETTING_STARTED_DOC = Path("docs/getting-started.zh-CN.md")
 README_DOC = Path("README.md")
 WATCHDOG_ENV_EXAMPLE = Path("config/examples/watchdog.env.example")
+EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC = Path(
+    "docs/operations/external-integration-live-acceptance.md"
+)
 
 
 @dataclass(frozen=True)
@@ -206,12 +209,25 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "WATCHDOG_BASE_URL",
             "WATCHDOG_API_TOKEN",
             "--target feishu-control",
+            "docs/operations/external-integration-live-acceptance.md",
         ),
     ),
     DocContractCheck(
         name="readme_covers_watchdog_runtime_factory",
         path=README_DOC,
         must_contain=("watchdog.main:create_runtime_app", "--factory"),
+    ),
+    DocContractCheck(
+        name="external_integration_live_acceptance_covers_feishu_provider_memory",
+        path=EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC,
+        must_contain=(
+            "POST /api/v1/watchdog/feishu/events",
+            "WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible",
+            "POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor",
+            "scripts/watchdog_external_integration_smoke.py --target feishu-control",
+            "goal_contract_bootstrap",
+            "Fail-Closed Rules",
+        ),
     ),
 )
 
