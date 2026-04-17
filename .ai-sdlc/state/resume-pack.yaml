@@ -1,64 +1,55 @@
-current_stage: verify
-current_batch: 4
-last_committed_task: T234
+current_stage: execute
+current_batch: 1
+last_committed_task: ''
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/023-codex-client-openclaw-route-template/spec.md
-  plan_path: specs/023-codex-client-openclaw-route-template/plan.md
-  tasks_path: specs/023-codex-client-openclaw-route-template/tasks.md
+  spec_path: specs/079-state-resume-pack-canonical-sync/spec.md
+  plan_path: specs/079-state-resume-pack-canonical-sync/plan.md
+  tasks_path: specs/079-state-resume-pack-canonical-sync/tasks.md
   active_files:
-  - '`examples/openclaw_watchdog_client.py`'
-  - '`README.md`'
-  - '`docs/getting-started.zh-CN.md`'
-  - '`config/examples/watchdog.env.example`'
-  - '`tests/integration/test_openclaw_integration_spine.py`'
-  - '`specs/023-codex-client-openclaw-route-template/tasks.md`'
-  - '`specs/023-codex-client-openclaw-route-template/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/runtime.yaml`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/working-set.yaml`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/resume-pack.yaml`'
+  - '`docs/framework-defect-backlog.zh-CN.md`'
+  - '`specs/079-state-resume-pack-canonical-sync/spec.md`'
+  - '`specs/079-state-resume-pack-canonical-sync/plan.md`'
+  - '`specs/079-state-resume-pack-canonical-sync/tasks.md`'
+  - '`specs/079-state-resume-pack-canonical-sync/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/runtime.yaml`'
+  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/079-state-resume-pack-canonical-sync/latest-summary.md`'
   - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
   context_summary: '# Development Summary
 
 
     Status: active
 
-    Total Tasks: 4
+    Total Tasks: 5
 
-    Completed Tasks: 4
+    Completed Tasks: 0
 
     Halted Tasks: 0
 
-    Total Batches: 4
+    Total Batches: 5
 
-    Completed Batches: 4
+    Completed Batches: 0
 
-    Last Committed Task: T234
+    Last Committed Task:
 
 
     ## Notes
 
-    - 已完成 `T234`，新增 `WatchdogTemplateClient`，把 OpenClaw 常见消息模板收敛到 stable Watchdog routes。
+    - 已确认顶层 `.ai-sdlc/state/resume-pack.yaml` 仍停留在 `WI-023 / verify / T234`，与当前 checkpoint / branch 真值漂移。
 
-    - 模板覆盖查询进展、查询卡点、继续推进、审批 inbox 与审批决策，并支持 `WATCHDOG_DEFAULT_PROJECT_ID` 的显式/缺省路由策略。
+    - `WI-079` 只收口顶层 state resume-pack canonical sync 与 repo-local gate，不扩展任何产品功能。
 
-    - `README.md`、`docs/getting-started.zh-CN.md` 与 `config/examples/watchdog.env.example` 已写清模板输入项与“本仓库不包含飞书/OpenClaw runtime”的边界。
-
-    - 已通过 `uv run pytest -q tests/integration/test_openclaw_integration_spine.py`。
-
-    - 当前环境的 `ai-sdlc workitem init` 失败根因已复现：`WorkitemScaffolder` 把模板目录错误解析到 `.venv/lib/python3.11/templates`，随后报错
-    `template not found: /Users/sinclairpan/project/openclaw-codex-watchdog/.venv/lib/python3.11/templates/spec-template.md`。
-
-    - 因此 023 继续采用与 canonical direct-formal 一致的目录边界维护 formal docs 与状态文件，并把失败原因保留在本摘要与 `specs/023-codex-client-openclaw-route-template/task-execution-log.md`。'
-current_branch: codex/023-codex-client-openclaw-route-template
+    - 本轮先冻结 formal spec / plan / tasks 与 active state pointers；实现将在后续批次按 TDD 推进。'
+current_branch: codex/079-state-resume-pack-canonical-sync
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-05T21:01:26Z'
+timestamp: '2026-04-18T00:22:00Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-05T21:01:26Z'
-checkpoint_fingerprint: 2b413b36d1d8023cc6718de6159d82e7f6c312fa768899bedbffb3ef6891198b
+checkpoint_last_updated: '2026-04-18T00:22:00Z'
+checkpoint_fingerprint: pending-refresh

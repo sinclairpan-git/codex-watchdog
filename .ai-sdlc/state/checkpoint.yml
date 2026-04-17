@@ -1,12 +1,12 @@
 pipeline_started_at: '2026-04-05T20:04:50Z'
-pipeline_last_updated: '2026-04-18T00:05:00Z'
-current_stage: completed
+pipeline_last_updated: '2026-04-18T00:22:00Z'
+current_stage: execute
 feature:
-  id: 078-completed-review-gate-drift
-  spec_dir: specs/078-completed-review-gate-drift
-  design_branch: design/078-completed-review-gate-drift
-  feature_branch: feature/078-completed-review-gate-drift
-  current_branch: codex/078-completed-review-gate-drift
+  id: 079-state-resume-pack-canonical-sync
+  spec_dir: specs/079-state-resume-pack-canonical-sync
+  design_branch: design/079-state-resume-pack-canonical-sync
+  feature_branch: feature/079-state-resume-pack-canonical-sync
+  current_branch: codex/079-state-resume-pack-canonical-sync
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
@@ -36,6 +36,6 @@ completed_stages:
       - tasks.md
 ai_decisions_count: 60
 execution_mode: auto
-linked_wi_id: 078-completed-review-gate-drift
+linked_wi_id: 079-state-resume-pack-canonical-sync
 linked_plan_uri: null
-last_synced_at: '2026-04-18T00:05:00Z'
+last_synced_at: '2026-04-18T00:22:00Z'

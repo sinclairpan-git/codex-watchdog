@@ -1,0 +1,13 @@
+work_item_id: 079-state-resume-pack-canonical-sync
+spec_dir: specs/079-state-resume-pack-canonical-sync
+current_stage: execute
+current_batch: 1
+current_task: T791
+last_committed_task: ''
+current_branch: codex/079-state-resume-pack-canonical-sync
+ai_decisions_count: 1
+execution_mode: auto
+started_at: '2026-04-18T00:22:00Z'
+last_updated: '2026-04-18T00:22:00Z'
+debug_rounds: {}
+consecutive_halts: 0

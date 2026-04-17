@@ -62,3 +62,21 @@
 - 可验证成功标准: 在同类仓库里，涉及“总设计”“架构冻结”“正式 spec”的文件提案时，输出路径始终落到 `docs/architecture/` 或 `specs/<work-item>/`；即使 skill 默认说明仍指向 `docs/superpowers/specs`，宿主输出也不会复述该路径为项目正式落点；当用户指出“这个问题已经出现过很多次”时，系统能直接关联既有 defect 条目并输出根因与杜绝方案，而不是再次发生同类路径漂移。
 - 是否需要回归测试补充: 需要
 - 当前状态: 已由 `WI-052` 补齐 formal path classifier、forbidden-path 校验与 `docs/superpowers/*` 回归测试。
+
+## FD-2026-04-18-004 | 顶层 state resume-pack 长期漂移且未纳入 repo-local gate
+- 现象: `.ai-sdlc/state/resume-pack.yaml` 仍停留在 `WI-023 / verify / T234` 的旧上下文，但 `.ai-sdlc/state/checkpoint.yml` 与当前 branch 已推进到更高编号 work item；repo-local `python -m ai_sdlc verify constraints` 也没有对该顶层 resume pack 做任何一致性校验。
+- 触发场景: 完成 `WI-078` 后继续做 framework truth 巡检时，发现顶层 checkpoint、project-state 与 active branch 已正确推进，但顶层 `resume-pack.yaml` 长期保留历史工作集快照，没有随着 active work item 切换。
+- 影响范围: 会造成“恢复入口”与“当前 canonical truth”分叉；后续若有人按顶层 resume pack 恢复工作，可能误回到旧 work item / 旧 branch / 旧 tasks 上下文，而仓库不会给出 blocker。
+- 根因分类: `WI-047` 之后 formal truth 生命周期主要收敛在 `.ai-sdlc/work-items/<wi>/resume-pack.yaml`，顶层 `.ai-sdlc/state/resume-pack.yaml` 没有同步纳入 repo-local reconciliation inventory 与 constraint gate。
+- 未来杜绝方案摘要: 将顶层 state resume pack 明确纳入 active work item truth，定义它与 `checkpoint.yml` / 当前 active branch 的最小一致性不变量，并让 `verify constraints` 能直接阻断漂移。
+- 建议改动层级: rule / workflow / tool / eval
+- prompt / context: 当仓库存在 `.ai-sdlc/state/resume-pack.yaml` 时，继续下一张 work item 前必须先核对它是否仍指向当前 active WI，而不是默认忽略该文件。
+- rule / policy: 顶层 `.ai-sdlc/state/resume-pack.yaml` 不是历史快照归档，而是 active resume entry；它不得与 `checkpoint.yml` 指向不同 work item 或 branch。
+- middleware: 在 reconciliation inventory 中增加 top-level state resume pack 指针读取与 stale pointer 检查。
+- workflow: formal closeout 后切入下一张 work item 时，除 `checkpoint.yml` 与 `project-state.yaml` 外，还必须同步顶层 `resume-pack.yaml`。
+- tool: 扩展 `verify constraints` 与回归测试，显式覆盖顶层 state resume pack 漂移。
+- eval: 增加“checkpoint 已推进、state resume pack 仍指向旧 WI”场景，要求代理输出 blocker，而不是继续静默通过。
+- 风险等级: 高
+- 可验证成功标准: 当顶层 state resume pack 指向旧 WI、旧 branch 或旧 spec/tasks 路径时，repo-local verify 会失败；正常切换到下一张 work item 时，status / checkpoint / state resume pack 会共同指向同一 active truth。
+- 是否需要回归测试补充: 需要
+- 当前状态: 已由 `WI-079` 正式接管，待补 validator、CLI gate 与回归测试。
