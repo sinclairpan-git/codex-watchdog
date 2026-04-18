@@ -480,6 +480,84 @@ def test_session_spine_read_routes_return_stable_reply_models(tmp_path) -> None:
     assert approvals_data["approvals"][0]["thread_id"] == "session:repo-a"
 
 
+def test_session_spine_single_session_explanations_surface_decision_degradation(tmp_path) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_client(),
+    )
+    app.state.policy_decision_store.put(
+        _decision_record(project_id="repo-a", session_id="session:repo-a").model_copy(
+            update={
+                "evidence": {
+                    "facts": [
+                        {
+                            "fact_id": "fact-1",
+                            "fact_code": "approval_pending",
+                            "fact_kind": "blocker",
+                            "severity": "warning",
+                            "summary": "approval pending",
+                            "detail": "approval pending",
+                            "source": "watchdog",
+                            "observed_at": "2026-04-07T00:05:00Z",
+                            "related_ids": {},
+                        }
+                    ],
+                    "matched_policy_rules": ["registered_action"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": None,
+                    },
+                    "decision_trace": {
+                        "trace_id": "trace:repo-a-provider-invalid",
+                        "provider": "openai-compatible",
+                        "model": "gpt-4.1-mini",
+                        "prompt_schema_ref": "prompt:decision-v2",
+                        "output_schema_ref": "schema:decision-trace-v1",
+                        "provider_output_schema_ref": "schema:provider-decision-v2",
+                        "degrade_reason": "provider_output_invalid",
+                        "goal_contract_version": "goal-v1",
+                        "policy_ruleset_hash": "policy-hash-v1",
+                        "memory_packet_input_ids": [],
+                        "memory_packet_input_hashes": [],
+                    },
+                },
+            }
+        )
+    )
+    c = TestClient(app)
+
+    progress_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/progress",
+        headers={"Authorization": "Bearer wt"},
+    )
+    stuck_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/stuck-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+    blocker_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/blocker-explanation",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert progress_response.status_code == 200
+    assert stuck_response.status_code == 200
+    assert blocker_response.status_code == 200
+
+    expected_suffix = " | 决策=provider降级(schema:provider-decision-v2)"
+    progress_data = progress_response.json()["data"]
+    stuck_data = stuck_response.json()["data"]
+    blocker_data = blocker_response.json()["data"]
+
+    assert progress_data["message"] == f"waiting for approval{expected_suffix}"
+    assert progress_data["progress"]["decision_trace_ref"] == "trace:repo-a-provider-invalid"
+    assert stuck_data["message"] == f"no current stuck signals{expected_suffix}"
+    assert blocker_data["message"] == (
+        "approval required; awaiting operator direction"
+        f"{expected_suffix}"
+    )
+
+
 def test_session_route_reads_seeded_persisted_spine_on_cold_start(tmp_path) -> None:
     _seed_persisted_session_spine(tmp_path)
     a_client = BrokenAClient()

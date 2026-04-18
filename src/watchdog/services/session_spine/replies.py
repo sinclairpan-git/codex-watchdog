@@ -56,6 +56,17 @@ def _render_decision_summary(progress) -> str | None:
     return None
 
 
+def _append_progress_annotations(message: str, progress) -> str:
+    enriched = message
+    recovery_summary = _render_recovery_summary(progress)
+    if recovery_summary:
+        enriched = f"{enriched} | 恢复={recovery_summary}"
+    decision_summary = _render_decision_summary(progress)
+    if decision_summary:
+        enriched = f"{enriched} | 决策={decision_summary}"
+    return enriched
+
+
 def _build_session_directory_message(bundle: SessionDirectoryReadBundle) -> str:
     count = len(bundle.progresses) if bundle.progresses else len(bundle.sessions)
     lines = [f"多项目进展（{count}）"]
@@ -65,12 +76,7 @@ def _build_session_directory_message(bundle: SessionDirectoryReadBundle) -> str:
                 f"- {progress.project_id} | {progress.activity_phase} | {progress.summary} "
                 f"| 上下文={progress.context_pressure}"
             )
-            recovery_summary = _render_recovery_summary(progress)
-            if recovery_summary:
-                line = f"{line} | 恢复={recovery_summary}"
-            decision_summary = _render_decision_summary(progress)
-            if decision_summary:
-                line = f"{line} | 决策={decision_summary}"
+            line = _append_progress_annotations(line, progress)
             lines.append(line)
         return "\n".join(lines)
     for session in bundle.sessions:
@@ -122,7 +128,10 @@ def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.TASK_PROGRESS_VIEW,
         intent_code="get_progress",
-        message=bundle.progress.summary or bundle.session.headline,
+        message=_append_progress_annotations(
+            bundle.progress.summary or bundle.session.headline,
+            bundle.progress,
+        ),
         progress=bundle.progress,
         snapshot=bundle.snapshot,
         facts=bundle.facts,
@@ -195,7 +204,7 @@ def build_stuck_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_kind=ReplyKind.EXPLANATION,
         reply_code=ReplyCode.STUCK_EXPLANATION,
         intent_code="why_stuck",
-        message=message,
+        message=_append_progress_annotations(message, bundle.progress),
         session=bundle.session,
         progress=bundle.progress,
         snapshot=bundle.snapshot,
@@ -214,7 +223,7 @@ def build_blocker_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_kind=ReplyKind.EXPLANATION,
         reply_code=ReplyCode.BLOCKER_EXPLANATION,
         intent_code="explain_blocker",
-        message=message,
+        message=_append_progress_annotations(message, bundle.progress),
         session=bundle.session,
         progress=bundle.progress,
         snapshot=bundle.snapshot,
