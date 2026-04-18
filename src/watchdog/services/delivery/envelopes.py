@@ -216,6 +216,7 @@ class NotificationEnvelope(EnvelopeBase):
     occurred_at: str | None = None
     decision_result: str | None = None
     action_name: str | None = None
+    action_args: dict[str, Any] = Field(default_factory=dict)
     title: str
     summary: str
     reason: str
@@ -281,6 +282,7 @@ def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvel
 
 def _build_decision_notification(decision: CanonicalDecisionRecord) -> NotificationEnvelope:
     occurred_at = _canonical_timestamp(decision.created_at)
+    action_args = requested_action_args_from_decision(decision)
     return NotificationEnvelope(
         envelope_id=_envelope_id(decision.decision_key, "notification", "decision_result"),
         correlation_id=decision.decision_id,
@@ -298,6 +300,7 @@ def _build_decision_notification(decision: CanonicalDecisionRecord) -> Notificat
         occurred_at=occurred_at,
         decision_result=decision.decision_result,
         action_name=decision.action_ref,
+        action_args=action_args,
         title=f"decision {decision.decision_result}",
         summary=decision.decision_reason,
         reason=decision.decision_reason,

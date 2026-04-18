@@ -43,7 +43,7 @@ def brain_intent_to_runtime_disposition(brain_intent: str) -> str:
     mapping = {
         "propose_execute": "auto_execute_and_notify",
         "require_approval": "require_user_decision",
-        "propose_recovery": "require_user_decision",
+        "propose_recovery": "auto_execute_and_notify",
         "candidate_closure": "require_user_decision",
         "suggest_only": "block_and_alert",
         "observe_only": "block_and_alert",

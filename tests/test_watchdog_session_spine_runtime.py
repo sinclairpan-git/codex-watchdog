@@ -798,6 +798,7 @@ def test_approval_read_snapshot_uses_session_projection_instead_of_full_approval
         ],
     )
     app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     app.state.session_service.record_event_once(
         event_type="approval_requested",
@@ -1140,33 +1141,34 @@ def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_pr
         }
     )
     app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     prior_decision = CanonicalDecisionRecord(
         decision_id="decision:repo-a:fact-v1:require_user_decision:local-only",
-        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
         session_id="session:repo-a",
         project_id="repo-a",
         thread_id="session:repo-a",
         native_thread_id="native:repo-a",
         approval_id="appr_001",
-        action_ref="execute_recovery",
+        action_ref="continue_session",
         trigger="resident_orchestrator",
         decision_result="require_user_decision",
         risk_class="human_gate",
         decision_reason="existing local approval should be refreshed in place",
-        matched_policy_rules=["recovery_human_gate"],
+        matched_policy_rules=["brain_requires_approval"],
         why_not_escalated=None,
-        why_escalated="recovery execution requires explicit human decision",
+        why_escalated="brain intent requires explicit human approval",
         uncertainty_reasons=[],
         policy_version="policy-v1",
         fact_snapshot_version="fact-v1",
-        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
         created_at="2026-04-05T05:21:30Z",
         operator_notes=[],
         evidence={
             "decision": {
                 "decision_result": "require_user_decision",
-                "action_ref": "execute_recovery",
+                "action_ref": "continue_session",
                 "approval_id": "appr_001",
             },
             "goal_contract_version": "goal-contract:unknown",
@@ -1185,7 +1187,7 @@ def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_pr
     approvals = app.state.canonical_approval_store.list_records()
     decisions = app.state.policy_decision_store.list_records()
 
-    assert [outcome.action_ref for outcome in outcomes] == ["execute_recovery"]
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
     assert len(decisions) == 1
     assert decisions[0].approval_id == prior_approval.approval_id
@@ -1232,8 +1234,8 @@ def test_resident_orchestrator_remints_approval_when_projected_command_conflicts
                 "project_id": "repo-a",
                 "thread_id": "thr_native_1",
                 "risk_level": "L2",
-                "command": "execute_recovery",
-                "reason": "recover manually",
+                "command": "continue_session",
+                "reason": "continue with explicit approval",
                 "alternative": "",
                 "status": "pending",
                 "requested_at": "2026-04-05T05:21:00Z",
@@ -1360,34 +1362,34 @@ def test_resident_orchestrator_remints_approval_when_projected_goal_contract_dri
         ],
     )
     app = create_app(settings, a_client=a_client, start_background_workers=False)
-    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     prior_decision = CanonicalDecisionRecord(
         decision_id="decision:repo-a:fact-v1:require_user_decision:stale-goal-contract",
-        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
         session_id="session:repo-a",
         project_id="repo-a",
         thread_id="session:repo-a",
         native_thread_id="native:repo-a",
         approval_id="appr_001",
-        action_ref="execute_recovery",
+        action_ref="continue_session",
         trigger="resident_orchestrator",
         decision_result="require_user_decision",
         risk_class="human_gate",
-        decision_reason="old recovery approval predates current goal contract truth",
-        matched_policy_rules=["recovery_human_gate"],
+        decision_reason="old continue-session approval predates current goal contract truth",
+        matched_policy_rules=["brain_requires_approval"],
         why_not_escalated=None,
-        why_escalated="recovery execution requires explicit human decision",
+        why_escalated="brain intent requires explicit human approval",
         uncertainty_reasons=[],
         policy_version="policy-v1",
         fact_snapshot_version="fact-v1",
-        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|appr_001",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
         created_at="2026-04-05T05:21:30Z",
         operator_notes=[],
         evidence={
             "decision": {
                 "decision_result": "require_user_decision",
-                "action_ref": "execute_recovery",
+                "action_ref": "continue_session",
                 "approval_id": "appr_001",
             }
         },
@@ -1413,18 +1415,18 @@ def test_resident_orchestrator_remints_approval_when_projected_goal_contract_dri
         key=lambda record: record.outbox_seq,
     )
 
-    assert [outcome.action_ref for outcome in outcomes] == ["execute_recovery"]
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
     assert len(decisions) == 1
     assert decisions[0].approval_id is None
-    assert decisions[0].action_ref == "execute_recovery"
+    assert decisions[0].action_ref == "continue_session"
     assert decisions[0].evidence["decision_trace"]["approval_read"] is None
     assert len(approvals) == 2
     assert approvals[0].approval_id == "appr_001"
     assert approvals[0].goal_contract_version is None
     assert approvals[0].status == "superseded"
     assert approvals[1].approval_id != "appr_001"
-    assert approvals[1].requested_action == "execute_recovery"
+    assert approvals[1].requested_action == "continue_session"
     assert approvals[1].goal_contract_version == "goal-contract:unknown"
     assert approvals[1].status == "pending"
     assert len(outbox) == 2
@@ -1614,7 +1616,7 @@ def test_resident_orchestrator_routes_brain_require_approval_to_human_gate(
     steer_mock.assert_not_called()
 
 
-def test_resident_orchestrator_routes_brain_propose_recovery_to_human_gate(
+def test_resident_orchestrator_auto_executes_brain_proposed_recovery(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -1642,21 +1644,41 @@ def test_resident_orchestrator_routes_brain_propose_recovery_to_human_gate(
     app = create_app(settings, a_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
     app.state.session_spine_runtime.refresh_all()
+    recovery_result = WatchdogActionResult(
+        action_code="execute_recovery",
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="decision:recovery",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.HANDOFF_AND_RESUME,
+        reply_code=ReplyCode.RECOVERY_EXECUTION_RESULT,
+        message="recovery handoff triggered and resume requested",
+        facts=[],
+    )
 
-    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
-        outcomes = app.state.resident_orchestrator.orchestrate_all(
-            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
-        )
+    with patch(
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision",
+        return_value=recovery_result,
+    ) as execute_mock:
+        with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+            outcomes = app.state.resident_orchestrator.orchestrate_all(
+                now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+            )
 
     assert [outcome.action_ref for outcome in outcomes] == ["execute_recovery"]
-    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     assert decisions[0].brain_intent == "propose_recovery"
-    approvals = app.state.canonical_approval_store.list_records()
-    assert len(approvals) == 1
-    assert approvals[0].requested_action == "execute_recovery"
-    assert app.state.command_lease_store.list_events() == []
+    assert decisions[0].runtime_disposition == "auto_execute_and_notify"
+    assert app.state.canonical_approval_store.list_records() == []
+    execute_mock.assert_called_once()
+    assert any(
+        record.envelope_type == "notification"
+        and record.envelope_payload.get("notification_kind") == "decision_result"
+        and record.envelope_payload.get("action_name") == "execute_recovery"
+        for record in app.state.delivery_outbox_store.list_records()
+    )
     steer_mock.assert_not_called()
 
 
@@ -1855,7 +1877,7 @@ def test_background_runtime_persists_last_local_manual_activity_from_a_side_task
     )
 
 
-def test_background_runtime_routes_context_critical_session_to_approval_request(
+def test_background_runtime_auto_executes_context_critical_recovery(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -1885,17 +1907,24 @@ def test_background_runtime_routes_context_critical_session_to_approval_request(
     )
     delivery_client = RecordingDeliveryClient()
     app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
         time.sleep(0.05)
 
-    assert a_client.handoff_calls == []
-    assert a_client.resume_calls == []
+    assert a_client.handoff_calls == [("repo-a", "context_critical")]
+    assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
     assert any(
+        record.get("envelope_type") == "notification"
+        and record.get("notification_kind") == "decision_result"
+        and record.get("action_name") == "execute_recovery"
+        and record.get("decision_result") == "auto_execute_and_notify"
+        for record in delivery_client.records
+    )
+    assert not any(
         record.get("envelope_type") == "approval"
         and record.get("requested_action") == "execute_recovery"
-        and record.get("risk_level") == "L2"
         for record in delivery_client.records
     )
 
@@ -1942,6 +1971,7 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
         ]
     )
     app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
 
     app.state.session_spine_runtime.refresh_all()
     first = app.state.resident_orchestrator.orchestrate_all(
@@ -1951,6 +1981,7 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
         steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
         app.state.session_spine_runtime.refresh_all()
         second = app.state.resident_orchestrator.orchestrate_all(
             now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC)
@@ -1970,15 +2001,16 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
         approval_store=app.state.canonical_approval_store,
     )
 
-    assert [outcome.action_ref for outcome in first] == ["execute_recovery"]
+    assert [outcome.action_ref for outcome in first] == ["continue_session"]
     assert [outcome.decision_result for outcome in first] == ["require_user_decision"]
     assert len(first_approvals) == 1
     assert first_approvals[0].status == "pending"
+    assert first_approvals[0].requested_action == "continue_session"
     assert [outcome.action_ref for outcome in second] == ["continue_session"]
     assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
     assert steer_mock.call_count == 1
     assert len(approvals) == 1
-    assert approvals[0].requested_action == "execute_recovery"
+    assert approvals[0].requested_action == "continue_session"
     assert approvals[0].status == "superseded"
     assert approvals[0].decided_by == "policy-supersede"
     assert any(
@@ -4217,6 +4249,65 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
     assert app.state.delivery_outbox_store.list_records() == []
 
 
+def test_resident_orchestrator_persists_brain_requested_action_args_for_continue_session(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "ship provider integration",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="propose_execute",
+                rationale="provider decided continue",
+                action_arguments={
+                    "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 1,
+                },
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    decision = app.state.policy_decision_store.list_records()[0]
+    assert decision.evidence["requested_action_args"] == {
+        "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+        "reason_code": "brain_auto_continue",
+        "stuck_level": 1,
+    }
+    steer_mock.assert_called_once()
+
+
 def test_resident_orchestrator_applies_cooldown_to_repeated_auto_continue(
     tmp_path: Path,
 ) -> None:
@@ -4468,6 +4559,67 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
 
     assert len(progress_notifications) >= 1
     assert progress_notifications[-1]["summary"] == "tests are running"
+
+
+def test_background_runtime_pushes_progress_summary_for_multiple_projects(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+    )
+    a_client = MultiProjectResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "repo-a editing",
+                "files_touched": ["src/a.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "running_tests",
+                "pending_approval": False,
+                "last_summary": "repo-b testing",
+                "files_touched": ["src/b.py", "tests/test_b.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:01:00Z",
+            },
+        ],
+        approvals=[],
+    )
+    delivery_client = RecordingDeliveryClient()
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.delivery_worker._delivery_client = delivery_client
+
+    with TestClient(app):
+        time.sleep(0.08)
+
+    progress_notifications = [
+        record
+        for record in delivery_client.records
+        if record.get("notification_kind") == "progress_summary"
+    ]
+
+    project_ids = {record.get("project_id") for record in progress_notifications}
+    assert {"repo-a", "repo-b"} <= project_ids
 
 
 def test_background_runtime_skips_stale_progress_summary_even_when_project_progress_changes(

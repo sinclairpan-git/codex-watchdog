@@ -95,6 +95,30 @@ def _normalize_operator_guidance_arguments(
     return message, reason_code, stuck_level
 
 
+def _normalize_continue_arguments(
+    action: WatchdogAction,
+    *,
+    current_stuck_level: object,
+) -> tuple[str, str, int] | WatchdogActionResult:
+    soft = steer_template_registry()["soft"]
+    message = str(action.arguments.get("message") or soft.message or SOFT_STEER_MESSAGE).strip()
+    if not message:
+        message = SOFT_STEER_MESSAGE
+    reason_code = str(
+        action.arguments.get("reason_code") or soft.reason_code or "openclaw_continue_session"
+    ).strip()
+    if not reason_code:
+        reason_code = "openclaw_continue_session"
+    stuck_level_raw = action.arguments.get("stuck_level", current_stuck_level)
+    try:
+        stuck_level = int(stuck_level_raw or 0)
+    except (TypeError, ValueError):
+        return _invalid_action_arguments(action, "arguments.stuck_level must be an integer in 0..4")
+    if stuck_level < 0 or stuck_level > 4:
+        return _invalid_action_arguments(action, "arguments.stuck_level must be an integer in 0..4")
+    return message, reason_code, stuck_level
+
+
 def _execute_continue(
     action: WatchdogAction,
     *,
@@ -121,15 +145,21 @@ def _execute_continue(
             message="session is awaiting human approval",
             facts=bundle.facts,
         )
-    soft = steer_template_registry()["soft"]
+    continue_args = _normalize_continue_arguments(
+        action,
+        current_stuck_level=bundle.task.get("stuck_level", 0),
+    )
+    if isinstance(continue_args, WatchdogActionResult):
+        return continue_args
+    message, reason_code, stuck_level = continue_args
     try:
         steer_body = post_steer(
             settings.a_agent_base_url,
             settings.a_agent_token,
             action.project_id,
-            message=soft.message or SOFT_STEER_MESSAGE,
-            reason=soft.reason_code or "openclaw_continue_session",
-            stuck_level=int(bundle.task.get("stuck_level", 0) or 0),
+            message=message,
+            reason=reason_code,
+            stuck_level=stuck_level,
             timeout=settings.http_timeout_s,
         )
     except (httpx.HTTPError, RuntimeError) as exc:

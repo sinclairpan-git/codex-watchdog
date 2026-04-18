@@ -371,6 +371,35 @@ class FeishuAppDeliveryClient:
             return "；".join(parts)
         return normalized
 
+    @staticmethod
+    def _render_next_step(action_args: dict[str, object] | None) -> str:
+        if not isinstance(action_args, dict):
+            return ""
+        message = str(action_args.get("message") or "").strip()
+        if not message:
+            return ""
+        for prefix in ("下一步建议：", "建议下一步："):
+            if message.startswith(prefix):
+                message = message[len(prefix) :].strip()
+                break
+        return message
+
+    @staticmethod
+    def _render_key_facts(facts: list[dict[str, object]] | None) -> str:
+        if not isinstance(facts, list):
+            return ""
+        summaries: list[str] = []
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            summary = str(fact.get("summary") or fact.get("detail") or fact.get("fact_code") or "").strip()
+            if not summary or summary in summaries:
+                continue
+            summaries.append(summary)
+            if len(summaries) >= 3:
+                break
+        return "；".join(summaries)
+
     @classmethod
     def _render_approval_text(cls, envelope: ApprovalEnvelope) -> str:
         lines = [
@@ -384,6 +413,12 @@ class FeishuAppDeliveryClient:
         reason = cls._humanize_reason(envelope.reason or envelope.why_escalated)
         if reason:
             lines.append(f"原因：{reason}")
+        next_step = cls._render_next_step(envelope.requested_action_args)
+        if next_step:
+            lines.append(f"建议下一步：{next_step}")
+        key_facts = cls._render_key_facts(envelope.facts)
+        if key_facts:
+            lines.append(f"关键依据：{key_facts}")
         lines.append('你现在可以这样干预：回复“批准”、“拒绝”或“直接执行”')
         return "\n".join(lines)
 
@@ -397,6 +432,12 @@ class FeishuAppDeliveryClient:
         decision_reason = str(envelope.decision_reason or envelope.reason or "").strip()
         if decision_reason:
             lines.append(f"决策依据：{decision_reason}")
+        next_step = cls._render_next_step(envelope.action_args)
+        if next_step:
+            lines.append(f"建议下一步：{next_step}")
+        key_facts = cls._render_key_facts(envelope.facts)
+        if key_facts:
+            lines.append(f"关键依据：{key_facts}")
         lines.append('你现在可以这样干预：回复“状态”查看详情，或回复“人工接管”')
         return "\n".join(lines)
 
@@ -410,6 +451,12 @@ class FeishuAppDeliveryClient:
         reason = str(envelope.reason or "").strip()
         if reason:
             lines.append(f"决策依据：{reason}")
+        next_step = cls._render_next_step(envelope.action_args)
+        if next_step:
+            lines.append(f"建议下一步：{next_step}")
+        key_facts = cls._render_key_facts(envelope.facts)
+        if key_facts:
+            lines.append(f"关键依据：{key_facts}")
         lines.append('你现在可以这样干预：回复“状态”查看详情，或回复“人工接管”')
         return "\n".join(lines)
 

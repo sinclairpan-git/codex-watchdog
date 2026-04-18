@@ -333,6 +333,46 @@ def test_feishu_render_text_formats_approval_for_human_reading(tmp_path: Path) -
     assert "options=" not in text
 
 
+def test_feishu_render_text_includes_next_step_and_key_facts_for_approval(tmp_path: Path) -> None:
+    envelope = build_envelopes_for_decision(
+        _decision().model_copy(
+            update={
+                "decision_result": "require_user_decision",
+                "risk_class": "human_gate",
+                "approval_id": "appr_001",
+                "action_ref": "continue_session",
+                "decision_reason": "当前任务可以继续自动推进，但需要人工确认。",
+                "why_not_escalated": None,
+                "why_escalated": "human gate matched",
+                "evidence": {
+                    "facts": [
+                        {
+                            "fact_code": "feishu_control_missing",
+                            "summary": "飞书控制链路未闭环",
+                        },
+                        {
+                            "fact_code": "validation_pending",
+                            "summary": "验证结果尚未回写",
+                        },
+                    ],
+                    "matched_policy_rules": ["registered_action"],
+                    "requested_action_args": {
+                        "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+                        "reason_code": "brain_auto_continue",
+                        "stuck_level": 1,
+                    },
+                    "decision": {},
+                },
+            }
+        )
+    )[0]
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "建议下一步：补齐飞书控制链路；回写验证结果。" in text
+    assert "关键依据：飞书控制链路未闭环；验证结果尚未回写" in text
+
+
 def test_feishu_render_text_formats_decision_notification_for_human_reading(
     tmp_path: Path,
 ) -> None:
@@ -347,6 +387,43 @@ def test_feishu_render_text_formats_decision_notification_for_human_reading(
     assert "decision=" not in text
     assert "action=" not in text
     assert "notification_kind=" not in text
+
+
+def test_feishu_render_text_includes_next_step_and_key_facts_for_decision_update(
+    tmp_path: Path,
+) -> None:
+    envelope = build_envelopes_for_decision(
+        _decision().model_copy(
+            update={
+                "action_ref": "continue_session",
+                "decision_reason": "当前任务可以继续自动推进",
+                "evidence": {
+                    "facts": [
+                        {
+                            "fact_code": "feishu_control_missing",
+                            "summary": "飞书控制链路未闭环",
+                        },
+                        {
+                            "fact_code": "validation_pending",
+                            "summary": "验证结果尚未回写",
+                        },
+                    ],
+                    "matched_policy_rules": ["registered_action"],
+                    "requested_action_args": {
+                        "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+                        "reason_code": "brain_auto_continue",
+                        "stuck_level": 1,
+                    },
+                    "decision": {},
+                },
+            }
+        )
+    )[1]
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "建议下一步：补齐飞书控制链路；回写验证结果。" in text
+    assert "关键依据：飞书控制链路未闭环；验证结果尚未回写" in text
 
 
 def test_feishu_render_text_humanizes_progress_reason_key_values(tmp_path: Path) -> None:

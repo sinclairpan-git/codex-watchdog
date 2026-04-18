@@ -10,6 +10,11 @@ class _BrainModel(BaseModel):
 class DecisionIntent(_BrainModel):
     intent: str = Field(min_length=1)
     rationale: str | None = None
+    action_arguments: dict[str, object] = Field(default_factory=dict)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    goal_coverage: str | None = None
+    remaining_work_hypothesis: list[str] = Field(default_factory=list)
+    evidence_codes: list[str] = Field(default_factory=list)
     provider: str = Field(default="resident_orchestrator", min_length=1)
     model: str = Field(default="rule-based-brain", min_length=1)
     prompt_schema_ref: str = Field(default="prompt:none", min_length=1)

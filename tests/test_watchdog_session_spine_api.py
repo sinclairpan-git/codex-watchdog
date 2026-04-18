@@ -1885,6 +1885,63 @@ def test_session_spine_action_routes_reject_empty_idempotency_key(tmp_path) -> N
     assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
 
 
+def test_session_spine_continue_session_uses_structured_steer_arguments(tmp_path) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            http_timeout_s=30.0,
+        ),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+    c = TestClient(app)
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        response = c.post(
+            "/api/v1/watchdog/actions",
+            json={
+                "action_code": "continue_session",
+                "project_id": "repo-a",
+                "operator": "openclaw",
+                "idempotency_key": "idem-continue-structured-1",
+                "arguments": {
+                    "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 1,
+                },
+            },
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    assert response.status_code == 200
+    steer_mock.assert_called_once_with(
+        "http://a.test",
+        "at",
+        "repo-a",
+        message="下一步建议：补齐飞书控制链路；回写验证结果。",
+        reason="brain_auto_continue",
+        stuck_level=1,
+        timeout=30.0,
+    )
+
+
 def test_session_spine_continue_retries_after_rejected_steer_without_caching_receipt(tmp_path) -> None:
     app = create_app(
         Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),

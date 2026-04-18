@@ -180,10 +180,12 @@ def test_canonical_decision_record_carries_policy_and_fact_snapshot_evidence() -
 
 def test_brain_intent_adapter_keeps_runtime_disposition_compatible() -> None:
     auto_execute = brain_intent_to_runtime_disposition("propose_execute")
+    auto_recovery = brain_intent_to_runtime_disposition("propose_recovery")
     require_approval = brain_intent_to_runtime_disposition("require_approval")
     suggest_only = brain_intent_to_runtime_disposition("suggest_only")
 
     assert auto_execute == "auto_execute_and_notify"
+    assert auto_recovery == "auto_execute_and_notify"
     assert require_approval == "require_user_decision"
     assert suggest_only == "block_and_alert"
 

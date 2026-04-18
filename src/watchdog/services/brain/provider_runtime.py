@@ -109,9 +109,18 @@ class OpenAICompatibleBrainProvider:
         request_id = str(payload.get("id") or "").strip() or None
         content = self._extract_content(payload)
         structured = json.loads(content)
+        remaining_work = self._coerce_string_list(structured.get("remaining_work_hypothesis"))
         return DecisionIntent(
             intent=self._map_intent(structured),
             rationale=str(structured.get("reason_short") or "").strip() or None,
+            action_arguments=self._build_action_arguments(
+                structured,
+                remaining_work_hypothesis=remaining_work,
+            ),
+            confidence=self._coerce_confidence(structured.get("confidence")),
+            goal_coverage=str(structured.get("goal_coverage") or "").strip() or None,
+            remaining_work_hypothesis=remaining_work,
+            evidence_codes=self._coerce_string_list(structured.get("evidence_codes")),
             provider="openai-compatible",
             model=str(self.settings.brain_provider_model or "openai-compatible-model"),
             prompt_schema_ref="prompt:brain-decision-v1",
@@ -172,3 +181,48 @@ class OpenAICompatibleBrainProvider:
         if execution_advice == "notify_only":
             return "suggest_only"
         return "observe_only"
+
+    @staticmethod
+    def _coerce_string_list(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        items: list[str] = []
+        for item in value:
+            normalized = str(item or "").strip()
+            if normalized:
+                items.append(normalized)
+        return items
+
+    @staticmethod
+    def _coerce_confidence(value: object) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return None
+        if 0.0 <= normalized <= 1.0:
+            return normalized
+        return None
+
+    @classmethod
+    def _build_action_arguments(
+        cls,
+        structured: dict[str, object],
+        *,
+        remaining_work_hypothesis: list[str],
+    ) -> dict[str, object]:
+        execution_advice = str(structured.get("execution_advice") or "").strip().lower()
+        if execution_advice not in {"auto_execute", "notify_then_execute"}:
+            return {}
+        if remaining_work_hypothesis:
+            message = f"下一步建议：{'；'.join(remaining_work_hypothesis)}。"
+        else:
+            message = str(structured.get("reason_short") or "").strip()
+        if not message:
+            return {}
+        return {
+            "message": message,
+            "reason_code": "brain_auto_continue",
+            "stuck_level": 0,
+        }

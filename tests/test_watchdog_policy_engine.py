@@ -168,7 +168,7 @@ def test_policy_engine_does_not_let_require_approval_override_controlled_uncerta
     assert "controlled_uncertainty" in decision.matched_policy_rules
 
 
-def test_policy_engine_requires_user_decision_for_execute_recovery() -> None:
+def test_policy_engine_requires_user_decision_for_manual_execute_recovery() -> None:
     record = _record(facts=[_fact("recovery_available", fact_kind="action")])
 
     decision = evaluate_persisted_session_policy(
@@ -182,6 +182,23 @@ def test_policy_engine_requires_user_decision_for_execute_recovery() -> None:
     assert decision.why_not_escalated is None
     assert decision.why_escalated == "recovery execution requires explicit human decision"
     assert "recovery_human_gate" in decision.matched_policy_rules
+
+
+def test_policy_engine_allows_auto_execution_for_brain_proposed_recovery() -> None:
+    record = _record(facts=[_fact("recovery_available", fact_kind="action")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        brain_intent="propose_recovery",
+    )
+
+    assert decision.decision_result == "auto_execute_and_notify"
+    assert decision.risk_class == "none"
+    assert decision.why_not_escalated == "policy_allows_auto_execution"
+    assert decision.why_escalated is None
+    assert "registered_action" in decision.matched_policy_rules
 
 
 def test_policy_engine_requires_user_decision_when_goal_contract_is_not_ready() -> None:

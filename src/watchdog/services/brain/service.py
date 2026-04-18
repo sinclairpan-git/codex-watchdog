@@ -145,7 +145,44 @@ class BrainDecisionService:
             else:
                 intent = "observe_only"
                 rationale = rationale or "no executable action proposed"
-        return DecisionIntent(intent=intent, rationale=rationale)
+        return DecisionIntent(
+            intent=intent,
+            rationale=rationale,
+            action_arguments=self._rule_based_action_arguments(
+                record=record,
+                intent=intent,
+                rationale=rationale,
+            ),
+        )
+
+    @staticmethod
+    def _rule_based_action_arguments(
+        *,
+        record: PersistedSessionRecord | None,
+        intent: str,
+        rationale: str | None,
+    ) -> dict[str, object]:
+        if intent == "candidate_closure" and record is not None:
+            summary = record.progress.summary or "session reached done state"
+            return {
+                "message": f"Review completion candidate for {record.project_id}: {summary}",
+                "reason_code": "candidate_closure",
+                "stuck_level": 0,
+            }
+        if intent != "propose_execute" or record is None:
+            return {}
+        summary = str(record.progress.summary or "current task").strip()
+        if not summary:
+            summary = "current task"
+        stuck_level = int(record.progress.stuck_level or 0)
+        message = f"下一步建议：继续推进 {summary}，并优先验证最近改动。"
+        if rationale and "recovery" in rationale.lower():
+            message = "下一步建议：继续推进恢复流程，并优先验证最近改动。"
+        return {
+            "message": message,
+            "reason_code": "rule_based_continue",
+            "stuck_level": max(stuck_level, 0),
+        }
 
     def evaluate_session(
         self,

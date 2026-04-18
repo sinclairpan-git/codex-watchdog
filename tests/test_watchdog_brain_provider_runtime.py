@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from watchdog.main import create_app
 from watchdog.contracts.session_spine.models import FactRecord
@@ -149,6 +150,53 @@ def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_pa
     assert intent.model == "rule-based-brain"
 
 
+def test_brain_service_rule_based_continue_keeps_next_step_when_provider_unavailable(
+    tmp_path: Path,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("provider timeout")
+
+    record = _record().model_copy(
+        update={
+            "facts": [
+                FactRecord(
+                    fact_id="fact:stuck",
+                    fact_code="stuck_no_progress",
+                    fact_kind="derived",
+                    severity="warning",
+                    summary="session stalled",
+                    detail="no progress in the last interval",
+                    source="projection",
+                    observed_at="2026-04-16T00:00:00Z",
+                )
+            ]
+        }
+    )
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=_session_service(tmp_path),
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=record)
+
+    assert intent.intent == "propose_execute"
+    assert intent.action_arguments == {
+        "message": "下一步建议：继续推进 ship feishu and memory hub integration，并优先验证最近改动。",
+        "reason_code": "rule_based_continue",
+        "stuck_level": 0,
+    }
+    assert intent.provider == "resident_orchestrator"
+    assert intent.model == "rule-based-brain"
+
+
 def test_provider_runtime_uses_provider_specific_timeout(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -261,6 +309,66 @@ def test_provider_runtime_parses_think_and_fenced_json(tmp_path: Path) -> None:
     assert intent.intent == "propose_execute"
     assert intent.provider == "openai-compatible"
     assert intent.provider_request_id == "chatcmpl-think-1"
+
+
+def test_brain_service_keeps_structured_next_step_from_provider(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-next-step-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "session_decision": "active",
+                                    "execution_advice": "auto_execute",
+                                    "approval_advice": "none",
+                                    "risk_band": "low",
+                                    "goal_coverage": "partial",
+                                    "remaining_work_hypothesis": [
+                                        "补齐飞书控制链路",
+                                        "回写验证结果",
+                                    ],
+                                    "confidence": 0.86,
+                                    "reason_short": "当前任务可以继续自动推进",
+                                    "evidence_codes": ["active_goal_present"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=_session_service(tmp_path),
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=_record())
+
+    assert intent.intent == "propose_execute"
+    assert intent.action_arguments == {
+        "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+        "reason_code": "brain_auto_continue",
+        "stuck_level": 0,
+    }
+    assert intent.confidence == pytest.approx(0.86)
+    assert intent.goal_coverage == "partial"
+    assert intent.remaining_work_hypothesis == [
+        "补齐飞书控制链路",
+        "回写验证结果",
+    ]
+    assert intent.evidence_codes == ["active_goal_present"]
 
 
 def test_resident_orchestrator_decision_trace_uses_provider_metadata(tmp_path: Path) -> None:

@@ -837,6 +837,21 @@ class ResidentOrchestrator:
         now: datetime,
     ) -> dict[str, object]:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
+        if brain_intent.action_arguments:
+            evidence["requested_action_args"] = dict(brain_intent.action_arguments)
+        brain_output: dict[str, object] = {}
+        if brain_intent.confidence is not None:
+            brain_output["confidence"] = brain_intent.confidence
+        if brain_intent.goal_coverage:
+            brain_output["goal_coverage"] = brain_intent.goal_coverage
+        if brain_intent.remaining_work_hypothesis:
+            brain_output["remaining_work_hypothesis"] = list(
+                brain_intent.remaining_work_hypothesis
+            )
+        if brain_intent.evidence_codes:
+            brain_output["evidence_codes"] = list(brain_intent.evidence_codes)
+        if brain_output:
+            evidence["brain_output"] = brain_output
         decision_trace = self._decision_trace_for_intent(
             record,
             brain_intent=brain_intent,
@@ -899,7 +914,7 @@ class ResidentOrchestrator:
                 mode="json",
                 exclude_none=True,
             )
-        if brain_intent.intent == "candidate_closure":
+        if "requested_action_args" not in evidence and brain_intent.intent == "candidate_closure":
             evidence["requested_action_args"] = self._candidate_closure_action_args(record)
         return evidence
 
@@ -943,7 +958,7 @@ class ResidentOrchestrator:
 
     @staticmethod
     def _decision_allows_auto_execute(decision) -> bool:
-        if decision.brain_intent not in (None, "propose_execute"):
+        if decision.brain_intent not in (None, "propose_execute", "propose_recovery"):
             return False
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         validator_verdict = read_validator_decision_evidence(evidence).verdict
@@ -951,7 +966,11 @@ class ResidentOrchestrator:
             return False
         release_gate = read_release_gate_decision_evidence(evidence)
         release_gate_verdict = release_gate.verdict
-        if release_gate_verdict is None or release_gate_verdict.status != "pass":
+        if release_gate_verdict is None:
+            return False
+        if decision.brain_intent == "propose_recovery":
+            return release_gate_verdict.status in {"pass", "not_applicable"}
+        if release_gate_verdict.status != "pass":
             return False
         if (
             ResidentOrchestrator._pass_verdict_requires_bundle(release_gate_verdict)
@@ -975,12 +994,21 @@ class ResidentOrchestrator:
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         release_gate = read_release_gate_decision_evidence(evidence)
         validator_verdict = read_validator_decision_evidence(evidence).verdict
+        release_gate_verdict = release_gate.verdict
+        if (
+            decision.brain_intent == "propose_recovery"
+            and validator_verdict is not None
+            and validator_verdict.status == "pass"
+            and release_gate_verdict is not None
+            and release_gate_verdict.status in {"pass", "not_applicable"}
+        ):
+            return True
         return (
             validator_verdict is not None
             and validator_verdict.status == "pass"
-            and release_gate.verdict is not None
+            and release_gate_verdict is not None
             and (
-                not ResidentOrchestrator._pass_verdict_requires_bundle(release_gate.verdict)
+                not ResidentOrchestrator._pass_verdict_requires_bundle(release_gate_verdict)
                 or release_gate.evidence_bundle is not None
             )
         )
@@ -1130,9 +1158,11 @@ class ResidentOrchestrator:
         self,
         record: PersistedSessionRecord,
         *,
-        brain_intent: str,
+        brain_intent,
     ) -> dict[str, Any]:
-        if brain_intent == "candidate_closure":
+        if brain_intent.action_arguments:
+            return dict(brain_intent.action_arguments)
+        if brain_intent.intent == "candidate_closure":
             return self._candidate_closure_action_args(record)
         return {}
 
@@ -1518,7 +1548,7 @@ class ResidentOrchestrator:
         if action_ref is not None:
             requested_action_args = self._requested_action_args_for_intent(
                 record,
-                brain_intent=brain_intent.intent,
+                brain_intent=brain_intent,
             )
             record = self._record_with_trustworthy_approval_identity(
                 record,

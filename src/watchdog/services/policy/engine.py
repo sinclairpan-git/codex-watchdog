@@ -103,7 +103,7 @@ def evaluate_persisted_session_policy(
             extra_evidence=extra_evidence,
         )
 
-    if action_ref in EXPLICIT_USER_DECISION_ACTION_REFS:
+    if action_ref in EXPLICIT_USER_DECISION_ACTION_REFS and brain_intent != "propose_recovery":
         return build_canonical_decision_record(
             persisted_record=persisted_record,
             decision_result=DECISION_REQUIRE_USER_DECISION,
