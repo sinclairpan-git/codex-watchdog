@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from a_control_agent.envelope import ok
@@ -137,6 +137,16 @@ class OpsResidentExpertConsultRequest(BaseModel):
     consultation_ref: str | None = None
     observed_runtime_handles: dict[str, str] = Field(default_factory=dict)
     consulted_at: str | None = None
+
+
+class OpsResidentExpertRuntimeHandleBinding(BaseModel):
+    expert_id: str
+    runtime_handle: str
+    observed_at: str | None = None
+
+
+class OpsResidentExpertRuntimeHandleBindingRequest(BaseModel):
+    bindings: list[OpsResidentExpertRuntimeHandleBinding] = Field(default_factory=list)
 
 
 class OpsResidentExpertDecisionAuditExpert(BaseModel):
@@ -856,6 +866,38 @@ def post_resident_experts_consult(
         observed_runtime_handles=payload.observed_runtime_handles,
         consulted_at=payload.consulted_at,
     )
+    return ok(
+        request.headers.get("x-request-id"),
+        {
+            "experts": [
+                OpsResidentExpertStatus.model_validate(
+                    view.model_dump(mode="json")
+                ).model_dump(mode="json")
+                for view in resident_expert_runtime_service.list_runtime_views()
+            ]
+        },
+    )
+
+
+@router.post("/resident-experts/runtime-handles")
+def post_resident_expert_runtime_handles(
+    request: Request,
+    payload: OpsResidentExpertRuntimeHandleBindingRequest,
+    _: None = Depends(require_token),
+    resident_expert_runtime_service: ResidentExpertRuntimeService = Depends(
+        get_resident_expert_runtime_service
+    ),
+) -> dict[str, object]:
+    for binding in payload.bindings:
+        try:
+            resident_expert_runtime_service.bind_runtime_handle(
+                expert_id=binding.expert_id,
+                runtime_handle=binding.runtime_handle,
+                observed_at=binding.observed_at,
+            )
+        except KeyError as exc:
+            detail = exc.args[0] if exc.args else str(exc)
+            raise HTTPException(status_code=404, detail=str(detail)) from exc
     return ok(
         request.headers.get("x-request-id"),
         {
