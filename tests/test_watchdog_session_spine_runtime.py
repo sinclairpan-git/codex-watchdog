@@ -4322,6 +4322,76 @@ def test_resident_orchestrator_persists_brain_requested_action_args_for_continue
     steer_mock.assert_called_once()
 
 
+def test_resident_orchestrator_blocks_brain_continue_when_action_args_violate_contract(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "ship provider integration",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="propose_execute",
+                rationale="provider decided continue",
+                action_arguments={
+                    "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 9,
+                },
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    decision = app.state.policy_decision_store.list_records()[0]
+    assert decision.matched_policy_rules == ["validator_gate_degraded"]
+    assert decision.uncertainty_reasons == ["action_args_invalid"]
+    assert decision.evidence["validator_verdict"] == {
+        "status": "degraded",
+        "reason": "action_args_invalid",
+    }
+    assert decision.evidence["managed_action_args_contract"] == {
+        "status": "blocked",
+        "action_ref": "continue_session",
+        "allowed_keys": ["message", "reason_code", "stuck_level"],
+        "required_keys": [],
+        "missing_required_keys": [],
+        "rejected_keys": [],
+        "invalid_fields": {
+            "stuck_level": "must be an integer in 0..4",
+        },
+    }
+    steer_mock.assert_not_called()
+
+
 def test_resident_orchestrator_applies_cooldown_to_repeated_auto_continue(
     tmp_path: Path,
 ) -> None:

@@ -57,3 +57,26 @@ MANAGED_AGENT_ACTION_BOUNDARY = {
         "auto_execute_allowed_intents": (),
     },
 }
+
+MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS = {
+    "continue_session": {
+        "allowed_keys": (
+            "message",
+            "reason_code",
+            "stuck_level",
+        ),
+        "required_keys": (),
+    },
+    "execute_recovery": {
+        "allowed_keys": (),
+        "required_keys": (),
+    },
+    "post_operator_guidance": {
+        "allowed_keys": (
+            "message",
+            "reason_code",
+            "stuck_level",
+        ),
+        "required_keys": ("message",),
+    },
+}

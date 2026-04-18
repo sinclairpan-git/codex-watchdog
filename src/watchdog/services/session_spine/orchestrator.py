@@ -29,7 +29,10 @@ from watchdog.services.session_spine.event_gate_payload_contract import (
 )
 from watchdog.services.brain.replay import DecisionReplayService
 from watchdog.services.brain.service import BrainDecisionService
-from watchdog.services.brain.validator import DecisionValidator
+from watchdog.services.brain.validator import (
+    DecisionValidator,
+    validate_managed_action_arguments,
+)
 from watchdog.services.brain.validator_read_contract import (
     read_validator_decision_evidence,
 )
@@ -833,12 +836,13 @@ class ResidentOrchestrator:
         *,
         brain_intent,
         action_ref: str,
+        requested_action_args: dict[str, Any],
         goal_contract_readiness: GoalContractReadiness | None,
         now: datetime,
     ) -> dict[str, object]:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
-        if brain_intent.action_arguments:
-            evidence["requested_action_args"] = dict(brain_intent.action_arguments)
+        if requested_action_args:
+            evidence["requested_action_args"] = dict(requested_action_args)
         brain_output: dict[str, object] = {}
         if brain_intent.confidence is not None:
             brain_output["confidence"] = brain_intent.confidence
@@ -858,8 +862,14 @@ class ResidentOrchestrator:
             action_ref=action_ref,
             goal_contract_version=self._goal_contract_version_for_record(record),
         )
+        action_args_contract = validate_managed_action_arguments(
+            action_ref=action_ref,
+            action_arguments=requested_action_args,
+        )
         validator_verdict = self._decision_validator.validate(
             brain_intent=brain_intent.intent,
+            action_ref=action_ref,
+            action_arguments=requested_action_args,
             goal_contract_readiness=goal_contract_readiness,
             memory_conflict_detected=self._session_has_event(
                 session_id=record.thread_id,
@@ -907,6 +917,7 @@ class ResidentOrchestrator:
             shadow_decision_ledger_ref=self._settings.release_gate_shadow_decision_ledger_ref,
         )
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
+        evidence["managed_action_args_contract"] = action_args_contract.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
         evidence["release_gate_verdict"] = release_gate_evidence.verdict.model_dump(mode="json")
         if release_gate_evidence.evidence_bundle is not None:
@@ -914,8 +925,6 @@ class ResidentOrchestrator:
                 mode="json",
                 exclude_none=True,
             )
-        if "requested_action_args" not in evidence and brain_intent.intent == "candidate_closure":
-            evidence["requested_action_args"] = self._candidate_closure_action_args(record)
         return evidence
 
     def _record_and_store_decision(self, decision):
@@ -1568,6 +1577,7 @@ class ResidentOrchestrator:
                 record,
                 brain_intent=brain_intent,
                 action_ref=action_ref,
+                requested_action_args=requested_action_args,
                 goal_contract_readiness=goal_contract_readiness,
                 now=now,
             )
