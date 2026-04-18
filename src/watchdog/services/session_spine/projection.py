@@ -255,6 +255,7 @@ def build_task_progress_view(
     task: dict[str, Any] | None,
     facts: list[FactRecord],
     recovery: dict[str, Any] | None = None,
+    decision_trace: dict[str, Any] | None = None,
 ) -> TaskProgressView:
     stable_thread_id = stable_thread_id_for_project(project_id)
     return TaskProgressView(
@@ -277,6 +278,13 @@ def build_task_progress_view(
         recovery_status=str((recovery or {}).get("recovery_status") or "") or None,
         recovery_updated_at=str((recovery or {}).get("recovery_updated_at") or "") or None,
         recovery_child_session_id=str((recovery or {}).get("recovery_child_session_id") or "") or None,
+        decision_trace_ref=str((decision_trace or {}).get("decision_trace_ref") or "") or None,
+        decision_degrade_reason=str((decision_trace or {}).get("decision_degrade_reason") or "")
+        or None,
+        provider_output_schema_ref=str(
+            (decision_trace or {}).get("provider_output_schema_ref") or ""
+        )
+        or None,
     )
 
 

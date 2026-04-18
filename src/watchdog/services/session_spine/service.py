@@ -118,6 +118,49 @@ class SessionDirectoryReadBundle:
     progresses: list[TaskProgressView] = field(default_factory=list)
 
 
+def _canonical_decision_sort_key(record: CanonicalDecisionRecord) -> tuple[str, str]:
+    return (str(record.created_at or ""), record.decision_id)
+
+
+def _build_decision_trace_projection(
+    decision_store: PolicyDecisionStore | None,
+    *,
+    project_id: str,
+    session_id: str | None = None,
+    native_thread_id: str | None = None,
+) -> dict[str, Any] | None:
+    if decision_store is None:
+        return None
+    normalized_session_id = str(session_id or "").strip()
+    normalized_native_thread_id = str(native_thread_id or "").strip()
+    project_records = [
+        record for record in decision_store.list_records() if record.project_id == project_id
+    ]
+    if not project_records:
+        return None
+    matched_records = [
+        record
+        for record in project_records
+        if (
+            normalized_session_id
+            and record.session_id == normalized_session_id
+            or normalized_native_thread_id
+            and record.native_thread_id == normalized_native_thread_id
+        )
+    ]
+    candidate_records = matched_records or project_records
+    latest = max(candidate_records, key=_canonical_decision_sort_key)
+    evidence = latest.evidence if isinstance(latest.evidence, dict) else {}
+    trace = evidence.get("decision_trace")
+    if not isinstance(trace, dict):
+        return None
+    return {
+        "decision_trace_ref": str(trace.get("trace_id") or "") or None,
+        "decision_degrade_reason": str(trace.get("degrade_reason") or "") or None,
+        "provider_output_schema_ref": str(trace.get("provider_output_schema_ref") or "") or None,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspaceActivityReadBundle:
     project_id: str
@@ -403,6 +446,7 @@ def _build_session_read_bundle_from_session_events(
     persisted_record: PersistedSessionRecord | None = None,
     task: dict[str, Any] | None = None,
     session_service: SessionService | None = None,
+    decision_store: PolicyDecisionStore | None = None,
 ) -> SessionReadBundle:
     approvals = _build_approval_rows_from_session_events(events)
     projected_task = _build_event_projection_task(
@@ -424,6 +468,12 @@ def _build_session_read_bundle_from_session_events(
     facts = _merge_fact_records(approval_facts, event_facts)
     native_thread_id = str(projected_task.get("thread_id") or "") or None
     recovery = _build_recovery_projection(session_service=session_service, project_id=project_id)
+    decision_trace = _build_decision_trace_projection(
+        decision_store,
+        project_id=project_id,
+        session_id=stable_thread_id_for_project(project_id),
+        native_thread_id=native_thread_id,
+    )
     return SessionReadBundle(
         project_id=project_id,
         task=projected_task,
@@ -440,6 +490,7 @@ def _build_session_read_bundle_from_session_events(
             task=projected_task,
             facts=facts,
             recovery=recovery,
+            decision_trace=decision_trace,
         ),
         approval_queue=build_approval_projections(
             project_id=project_id,
@@ -593,10 +644,17 @@ def _build_session_read_bundle(
     task: dict[str, Any] | None,
     approvals: list[dict[str, Any]],
     session_service: SessionService | None = None,
+    decision_store: PolicyDecisionStore | None = None,
 ) -> SessionReadBundle:
     facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     native_thread_id = str(task.get("thread_id") or "") or None
     recovery = _build_recovery_projection(session_service=session_service, project_id=project_id)
+    decision_trace = _build_decision_trace_projection(
+        decision_store,
+        project_id=project_id,
+        session_id=stable_thread_id_for_project(project_id),
+        native_thread_id=native_thread_id,
+    )
     return SessionReadBundle(
         project_id=project_id,
         task=task,
@@ -613,6 +671,7 @@ def _build_session_read_bundle(
             task=task,
             facts=facts,
             recovery=recovery,
+            decision_trace=decision_trace,
         ),
         approval_queue=build_approval_projections(
             project_id=project_id,
@@ -735,6 +794,7 @@ def _build_session_read_bundle_from_persisted_record(
     approval_store: CanonicalApprovalStore | None = None,
     freshness_window_seconds: float,
     session_service: SessionService | None = None,
+    decision_store: PolicyDecisionStore | None = None,
 ) -> SessionReadBundle:
     canonical_approvals = _list_actionable_canonical_approval_rows(
         approval_store,
@@ -748,6 +808,7 @@ def _build_session_read_bundle_from_persisted_record(
             task=synthesized_task,
             approvals=approvals,
             session_service=session_service,
+            decision_store=decision_store,
         )
         return SessionReadBundle(
             project_id=bundle.project_id,
@@ -766,6 +827,12 @@ def _build_session_read_bundle_from_persisted_record(
         session_service=session_service,
         project_id=record.project_id,
     )
+    decision_trace = _build_decision_trace_projection(
+        decision_store,
+        project_id=record.project_id,
+        session_id=record.thread_id,
+        native_thread_id=record.native_thread_id,
+    )
     return SessionReadBundle(
         project_id=record.project_id,
         task=None,
@@ -778,6 +845,11 @@ def _build_session_read_bundle_from_persisted_record(
                 "recovery_status": (recovery or {}).get("recovery_status"),
                 "recovery_updated_at": (recovery or {}).get("recovery_updated_at"),
                 "recovery_child_session_id": (recovery or {}).get("recovery_child_session_id"),
+                "decision_trace_ref": (decision_trace or {}).get("decision_trace_ref"),
+                "decision_degrade_reason": (decision_trace or {}).get("decision_degrade_reason"),
+                "provider_output_schema_ref": (decision_trace or {}).get(
+                    "provider_output_schema_ref"
+                ),
             }
         ),
         approval_queue=list(record.approval_queue),
@@ -829,6 +901,7 @@ def build_session_read_bundle(
     session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
+    decision_store: PolicyDecisionStore | None = None,
     freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
     persisted_record = store.get(project_id) if store is not None else None
@@ -840,6 +913,7 @@ def build_session_read_bundle(
                 events=session_events,
                 persisted_record=persisted_record,
                 session_service=session_service,
+                decision_store=decision_store,
             )
     if store is not None:
         if persisted_record is not None:
@@ -848,6 +922,7 @@ def build_session_read_bundle(
                 approval_store=approval_store,
                 freshness_window_seconds=freshness_window_seconds,
                 session_service=session_service,
+                decision_store=decision_store,
             )
     task = _load_task_or_raise(client, project_id)
     approvals = _load_approvals_or_raise(client, project_id)
@@ -856,6 +931,7 @@ def build_session_read_bundle(
         task=task,
         approvals=approvals,
         session_service=session_service,
+        decision_store=decision_store,
     )
     return SessionReadBundle(
         project_id=bundle.project_id,
@@ -876,6 +952,7 @@ def build_session_read_bundle_by_native_thread(
     session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
+    decision_store: PolicyDecisionStore | None = None,
     freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
     persisted_record = store.get_by_native_thread(native_thread_id) if store is not None else None
@@ -887,6 +964,7 @@ def build_session_read_bundle_by_native_thread(
                 events=session_events,
                 persisted_record=persisted_record,
                 session_service=session_service,
+                decision_store=decision_store,
             )
     if store is not None:
         if persisted_record is not None:
@@ -895,6 +973,7 @@ def build_session_read_bundle_by_native_thread(
                 approval_store=approval_store,
                 freshness_window_seconds=freshness_window_seconds,
                 session_service=session_service,
+                decision_store=decision_store,
             )
     task = _load_task_by_native_thread_or_raise(client, native_thread_id)
     project_id = str(task.get("project_id") or "")
@@ -910,6 +989,7 @@ def build_session_read_bundle_by_native_thread(
                 events=session_events,
                 task=task,
                 session_service=session_service,
+                decision_store=decision_store,
             )
     approvals = _load_approvals_or_raise(client, project_id)
     bundle = _build_session_read_bundle(
@@ -917,6 +997,7 @@ def build_session_read_bundle_by_native_thread(
         task=task,
         approvals=approvals,
         session_service=session_service,
+        decision_store=decision_store,
     )
     return SessionReadBundle(
         project_id=bundle.project_id,
@@ -1063,6 +1144,7 @@ def build_session_directory_bundle(
     session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
+    decision_store: PolicyDecisionStore | None = None,
 ) -> SessionDirectoryReadBundle:
     persisted_records = store.list_records() if store is not None else []
     persisted_by_project = {record.project_id: record for record in persisted_records}
@@ -1082,6 +1164,7 @@ def build_session_directory_bundle(
                         events=grouped_events[current_project_id],
                         persisted_record=persisted_by_project.get(current_project_id),
                         session_service=session_service,
+                        decision_store=decision_store,
                     )
                     sessions.append(bundle.session)
                     progresses.append(bundle.progress)
@@ -1094,6 +1177,7 @@ def build_session_directory_bundle(
                     approval_store=approval_store,
                     freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
                     session_service=session_service,
+                    decision_store=decision_store,
                 )
                 sessions.append(bundle.session)
                 progresses.append(bundle.progress)
@@ -1112,6 +1196,7 @@ def build_session_directory_bundle(
                     approval_store=approval_store,
                     freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
                     session_service=session_service,
+                    decision_store=decision_store,
                 )
                 for record in persisted_records
             ]
@@ -1143,6 +1228,7 @@ def build_session_directory_bundle(
             task=task,
             approvals=project_approvals,
             session_service=session_service,
+            decision_store=decision_store,
         )
         sessions.append(bundle.session)
         progresses.append(bundle.progress)

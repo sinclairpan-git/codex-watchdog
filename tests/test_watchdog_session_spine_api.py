@@ -1095,6 +1095,47 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
         resume=None,
         resume_error="resume_call_failed",
     )
+    app.state.policy_decision_store.put(
+        _decision_record(project_id="repo-b", session_id="session:repo-b").model_copy(
+            update={
+                "created_at": "2026-04-07T00:05:00Z",
+                "evidence": {
+                    "facts": [
+                        {
+                            "fact_id": "fact-1",
+                            "fact_code": "approval_pending",
+                            "fact_kind": "blocker",
+                            "severity": "warning",
+                            "summary": "approval pending",
+                            "detail": "approval pending",
+                            "source": "watchdog",
+                            "observed_at": "2026-04-07T00:05:00Z",
+                            "related_ids": {},
+                        }
+                    ],
+                    "matched_policy_rules": ["registered_action"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": None,
+                    },
+                    "decision_trace": {
+                        "trace_id": "trace:repo-b-provider-invalid",
+                        "provider": "openai-compatible",
+                        "model": "gpt-4.1-mini",
+                        "prompt_schema_ref": "prompt:decision-v2",
+                        "output_schema_ref": "schema:decision-trace-v1",
+                        "provider_output_schema_ref": "schema:provider-decision-v2",
+                        "degrade_reason": "provider_output_invalid",
+                        "goal_contract_version": "goal-v1",
+                        "policy_ruleset_hash": "policy-hash-v1",
+                        "memory_packet_input_ids": [],
+                        "memory_packet_input_hashes": [],
+                    },
+                },
+            }
+        )
+    )
     c = TestClient(app)
 
     response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
@@ -1117,13 +1158,17 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
     assert data["progresses"][1]["recovery_outcome"] == "new_child_session"
     assert data["progresses"][1]["recovery_status"] == "completed"
     assert data["progresses"][1]["recovery_child_session_id"] == "session:repo-b:child-v1"
+    assert data["progresses"][1]["decision_trace_ref"] == "trace:repo-b-provider-invalid"
+    assert data["progresses"][1]["decision_degrade_reason"] == "provider_output_invalid"
+    assert data["progresses"][1]["provider_output_schema_ref"] == "schema:provider-decision-v2"
     assert data["progresses"][2]["recovery_outcome"] == "resume_failed"
     assert data["progresses"][2]["recovery_status"] == "failed_retryable"
     assert data["progresses"][2]["recovery_child_session_id"] is None
     assert data["message"] == (
         "多项目进展（3）\n"
         "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
-        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1\n"
+        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+        " | 决策=provider降级(schema:provider-decision-v2)\n"
         "- repo-c | editing_source | resuming after overflow | 上下文=high | 恢复=恢复失败(failed_retryable)"
     )
 

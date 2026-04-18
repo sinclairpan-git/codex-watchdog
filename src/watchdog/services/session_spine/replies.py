@@ -40,6 +40,22 @@ def _render_recovery_summary(progress) -> str | None:
     return None
 
 
+def _render_decision_summary(progress) -> str | None:
+    reason = str(progress.decision_degrade_reason or "").strip()
+    schema_ref = str(progress.provider_output_schema_ref or "").strip()
+    if reason == "provider_output_invalid":
+        if schema_ref:
+            return f"provider降级({schema_ref})"
+        return "provider降级"
+    if reason and schema_ref:
+        return f"{reason}({schema_ref})"
+    if reason:
+        return reason
+    if schema_ref:
+        return schema_ref
+    return None
+
+
 def _build_session_directory_message(bundle: SessionDirectoryReadBundle) -> str:
     count = len(bundle.progresses) if bundle.progresses else len(bundle.sessions)
     lines = [f"多项目进展（{count}）"]
@@ -52,6 +68,9 @@ def _build_session_directory_message(bundle: SessionDirectoryReadBundle) -> str:
             recovery_summary = _render_recovery_summary(progress)
             if recovery_summary:
                 line = f"{line} | 恢复={recovery_summary}"
+            decision_summary = _render_decision_summary(progress)
+            if decision_summary:
+                line = f"{line} | 决策={decision_summary}"
             lines.append(line)
         return "\n".join(lines)
     for session in bundle.sessions:

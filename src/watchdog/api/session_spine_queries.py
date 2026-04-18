@@ -55,6 +55,10 @@ def get_canonical_approval_store(request: Request) -> Any:
     return request.app.state.canonical_approval_store
 
 
+def get_decision_store(request: Request) -> Any:
+    return request.app.state.policy_decision_store
+
+
 def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
 
@@ -123,6 +127,7 @@ def list_sessions(
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -132,6 +137,7 @@ def list_sessions(
             session_service=session_service,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
@@ -153,6 +159,7 @@ def get_session_by_native_thread(
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -164,6 +171,7 @@ def get_session_by_native_thread(
             session_service=session_service,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -192,6 +200,7 @@ def get_session(
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -203,6 +212,7 @@ def get_session(
             session_service=session_service,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -225,6 +235,7 @@ def get_progress(
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -236,6 +247,7 @@ def get_progress(
             session_service=session_service,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -259,6 +271,7 @@ def get_session_facts(
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -270,6 +283,7 @@ def get_session_facts(
             session_service=session_service,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -319,6 +333,7 @@ def get_pending_approvals(
     client: AControlAgentClient = Depends(get_client),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -329,6 +344,7 @@ def get_pending_approvals(
             project_id,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -372,6 +388,7 @@ def get_stuck_explanation(
     client: AControlAgentClient = Depends(get_client),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -382,6 +399,7 @@ def get_stuck_explanation(
             project_id,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -403,6 +421,7 @@ def get_blocker_explanation(
     client: AControlAgentClient = Depends(get_client),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -413,6 +432,7 @@ def get_blocker_explanation(
             project_id,
             store=store,
             approval_store=approval_store,
+            decision_store=decision_store,
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:

@@ -95,6 +95,9 @@ class TaskProgressView(SessionSpineModel):
     recovery_status: str | None = None
     recovery_updated_at: str | None = None
     recovery_child_session_id: str | None = None
+    decision_trace_ref: str | None = None
+    decision_degrade_reason: str | None = None
+    provider_output_schema_ref: str | None = None
 
 
 class WorkspaceActivityView(SessionSpineModel):
