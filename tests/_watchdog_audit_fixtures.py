@@ -55,7 +55,11 @@ def _receipt_result(
     )
 
 
-def seed_audit_chain(data_dir: Path) -> dict[str, str]:
+def seed_audit_chain(
+    data_dir: Path,
+    *,
+    with_resident_expert_consultation: bool = False,
+) -> dict[str, str]:
     policy_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
     approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
     response_store = ApprovalResponseStore(data_dir / "approval_responses.json")
@@ -103,6 +107,36 @@ def seed_audit_chain(data_dir: Path) -> dict[str, str]:
                 "action_ref": "execute_recovery",
                 "approval_id": "appr_001",
             },
+            **(
+                {
+                    "resident_expert_consultation": {
+                        "consultation_ref": "decision:forensic-1",
+                        "consulted_at": "2026-04-07T00:00:00Z",
+                        "coverage_status": "degraded",
+                        "degraded_expert_ids": ["hermes-agent-expert"],
+                        "experts": [
+                            {
+                                "expert_id": "managed-agent-expert",
+                                "status": "available",
+                                "runtime_handle": "agent:managed:1",
+                                "last_seen_at": "2026-04-06T23:59:30Z",
+                                "last_consulted_at": "2026-04-07T00:00:00Z",
+                                "last_consultation_ref": "decision:forensic-1",
+                            },
+                            {
+                                "expert_id": "hermes-agent-expert",
+                                "status": "stale",
+                                "runtime_handle": "agent:hermes:1",
+                                "last_seen_at": "2026-04-06T23:55:00Z",
+                                "last_consulted_at": "2026-04-07T00:00:00Z",
+                                "last_consultation_ref": "decision:forensic-1",
+                            },
+                        ],
+                    }
+                }
+                if with_resident_expert_consultation
+                else {}
+            ),
         },
     )
     policy_store.put(decision)
