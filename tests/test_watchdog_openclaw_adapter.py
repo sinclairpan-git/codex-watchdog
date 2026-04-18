@@ -698,10 +698,126 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
     assert reply.progresses[1].recovery_outcome == "new_child_session"
     assert reply.progresses[1].recovery_child_session_id == "session:repo-b:child-v1"
     assert reply.message == (
-        "多项目进展（2）\n"
+        "多项目进展（2） | 先处理=repo-b:待审批\n"
         "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
         "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
         " | 下一步=审批列表、回复同意/拒绝、卡在哪里"
+    )
+
+
+def test_adapter_list_sessions_prioritizes_recovery_failures_before_approval_and_provider_degrade(
+    tmp_path: Path,
+) -> None:
+    session_service = SessionService.from_data_dir(tmp_path)
+    session_service.record_recovery_execution(
+        project_id="repo-c",
+        parent_session_id="session:repo-c",
+        parent_native_thread_id="thr_native_3",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-c.handoff.md",
+            "summary": "handoff",
+        },
+        resume_error="resume timeout",
+    )
+    PolicyDecisionStore(tmp_path / "policy_decisions.json").put(
+        _provider_invalid_decision_record(
+            project_id="repo-a",
+            session_id="session:repo-a",
+            native_thread_id="thr_native_1",
+        )
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "project_id": "repo-c",
+                "thread_id": "thr_native_3",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "retrying recovery",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:22:00Z",
+            },
+            {
+                "project_id": "repo-d",
+                "thread_id": "thr_native_4",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:23:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.message.startswith(
+        "多项目进展（4） | 先处理=repo-c:恢复失败、repo-b:待审批、repo-a:provider降级\n"
     )
 
 

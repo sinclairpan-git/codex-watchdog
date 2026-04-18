@@ -68,8 +68,53 @@ def _with_action_hint(reply: ReplyModel, *, available_intents: list[str]) -> Rep
     return reply.model_copy(update={"message": f"{reply.message} | 下一步={hint}"})
 
 
+def _render_directory_priority_summary(bundle: SessionDirectoryReadBundle) -> str | None:
+    session_by_project = {session.project_id: session for session in bundle.sessions}
+    ranked_projects: list[tuple[int, int, str, str]] = []
+
+    for index, progress in enumerate(bundle.progresses):
+        session = session_by_project.get(progress.project_id)
+        if session is None:
+            continue
+
+        attention_state = str(session.attention_state or "").strip()
+        recovery_outcome = str(progress.recovery_outcome or "").strip()
+        recovery_status = str(progress.recovery_status or "").strip()
+        decision_degrade_reason = str(progress.decision_degrade_reason or "").strip()
+
+        reason: tuple[int, str] | None = None
+        if attention_state == "unreachable":
+            reason = (0, "链路不可用")
+        elif recovery_outcome == "resume_failed" or recovery_status in {
+            "failed_retryable",
+            "failed_manual",
+        }:
+            reason = (1, "恢复失败")
+        elif attention_state == "critical":
+            reason = (2, "卡住")
+        elif session.pending_approval_count > 0 or attention_state == "needs_human":
+            reason = (3, "待审批")
+        elif decision_degrade_reason == "provider_output_invalid":
+            reason = (4, "provider降级")
+        elif decision_degrade_reason:
+            reason = (4, "决策降级")
+
+        if reason is None:
+            continue
+        ranked_projects.append((reason[0], index, progress.project_id, reason[1]))
+
+    if not ranked_projects:
+        return None
+
+    ranked_projects.sort(key=lambda item: (item[0], item[1]))
+    return "、".join(
+        f"{project_id}:{reason}"
+        for _, _, project_id, reason in ranked_projects[:3]
+    )
+
+
 def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
-    if not reply.message or " | 下一步=" in reply.message:
+    if not reply.message:
         return reply
 
     session_intents = {
@@ -79,7 +124,12 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
     if not lines:
         return reply
 
-    enriched_lines = [lines[0]]
+    header_line = lines[0]
+    priority_summary = _render_directory_priority_summary(bundle)
+    if priority_summary and " | 先处理=" not in header_line:
+        header_line = f"{header_line} | 先处理={priority_summary}"
+
+    enriched_lines = [header_line]
     progress_lines = lines[1:]
     for index, line in enumerate(progress_lines):
         if index >= len(bundle.progresses):

@@ -492,7 +492,7 @@ def test_feishu_ingress_project_directory_surfaces_next_steps_for_pending_approv
     assert response.status_code == 200
     assert response.json()["accepted"] is True
     assert response.json()["data"]["message"] == (
-        "多项目进展（2）\n"
+        "多项目进展（2） | 先处理=repo-b:待审批\n"
         "- repo-a | planning | waiting | 上下文=low\n"
         "- repo-b | approval | waiting for approval | 上下文=low"
         " | 下一步=审批列表、回复同意/拒绝、卡在哪里"
