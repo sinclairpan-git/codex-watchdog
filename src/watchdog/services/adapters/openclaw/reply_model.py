@@ -68,6 +68,34 @@ def _with_action_hint(reply: ReplyModel, *, available_intents: list[str]) -> Rep
     return reply.model_copy(update={"message": f"{reply.message} | 下一步={hint}"})
 
 
+def _directory_priority_reason(
+    *,
+    session,
+    progress,
+) -> tuple[int, str] | None:
+    attention_state = str(session.attention_state or "").strip()
+    recovery_outcome = str(progress.recovery_outcome or "").strip()
+    recovery_status = str(progress.recovery_status or "").strip()
+    decision_degrade_reason = str(progress.decision_degrade_reason or "").strip()
+
+    if attention_state == "unreachable":
+        return (0, "链路不可用")
+    if recovery_outcome == "resume_failed" or recovery_status in {
+        "failed_retryable",
+        "failed_manual",
+    }:
+        return (1, "恢复失败")
+    if attention_state == "critical":
+        return (2, "卡住")
+    if session.pending_approval_count > 0 or attention_state == "needs_human":
+        return (3, "待审批")
+    if decision_degrade_reason == "provider_output_invalid":
+        return (4, "provider降级")
+    if decision_degrade_reason:
+        return (4, "决策降级")
+    return None
+
+
 def _render_directory_priority_summary(bundle: SessionDirectoryReadBundle) -> str | None:
     session_by_project = {session.project_id: session for session in bundle.sessions}
     ranked_projects: list[tuple[int, int, str, str]] = []
@@ -77,28 +105,7 @@ def _render_directory_priority_summary(bundle: SessionDirectoryReadBundle) -> st
         if session is None:
             continue
 
-        attention_state = str(session.attention_state or "").strip()
-        recovery_outcome = str(progress.recovery_outcome or "").strip()
-        recovery_status = str(progress.recovery_status or "").strip()
-        decision_degrade_reason = str(progress.decision_degrade_reason or "").strip()
-
-        reason: tuple[int, str] | None = None
-        if attention_state == "unreachable":
-            reason = (0, "链路不可用")
-        elif recovery_outcome == "resume_failed" or recovery_status in {
-            "failed_retryable",
-            "failed_manual",
-        }:
-            reason = (1, "恢复失败")
-        elif attention_state == "critical":
-            reason = (2, "卡住")
-        elif session.pending_approval_count > 0 or attention_state == "needs_human":
-            reason = (3, "待审批")
-        elif decision_degrade_reason == "provider_output_invalid":
-            reason = (4, "provider降级")
-        elif decision_degrade_reason:
-            reason = (4, "决策降级")
-
+        reason = _directory_priority_reason(session=session, progress=progress)
         if reason is None:
             continue
         ranked_projects.append((reason[0], index, progress.project_id, reason[1]))
@@ -142,6 +149,7 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
     if not reply.message:
         return reply
 
+    session_by_project = {session.project_id: session for session in bundle.sessions}
     session_intents = {
         session.project_id: session.available_intents for session in bundle.sessions
     }
@@ -164,6 +172,11 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
             enriched_lines.append(line)
             continue
         progress = bundle.progresses[index]
+        session = session_by_project.get(progress.project_id)
+        if session is not None:
+            focus_reason = _directory_priority_reason(session=session, progress=progress)
+            if focus_reason and " | 关注=" not in line:
+                line = f"{line} | 关注={focus_reason[1]}"
         hint = _render_action_hint(
             intent_code=reply.intent_code,
             available_intents=session_intents.get(progress.project_id, []),
