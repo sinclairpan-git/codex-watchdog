@@ -57,6 +57,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         ),
         brain_provider_model=_optional_env("WATCHDOG_BRAIN_PROVIDER_MODEL"),
+        brain_provider_profiles_json=_optional_env("WATCHDOG_BRAIN_PROVIDER_PROFILES_JSON"),
         base_url=os.getenv("WATCHDOG_BASE_URL", "").strip(),
         api_token=os.getenv("WATCHDOG_API_TOKEN", "").strip(),
         data_dir=os.getenv("WATCHDOG_DATA_DIR", ".data/watchdog").strip(),

@@ -1,9 +1,29 @@
-from typing import Literal
+import json
+from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from watchdog.secrets import resolve_secret_value
 from watchdog.services.memory_hub.contracts import MemoryPreviewContractName
+
+
+def _normalize_optional_text(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+class BrainProviderProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    provider: str = Field(default="openai-compatible", min_length=1)
+    base_url: str | None = None
+    api_key: str | None = None
+    api_key_keychain_service: str | None = None
+    api_key_keychain_account: str | None = None
+    model: str | None = None
+    http_timeout_s: float | None = None
 
 
 class Settings(BaseSettings):
@@ -65,12 +85,86 @@ class Settings(BaseSettings):
     brain_provider_api_key_keychain_account: str | None = None
     brain_provider_model: str | None = None
     brain_provider_http_timeout_s: float = 30.0
+    brain_provider_profiles_json: str | None = None
 
     def model_post_init(self, __context: object) -> None:
         self.brain_provider_api_key = resolve_secret_value(
             explicit_value=self.brain_provider_api_key,
             keychain_service=self.brain_provider_api_key_keychain_service,
             keychain_account=self.brain_provider_api_key_keychain_account,
+        )
+
+    def brain_provider_profiles(self) -> dict[str, BrainProviderProfile]:
+        raw = _normalize_optional_text(self.brain_provider_profiles_json)
+        if raw is None:
+            return {}
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("brain_provider_profiles_json must be a JSON object")
+
+        profiles: dict[str, BrainProviderProfile] = {}
+        for profile_name, value in payload.items():
+            normalized_name = _normalize_optional_text(profile_name)
+            if normalized_name is None:
+                raise ValueError("brain_provider_profiles_json contains an empty provider name")
+            if not isinstance(value, dict):
+                raise ValueError("brain_provider_profiles_json entries must be JSON objects")
+            profiles[normalized_name] = self._brain_provider_profile_from_payload(
+                normalized_name,
+                value,
+            )
+        return profiles
+
+    def active_brain_provider_profile(self) -> BrainProviderProfile | None:
+        active_name = _normalize_optional_text(self.brain_provider_name)
+        if active_name in (None, "resident_orchestrator"):
+            return None
+
+        profiles = self.brain_provider_profiles()
+        if active_name in profiles:
+            return profiles[active_name]
+        if active_name != "openai-compatible":
+            return None
+
+        return BrainProviderProfile(
+            name="openai-compatible",
+            provider="openai-compatible",
+            base_url=_normalize_optional_text(self.brain_provider_base_url),
+            api_key=_normalize_optional_text(self.brain_provider_api_key),
+            api_key_keychain_service=_normalize_optional_text(
+                self.brain_provider_api_key_keychain_service
+            ),
+            api_key_keychain_account=_normalize_optional_text(
+                self.brain_provider_api_key_keychain_account
+            ),
+            model=_normalize_optional_text(self.brain_provider_model),
+            http_timeout_s=float(self.brain_provider_http_timeout_s),
+        )
+
+    def _brain_provider_profile_from_payload(
+        self,
+        name: str,
+        payload: dict[str, Any],
+    ) -> BrainProviderProfile:
+        explicit_api_key = _normalize_optional_text(payload.get("api_key"))
+        keychain_service = _normalize_optional_text(payload.get("api_key_keychain_service"))
+        keychain_account = _normalize_optional_text(payload.get("api_key_keychain_account"))
+        api_key = resolve_secret_value(
+            explicit_value=explicit_api_key,
+            keychain_service=keychain_service,
+            keychain_account=keychain_account,
+        )
+        timeout_value = payload.get("http_timeout_s")
+        http_timeout_s = float(timeout_value) if timeout_value is not None else None
+        return BrainProviderProfile(
+            name=name,
+            provider=_normalize_optional_text(payload.get("provider")) or "openai-compatible",
+            base_url=_normalize_optional_text(payload.get("base_url")),
+            api_key=_normalize_optional_text(api_key),
+            api_key_keychain_service=keychain_service,
+            api_key_keychain_account=keychain_account,
+            model=_normalize_optional_text(payload.get("model")),
+            http_timeout_s=http_timeout_s,
         )
 
     def build_memory_preview_contract_overrides(self) -> dict[MemoryPreviewContractName, bool]:

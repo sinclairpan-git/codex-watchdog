@@ -51,6 +51,7 @@ class ExternalIntegrationSmokeConfig:
     brain_provider_base_url: str | None = None
     brain_provider_api_key: str | None = None
     brain_provider_model: str | None = None
+    brain_provider_profiles_json: str | None = None
     memory_preview_ai_autosdlc_cursor_enabled: bool = False
 
 
@@ -657,20 +658,32 @@ def _run_provider_check(
     failure_transport: httpx.BaseTransport | None,
     live_transport: httpx.BaseTransport | None,
 ) -> SmokeCheckResult:
-    if config.brain_provider_name != "openai-compatible":
+    provider_settings = _provider_settings(config)
+    active_profile = provider_settings.active_brain_provider_profile()
+    if active_profile is None:
         return SmokeCheckResult(
             check_name="provider",
             status="skipped",
             reason="feature_not_enabled",
             evidence={"provider_name": config.brain_provider_name},
         )
+    if active_profile.provider != "openai-compatible":
+        return SmokeCheckResult(
+            check_name="provider",
+            status="skipped",
+            reason="unsupported_provider_family",
+            evidence={
+                "provider_name": active_profile.name,
+                "provider_family": active_profile.provider,
+            },
+        )
 
     missing_fields = [
         field_name
         for field_name, value in (
-            ("brain_provider_base_url", config.brain_provider_base_url),
-            ("brain_provider_api_key", config.brain_provider_api_key),
-            ("brain_provider_model", config.brain_provider_model),
+            ("brain_provider_base_url", active_profile.base_url),
+            ("brain_provider_api_key", active_profile.api_key),
+            ("brain_provider_model", active_profile.model),
         )
         if not str(value or "").strip()
     ]
@@ -695,12 +708,12 @@ def _run_provider_check(
         config=config,
         transport=failure_transport or _default_provider_failure_transport(),
     )
-    if success_intent.provider != "openai-compatible":
+    if success_intent.provider != active_profile.name:
         return SmokeCheckResult(
             check_name="provider",
             status="failed",
             reason="contract_mismatch",
-            evidence={"expected_provider": "openai-compatible", "actual_provider": success_intent.provider},
+            evidence={"expected_provider": active_profile.name, "actual_provider": success_intent.provider},
         )
     if failure_intent.provider != "resident_orchestrator":
         return SmokeCheckResult(
@@ -718,12 +731,13 @@ def _run_provider_check(
         reason="ok",
         evidence={
             "provider_name": success_intent.provider,
+            "provider_family": active_profile.provider,
             "provider_intent": success_intent.intent,
             "fallback_provider_name": failure_intent.provider,
             "probe_mode": "live" if config.provider_live_mode else "synthetic",
-            "model": config.brain_provider_model,
-            "base_url": config.brain_provider_base_url,
-            "api_key": config.brain_provider_api_key,
+            "model": active_profile.model,
+            "base_url": active_profile.base_url,
+            "api_key": active_profile.api_key,
         },
     )
 
@@ -807,19 +821,26 @@ def _probe_provider_intent(
     data_dir = Path(config.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     service = BrainDecisionService(
-        settings=Settings(
-            data_dir=str(data_dir),
-            brain_provider_name=config.brain_provider_name,
-            brain_provider_base_url=config.brain_provider_base_url,
-            brain_provider_api_key=config.brain_provider_api_key,
-            brain_provider_model=config.brain_provider_model,
-            http_timeout_s=config.http_timeout_s,
-            brain_provider_http_timeout_s=config.provider_http_timeout_s,
-        ),
+        settings=_provider_settings(config),
         session_service=SessionService(SessionServiceStore(data_dir / "session_service_smoke.json")),
         provider_transport=transport,
     )
     return service.evaluate_session(record=_synthetic_record())
+
+
+def _provider_settings(config: ExternalIntegrationSmokeConfig) -> Settings:
+    data_dir = Path(config.data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return Settings(
+        data_dir=str(data_dir),
+        brain_provider_name=config.brain_provider_name,
+        brain_provider_base_url=config.brain_provider_base_url,
+        brain_provider_api_key=config.brain_provider_api_key,
+        brain_provider_model=config.brain_provider_model,
+        brain_provider_profiles_json=config.brain_provider_profiles_json,
+        http_timeout_s=config.http_timeout_s,
+        brain_provider_http_timeout_s=config.provider_http_timeout_s,
+    )
 
 
 def _synthetic_record() -> PersistedSessionRecord:

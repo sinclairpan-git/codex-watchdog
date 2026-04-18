@@ -122,10 +122,14 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
-def _provider_success_transport() -> httpx.MockTransport:
+def _provider_success_transport(
+    *,
+    base_url: str = "https://provider.example/v1",
+    api_key: str = "sk-provider",
+) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://provider.example/v1/chat/completions"
-        assert request.headers["Authorization"] == "Bearer sk-provider"
+        assert str(request.url) == f"{base_url}/chat/completions"
+        assert request.headers["Authorization"] == f"Bearer {api_key}"
         return httpx.Response(
             200,
             json={
@@ -484,6 +488,37 @@ def test_provider_check_proves_provider_and_fallback_paths(tmp_path: Path) -> No
     assert results[0].evidence["probe_mode"] == "synthetic"
 
 
+def test_provider_check_supports_named_provider_profiles(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        brain_provider_name="deepseek-prod",
+        brain_provider_profiles_json=(
+            '{"deepseek-prod": {"provider": "openai-compatible", '
+            '"base_url": "https://deepseek.example/v1", '
+            '"api_key": "sk-deepseek", '
+            '"model": "deepseek-chat"}}'
+        ),
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("provider",),
+        provider_success_transport=_provider_success_transport(
+            base_url="https://deepseek.example/v1",
+            api_key="sk-deepseek",
+        ),
+        provider_failure_transport=_provider_failure_transport(),
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "passed"
+    assert results[0].evidence["provider_name"] == "deepseek-prod"
+    assert results[0].evidence["provider_family"] == "openai-compatible"
+    assert results[0].evidence["model"] == "deepseek-chat"
+
+
 def test_provider_check_can_probe_live_provider_when_enabled(tmp_path: Path) -> None:
     config = ExternalIntegrationSmokeConfig(
         base_url="https://watchdog.example",
@@ -726,3 +761,35 @@ def test_cli_reads_provider_live_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["targets"] == ("provider",)
     assert captured["config"].provider_live_mode is True
     assert captured["config"].provider_http_timeout_s == 42.0
+
+
+def test_cli_reads_named_provider_profiles_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_script_module()
+    captured: dict[str, object] = {}
+
+    def fake_run_smoke_checks(*, config, targets, **_: object):
+        captured["config"] = config
+        captured["targets"] = targets
+        return []
+
+    monkeypatch.setenv("WATCHDOG_BASE_URL", "https://watchdog.example")
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DATA_DIR", "/tmp/watchdog-smoke")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_NAME", "deepseek-prod")
+    monkeypatch.setenv(
+        "WATCHDOG_BRAIN_PROVIDER_PROFILES_JSON",
+        (
+            '{"deepseek-prod": {"provider": "openai-compatible", '
+            '"base_url": "https://deepseek.example/v1", '
+            '"api_key": "sk-deepseek", '
+            '"model": "deepseek-chat"}}'
+        ),
+    )
+    monkeypatch.setattr(module, "run_smoke_checks", fake_run_smoke_checks)
+
+    exit_code = module.main(["--target", "provider"])
+
+    assert exit_code == 0
+    assert captured["targets"] == ("provider",)
+    assert captured["config"].brain_provider_name == "deepseek-prod"
+    assert captured["config"].brain_provider_profiles_json is not None

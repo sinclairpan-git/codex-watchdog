@@ -8,7 +8,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from watchdog.services.brain.models import DecisionIntent
-from watchdog.settings import Settings
+from watchdog.settings import BrainProviderProfile, Settings
 
 
 class _ProviderRuntimeModel(BaseModel):
@@ -30,12 +30,20 @@ class OpenAICompatibleBrainProvider:
     settings: Settings
     transport: httpx.BaseTransport | None = None
 
+    def _active_profile(self) -> BrainProviderProfile | None:
+        profile = self.settings.active_brain_provider_profile()
+        if profile is None or profile.provider != "openai-compatible":
+            return None
+        return profile
+
     def configured(self) -> bool:
+        profile = self._active_profile()
+        if profile is None:
+            return False
         return (
-            self.settings.brain_provider_name == "openai-compatible"
-            and bool(str(self.settings.brain_provider_base_url or "").strip())
-            and bool(str(self.settings.brain_provider_api_key or "").strip())
-            and bool(str(self.settings.brain_provider_model or "").strip())
+            bool(str(profile.base_url or "").strip())
+            and bool(str(profile.api_key or "").strip())
+            and bool(str(profile.model or "").strip())
         )
 
     def capability_matrix(self) -> ProviderCapabilityMatrix:
@@ -56,13 +64,14 @@ class OpenAICompatibleBrainProvider:
         session_truth: dict[str, object],
         memory_advisory_context: dict[str, object] | None,
     ) -> DecisionIntent:
-        if not self.configured():
+        profile = self._active_profile()
+        if profile is None or not self.configured():
             raise RuntimeError("openai-compatible provider is not configured")
 
-        base_url = str(self.settings.brain_provider_base_url).rstrip("/")
+        base_url = str(profile.base_url).rstrip("/")
         url = f"{base_url}/chat/completions"
         body = {
-            "model": self.settings.brain_provider_model,
+            "model": profile.model,
             "temperature": 0,
             "messages": [
                 {
@@ -95,11 +104,15 @@ class OpenAICompatibleBrainProvider:
             ],
         }
         headers = {
-            "Authorization": f"Bearer {self.settings.brain_provider_api_key}",
+            "Authorization": f"Bearer {profile.api_key}",
             "Content-Type": "application/json",
         }
         with httpx.Client(
-            timeout=self.settings.brain_provider_http_timeout_s,
+            timeout=(
+                profile.http_timeout_s
+                if profile.http_timeout_s is not None
+                else self.settings.brain_provider_http_timeout_s
+            ),
             transport=self.transport,
             trust_env=False,
         ) as client:
@@ -121,8 +134,8 @@ class OpenAICompatibleBrainProvider:
             goal_coverage=str(structured.get("goal_coverage") or "").strip() or None,
             remaining_work_hypothesis=remaining_work,
             evidence_codes=self._coerce_string_list(structured.get("evidence_codes")),
-            provider="openai-compatible",
-            model=str(self.settings.brain_provider_model or "openai-compatible-model"),
+            provider=profile.name,
+            model=str(profile.model or "openai-compatible-model"),
             prompt_schema_ref="prompt:brain-decision-v1",
             output_schema_ref="schema:provider-decision-v1",
             provider_request_id=request_id,

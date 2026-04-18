@@ -110,6 +110,60 @@ def test_brain_service_uses_openai_compatible_provider_when_configured(tmp_path:
     assert intent.model == "minimax-m2.7"
 
 
+def test_brain_service_uses_named_provider_profile_when_selected(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://deepseek.example/v1/chat/completions"
+        assert request.headers["Authorization"] == "Bearer sk-deepseek"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["model"] == "deepseek-chat"
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-deepseek-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "session_decision": "active",
+                                    "execution_advice": "auto_execute",
+                                    "approval_advice": "none",
+                                    "risk_band": "low",
+                                    "goal_coverage": "partial",
+                                    "remaining_work_hypothesis": ["continue implementation"],
+                                    "confidence": 0.91,
+                                    "reason_short": "current work can continue",
+                                    "evidence_codes": ["active_goal_present"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="deepseek-prod",
+            brain_provider_profiles_json=(
+                '{"deepseek-prod": {"provider": "openai-compatible", '
+                '"base_url": "https://deepseek.example/v1", '
+                '"api_key": "sk-deepseek", '
+                '"model": "deepseek-chat"}}'
+            ),
+        ),
+        session_service=_session_service(tmp_path),
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=_record())
+
+    assert intent.intent == "propose_execute"
+    assert intent.provider == "deepseek-prod"
+    assert intent.model == "deepseek-chat"
+
+
 def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_path: Path) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("provider timeout")

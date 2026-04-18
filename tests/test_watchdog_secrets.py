@@ -59,3 +59,34 @@ def test_settings_resolve_brain_provider_api_key_from_keychain(monkeypatch) -> N
     )
 
     assert settings.brain_provider_api_key == "sk-keychain"
+
+
+def test_settings_resolve_named_brain_provider_profile_from_json_and_keychain(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "watchdog.settings.resolve_secret_value",
+        lambda **kwargs: (
+            kwargs["explicit_value"]
+            if kwargs["explicit_value"] is not None
+            else "sk-profile-keychain"
+        ),
+    )
+
+    settings = Settings(
+        brain_provider_name="deepseek-prod",
+        brain_provider_profiles_json=(
+            '{"deepseek-prod": {"provider": "openai-compatible", '
+            '"base_url": "https://deepseek.example/v1", '
+            '"model": "deepseek-chat", '
+            '"api_key_keychain_service": "watchdog.brain-provider", '
+            '"api_key_keychain_account": "deepseek-prod"}}'
+        ),
+    )
+
+    profile = settings.active_brain_provider_profile()
+
+    assert profile is not None
+    assert profile.name == "deepseek-prod"
+    assert profile.provider == "openai-compatible"
+    assert profile.base_url == "https://deepseek.example/v1"
+    assert profile.model == "deepseek-chat"
+    assert profile.api_key == "sk-profile-keychain"
