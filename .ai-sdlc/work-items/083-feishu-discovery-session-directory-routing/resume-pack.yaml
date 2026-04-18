@@ -1,0 +1,21 @@
+work_item:
+  id: 083-feishu-discovery-session-directory-routing
+  spec_dir: specs/083-feishu-discovery-session-directory-routing
+  branch: codex/083-feishu-discovery-session-directory-routing
+current_stage: completed
+current_batch: 4
+last_committed_task: ''
+current_branch: codex/083-feishu-discovery-session-directory-routing
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: work item closed; if discovery regresses again, first verify the local launchd watchdog process has been restarted onto the current branch before opening a new residual
+artifacts:
+  - specs/083-feishu-discovery-session-directory-routing/spec.md
+  - specs/083-feishu-discovery-session-directory-routing/plan.md
+  - specs/083-feishu-discovery-session-directory-routing/tasks.md
+  - specs/083-feishu-discovery-session-directory-routing/task-execution-log.md
+  - .ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/execution-plan.yaml
+  - .ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/runtime.yaml
+  - .ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/latest-summary.md
+timestamp: '2026-04-19T00:40:00Z'

@@ -34,7 +34,7 @@ class ExternalIntegrationSmokeConfig:
     provider_http_timeout_s: float = 30.0
     provider_live_mode: bool = False
     feishu_control_http_timeout_s: float = 15.0
-    feishu_discovery_http_timeout_s: float = 15.0
+    feishu_discovery_http_timeout_s: float = 30.0
     feishu_event_ingress_mode: str = "callback"
     feishu_callback_ingress_mode: str = "callback"
     feishu_app_id: str | None = None
@@ -44,7 +44,7 @@ class ExternalIntegrationSmokeConfig:
     feishu_control_goal_message: str | None = None
     feishu_control_expected_session_id: str | None = None
     feishu_control_actor_open_id: str = "ou_watchdog_smoke"
-    feishu_discovery_command_text: str = "所有项目进展"
+    feishu_discovery_command_text: str = "项目列表"
     feishu_discovery_expected_project_ids: tuple[str, ...] = ()
     feishu_discovery_actor_open_id: str = "ou_watchdog_smoke"
     brain_provider_name: str = "resident_orchestrator"
@@ -396,8 +396,12 @@ def _run_feishu_control_check(
         return SmokeCheckResult(
             check_name="feishu-control",
             status="skipped",
-            reason="feature_not_configured",
-            evidence={"missing_fields": missing_fields},
+            reason="operator_confirmation_required",
+            evidence={
+                "missing_fields": missing_fields,
+                "required_action": "confirm_mutating_live_target",
+                "mutation_path": "goal_contract_bootstrap",
+            },
         )
     assert client is not None
     body = _feishu_control_body(config)
@@ -523,7 +527,7 @@ def _run_feishu_discovery_check(
             evidence={"missing_fields": ["feishu_discovery_expected_project_ids"]},
         )
     assert client is not None
-    command_text = str(config.feishu_discovery_command_text or "").strip() or "所有项目进展"
+    command_text = str(config.feishu_discovery_command_text or "").strip() or "项目列表"
     body = _feishu_event_body(
         token=config.feishu_verification_token,
         text=command_text,
@@ -989,6 +993,8 @@ def _overall_status(results: Sequence[SmokeCheckResult]) -> SmokeStatus:
         return "failed"
     if results and all(result.status == "skipped" for result in results):
         return "skipped"
+    if any(result.status == "skipped" for result in results):
+        return "failed"
     return "passed"
 
 

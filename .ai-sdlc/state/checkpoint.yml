@@ -1,12 +1,12 @@
-pipeline_started_at: '2026-04-18T04:25:24Z'
-pipeline_last_updated: '2026-04-18T04:25:24Z'
-current_stage: execute
+pipeline_started_at: '2026-04-18T14:05:00Z'
+pipeline_last_updated: '2026-04-18T17:34:06Z'
+current_stage: completed
 feature:
-  id: 081-autonomous-next-step-recovery
-  spec_dir: specs/081-autonomous-next-step-recovery
-  design_branch: design/081-autonomous-next-step-recovery
-  feature_branch: feature/081-autonomous-next-step-recovery
-  current_branch: codex/081-autonomous-next-step-recovery
+  id: 082-external-integration-live-runtime-acceptance-closeout
+  spec_dir: specs/082-external-integration-live-runtime-acceptance-closeout
+  design_branch: design/082-external-integration-live-runtime-acceptance-closeout
+  feature_branch: feature/082-external-integration-live-runtime-acceptance-closeout
+  current_branch: codex/083-feishu-discovery-session-directory-routing
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
@@ -34,8 +34,15 @@ completed_stages:
     completed_at: '2026-04-18T04:25:24Z'
     artifacts:
       - tasks.md
-ai_decisions_count: 1
+  -
+    stage: execute
+    completed_at: '2026-04-18T17:34:06Z'
+    artifacts:
+      - task-execution-log.md
+      - latest-summary.md
+      - artifacts/watchdog-live-acceptance.md
+ai_decisions_count: 6
 execution_mode: auto
-linked_wi_id: 081-autonomous-next-step-recovery
+linked_wi_id: 082-external-integration-live-runtime-acceptance-closeout
 linked_plan_uri: null
-last_synced_at: '2026-04-18T04:25:24Z'
+last_synced_at: '2026-04-18T17:34:06Z'

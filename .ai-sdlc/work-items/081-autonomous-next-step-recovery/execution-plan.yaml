@@ -8,19 +8,19 @@ tasks:
   depends_on: []
 - task_id: T812
   title: 冻结 autonomous next-step 与 recovery auto-execute contract
-  status: in_progress
+  status: completed
   phase: 2
   depends_on:
   - T811
 - task_id: T813
   title: 冻结多项目 progress summary / Feishu delivery 聚合回归
-  status: pending
+  status: completed
   phase: 3
   depends_on:
   - T812
 - task_id: T814
   title: 完成 targeted verification 并准备后续 live runtime acceptance
-  status: pending
+  status: completed
   phase: 4
   depends_on:
   - T813
@@ -36,15 +36,21 @@ batches:
   phase: 2
   tasks:
   - T812
-  status: in_progress
+  status: completed
+  started_at: '2026-04-18T04:25:24Z'
+  completed_at: '2026-04-18T11:55:02Z'
 - batch_id: 3
   phase: 3
   tasks:
   - T813
-  status: pending
+  status: completed
+  started_at: '2026-04-18T11:55:02Z'
+  completed_at: '2026-04-18T11:55:02Z'
 - batch_id: 4
   phase: 4
   tasks:
   - T814
-  status: pending
-current_batch: 2
+  status: completed
+  started_at: '2026-04-18T11:55:02Z'
+  completed_at: '2026-04-18T11:55:02Z'
+current_batch: 4

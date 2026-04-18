@@ -1,69 +1,59 @@
-current_stage: execute
-current_batch: 2
+current_stage: completed
+current_batch: 4
 last_committed_task: ''
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/081-autonomous-next-step-recovery/spec.md
-  plan_path: specs/081-autonomous-next-step-recovery/plan.md
-  tasks_path: specs/081-autonomous-next-step-recovery/tasks.md
+  spec_path: specs/082-external-integration-live-runtime-acceptance-closeout/spec.md
+  plan_path: specs/082-external-integration-live-runtime-acceptance-closeout/plan.md
+  tasks_path: specs/082-external-integration-live-runtime-acceptance-closeout/tasks.md
   active_files:
-  - '`src/watchdog/services/brain/models.py`'
-  - '`src/watchdog/services/brain/provider_runtime.py`'
-  - '`src/watchdog/services/brain/service.py`'
-  - '`src/watchdog/services/delivery/envelopes.py`'
-  - '`src/watchdog/services/delivery/feishu_client.py`'
-  - '`src/watchdog/services/policy/decisions.py`'
-  - '`src/watchdog/services/policy/engine.py`'
-  - '`src/watchdog/services/session_spine/actions.py`'
-  - '`src/watchdog/services/session_spine/orchestrator.py`'
-  - '`tests/test_watchdog_brain_provider_runtime.py`'
-  - '`tests/test_watchdog_feishu_delivery.py`'
-  - '`tests/test_watchdog_policy_decisions.py`'
-  - '`tests/test_watchdog_policy_engine.py`'
-  - '`tests/test_watchdog_session_spine_api.py`'
-  - '`tests/test_watchdog_session_spine_runtime.py`'
-  - '`specs/081-autonomous-next-step-recovery/spec.md`'
-  - '`specs/081-autonomous-next-step-recovery/plan.md`'
-  - '`specs/081-autonomous-next-step-recovery/tasks.md`'
-  - '`specs/081-autonomous-next-step-recovery/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/runtime.yaml`'
-  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/resume-pack.yaml`'
-  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/latest-summary.md`'
+  - '`artifacts/watchdog-live-acceptance.md`'
+  - '`docs/architecture/long-running-residual-backlog-ledger.yaml`'
+  - '`docs/architecture/long-running-residual-backlog-status.md`'
+  - '`specs/082-external-integration-live-runtime-acceptance-closeout/spec.md`'
+  - '`specs/082-external-integration-live-runtime-acceptance-closeout/plan.md`'
+  - '`specs/082-external-integration-live-runtime-acceptance-closeout/tasks.md`'
+  - '`specs/082-external-integration-live-runtime-acceptance-closeout/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/runtime.yaml`'
+  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/latest-summary.md`'
   - '`.ai-sdlc/state/checkpoint.yml`'
   - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
   context_summary: '# Development Summary
 
 
-    Status: active
+    Status: completed
 
     Total Tasks: 4
 
-    Completed Tasks: 1
+    Completed Tasks: 4
 
     Halted Tasks: 0
 
     Total Batches: 4
 
-    Completed Batches: 1
+    Completed Batches: 4
 
     Last Committed Task: none
 
 
     ## Notes
 
-    - 提交 `794ebbd` 已把 autonomous next-step / context-critical recovery 的主补丁落到主仓，包括 `propose_recovery` 自动执行、`propose_execute` 与 `propose_recovery` 的 auto-execute 判定对齐，以及多项目 progress summary 的 Feishu 回归覆盖。
+    - 2026-04-19 已建立隔离 `feishu-control` live target，并把其 `thread_id` 锁定为 smoke 预期 session。
 
-    - `require_approval -> continue_session -> require_user_decision` 仍保留人工闸门；只有 brain 提出的 `propose_recovery -> execute_recovery` 会自动 handoff / resume。
+    - `health`、`feishu`、`provider`、`memory`、`feishu-control`、`feishu-discovery` 六项 target 全部通过，`artifacts/watchdog-live-acceptance.md` 已收敛为 `Overall Status: passed`。
 
-    - 当前 formal owner 已切到 `WI-081`，下一步是补齐针对 live runtime 与多项目投递链路的收口证据，而不是继续在 `WI-080` 上叠加功能。'
-current_branch: codex/081-autonomous-next-step-recovery
+    - `WI-082/T824` 已完成 formal closeout；当前仓库内不再存在 live smoke blocker。
+
+    - 最新文档契约已覆盖设计文档、README、getting-started 与 live acceptance，并锁定 `skipped` / `confirm_mutating_live_target` / `project_id + goal_message` 不可猜填，以及 `feishu-discovery` 的 `项目列表` -> `list_sessions/session_directory` 语义。'
+current_branch: codex/083-feishu-discovery-session-directory-routing
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-18T04:25:24Z'
+timestamp: '2026-04-18T17:34:06Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-18T04:25:24Z'
+checkpoint_last_updated: '2026-04-18T17:34:06Z'
 checkpoint_fingerprint: ''

@@ -8,6 +8,9 @@ IMPLEMENTATION_PLAN_DOC = Path("docs/plans/2026-04-10-long-running-autonomy-impl
 GETTING_STARTED_DOC = Path("docs/getting-started.zh-CN.md")
 README_DOC = Path("README.md")
 WATCHDOG_ENV_EXAMPLE = Path("config/examples/watchdog.env.example")
+EXTERNAL_INTEGRATION_SMOKE_DESIGN_DOC = Path(
+    "docs/architecture/external-integration-smoke-harness-design.md"
+)
 EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC = Path(
     "docs/operations/external-integration-live-acceptance.md"
 )
@@ -167,6 +170,35 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         ),
     ),
     DocContractCheck(
+        name="external_smoke_design_covers_feishu_control_guardrail",
+        path=EXTERNAL_INTEGRATION_SMOKE_DESIGN_DOC,
+        must_contain=(
+            "skipped",
+            "operator_confirmation_required",
+            "confirm_mutating_live_target",
+            "project_id + goal_message",
+            "脚本不得根据 discovery 返回的候选项目、样例 env、测试数据或仓库同名项目自动猜填。",
+        ),
+    ),
+    DocContractCheck(
+        name="external_smoke_design_covers_fail_closed_skip_semantics",
+        path=EXTERNAL_INTEGRATION_SMOKE_DESIGN_DOC,
+        must_contain=(
+            "只要某个被选择的 target 返回 `skipped`",
+            "fail-closed",
+        ),
+    ),
+    DocContractCheck(
+        name="external_smoke_design_covers_feishu_discovery_contract",
+        path=EXTERNAL_INTEGRATION_SMOKE_DESIGN_DOC,
+        must_contain=(
+            "`feishu-discovery`",
+            "`项目列表`",
+            "`data.reply_code == \"session_directory\"`",
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+        ),
+    ),
+    DocContractCheck(
         name="getting_started_covers_feishu_official_ingress",
         path=GETTING_STARTED_DOC,
         must_contain=(
@@ -220,6 +252,28 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         ),
     ),
     DocContractCheck(
+        name="getting_started_covers_feishu_control_operator_confirmation_guardrail",
+        path=GETTING_STARTED_DOC,
+        must_contain=(
+            "skipped",
+            "operator_confirmation_required",
+            "可写 live target",
+            "goal_contract_bootstrap",
+            "confirm_mutating_live_target",
+            "project_id + goal_message",
+            "fail-closed",
+        ),
+    ),
+    DocContractCheck(
+        name="getting_started_covers_feishu_discovery_contract",
+        path=GETTING_STARTED_DOC,
+        must_contain=(
+            "项目列表",
+            "list_sessions/session_directory",
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+        ),
+    ),
+    DocContractCheck(
         name="readme_covers_external_integration_smoke_harness",
         path=README_DOC,
         must_contain=(
@@ -238,6 +292,28 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "docs/operations/external-integration-live-acceptance.md",
             "im.message.receive_v1",
             "im.chat.access_event.bot_p2p_chat_entered_v1",
+        ),
+    ),
+    DocContractCheck(
+        name="readme_covers_feishu_control_operator_confirmation_guardrail",
+        path=README_DOC,
+        must_contain=(
+            "skipped",
+            "operator_confirmation_required",
+            "可写 live target",
+            "goal_contract_bootstrap",
+            "confirm_mutating_live_target",
+            "project_id + goal_message",
+            "fail-closed",
+        ),
+    ),
+    DocContractCheck(
+        name="readme_covers_feishu_discovery_contract",
+        path=README_DOC,
+        must_contain=(
+            "项目列表",
+            "list_sessions/session_directory",
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
         ),
     ),
     DocContractCheck(
@@ -271,6 +347,20 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         ),
     ),
     DocContractCheck(
+        name="external_integration_live_acceptance_covers_resident_expert_evidence_chain",
+        path=EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC,
+        must_contain=(
+            "resident_expert_consultation",
+            "resident_expert_coverage",
+            "consultation_ref",
+            "coverage_status",
+            "stale_expert_count",
+            "healthz",
+            "ops degraded",
+            "session directory",
+        ),
+    ),
+    DocContractCheck(
         name="external_integration_live_acceptance_truth_boundary",
         path=EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC,
         must_contain=(
@@ -279,6 +369,31 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "外部平台最终放量、组织级权限开通、正式公网入口与密钥轮换仍属于仓库外运维真值。",
             "repo 内 contract 已落地，真实环境接线已按本 runbook 验收通过",
             "repo 内 contract 已落地，但真实环境仍受外部平台/凭证/组织安装阻断",
+            "resident expert replay、session directory 与 health 之间任何一处证据缺失",
+        ),
+    ),
+    DocContractCheck(
+        name="external_integration_live_acceptance_covers_mutating_feishu_control_guardrail",
+        path=EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC,
+        must_contain=(
+            "skipped",
+            "可写验收要命中的 live target",
+            "goal_contract_bootstrap",
+            "supersede pending approvals / delivery outbox",
+            "confirm_mutating_live_target",
+            "project_id + goal_message",
+            "fail-closed",
+        ),
+    ),
+    DocContractCheck(
+        name="external_integration_live_acceptance_covers_feishu_discovery_contract",
+        path=EXTERNAL_INTEGRATION_LIVE_ACCEPTANCE_DOC,
+        must_contain=(
+            "项目列表",
+            "command_request",
+            "list_sessions",
+            "session_directory",
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
         ),
     ),
 )

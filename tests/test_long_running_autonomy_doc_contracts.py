@@ -23,14 +23,24 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "env_example_covers_openai_compatible_provider" in names
     assert "env_example_covers_ai_autosdlc_preview_cursor_toggle" in names
     assert "env_example_covers_feishu_control_smoke" in names
+    assert "external_smoke_design_covers_feishu_control_guardrail" in names
+    assert "external_smoke_design_covers_fail_closed_skip_semantics" in names
+    assert "external_smoke_design_covers_feishu_discovery_contract" in names
     assert "getting_started_covers_feishu_official_ingress" in names
     assert "getting_started_covers_openai_compatible_provider" in names
     assert "getting_started_covers_ai_autosdlc_preview_cursor" in names
     assert "getting_started_covers_external_integration_smoke_harness" in names
+    assert "getting_started_covers_feishu_control_operator_confirmation_guardrail" in names
+    assert "getting_started_covers_feishu_discovery_contract" in names
     assert "readme_covers_external_integration_smoke_harness" in names
+    assert "readme_covers_feishu_control_operator_confirmation_guardrail" in names
+    assert "readme_covers_feishu_discovery_contract" in names
     assert "readme_covers_watchdog_runtime_factory" in names
     assert "external_integration_live_acceptance_covers_feishu_provider_memory" in names
+    assert "external_integration_live_acceptance_covers_resident_expert_evidence_chain" in names
     assert "external_integration_live_acceptance_truth_boundary" in names
+    assert "external_integration_live_acceptance_covers_mutating_feishu_control_guardrail" in names
+    assert "external_integration_live_acceptance_covers_feishu_discovery_contract" in names
 
 
 def test_long_running_autonomy_doc_validator_reports_missing_files(tmp_path) -> None:

@@ -4,6 +4,7 @@ canonical_status_doc: docs/architecture/long-running-residual-backlog-status.md
 formal_truth_refs:
   - .ai-sdlc/state/checkpoint.yml
   - .ai-sdlc/project/config/project-state.yaml
+  - .ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/latest-summary.md
   - .ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md
   - .ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md
   - .ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/latest-summary.md
@@ -41,8 +42,20 @@ residual_items:
       - .ai-sdlc/state/checkpoint.yml
       - .ai-sdlc/project/config/project-state.yaml
     notes: 实施计划保留为候选义务来源，但其 checkbox 状态已被 `.ai-sdlc` formal truth 与后续 closeout 文档取代，不再直接充当 live backlog。
+  - residual_id: RES-RUNTIME-083
+    source_refs:
+      - specs/082-external-integration-live-runtime-acceptance-closeout/task-execution-log.md
+      - docs/operations/external-integration-live-acceptance.md
+      - docs/getting-started.zh-CN.md
+    disposition: satisfied
+    formal_truth_refs:
+      - specs/083-feishu-discovery-session-directory-routing/spec.md
+      - .ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/latest-summary.md
+      - .ai-sdlc/state/checkpoint.yml
+      - .ai-sdlc/project/config/project-state.yaml
+    notes: "live `feishu-discovery` runtime residual 已由 `WI-083` 正式关闭；同时 `WI-082` 的完整 external-integration smoke bundle 已回到 `Overall Status: passed`，因此当前不存在 active runtime residual blocker。"
 summary:
-  satisfied_count: 2
+  satisfied_count: 3
   superseded_count: 1
   residual_count: 0
   conclusion: NO_RESIDUAL_BLOCKERS

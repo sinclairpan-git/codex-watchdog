@@ -63,7 +63,9 @@
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`（可选；真实数据量较大时可单独放宽 DM synthetic smoke 的超时窗口，默认 15 秒）
 - `WATCHDOG_SMOKE_FEISHU_DISCOVERY_COMMAND_TEXT`（可选；默认 `项目列表`）
 - `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS`（逗号分隔；用于多项目目录发现验收）
-- `WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S`（可选；真实数据量较大时可单独放宽多项目目录 smoke 的超时窗口，默认 15 秒）
+- `WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S`（可选；真实数据量较大时可单独放宽多项目目录 smoke 的超时窗口，默认 30 秒）
+
+其中 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE` 必须由操作者显式确认是本次可写验收要命中的 live target。不要从 discovery 返回的候选项目列表、样例 env、测试数据或仓库同名项目里自动猜填；`feishu-control` synthetic smoke 会进入真实 `goal_contract_bootstrap` 写路径，并可能连带 supersede pending approvals / delivery outbox。若该 target 因 live target 缺失返回 `skipped`，evidence 必须显式包含 `required_action=confirm_mutating_live_target`，且整包验收继续按 fail-closed 记为未完成。
 
 ## Acceptance Flow
 
@@ -152,12 +154,15 @@ uv run python scripts/watchdog_external_integration_smoke.py --target feishu-con
 repo:<project_id> /goal <goal_message>
 ```
 
+它不是只读探活。只要请求被真实环境接受，就可能创建或修订 goal contract，并对当前 project/session 的待批记录产生 supersede 副作用。
+
 通过标准：
 
 - 结果不是 `skipped` 时，必须落成 `goal_contract_bootstrap`；
 - 若设置了 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`，返回 session id 必须一致；
 - 若 callback contract 在真实数据量下超过默认公共 HTTP 窗口，可仅调整 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`，不要顺手放大全局 `WATCHDOG_HTTP_TIMEOUT_S`；
 - 如果变量未配置而出现 `skipped`，这只能说明真实 DM smoke 尚未执行，不能当作控制面已验收完成；
+- 若只有候选 `project_id` 列表、但没有经操作者确认的 `project_id + goal_message` 组合，必须保持 fail-closed，不得自动补值后继续跑 live smoke；
 - 若真实用户在 Feishu 中直接发送同格式 DM，也应触发相同 contract，而不是另一套私有入口；
 - 无公网域名场景下，这条 DM 应通过长连接 bridge 进入系统，而不是要求外部回调地址可达。
 - 如果 synthetic smoke 通过、但真实 DM 仍无日志，归因应收敛为飞书控制台事件订阅/权限/发布状态，而不是仓库内 control contract 缺失。
@@ -272,6 +277,7 @@ uv run python scripts/watchdog_external_integration_smoke.py \
 - 默认 smoke 至少覆盖 `health`、`feishu`、`provider`、`memory`；
 - `feishu-control` 在真实环境若需要控制面 DM，则应单独跑到 `passed`；
 - `feishu-discovery` 在真实环境若需要多项目目录可见性，则应单独跑到 `passed`；
+- resident expert 相关证据必须可复现：canonical replay 中要能 materialize `resident_expert_consultation`，session directory 要暴露 `resident_expert_coverage`，stale expert 时 ops / health 语义必须同步降级；
 - 任何已启用能力只要返回字段缺失、contract mismatch 或回退语义异常，都应判为阻断，不得口头放行。
 
 ## Evidence Bundle
@@ -287,6 +293,9 @@ uv run python scripts/watchdog_external_integration_smoke.py \
 7. 若执行了 `feishu-control`，记录 `project_id`、`goal_message`、返回 session id。
 8. 若执行了 `feishu-discovery`，记录 `command_text`、期望项目集合与实际返回项目集合。
 9. 若执行了 Memory preview，记录 `enabled=true|false` 与 `contract_name=ai-autosdlc-cursor`。
+10. resident expert replay 证据：至少保留一次能 materialize `resident_expert_consultation` 的 replay 结果，并记录 `consultation_ref`、`coverage_status` 与专家状态摘要。
+11. session directory 证据：保留 `resident_expert_coverage` 摘要，至少包含 `coverage_status`、`available_expert_count`、`stale_expert_count`、`latest_consultation_ref`。
+12. 若存在 stale expert，保留 `healthz` / ops degraded 证据，证明 session directory 的 degraded 状态与健康面降级同向，而不是读面分叉。
 
 ## Fail-Closed Rules
 
@@ -304,6 +313,8 @@ uv run python scripts/watchdog_external_integration_smoke.py \
 - `feishu-control` 因未配置变量而 `skipped`，却被当作控制面已打通；
 - provider 仅写入环境变量，但没有验证真实请求或失败回退；
 - 把 preview route 的可调用性写成 Memory Hub 已完成主链接管；
+- resident expert replay、session directory 与 health 之间任何一处证据缺失，却仍声称监督链已验收闭环；
+- session directory 已经显示 `resident_expert_coverage=degraded` 或 stale expert，但 `healthz` / ops 仍被写成 green；
 - 外部 Feishu 组织安装、域名、证书、密钥轮换尚未完成，却被写成仓库已自动闭环。
 
 推荐结论口径只有两种：

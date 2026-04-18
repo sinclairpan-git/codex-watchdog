@@ -1,0 +1,56 @@
+total_tasks: 4
+total_batches: 4
+tasks:
+- task_id: T831
+  title: formalize WI-083 的 owner、state entry、branch handoff 与 residual ledger
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T832
+  title: 冻结 feishu-discovery routing contract 与 residual 边界
+  status: completed
+  phase: 2
+  depends_on:
+  - T831
+- task_id: T833
+  title: 修复 discovery 文本入口误路由到 goal_contract_bootstrap 的来源
+  status: completed
+  phase: 3
+  depends_on:
+  - T832
+- task_id: T834
+  title: 执行 targeted verification 与 live feishu-discovery smoke closeout
+  status: completed
+  phase: 4
+  depends_on:
+  - T833
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T831
+  status: completed
+  started_at: '2026-04-18T14:05:00Z'
+  completed_at: '2026-04-18T14:05:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T832
+  status: completed
+  started_at: '2026-04-18T14:05:00Z'
+  completed_at: '2026-04-18T15:26:25Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T833
+  status: completed
+  started_at: '2026-04-18T15:26:25Z'
+  completed_at: '2026-04-19T00:40:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T834
+  status: completed
+  started_at: '2026-04-19T00:40:00Z'
+  completed_at: '2026-04-19T00:40:00Z'
+current_batch: 4

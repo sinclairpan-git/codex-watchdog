@@ -359,6 +359,50 @@ def test_feishu_ingress_default_bound_status_stays_command_request(tmp_path: Pat
     assert response.json()["data"]["intent_code"] == "get_session"
 
 
+def test_feishu_ingress_default_bound_project_directory_stays_command_request(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("项目列表"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "list_sessions"
+    assert response.json()["data"]["reply_code"] == "session_directory"
+    assert {session["project_id"] for session in response.json()["data"]["sessions"]} == {
+        "repo-a",
+        "repo-b",
+    }
+
+
+def test_feishu_ingress_default_bound_discovery_alias_stays_command_request(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("所有项目进展"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "list_sessions"
+    assert response.json()["data"]["reply_code"] == "session_directory"
+    assert {session["project_id"] for session in response.json()["data"]["sessions"]} == {
+        "repo-a",
+        "repo-b",
+    }
+
+
 def test_feishu_ingress_progress_surfaces_decision_degradation_annotations(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
@@ -452,6 +496,27 @@ def test_feishu_ingress_global_project_directory_command_skips_project_binding(t
         "- repo-a | planning | waiting | 上下文=low\n"
         "- repo-b | planning | waiting | 上下文=low"
     )
+
+
+def test_feishu_ingress_discovery_alias_routes_to_session_directory(tmp_path: Path) -> None:
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("所有项目进展"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "list_sessions"
+    assert response.json()["data"]["reply_code"] == "session_directory"
+    assert {session["project_id"] for session in response.json()["data"]["sessions"]} == {
+        "repo-a",
+        "repo-b",
+    }
 
 
 def test_feishu_ingress_project_directory_surfaces_next_steps_for_pending_approval(

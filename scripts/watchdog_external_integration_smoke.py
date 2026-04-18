@@ -72,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.getenv("WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S", "15.0")
         ),
         feishu_discovery_http_timeout_s=float(
-            os.getenv("WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S", "15.0")
+            os.getenv("WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S", "30.0")
         ),
         feishu_event_ingress_mode=os.getenv(
             "WATCHDOG_FEISHU_EVENT_INGRESS_MODE",

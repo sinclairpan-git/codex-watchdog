@@ -87,7 +87,8 @@ uv run python scripts/watchdog_external_integration_smoke.py
   - `WATCHDOG_API_TOKEN`
 - 按能力面启用的可选输入：
   - Feishu：`WATCHDOG_FEISHU_VERIFICATION_TOKEN`
-- Feishu callback smoke：`WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`、`WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`
+  - Feishu callback smoke：`WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`、`WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`、`WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`
+  - Feishu discovery smoke：`WATCHDOG_SMOKE_FEISHU_DISCOVERY_COMMAND_TEXT`、`WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS`、`WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S`
   - OpenAI-compatible：`WATCHDOG_BRAIN_PROVIDER_NAME`、`WATCHDOG_BRAIN_PROVIDER_BASE_URL`、`WATCHDOG_BRAIN_PROVIDER_API_KEY`、`WATCHDOG_BRAIN_PROVIDER_MODEL`
   - Memory Hub preview：`WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED`
 
@@ -97,11 +98,12 @@ uv run python scripts/watchdog_external_integration_smoke.py
 - `health`
 - `feishu`
 - `feishu-control`
+- `feishu-discovery`
 - `provider`
 - `memory`
 
-目标选择用命令行参数；仅 `feishu-control` 这一可选 callback smoke 会额外读取 project binding
-相关环境变量，其余 target 继续只依赖既有运行时变量。
+目标选择用命令行参数；`feishu-control` 与 `feishu-discovery` 这两个可选 callback smoke
+会额外读取各自的验收绑定变量，其余 target 继续只依赖既有运行时变量。
 
 ### 3. 检查模型
 
@@ -120,8 +122,18 @@ uv run python scripts/watchdog_external_integration_smoke.py
 - `1`：至少一个被请求的检查失败；
 - `2`：命令参数错误或必选基础输入缺失。
 
-`skipped` 只允许出现在“该检查未被请求”或“明确未启用该能力面”的情形；若用户请求了某项
-检查，但对应必需环境缺失，则必须判定为 `failed`，不能静默跳过。
+`skipped` 允许出现在三种受控情形：
+
+1. 该检查未被请求；
+2. 可选能力面明确未启用，例如 provider 仍处于 resident 默认模式；
+3. `feishu-control` / `feishu-discovery` 这类可选 synthetic smoke 缺少 operator 明确提供的验收绑定。
+
+其中 `feishu-control` 缺少 `project_id + goal_message` 时，必须返回
+`operator_confirmation_required`，并显式指出 `confirm_mutating_live_target`；
+这不是普通配置缺口，因为该 smoke 会进入真实 `goal_contract_bootstrap` 写路径。
+
+只要某个被选择的 target 返回 `skipped`，Markdown 汇总仍必须按 fail-closed 记为整体未通过，
+不能把“未执行”误写成“已验收完成”。
 
 ### 4. 数据流
 
@@ -145,9 +157,11 @@ uv run python scripts/watchdog_external_integration_smoke.py
 
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID`
 - `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`
-- `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`
 
-时，脚本允许额外执行 `feishu-control` target。该 target 仍然只调用既有入口；若仓内历史数据较大导致 DM synthetic smoke 超过默认公共 HTTP 窗口，只放宽 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`，不修改其余 remote target 的 timeout：
+时，脚本允许额外执行 `feishu-control` target。`WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`
+只是可选调优项，不属于启用该 target 的 live target 前置条件。若仓内历史数据较大导致
+DM synthetic smoke 超过默认公共 HTTP 窗口，只放宽
+`WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S`，不修改其余 remote target 的 timeout：
 
 - `POST /api/v1/watchdog/feishu/events`
 
@@ -166,6 +180,35 @@ uv run python scripts/watchdog_external_integration_smoke.py
 该 target 的目的，是补一条 repo-local、可回归的 callback contract smoke，验证 official ingress
 仍能把文本 DM 事件归一为正式 control request；它不是组织级真实 E2E，也不要求真实 Feishu
 后台投递消息。
+
+若缺少上述 live target，必须返回 `operator_confirmation_required`，并在 evidence 中固定输出：
+
+- `required_action=confirm_mutating_live_target`
+- `mutation_path=goal_contract_bootstrap`
+
+脚本不得根据 discovery 返回的候选项目、样例 env、测试数据或仓库同名项目自动猜填。
+
+#### 4.2.2 Feishu multi-project discovery smoke
+
+当 operator 显式提供：
+
+- `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS`
+
+时，脚本允许额外执行 `feishu-discovery` target。该 target 同样只调用既有入口：
+
+- `POST /api/v1/watchdog/feishu/events`
+
+但请求体改为构造一条最小的 `im.message.receive_v1` 文本事件，默认消息内容固定为：
+
+- `项目列表`
+
+断言响应满足：
+
+- `accepted == true`
+- `event_type == "command_request"`
+- `data.intent_code == "list_sessions"`
+- `data.reply_code == "session_directory"`
+- `sessions[].project_id` 覆盖 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS`
 
 #### 4.3 Provider wiring smoke
 
@@ -249,6 +292,8 @@ token 做脱敏，避免把完整 secret 打到终端。
 7. Memory Hub preview 在 disabled/enabled 两种模式下的断言；
 8. 汇总输出与退出码映射。
 9. `all` 与可选 `feishu-control` target 的组合语义。
+10. `feishu-control` 缺少 live target 时返回 `operator_confirmation_required` 的语义与证据字段。
+11. `feishu-discovery` 默认文案与期望项目集合校验。
 
 测试应优先使用可注入的 HTTP client 或 transport stub，避免依赖真实网络与真实服务进程。
 
@@ -259,6 +304,7 @@ token 做脱敏，避免把完整 secret 打到终端。
 - 推荐的统一 smoke 命令；
 - 各目标检查分别验证什么；
 - 哪些情况会返回 `skipped`；
+- `feishu-control` 是写路径，缺少经确认的 live target 时必须返回 `operator_confirmation_required`；
 - 原有 `curl` 片段仍作为手工排障参考。
 
 `README.md` 也必须同步到同一 truth surface，避免 operator 在仓库首页看到与 getting-started
@@ -268,7 +314,8 @@ token 做脱敏，避免把完整 secret 打到终端。
 
 - 统一 smoke 脚本路径；
 - `docs/getting-started.zh-CN.md` 中的推荐命令；
-- `README.md` 中的 canonical 启动命令与 smoke 入口。
+- `README.md` 中的 canonical 启动命令与 smoke 入口；
+- `feishu-control` 的 `operator_confirmation_required` / `confirm_mutating_live_target` guardrail。
 
 ## 验证
 

@@ -1,0 +1,21 @@
+work_item:
+  id: 082-external-integration-live-runtime-acceptance-closeout
+  spec_dir: specs/082-external-integration-live-runtime-acceptance-closeout
+  branch: codex/082-external-integration-live-runtime-acceptance-closeout
+current_stage: completed
+current_batch: 4
+last_committed_task: ''
+current_branch: codex/083-feishu-discovery-session-directory-routing
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: work item closed; use the recorded live smoke evidence bundle for commit or archive flow, and reopen only if the live acceptance contract regresses
+artifacts:
+  - specs/082-external-integration-live-runtime-acceptance-closeout/spec.md
+  - specs/082-external-integration-live-runtime-acceptance-closeout/plan.md
+  - specs/082-external-integration-live-runtime-acceptance-closeout/tasks.md
+  - specs/082-external-integration-live-runtime-acceptance-closeout/task-execution-log.md
+  - .ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/execution-plan.yaml
+  - .ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/runtime.yaml
+  - .ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/latest-summary.md
+timestamp: '2026-04-19T17:34:06Z'
