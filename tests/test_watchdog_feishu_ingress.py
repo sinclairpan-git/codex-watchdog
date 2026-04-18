@@ -13,8 +13,14 @@ from watchdog.settings import Settings
 
 
 class _IngressAClient:
-    def __init__(self, *, tasks: list[dict[str, object]]) -> None:
+    def __init__(
+        self,
+        *,
+        tasks: list[dict[str, object]],
+        approvals: list[dict[str, object]] | None = None,
+    ) -> None:
         self._tasks = tasks
+        self._approvals = [dict(approval) for approval in approvals or []]
         self.pause_calls: list[str] = []
 
     def list_tasks(self) -> list[dict[str, object]]:
@@ -35,8 +41,24 @@ class _IngressAClient:
         task = next(task for task in self._tasks if task["thread_id"] == thread_id)
         return {"success": True, "data": dict(task)}
 
-    def list_approvals(self, **_: object) -> list[dict[str, object]]:
-        return []
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        rows = [dict(approval) for approval in self._approvals]
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        if project_id:
+            rows = [row for row in rows if row.get("project_id") == project_id]
+        if decided_by:
+            rows = [row for row in rows if row.get("decided_by") == decided_by]
+        if callback_status:
+            rows = [row for row in rows if row.get("callback_status") == callback_status]
+        return rows
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -358,6 +380,51 @@ def test_feishu_ingress_progress_surfaces_decision_degradation_annotations(tmp_p
     )
     assert response.json()["data"]["progress"]["decision_trace_ref"] == (
         "trace:repo-a-provider-invalid"
+    )
+
+
+def test_feishu_ingress_session_surfaces_operator_next_steps_for_pending_approval(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "last_summary": "waiting for approval",
+            }
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr:repo-a",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-16T13:01:00Z",
+            }
+        ],
+    )
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("状态"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "get_session"
+    assert response.json()["data"]["message"] == (
+        "waiting for approval | 下一步=审批列表、回复同意/拒绝、卡在哪里"
     )
 
 

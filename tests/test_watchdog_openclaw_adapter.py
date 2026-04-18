@@ -278,6 +278,45 @@ def test_adapter_get_session_returns_stable_session_projection(tmp_path: Path) -
     assert reply.session.native_thread_id == "thr_native_1"
 
 
+def test_adapter_get_session_surfaces_operator_next_steps_for_pending_approval(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "last_summary": "waiting for approval",
+            "files_touched": [],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+
+    reply = adapter.handle_intent("get_session", project_id="repo-a")
+
+    assert reply.reply_code == "session_projection"
+    assert reply.message == "waiting for approval | 下一步=审批列表、回复同意/拒绝、卡在哪里"
+
+
 def test_adapter_get_session_by_native_thread_returns_stable_session_projection(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -370,8 +409,11 @@ def test_adapter_why_stuck_is_built_from_fact_records(tmp_path: Path) -> None:
         "context_critical",
         "recovery_available",
     ]
-    assert "session appears stuck" in reply.message
-    assert "repeated failures detected" in reply.message
+    assert (
+        reply.message
+        == "session appears stuck; repeated failures detected; context pressure is critical"
+        " | 下一步=卡在哪里"
+    )
 
 
 def test_adapter_progress_surfaces_decision_degradation_annotations(tmp_path: Path) -> None:

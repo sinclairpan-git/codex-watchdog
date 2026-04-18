@@ -688,7 +688,10 @@ def test_integration_api_and_adapter_share_stuck_explanation_semantics(tmp_path:
     assert [fact["fact_code"] for fact in api_reply["facts"]] == [
         fact.fact_code for fact in adapter_reply.facts
     ]
-    assert api_reply["message"] == adapter_reply.message
+    assert api_reply["message"] == (
+        "session appears stuck; repeated failures detected; context pressure is critical"
+    )
+    assert adapter_reply.message == f'{api_reply["message"]} | 下一步=卡在哪里'
 
 
 def test_integration_api_and_adapter_share_session_facts_semantics(tmp_path: Path) -> None:

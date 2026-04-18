@@ -37,12 +37,46 @@ from watchdog.services.session_spine.service import (
 from watchdog.contracts.session_spine.models import SessionEvent
 
 
+def _render_action_hint(*, intent_code: str, available_intents: list[str]) -> str | None:
+    intents = set(available_intents)
+    hints: list[str] = []
+
+    if "list_pending_approvals" in intents and intent_code != "list_pending_approvals":
+        hints.append("审批列表")
+
+    if "approve_approval" in intents:
+        if "reject_approval" in intents:
+            hints.append("回复同意/拒绝")
+        else:
+            hints.append("回复同意")
+
+    if "explain_blocker" in intents and intent_code != "explain_blocker":
+        hints.append("卡在哪里")
+
+    if "why_stuck" in intents and intent_code != "why_stuck" and "卡在哪里" not in hints:
+        hints.append("为什么卡住")
+
+    if not hints:
+        return None
+    return "、".join(hints)
+
+
+def _with_action_hint(reply: ReplyModel, *, available_intents: list[str]) -> ReplyModel:
+    hint = _render_action_hint(intent_code=reply.intent_code, available_intents=available_intents)
+    if not hint or " | 下一步=" in reply.message:
+        return reply
+    return reply.model_copy(update={"message": f"{reply.message} | 下一步={hint}"})
+
+
 def build_session_reply(
     bundle: SessionReadBundle,
     *,
     intent_code: str = "get_session",
 ) -> ReplyModel:
-    return build_session_read_reply(bundle, intent_code=intent_code)
+    return _with_action_hint(
+        build_session_read_reply(bundle, intent_code=intent_code),
+        available_intents=bundle.session.available_intents,
+    )
 
 
 def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:
@@ -54,7 +88,10 @@ def build_session_event_snapshot_reply(events: list[SessionEvent]) -> ReplyModel
 
 
 def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
-    return build_progress_read_reply(bundle)
+    return _with_action_hint(
+        build_progress_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
 
 
 def build_session_facts_reply(bundle: SessionReadBundle) -> ReplyModel:
@@ -66,7 +103,10 @@ def build_workspace_activity_reply(bundle: WorkspaceActivityReadBundle) -> Reply
 
 
 def build_approval_queue_reply(bundle: SessionReadBundle) -> ReplyModel:
-    return build_approval_queue_read_reply(bundle)
+    return _with_action_hint(
+        build_approval_queue_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
 
 
 def build_approval_inbox_reply(bundle: ApprovalInboxReadBundle) -> ReplyModel:
@@ -74,11 +114,17 @@ def build_approval_inbox_reply(bundle: ApprovalInboxReadBundle) -> ReplyModel:
 
 
 def build_stuck_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
-    return build_stuck_explanation_read_reply(bundle)
+    return _with_action_hint(
+        build_stuck_explanation_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
 
 
 def build_blocker_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
-    return build_blocker_explanation_read_reply(bundle)
+    return _with_action_hint(
+        build_blocker_explanation_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
 
 
 def build_action_reply(intent_code: str, result: WatchdogActionResult) -> ReplyModel:
