@@ -8,6 +8,10 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from watchdog.services.brain.models import DecisionIntent
+from watchdog.services.policy.rules import (
+    MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS,
+    MANAGED_AGENT_ACTION_BOUNDARY,
+)
 from watchdog.settings import BrainProviderProfile, Settings
 
 
@@ -29,6 +33,36 @@ class ProviderCapabilityMatrix(_ProviderRuntimeModel):
 class OpenAICompatibleBrainProvider:
     settings: Settings
     transport: httpx.BaseTransport | None = None
+
+    @staticmethod
+    def _managed_agent_contract_surface() -> dict[str, object]:
+        actions: dict[str, object] = {}
+        for action_ref, boundary in MANAGED_AGENT_ACTION_BOUNDARY.items():
+            argument_contract = MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS.get(
+                action_ref,
+                {"allowed_keys": (), "required_keys": ()},
+            )
+            actions[action_ref] = {
+                "capability": boundary["capability"],
+                "allowed_brain_intents": list(boundary["allowed_brain_intents"]),
+                "auto_execute_allowed_intents": list(boundary["auto_execute_allowed_intents"]),
+                "allowed_keys": list(argument_contract["allowed_keys"]),
+                "required_keys": list(argument_contract["required_keys"]),
+            }
+        return {
+            "version": "managed-action-contract:v1",
+            "actions": actions,
+            "provider_output_rules": {
+                "derive_requested_action_args_locally": True,
+                "forbidden_output_keys": [
+                    "action_ref",
+                    "action_arguments",
+                    "approval_id",
+                    "mode",
+                    "resume",
+                ],
+            },
+        }
 
     def _active_profile(self) -> BrainProviderProfile | None:
         profile = self.settings.active_brain_provider_profile()
@@ -70,6 +104,7 @@ class OpenAICompatibleBrainProvider:
 
         base_url = str(profile.base_url).rstrip("/")
         url = f"{base_url}/chat/completions"
+        managed_agent_contract = self._managed_agent_contract_surface()
         body = {
             "model": profile.model,
             "temperature": 0,
@@ -80,7 +115,9 @@ class OpenAICompatibleBrainProvider:
                         "Return JSON only. "
                         "Keys: session_decision, execution_advice, approval_advice, "
                         "risk_band, goal_coverage, remaining_work_hypothesis, confidence, "
-                        "reason_short, evidence_codes."
+                        "reason_short, evidence_codes. "
+                        "Do not emit action_ref, action_arguments, approval_id, mode, or resume payloads. "
+                        "Watchdog derives requested action arguments locally from the managed action contract."
                     ),
                 },
                 {
@@ -96,6 +133,7 @@ class OpenAICompatibleBrainProvider:
                             ],
                             "session_truth": session_truth,
                             "memory_advisory_context": memory_advisory_context,
+                            "managed_agent_contract": managed_agent_contract,
                         },
                         ensure_ascii=False,
                         sort_keys=True,
@@ -136,8 +174,8 @@ class OpenAICompatibleBrainProvider:
             evidence_codes=self._coerce_string_list(structured.get("evidence_codes")),
             provider=profile.name,
             model=str(profile.model or "openai-compatible-model"),
-            prompt_schema_ref="prompt:brain-decision-v1",
-            output_schema_ref="schema:provider-decision-v1",
+            prompt_schema_ref="prompt:brain-decision-v2",
+            output_schema_ref="schema:provider-decision-v2",
             provider_request_id=request_id,
         )
 

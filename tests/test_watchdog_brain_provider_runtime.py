@@ -11,6 +11,7 @@ from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.contracts.session_spine.models import SessionProjection, TaskProgressView
 from watchdog.services.brain.models import DecisionIntent
 from watchdog.services.brain.provider_runtime import OpenAICompatibleBrainProvider
+from watchdog.services.policy.rules import MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
@@ -162,6 +163,133 @@ def test_brain_service_uses_named_provider_profile_when_selected(tmp_path: Path)
     assert intent.intent == "propose_execute"
     assert intent.provider == "deepseek-prod"
     assert intent.model == "deepseek-chat"
+
+
+def test_provider_runtime_sends_managed_action_contract_surface(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["model"] == "minimax-m2.7"
+        system_prompt = payload["messages"][0]["content"]
+        user_payload = json.loads(payload["messages"][1]["content"])
+        continue_session = user_payload["managed_agent_contract"]["actions"]["continue_session"]
+        execute_recovery = user_payload["managed_agent_contract"]["actions"]["execute_recovery"]
+        post_operator_guidance = user_payload["managed_agent_contract"]["actions"]["post_operator_guidance"]
+
+        assert "Do not emit action_ref, action_arguments, approval_id, mode, or resume payloads." in system_prompt
+        assert continue_session["allowed_keys"] == list(
+            MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS["continue_session"]["allowed_keys"]
+        )
+        assert continue_session["required_keys"] == []
+        assert execute_recovery["allowed_keys"] == []
+        assert execute_recovery["required_keys"] == []
+        assert post_operator_guidance["allowed_keys"] == list(
+            MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS["post_operator_guidance"]["allowed_keys"]
+        )
+        assert post_operator_guidance["required_keys"] == ["message"]
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-contract-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "session_decision": "active",
+                                    "execution_advice": "auto_execute",
+                                    "approval_advice": "none",
+                                    "risk_band": "low",
+                                    "goal_coverage": "partial",
+                                    "remaining_work_hypothesis": ["continue implementation"],
+                                    "confidence": 0.91,
+                                    "reason_short": "current work can continue",
+                                    "evidence_codes": ["active_goal_present"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "active", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+    )
+
+    assert intent.prompt_schema_ref == "prompt:brain-decision-v2"
+    assert intent.output_schema_ref == "schema:provider-decision-v2"
+
+
+def test_provider_runtime_ignores_raw_action_arguments_from_provider(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-raw-action-args-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "session_decision": "active",
+                                    "execution_advice": "auto_execute",
+                                    "approval_advice": "none",
+                                    "risk_band": "low",
+                                    "goal_coverage": "partial",
+                                    "remaining_work_hypothesis": ["continue implementation"],
+                                    "confidence": 0.77,
+                                    "reason_short": "current work can continue",
+                                    "evidence_codes": ["active_goal_present"],
+                                    "action_arguments": {
+                                        "message": "override",
+                                        "reason_code": "provider_override",
+                                        "stuck_level": 4,
+                                        "approval_id": "approval-bad",
+                                    },
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "active", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+    )
+
+    assert intent.intent == "propose_execute"
+    assert intent.action_arguments == {
+        "message": "下一步建议：continue implementation。",
+        "reason_code": "brain_auto_continue",
+        "stuck_level": 0,
+    }
 
 
 def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_path: Path) -> None:
