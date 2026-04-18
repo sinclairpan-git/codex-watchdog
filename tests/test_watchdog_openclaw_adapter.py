@@ -837,6 +837,87 @@ def test_adapter_list_sessions_prioritizes_recovery_failures_before_approval_and
     ) in reply.message
 
 
+def test_adapter_list_sessions_surfaces_relative_freshness_buckets(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T04:35:00Z",
+            },
+            {
+                "project_id": "repo-c",
+                "thread_id": "thr_native_3",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T01:00:00Z",
+            },
+            {
+                "project_id": "repo-d",
+                "thread_id": "thr_native_4",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert "多项目进展（4） | 状态=进行中4" in reply.message
+    assert "- repo-a | editing_source | editing files | 上下文=low" in reply.message
+    assert "- repo-b | planning | waiting | 上下文=low | 更新=较早" in reply.message
+    assert "- repo-c | planning | waiting | 上下文=low | 更新=静默" in reply.message
+    assert "- repo-d | planning | waiting | 上下文=low | 更新=未知" in reply.message
+
+
 def test_adapter_list_session_events_returns_stable_reply_model(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,

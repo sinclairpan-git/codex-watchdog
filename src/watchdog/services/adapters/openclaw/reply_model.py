@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
 from watchdog.contracts.session_spine.models import ReplyModel, WatchdogActionResult
 from watchdog.services.session_spine.replies import (
@@ -66,6 +68,19 @@ def _with_action_hint(reply: ReplyModel, *, available_intents: list[str]) -> Rep
     if not hint or " | 下一步=" in reply.message:
         return reply
     return reply.model_copy(update={"message": f"{reply.message} | 下一步={hint}"})
+
+
+def _parse_iso8601(value: str | None) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _directory_priority_reason(
@@ -157,6 +172,38 @@ def _directory_message_sort_key(
     return (0, reason[0], index)
 
 
+def _directory_freshness_labels(bundle: SessionDirectoryReadBundle) -> dict[str, str]:
+    if len(bundle.progresses) < 2:
+        return {}
+
+    parsed_by_project = {
+        progress.project_id: _parse_iso8601(progress.last_progress_at)
+        for progress in bundle.progresses
+    }
+    latest_progress_at = max(
+        (parsed for parsed in parsed_by_project.values() if parsed is not None),
+        default=None,
+    )
+    if latest_progress_at is None:
+        return {
+            progress.project_id: "未知"
+            for progress in bundle.progresses
+        }
+
+    labels: dict[str, str] = {}
+    for progress in bundle.progresses:
+        progress_at = parsed_by_project.get(progress.project_id)
+        if progress_at is None:
+            labels[progress.project_id] = "未知"
+            continue
+        age = latest_progress_at - progress_at
+        if age > timedelta(hours=2):
+            labels[progress.project_id] = "静默"
+        elif age > timedelta(minutes=30):
+            labels[progress.project_id] = "较早"
+    return labels
+
+
 def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
     if not reply.message:
         return reply
@@ -179,6 +226,7 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
 
     enriched_lines = [header_line]
     progress_lines = lines[1:]
+    freshness_labels = _directory_freshness_labels(bundle)
     rendered_progress_lines: list[tuple[tuple[int, int, int], str]] = []
     trailing_lines: list[str] = []
     for index, line in enumerate(progress_lines):
@@ -194,6 +242,9 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
                 progress=progress,
                 index=index,
             )
+            freshness_label = freshness_labels.get(progress.project_id)
+            if freshness_label and " | 更新=" not in line:
+                line = f"{line} | 更新={freshness_label}"
             focus_reason = _directory_priority_reason(session=session, progress=progress)
             if focus_reason and " | 关注=" not in line:
                 line = f"{line} | 关注={focus_reason[1]}"

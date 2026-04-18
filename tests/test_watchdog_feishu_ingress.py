@@ -499,6 +499,41 @@ def test_feishu_ingress_project_directory_surfaces_next_steps_for_pending_approv
     )
 
 
+def test_feishu_ingress_lists_projects_with_relative_freshness(tmp_path: Path) -> None:
+    tasks = [
+        {
+            **_task("repo-a"),
+            "phase": "editing_source",
+            "last_summary": "editing files",
+            "last_progress_at": "2026-04-16T13:00:00Z",
+        },
+        {
+            **_task("repo-b"),
+            "last_progress_at": "2026-04-16T12:20:00Z",
+        },
+        {
+            **_task("repo-c"),
+            "last_progress_at": "",
+        },
+    ]
+    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=tasks))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("项目列表"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["data"]["message"] == (
+        "多项目进展（3） | 状态=进行中3\n"
+        "- repo-a | editing_source | editing files | 上下文=low\n"
+        "- repo-b | planning | waiting | 上下文=low | 更新=较早\n"
+        "- repo-c | planning | waiting | 上下文=low | 更新=未知"
+    )
+
+
 def test_feishu_ingress_rejects_ambiguous_project_binding(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
     app = create_app(settings=_settings(tmp_path), a_client=a_client)

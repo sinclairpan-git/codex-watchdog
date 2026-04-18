@@ -928,6 +928,73 @@ def test_integration_api_and_adapter_share_session_directory_semantics(tmp_path:
     )
 
 
+def test_integration_session_directory_adapter_adds_relative_freshness_without_mutating_api_payload(
+    tmp_path: Path,
+) -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    a_client = FakeAClient(
+        task=task,
+        tasks=[
+            task,
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T01:00:00Z",
+            },
+        ],
+    )
+    adapter = _adapter(tmp_path, a_client)
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        a_client=a_client,
+    )
+
+    with TestClient(app) as client:
+        api_response = client.get(
+            "/api/v1/watchdog/sessions",
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    adapter_reply = adapter.handle_intent("list_sessions")
+    assert api_response.status_code == 200
+    api_reply = api_response.json()["data"]
+    assert api_reply["message"] == (
+        "多项目进展（2）\n"
+        "- repo-a | editing_source | editing files | 上下文=low\n"
+        "- repo-b | planning | waiting | 上下文=low"
+    )
+    assert adapter_reply.message == (
+        "多项目进展（2） | 状态=进行中2\n"
+        "- repo-a | editing_source | editing files | 上下文=low\n"
+        "- repo-b | planning | waiting | 上下文=low | 更新=静默"
+    )
+
+
 def test_integration_api_and_adapter_share_native_thread_resolution_semantics(tmp_path: Path) -> None:
     task = {
         "project_id": "repo-a",
