@@ -922,9 +922,9 @@ def test_integration_api_and_adapter_share_session_directory_semantics(tmp_path:
     )
     assert adapter_reply.message == (
         "多项目进展（2） | 状态=进行中1、待审批1 | 先处理=repo-b:待审批\n"
-        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
         "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
-        " | 关注=待审批 | 下一步=审批列表、回复同意/拒绝、卡在哪里"
+        " | 关注=待审批 | 下一步=审批列表、回复同意/拒绝、卡在哪里\n"
+        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑"
     )
 
 

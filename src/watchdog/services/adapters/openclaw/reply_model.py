@@ -145,6 +145,18 @@ def _render_directory_state_summary(bundle: SessionDirectoryReadBundle) -> str |
     return "、".join(parts)
 
 
+def _directory_message_sort_key(
+    *,
+    session,
+    progress,
+    index: int,
+) -> tuple[int, int, int]:
+    reason = _directory_priority_reason(session=session, progress=progress)
+    if reason is None:
+        return (1, 0, index)
+    return (0, reason[0], index)
+
+
 def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
     if not reply.message:
         return reply
@@ -167,13 +179,21 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
 
     enriched_lines = [header_line]
     progress_lines = lines[1:]
+    rendered_progress_lines: list[tuple[tuple[int, int, int], str]] = []
+    trailing_lines: list[str] = []
     for index, line in enumerate(progress_lines):
         if index >= len(bundle.progresses):
-            enriched_lines.append(line)
+            trailing_lines.append(line)
             continue
         progress = bundle.progresses[index]
         session = session_by_project.get(progress.project_id)
+        sort_key = (1, 0, index)
         if session is not None:
+            sort_key = _directory_message_sort_key(
+                session=session,
+                progress=progress,
+                index=index,
+            )
             focus_reason = _directory_priority_reason(session=session, progress=progress)
             if focus_reason and " | 关注=" not in line:
                 line = f"{line} | 关注={focus_reason[1]}"
@@ -183,7 +203,9 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
         )
         if hint and " | 下一步=" not in line:
             line = f"{line} | 下一步={hint}"
-        enriched_lines.append(line)
+        rendered_progress_lines.append((sort_key, line))
+    enriched_lines.extend(line for _, line in sorted(rendered_progress_lines, key=lambda item: item[0]))
+    enriched_lines.extend(trailing_lines)
     return reply.model_copy(update={"message": "\n".join(enriched_lines)})
 
 
