@@ -233,7 +233,7 @@ def test_provider_runtime_sends_managed_action_contract_surface(tmp_path: Path) 
     assert intent.output_schema_ref == "schema:provider-decision-v2"
 
 
-def test_provider_runtime_ignores_raw_action_arguments_from_provider(tmp_path: Path) -> None:
+def test_provider_runtime_rejects_raw_action_arguments_from_provider(tmp_path: Path) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -278,18 +278,80 @@ def test_provider_runtime_ignores_raw_action_arguments_from_provider(tmp_path: P
         transport=httpx.MockTransport(handler),
     )
 
-    intent = provider.decide(
-        record=_record(),
-        session_truth={"status": "active", "activity_phase": "editing_source"},
-        memory_advisory_context=None,
+    with pytest.raises(ValueError, match="provider response violates schema"):
+        provider.decide(
+            record=_record(),
+            session_truth={"status": "active", "activity_phase": "editing_source"},
+            memory_advisory_context=None,
+        )
+
+
+def test_brain_service_falls_back_when_provider_output_violates_schema(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-invalid-schema-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "session_decision": "active",
+                                    "execution_advice": "auto_execute",
+                                    "reason_short": "current work can continue",
+                                    "action_arguments": {
+                                        "message": "override",
+                                        "reason_code": "provider_override",
+                                        "stuck_level": 4,
+                                    },
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    record = _record().model_copy(
+        update={
+            "facts": [
+                FactRecord(
+                    fact_id="fact:stuck",
+                    fact_code="stuck_no_progress",
+                    fact_kind="derived",
+                    severity="warning",
+                    summary="session stalled",
+                    detail="no progress in the last interval",
+                    source="projection",
+                    observed_at="2026-04-16T00:00:00Z",
+                )
+            ]
+        }
     )
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=_session_service(tmp_path),
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=record)
 
     assert intent.intent == "propose_execute"
     assert intent.action_arguments == {
-        "message": "下一步建议：continue implementation。",
-        "reason_code": "brain_auto_continue",
+        "message": "下一步建议：继续推进 ship feishu and memory hub integration，并优先验证最近改动。",
+        "reason_code": "rule_based_continue",
         "stuck_level": 0,
     }
+    assert intent.provider == "resident_orchestrator"
+    assert intent.model == "rule-based-brain"
 
 
 def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_path: Path) -> None:

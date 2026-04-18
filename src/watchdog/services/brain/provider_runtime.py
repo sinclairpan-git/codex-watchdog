@@ -29,6 +29,18 @@ class ProviderCapabilityMatrix(_ProviderRuntimeModel):
     cost_class: str = Field(default="standard", min_length=1)
 
 
+class _StructuredProviderDecision(_ProviderRuntimeModel):
+    session_decision: str = Field(min_length=1)
+    execution_advice: str | None = Field(default=None, min_length=1)
+    approval_advice: str | None = Field(default=None, min_length=1)
+    risk_band: str | None = Field(default=None, min_length=1)
+    goal_coverage: str | None = Field(default=None, min_length=1)
+    remaining_work_hypothesis: list[str] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    reason_short: str | None = None
+    evidence_codes: list[str] = Field(default_factory=list)
+
+
 @dataclass(frozen=True, slots=True)
 class OpenAICompatibleBrainProvider:
     settings: Settings
@@ -159,25 +171,32 @@ class OpenAICompatibleBrainProvider:
         payload = response.json()
         request_id = str(payload.get("id") or "").strip() or None
         content = self._extract_content(payload)
-        structured = json.loads(content)
-        remaining_work = self._coerce_string_list(structured.get("remaining_work_hypothesis"))
+        structured = self._validate_provider_decision(content)
+        remaining_work = self._coerce_string_list(structured.remaining_work_hypothesis)
         return DecisionIntent(
             intent=self._map_intent(structured),
-            rationale=str(structured.get("reason_short") or "").strip() or None,
+            rationale=str(structured.reason_short or "").strip() or None,
             action_arguments=self._build_action_arguments(
                 structured,
                 remaining_work_hypothesis=remaining_work,
             ),
-            confidence=self._coerce_confidence(structured.get("confidence")),
-            goal_coverage=str(structured.get("goal_coverage") or "").strip() or None,
+            confidence=self._coerce_confidence(structured.confidence),
+            goal_coverage=str(structured.goal_coverage or "").strip() or None,
             remaining_work_hypothesis=remaining_work,
-            evidence_codes=self._coerce_string_list(structured.get("evidence_codes")),
+            evidence_codes=self._coerce_string_list(structured.evidence_codes),
             provider=profile.name,
             model=str(profile.model or "openai-compatible-model"),
             prompt_schema_ref="prompt:brain-decision-v2",
             output_schema_ref="schema:provider-decision-v2",
             provider_request_id=request_id,
         )
+
+    @staticmethod
+    def _validate_provider_decision(content: str) -> _StructuredProviderDecision:
+        try:
+            return _StructuredProviderDecision.model_validate_json(content)
+        except Exception as exc:
+            raise ValueError("provider response violates schema") from exc
 
     @staticmethod
     def _extract_content(payload: dict[str, object]) -> str:
@@ -216,9 +235,9 @@ class OpenAICompatibleBrainProvider:
         raise ValueError("provider response missing JSON object")
 
     @staticmethod
-    def _map_intent(structured: dict[str, object]) -> str:
-        session_decision = str(structured.get("session_decision") or "").strip().lower()
-        execution_advice = str(structured.get("execution_advice") or "").strip().lower()
+    def _map_intent(structured: _StructuredProviderDecision) -> str:
+        session_decision = str(structured.session_decision or "").strip().lower()
+        execution_advice = str(structured.execution_advice or "").strip().lower()
         if session_decision in {"complete", "candidate_complete"}:
             return "candidate_closure"
         if session_decision in {"need_recovery", "handoff_to_new_session"}:
@@ -259,17 +278,17 @@ class OpenAICompatibleBrainProvider:
     @classmethod
     def _build_action_arguments(
         cls,
-        structured: dict[str, object],
+        structured: _StructuredProviderDecision,
         *,
         remaining_work_hypothesis: list[str],
     ) -> dict[str, object]:
-        execution_advice = str(structured.get("execution_advice") or "").strip().lower()
+        execution_advice = str(structured.execution_advice or "").strip().lower()
         if execution_advice not in {"auto_execute", "notify_then_execute"}:
             return {}
         if remaining_work_hypothesis:
             message = f"下一步建议：{'；'.join(remaining_work_hypothesis)}。"
         else:
-            message = str(structured.get("reason_short") or "").strip()
+            message = str(structured.reason_short or "").strip()
         if not message:
             return {}
         return {
