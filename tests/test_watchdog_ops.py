@@ -300,6 +300,173 @@ def test_watchdog_ops_can_mark_resident_expert_consult_restore_state(tmp_path: P
     assert experts["hermes-agent-expert"]["status"] == "unavailable"
 
 
+def test_watchdog_ops_exposes_resident_expert_decision_audit_rows(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:recorded",
+            decision_key="decision-key:repo-a:recorded",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="waiting for recovery",
+            matched_policy_rules=["runtime_gate_missing"],
+            why_not_escalated=None,
+            why_escalated="recovery guard",
+            uncertainty_reasons=["runtime_gate_missing"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v12",
+            idempotency_key="idem:repo-a:recorded",
+            created_at="2026-04-18T06:10:00Z",
+            operator_notes=[],
+            evidence={
+                "resident_expert_consultation": {
+                    "consultation_ref": "decision:repo-a:recorded",
+                    "consulted_at": "2026-04-18T06:10:00Z",
+                    "experts": [
+                        {
+                            "expert_id": "managed-agent-expert",
+                            "status": "available",
+                            "runtime_handle": "agent:managed:1",
+                            "last_seen_at": "2026-04-18T06:09:00Z",
+                            "last_consulted_at": "2026-04-18T06:10:00Z",
+                            "last_consultation_ref": "decision:repo-a:recorded",
+                        },
+                        {
+                            "expert_id": "hermes-agent-expert",
+                            "status": "restoring",
+                            "runtime_handle": "agent:hermes:1",
+                            "last_seen_at": "2026-04-18T06:08:00Z",
+                            "last_consulted_at": "2026-04-18T06:10:00Z",
+                            "last_consultation_ref": "decision:repo-a:recorded",
+                        },
+                    ],
+                }
+            },
+        )
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-b:missing",
+            decision_key="decision-key:repo-b:missing",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            thread_id="session:repo-b",
+            native_thread_id="thr_native_2",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            decision_result="observe_only",
+            risk_class="none",
+            decision_reason="monitor only",
+            matched_policy_rules=[],
+            why_not_escalated="observe only",
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v13",
+            idempotency_key="idem:repo-b:missing",
+            created_at="2026-04-18T06:11:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+    )
+
+    response = client.get(
+        "/api/v1/watchdog/ops/resident-experts/decision-audit",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    rows = payload["data"]["decisions"]
+    assert [row["decision_id"] for row in rows] == [
+        "decision:repo-b:missing",
+        "decision:repo-a:recorded",
+    ]
+    assert rows[0]["consultation_status"] == "missing"
+    assert rows[0]["consultation_ref"] is None
+    assert rows[0]["experts"] == []
+    assert rows[1]["consultation_status"] == "recorded"
+    assert rows[1]["consultation_ref"] == "decision:repo-a:recorded"
+    assert rows[1]["consulted_at"] == "2026-04-18T06:10:00Z"
+    assert [item["expert_id"] for item in rows[1]["experts"]] == [
+        "managed-agent-expert",
+        "hermes-agent-expert",
+    ]
+    assert [item["status"] for item in rows[1]["experts"]] == [
+        "available",
+        "restoring",
+    ]
+
+
+def test_watchdog_ops_can_filter_resident_expert_decision_audit_rows(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    for decision_id, project_id, session_id in (
+        ("decision:repo-a:1", "repo-a", "session:repo-a"),
+        ("decision:repo-b:1", "repo-b", "session:repo-b"),
+    ):
+        decision_store.put(
+            CanonicalDecisionRecord(
+                decision_id=decision_id,
+                decision_key=f"decision-key:{decision_id}",
+                session_id=session_id,
+                project_id=project_id,
+                thread_id=session_id,
+                native_thread_id=f"thr_native:{project_id}",
+                approval_id=None,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                decision_result="observe_only",
+                risk_class="none",
+                decision_reason="monitor only",
+                matched_policy_rules=[],
+                why_not_escalated="observe only",
+                why_escalated=None,
+                uncertainty_reasons=[],
+                policy_version="policy-v1",
+                fact_snapshot_version="fact-v1",
+                idempotency_key=f"idem:{decision_id}",
+                created_at="2026-04-18T06:10:00Z",
+                operator_notes=[],
+                evidence={
+                    "resident_expert_consultation": {
+                        "consultation_ref": decision_id,
+                        "consulted_at": "2026-04-18T06:10:00Z",
+                        "experts": [],
+                    }
+                },
+            )
+        )
+
+    response = client.get(
+        "/api/v1/watchdog/ops/resident-experts/decision-audit",
+        headers={"Authorization": "Bearer wt"},
+        params={"project_id": "repo-b"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    rows = payload["data"]["decisions"]
+    assert [row["decision_id"] for row in rows] == ["decision:repo-b:1"]
+    assert rows[0]["project_id"] == "repo-b"
+    assert rows[0]["session_id"] == "session:repo-b"
+
+
 def test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_alert_bucket(
     tmp_path: Path,
 ) -> None:

@@ -139,6 +139,28 @@ class OpsResidentExpertConsultRequest(BaseModel):
     consulted_at: str | None = None
 
 
+class OpsResidentExpertDecisionAuditExpert(BaseModel):
+    expert_id: str
+    status: str
+    runtime_handle: str | None = None
+    last_seen_at: str | None = None
+    last_consulted_at: str | None = None
+    last_consultation_ref: str | None = None
+
+
+class OpsResidentExpertDecisionAuditRow(BaseModel):
+    decision_id: str
+    project_id: str
+    session_id: str
+    action_ref: str
+    decision_result: str
+    created_at: str
+    consultation_status: str
+    consultation_ref: str | None = None
+    consulted_at: str | None = None
+    experts: list[OpsResidentExpertDecisionAuditExpert] = Field(default_factory=list)
+
+
 class OpsDeliveryRequeueReceipt(BaseModel):
     accepted: bool = True
     requeued: int
@@ -263,6 +285,65 @@ def _provider_degrade_reason_counts(decisions) -> dict[str, int]:
 
 def get_resident_expert_runtime_service(request: Request) -> ResidentExpertRuntimeService:
     return request.app.state.resident_expert_runtime_service
+
+
+def _resident_expert_decision_audit_rows(
+    decisions,
+    *,
+    decision_id: str | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
+) -> list[OpsResidentExpertDecisionAuditRow]:
+    rows: list[OpsResidentExpertDecisionAuditRow] = []
+    for record in decisions:
+        if decision_id and record.decision_id != decision_id:
+            continue
+        if project_id and record.project_id != project_id:
+            continue
+        if session_id and record.session_id != session_id:
+            continue
+        evidence = record.evidence if isinstance(record.evidence, dict) else {}
+        consultation = evidence.get("resident_expert_consultation")
+        consultation_bundle = consultation if isinstance(consultation, dict) else None
+        experts: list[OpsResidentExpertDecisionAuditExpert] = []
+        if consultation_bundle is not None:
+            raw_experts = consultation_bundle.get("experts")
+            if isinstance(raw_experts, list):
+                experts = [
+                    OpsResidentExpertDecisionAuditExpert.model_validate(item)
+                    for item in raw_experts
+                    if isinstance(item, dict)
+                ]
+        rows.append(
+            OpsResidentExpertDecisionAuditRow(
+                decision_id=record.decision_id,
+                project_id=record.project_id,
+                session_id=record.session_id,
+                action_ref=record.action_ref,
+                decision_result=record.decision_result,
+                created_at=record.created_at,
+                consultation_status="recorded" if consultation_bundle is not None else "missing",
+                consultation_ref=(
+                    str(consultation_bundle.get("consultation_ref") or "").strip() or None
+                    if consultation_bundle is not None
+                    else None
+                ),
+                consulted_at=(
+                    str(consultation_bundle.get("consulted_at") or "").strip() or None
+                    if consultation_bundle is not None
+                    else None
+                ),
+                experts=experts,
+            )
+        )
+    rows.sort(
+        key=lambda item: (
+            _parse_iso8601(item.consulted_at or item.created_at) or datetime.min.replace(tzinfo=UTC),
+            item.decision_id,
+        ),
+        reverse=True,
+    )
+    return rows
 
 
 def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
@@ -784,6 +865,28 @@ def post_resident_experts_consult(
                 ).model_dump(mode="json")
                 for view in resident_expert_runtime_service.list_runtime_views()
             ]
+        },
+    )
+
+
+@router.get("/resident-experts/decision-audit")
+def get_resident_expert_decision_audit(
+    request: Request,
+    decision_id: str | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    rows = _resident_expert_decision_audit_rows(
+        request.app.state.policy_decision_store.list_records(),
+        decision_id=decision_id,
+        project_id=project_id,
+        session_id=session_id,
+    )
+    return ok(
+        request.headers.get("x-request-id"),
+        {
+            "decisions": [row.model_dump(mode="json") for row in rows],
         },
     )
 
