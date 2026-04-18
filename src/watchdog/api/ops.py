@@ -126,6 +126,8 @@ class OpsResidentExpertStatus(BaseModel):
     charter_source_ref: str
     charter_version_hash: str
     status: str
+    runtime_handle_bound: bool = False
+    oversight_ready: bool = False
     runtime_handle: str | None = None
     last_seen_at: str | None = None
     last_consulted_at: str | None = None
@@ -208,6 +210,13 @@ def _is_recent_enough(value: str | None, *, now: datetime, threshold_seconds: fl
     if parsed is None:
         return True
     return (now - parsed).total_seconds() < threshold_seconds
+
+
+def _latest_timestamp(values: list[str | None]) -> datetime | None:
+    parsed = [item for item in (_parse_iso8601(value) for value in values) if item is not None]
+    if not parsed:
+        return None
+    return max(parsed)
 
 
 def _approval_recency_key(record: CanonicalApprovalRecord) -> tuple[tuple[int, str], datetime, str]:
@@ -617,6 +626,11 @@ def build_ops_summary(
     provider_degrade_reason_counts = _provider_degrade_reason_counts(decisions)
     release_gate_blockers = _release_gate_blockers(decisions)
     future_workers = _future_worker_statuses(data_dir=data_dir)
+    resident_expert_views = ResidentExpertRuntimeService.from_data_dir(
+        data_dir,
+        stale_after_seconds=settings.resident_expert_stale_after_seconds,
+    ).list_runtime_views(now=now)
+    resident_expert_stale = sum(1 for view in resident_expert_views if view.status == "stale")
     recovery_failed = sum(
         1
         for _, result in receipt_items
@@ -686,6 +700,15 @@ def build_ops_summary(
                 severity="critical",
                 count=recovery_failed,
                 summary="recovery execution produced non-completed receipts",
+            )
+        )
+    if resident_expert_stale:
+        alerts.append(
+            OpsAlert(
+                alert_code="resident_expert_stale",
+                severity="warning",
+                count=resident_expert_stale,
+                summary="resident expert runtime handles are stale",
             )
         )
 
@@ -758,6 +781,14 @@ def build_ops_health_summary(
     )
     runtime_gate_reason_counts: dict[str, int] = {}
     release_gate_blockers = 0
+    resident_expert_stale = sum(
+        1
+        for view in ResidentExpertRuntimeService.from_data_dir(
+            data_dir,
+            stale_after_seconds=settings.resident_expert_stale_after_seconds,
+        ).list_runtime_views(now=now)
+        if view.status == "stale"
+    )
     for row in decision_rows:
         matched_policy_rules = list(row.get("matched_policy_rules") or [])
         if any(rule in _RUNTIME_GATE_ALERT_RULES for rule in matched_policy_rules):
@@ -790,6 +821,7 @@ def build_ops_health_summary(
             delivery_failed,
             mapping_incomplete,
             recovery_failed,
+            resident_expert_stale,
         )
         if value
     ) + sum(1 for count in runtime_gate_reason_counts.values() if count)
@@ -845,7 +877,7 @@ def get_resident_experts(
                 OpsResidentExpertStatus.model_validate(
                     view.model_dump(mode="json")
                 ).model_dump(mode="json")
-                for view in resident_expert_runtime_service.list_runtime_views()
+                for view in resident_expert_runtime_service.list_runtime_views(now=datetime.now(UTC))
             ]
         },
     )
@@ -860,6 +892,7 @@ def post_resident_experts_consult(
         get_resident_expert_runtime_service
     ),
 ) -> dict[str, object]:
+    response_now = _parse_iso8601(payload.consulted_at) or datetime.now(UTC)
     resident_expert_runtime_service.consult_or_restore(
         expert_ids=payload.expert_ids or None,
         consultation_ref=payload.consultation_ref,
@@ -873,7 +906,7 @@ def post_resident_experts_consult(
                 OpsResidentExpertStatus.model_validate(
                     view.model_dump(mode="json")
                 ).model_dump(mode="json")
-                for view in resident_expert_runtime_service.list_runtime_views()
+                for view in resident_expert_runtime_service.list_runtime_views(now=response_now)
             ]
         },
     )
@@ -898,6 +931,7 @@ def post_resident_expert_runtime_handles(
         except KeyError as exc:
             detail = exc.args[0] if exc.args else str(exc)
             raise HTTPException(status_code=404, detail=str(detail)) from exc
+    response_now = _latest_timestamp([binding.observed_at for binding in payload.bindings])
     return ok(
         request.headers.get("x-request-id"),
         {
@@ -905,7 +939,7 @@ def post_resident_expert_runtime_handles(
                 OpsResidentExpertStatus.model_validate(
                     view.model_dump(mode="json")
                 ).model_dump(mode="json")
-                for view in resident_expert_runtime_service.list_runtime_views()
+                for view in resident_expert_runtime_service.list_runtime_views(now=response_now)
             ]
         },
     )

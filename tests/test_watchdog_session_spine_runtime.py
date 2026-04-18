@@ -2205,6 +2205,65 @@ def test_resident_orchestrator_records_resident_expert_consultation_evidence(
     ]
 
 
+def test_resident_orchestrator_marks_resident_expert_coverage_degraded_when_stale(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        resident_expert_stale_after_seconds=60.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent:managed:1",
+        observed_at="2026-04-07T00:00:00Z",
+    )
+    app.state.resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="hermes-agent-expert",
+        runtime_handle="agent:hermes:1",
+        observed_at="2026-04-07T00:00:00Z",
+    )
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 2, 0, tzinfo=UTC)
+        )
+
+    steer_mock.assert_not_called()
+    decision = app.state.policy_decision_store.list_records()[0]
+    consultation = decision.evidence["resident_expert_consultation"]
+    assert consultation["coverage_status"] == "degraded"
+    assert consultation["degraded_expert_ids"] == [
+        "managed-agent-expert",
+        "hermes-agent-expert",
+    ]
+    assert [item["status"] for item in consultation["experts"]] == [
+        "stale",
+        "stale",
+    ]
+
+
 def test_resident_orchestrator_does_not_reconsult_resident_experts_for_identical_replay(
     tmp_path: Path,
 ) -> None:

@@ -22,7 +22,13 @@ class ResidentExpertDefinition(_ResidentExpertModel):
     expected_output: list[str] = Field(default_factory=list)
 
 
-ResidentExpertRuntimeStatus = Literal["available", "unavailable", "restoring"]
+ResidentExpertRuntimeStatus = Literal[
+    "available",
+    "bound",
+    "stale",
+    "unavailable",
+    "restoring",
+]
 
 
 class ResidentExpertRuntimeBinding(_ResidentExpertModel):
@@ -50,6 +56,8 @@ class ResidentExpertRuntimeView(_ResidentExpertModel):
     charter_source_ref: str = Field(min_length=1)
     charter_version_hash: str = Field(min_length=1)
     status: ResidentExpertRuntimeStatus
+    runtime_handle_bound: bool = False
+    oversight_ready: bool = False
     runtime_handle: str | None = None
     last_seen_at: str | None = None
     last_consulted_at: str | None = None

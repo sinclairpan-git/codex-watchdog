@@ -91,3 +91,51 @@ def test_consult_or_restore_prefers_existing_runtime_handle_over_ad_hoc_redefini
     assert restored[0].status == "restoring"
     assert restored[0].last_seen_at == "2026-04-18T06:00:00Z"
     assert restored[0].last_consultation_ref == "decision:resident:1"
+
+
+def test_bind_runtime_handle_marks_fixed_expert_as_bound_until_consulted(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    data_dir = tmp_path / "data"
+    _write_registry(repo_root)
+
+    service = ResidentExpertRuntimeService.from_data_dir(data_dir, repo_root=repo_root)
+    service.ensure_registry()
+    service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent:managed:1",
+        observed_at="2026-04-18T06:00:00Z",
+    )
+
+    views = service.list_runtime_views()
+
+    assert views[0].expert_id == "managed-agent-expert"
+    assert views[0].status == "bound"
+    assert views[0].runtime_handle_bound is True
+    assert views[0].oversight_ready is False
+
+
+def test_resident_expert_runtime_becomes_stale_after_threshold(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    data_dir = tmp_path / "data"
+    _write_registry(repo_root)
+
+    service = ResidentExpertRuntimeService.from_data_dir(
+        data_dir,
+        repo_root=repo_root,
+        stale_after_seconds=60.0,
+    )
+    service.ensure_registry()
+    service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent:managed:1",
+        observed_at="2026-04-18T06:00:00Z",
+    )
+
+    views = service.list_runtime_views(now="2026-04-18T06:02:00Z")
+
+    assert views[0].expert_id == "managed-agent-expert"
+    assert views[0].status == "stale"
+    assert views[0].runtime_handle_bound is True
+    assert views[0].oversight_ready is False

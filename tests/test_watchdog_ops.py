@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -328,10 +329,14 @@ def test_watchdog_ops_can_bind_fixed_resident_expert_runtime_handles(tmp_path: P
     assert payload["success"] is True
     experts = {expert["expert_id"]: expert for expert in payload["data"]["experts"]}
     assert experts["managed-agent-expert"]["runtime_handle"] == "agent:managed:1"
-    assert experts["managed-agent-expert"]["status"] == "available"
+    assert experts["managed-agent-expert"]["status"] == "bound"
+    assert experts["managed-agent-expert"]["runtime_handle_bound"] is True
+    assert experts["managed-agent-expert"]["oversight_ready"] is False
     assert experts["managed-agent-expert"]["last_seen_at"] == "2026-04-18T06:12:00Z"
     assert experts["hermes-agent-expert"]["runtime_handle"] == "agent:hermes:1"
-    assert experts["hermes-agent-expert"]["status"] == "available"
+    assert experts["hermes-agent-expert"]["status"] == "bound"
+    assert experts["hermes-agent-expert"]["runtime_handle_bound"] is True
+    assert experts["hermes-agent-expert"]["oversight_ready"] is False
     assert experts["hermes-agent-expert"]["last_seen_at"] == "2026-04-18T06:13:00Z"
 
 
@@ -357,6 +362,47 @@ def test_watchdog_ops_rejects_unknown_resident_expert_runtime_handle_binding(
     assert response.status_code == 404
     payload = response.json()
     assert payload["detail"] == "resident expert binding missing: unknown-expert"
+
+
+def test_watchdog_ops_exposes_stale_resident_expert_runtime_status(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            data_dir=str(tmp_path),
+            resident_expert_stale_after_seconds=60.0,
+        )
+    )
+    app.state.resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent:managed:1",
+        observed_at="2000-01-01T00:00:00Z",
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/watchdog/ops/resident-experts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    experts = {expert["expert_id"]: expert for expert in payload["data"]["experts"]}
+    assert experts["managed-agent-expert"]["status"] == "stale"
+    assert experts["managed-agent-expert"]["runtime_handle_bound"] is True
+    assert experts["managed-agent-expert"]["oversight_ready"] is False
+
+    summary = build_ops_summary(
+        data_dir=tmp_path,
+        settings=Settings(
+            api_token="wt",
+            data_dir=str(tmp_path),
+            resident_expert_stale_after_seconds=60.0,
+        ),
+        now=datetime(2000, 1, 1, 0, 2, 0, tzinfo=UTC),
+    )
+    assert summary.status == "degraded"
+    assert [alert.alert_code for alert in summary.alerts] == ["resident_expert_stale"]
 
 
 def test_watchdog_ops_exposes_resident_expert_decision_audit_rows(tmp_path: Path) -> None:

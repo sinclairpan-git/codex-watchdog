@@ -431,9 +431,16 @@ class ResidentOrchestrator:
             consultation_ref=consultation_ref,
             consulted_at=consulted_at,
         )
+        degraded_expert_ids = [
+            binding.expert_id
+            for binding in bindings
+            if binding.status in {"stale", "unavailable"}
+        ]
         consultation_bundle = {
             "consultation_ref": consultation_ref,
             "consulted_at": consulted_at,
+            "coverage_status": "degraded" if degraded_expert_ids else "healthy",
+            "degraded_expert_ids": degraded_expert_ids,
             "experts": [
                 {
                     "expert_id": binding.expert_id,

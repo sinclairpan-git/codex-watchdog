@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     session_spine_refresh_interval_seconds: float = 30.0
     session_spine_freshness_window_seconds: float = 60.0
     resident_orchestrator_interval_seconds: float = 5.0
+    resident_expert_stale_after_seconds: float = 900.0
     auto_continue_cooldown_seconds: float = 300.0
     progress_summary_interval_seconds: float = 300.0
     progress_summary_max_age_seconds: float = 600.0

@@ -363,7 +363,8 @@ def create_app(
         preview_contract_overrides=settings.build_memory_preview_contract_overrides(),
     )
     app.state.resident_expert_runtime_service = ResidentExpertRuntimeService.from_data_dir(
-        settings.data_dir
+        settings.data_dir,
+        stale_after_seconds=settings.resident_expert_stale_after_seconds,
     )
     app.state.resident_expert_runtime_service.ensure_registry()
     app.state.memory_ingest_queue_store = MemoryIngestQueueStore(

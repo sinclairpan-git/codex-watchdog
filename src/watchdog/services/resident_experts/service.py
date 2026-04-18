@@ -9,6 +9,7 @@ import yaml
 from watchdog.services.resident_experts.models import (
     ResidentExpertDefinition,
     ResidentExpertRuntimeBinding,
+    ResidentExpertRuntimeStatus,
     ResidentExpertRuntimeView,
 )
 from watchdog.services.resident_experts.store import ResidentExpertRuntimeStore
@@ -19,6 +20,29 @@ _CHARTER_PATH = Path("docs/operations/resident-expert-agents.zh-CN.md")
 
 def _utcnow() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_utc(value: str | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _format_utc(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _repo_root() -> Path:
@@ -42,11 +66,13 @@ class ResidentExpertRuntimeService:
         repo_root: Path | None = None,
         registry_path: Path | None = None,
         charter_path: Path | None = None,
+        stale_after_seconds: float = 900.0,
     ) -> None:
         self._store = store
         self._repo_root = repo_root or _repo_root()
         self._registry_path = registry_path or (self._repo_root / _REGISTRY_PATH)
         self._charter_path = charter_path or (self._repo_root / _CHARTER_PATH)
+        self._stale_after_seconds = max(float(stale_after_seconds), 0.0)
         registry_text = _read_text(self._registry_path)
         charter_text = _read_text(self._charter_path)
         self._charter_source_ref = ",".join(
@@ -89,12 +115,14 @@ class ResidentExpertRuntimeService:
         repo_root: Path | None = None,
         registry_path: Path | None = None,
         charter_path: Path | None = None,
+        stale_after_seconds: float = 900.0,
     ) -> ResidentExpertRuntimeService:
         return cls(
             store=ResidentExpertRuntimeStore(Path(data_dir) / "resident_experts.json"),
             repo_root=repo_root,
             registry_path=registry_path,
             charter_path=charter_path,
+            stale_after_seconds=stale_after_seconds,
         )
 
     def ensure_registry(self) -> list[ResidentExpertRuntimeBinding]:
@@ -140,7 +168,7 @@ class ResidentExpertRuntimeService:
         updated = binding.model_copy(
             update={
                 "runtime_handle": runtime_handle,
-                "status": "available",
+                "status": "bound",
                 "last_seen_at": observed_at or _utcnow(),
             }
         )
@@ -155,6 +183,7 @@ class ResidentExpertRuntimeService:
         consulted_at: str | None = None,
     ) -> list[ResidentExpertRuntimeBinding]:
         now = consulted_at or _utcnow()
+        now_dt = _parse_utc(now)
         self.ensure_registry()
         if expert_ids is None:
             requested_ids = [definition.expert_id for definition in self._definitions]
@@ -180,7 +209,9 @@ class ResidentExpertRuntimeService:
                 next_status = "available"
                 last_seen_at = now
             elif runtime_handle:
-                next_status = "restoring"
+                next_status = self._effective_status(binding, now=now_dt)
+                if next_status != "stale":
+                    next_status = "restoring"
             else:
                 next_status = "unavailable"
             refreshed = binding.model_copy(
@@ -195,9 +226,14 @@ class ResidentExpertRuntimeService:
             updated.append(self._store.upsert_binding(refreshed))
         return updated
 
-    def list_runtime_views(self) -> list[ResidentExpertRuntimeView]:
+    def list_runtime_views(
+        self,
+        *,
+        now: str | datetime | None = None,
+    ) -> list[ResidentExpertRuntimeView]:
         self.ensure_registry()
         bindings = {binding.expert_id: binding for binding in self._store.list_bindings()}
+        now_dt = _parse_utc(now)
         return [
             ResidentExpertRuntimeView(
                 expert_id=definition.expert_id,
@@ -212,7 +248,9 @@ class ResidentExpertRuntimeService:
                 expected_output=list(definition.expected_output),
                 charter_source_ref=self._charter_source_ref,
                 charter_version_hash=bindings[definition.expert_id].charter_version_hash,
-                status=bindings[definition.expert_id].status,
+                status=(status := self._effective_status(bindings[definition.expert_id], now=now_dt)),
+                runtime_handle_bound=bool(bindings[definition.expert_id].runtime_handle),
+                oversight_ready=(status == "available"),
                 runtime_handle=bindings[definition.expert_id].runtime_handle,
                 last_seen_at=bindings[definition.expert_id].last_seen_at,
                 last_consulted_at=bindings[definition.expert_id].last_consulted_at,
@@ -229,3 +267,25 @@ class ResidentExpertRuntimeService:
         if binding is None:
             raise KeyError(f"resident expert binding missing: {expert_id}")
         return binding
+
+    def _effective_status(
+        self,
+        binding: ResidentExpertRuntimeBinding,
+        *,
+        now: datetime | None,
+    ) -> ResidentExpertRuntimeStatus:
+        if not binding.runtime_handle:
+            return "unavailable"
+        if self._is_stale(binding.last_seen_at, now=now):
+            return "stale"
+        if binding.status in {"available", "bound", "restoring"}:
+            return binding.status
+        return "bound"
+
+    def _is_stale(self, value: str | None, *, now: datetime | None) -> bool:
+        if self._stale_after_seconds <= 0:
+            return False
+        last_seen_at = _parse_utc(value)
+        if last_seen_at is None or now is None:
+            return False
+        return (now - last_seen_at).total_seconds() >= self._stale_after_seconds
