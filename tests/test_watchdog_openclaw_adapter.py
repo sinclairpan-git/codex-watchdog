@@ -11,6 +11,7 @@ from watchdog.contracts.session_spine.enums import (
 )
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
+from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
@@ -186,6 +187,71 @@ def _adapter(
     )
 
 
+def _provider_invalid_decision_record(
+    *,
+    project_id: str = "repo-a",
+    session_id: str = "session:repo-a",
+    native_thread_id: str = "thr_native_1",
+) -> CanonicalDecisionRecord:
+    return CanonicalDecisionRecord(
+        decision_id=f"decision:{project_id}:provider-invalid",
+        decision_key=f"{session_id}|fact-v7|policy-v1|require_user_decision|execute_recovery|",
+        session_id=session_id,
+        project_id=project_id,
+        thread_id=session_id,
+        native_thread_id=native_thread_id,
+        approval_id=None,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="manual approval required",
+        matched_policy_rules=["registered_action"],
+        why_not_escalated=None,
+        why_escalated="manual decision required",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key=f"{session_id}|fact-v7|policy-v1|require_user_decision|execute_recovery|",
+        created_at="2026-04-07T00:05:00Z",
+        operator_notes=[],
+        evidence={
+            "facts": [
+                {
+                    "fact_id": "fact-1",
+                    "fact_code": "approval_pending",
+                    "fact_kind": "blocker",
+                    "severity": "warning",
+                    "summary": "approval pending",
+                    "detail": "approval pending",
+                    "source": "watchdog",
+                    "observed_at": "2026-04-07T00:05:00Z",
+                    "related_ids": {},
+                }
+            ],
+            "matched_policy_rules": ["registered_action"],
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": None,
+            },
+            "decision_trace": {
+                "trace_id": f"trace:{project_id}-provider-invalid",
+                "provider": "openai-compatible",
+                "model": "gpt-4.1-mini",
+                "prompt_schema_ref": "prompt:decision-v2",
+                "output_schema_ref": "schema:decision-trace-v1",
+                "provider_output_schema_ref": "schema:provider-decision-v2",
+                "degrade_reason": "provider_output_invalid",
+                "goal_contract_version": "goal-v1",
+                "policy_ruleset_hash": "policy-hash-v1",
+                "memory_packet_input_ids": [],
+                "memory_packet_input_hashes": [],
+            },
+        },
+    )
+
+
 def test_adapter_get_session_returns_stable_session_projection(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -306,6 +372,36 @@ def test_adapter_why_stuck_is_built_from_fact_records(tmp_path: Path) -> None:
     ]
     assert "session appears stuck" in reply.message
     assert "repeated failures detected" in reply.message
+
+
+def test_adapter_progress_surfaces_decision_degradation_annotations(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    PolicyDecisionStore(tmp_path / "policy_decisions.json").put(
+        _provider_invalid_decision_record()
+    )
+
+    reply = adapter.handle_intent("get_progress", project_id="repo-a")
+
+    assert reply.reply_code == "task_progress_view"
+    assert reply.message == "waiting for approval | 决策=provider降级(schema:provider-decision-v2)"
+    assert reply.progress is not None
+    assert reply.progress.decision_trace_ref == "trace:repo-a-provider-invalid"
 
 
 def test_adapter_explain_blocker_uses_fact_records_and_stable_read_model(tmp_path: Path) -> None:

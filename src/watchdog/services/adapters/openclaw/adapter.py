@@ -34,6 +34,7 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_unsupported_intent_reply,
     build_workspace_activity_reply,
 )
+from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.entrypoints.command_routing import (
     resolve_entry_message,
     resolve_entry_route,
@@ -75,6 +76,7 @@ class OpenClawAdapter:
         self._session_service = SessionService.from_data_dir(data_dir)
         self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
         self._approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
+        self._decision_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
 
     def handle_intent(
         self,
@@ -113,6 +115,7 @@ class OpenClawAdapter:
                         session_service=self._session_service,
                         store=self._session_spine_store,
                         approval_store=self._approval_store,
+                        decision_store=self._decision_store,
                     )
                     return build_session_directory_reply(bundle)
                 if intent_code == "list_approval_inbox":
@@ -137,6 +140,7 @@ class OpenClawAdapter:
                         session_service=self._session_service,
                         store=self._session_spine_store,
                         approval_store=self._approval_store,
+                        decision_store=self._decision_store,
                     )
                     return build_session_reply(bundle, intent_code=intent_code)
                 if not project_id:
@@ -164,6 +168,7 @@ class OpenClawAdapter:
                     session_service=self._session_service,
                     store=self._session_spine_store,
                     approval_store=self._approval_store,
+                    decision_store=self._decision_store,
                 )
                 if intent_code == "get_session":
                     return build_session_reply(bundle)

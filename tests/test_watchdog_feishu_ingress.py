@@ -151,6 +151,71 @@ def _approval_decision(
     )
 
 
+def _provider_invalid_decision(
+    *,
+    project_id: str = "repo-a",
+    session_id: str = "session:repo-a",
+    native_thread_id: str = "thr:repo-a",
+) -> CanonicalDecisionRecord:
+    return CanonicalDecisionRecord(
+        decision_id=f"decision:{project_id}:provider-invalid",
+        decision_key=f"{session_id}|fact-v7|policy-v1|require_user_decision|execute_recovery|",
+        session_id=session_id,
+        project_id=project_id,
+        thread_id=session_id,
+        native_thread_id=native_thread_id,
+        approval_id=None,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="manual approval required",
+        matched_policy_rules=["registered_action"],
+        why_not_escalated=None,
+        why_escalated="manual decision required",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key=f"{session_id}|fact-v7|policy-v1|require_user_decision|execute_recovery|",
+        created_at="2026-04-15T04:45:05Z",
+        operator_notes=[],
+        evidence={
+            "facts": [
+                {
+                    "fact_id": "fact-1",
+                    "fact_code": "approval_pending",
+                    "fact_kind": "blocker",
+                    "severity": "warning",
+                    "summary": "approval pending",
+                    "detail": "approval pending",
+                    "source": "watchdog",
+                    "observed_at": "2026-04-15T04:45:05Z",
+                    "related_ids": {},
+                }
+            ],
+            "matched_policy_rules": ["registered_action"],
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "execute_recovery",
+                "approval_id": None,
+            },
+            "decision_trace": {
+                "trace_id": f"trace:{project_id}-provider-invalid",
+                "provider": "openai-compatible",
+                "model": "gpt-4.1-mini",
+                "prompt_schema_ref": "prompt:decision-v2",
+                "output_schema_ref": "schema:decision-trace-v1",
+                "provider_output_schema_ref": "schema:provider-decision-v2",
+                "degrade_reason": "provider_output_invalid",
+                "goal_contract_version": "goal-v1",
+                "policy_ruleset_hash": "policy-hash-v1",
+                "memory_packet_input_ids": [],
+                "memory_packet_input_hashes": [],
+            },
+        },
+    )
+
+
 def test_feishu_ingress_answers_url_verification_challenge(tmp_path: Path) -> None:
     app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[]))
 
@@ -270,6 +335,30 @@ def test_feishu_ingress_default_bound_status_stays_command_request(tmp_path: Pat
     assert response.json()["accepted"] is True
     assert response.json()["event_type"] == "command_request"
     assert response.json()["data"]["intent_code"] == "get_session"
+
+
+def test_feishu_ingress_progress_surfaces_decision_degradation_annotations(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=settings, a_client=a_client)
+    app.state.policy_decision_store.put(_provider_invalid_decision())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("进展"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "get_progress"
+    assert response.json()["data"]["message"] == (
+        "waiting | 决策=provider降级(schema:provider-decision-v2)"
+    )
+    assert response.json()["data"]["progress"]["decision_trace_ref"] == (
+        "trace:repo-a-provider-invalid"
+    )
 
 
 def test_feishu_ingress_global_project_directory_command_skips_project_binding(tmp_path: Path) -> None:
