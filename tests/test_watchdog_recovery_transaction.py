@@ -29,6 +29,8 @@ def test_recovery_transaction_persists_intermediate_lineage_and_parent_cooling_s
             "project_id": "repo-a",
             "status": "running",
             "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
         },
         goal_contract_version="goal-v9",
         source_packet_id="packet:handoff-v9",
@@ -98,6 +100,8 @@ def test_recovery_transaction_rejects_second_active_transaction_for_same_recover
                 "project_id": "repo-a",
                 "status": "running",
                 "mode": "resume_or_new_thread",
+                "resume_outcome": "new_child_session",
+                "session_id": "session:repo-a:child-v9",
             },
         )
 

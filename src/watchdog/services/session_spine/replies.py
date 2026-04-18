@@ -33,6 +33,7 @@ def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyMo
         intent_code="list_sessions",
         message=f"{len(bundle.sessions)} session(s)",
         sessions=bundle.sessions,
+        progresses=bundle.progresses,
     )
 
 

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pydantic import BaseModel, ConfigDict, Field
 
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.adapters.openclaw.intents import GLOBAL_READ_INTENTS
 from watchdog.services.entrypoints.command_routing import resolve_entry_message
 from watchdog.services.feishu_control import FeishuControlRequest
 from watchdog.services.session_spine.store import SessionSpineStore
@@ -256,6 +257,11 @@ class FeishuIngressNormalizationService:
             head, _, rest = message.partition(" ")
             lookup_thread_id = head.split(":", 1)[1].strip()
             command_text = rest.strip()
+        elif resolve_entry_message(command_text) in GLOBAL_READ_INTENTS:
+            return {
+                "event_type": "command_request",
+                "command_text": command_text,
+            }
         elif default_project_id:
             project_id = default_project_id
         else:

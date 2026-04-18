@@ -16,6 +16,11 @@ READ_INTENTS = {
     "list_approval_inbox",
 }
 
+GLOBAL_READ_INTENTS = {
+    "list_sessions",
+    "list_approval_inbox",
+}
+
 RECEIPT_INTENTS = {"get_action_receipt"}
 
 WRITE_INTENT_TO_ACTION = {
@@ -36,6 +41,11 @@ WRITE_INTENT_TO_ACTION = {
 ALL_SUPPORTED_INTENTS = READ_INTENTS.union(RECEIPT_INTENTS, WRITE_INTENT_TO_ACTION)
 
 NATURAL_LANGUAGE_TO_INTENT = {
+    "项目列表": "list_sessions",
+    "会话列表": "list_sessions",
+    "所有项目": "list_sessions",
+    "所有项目进展": "list_sessions",
+    "多项目进展": "list_sessions",
     "现在进展": "get_progress",
     "进展": "get_progress",
     "当前进展": "get_progress",

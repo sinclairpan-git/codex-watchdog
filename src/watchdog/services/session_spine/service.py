@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -115,6 +115,7 @@ class SessionDirectoryReadBundle:
     tasks: list[dict[str, Any]]
     approvals: list[dict[str, Any]]
     sessions: list[SessionProjection]
+    progresses: list[TaskProgressView] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +290,43 @@ def _latest_event_timestamp(events: list[SessionEventRecord]) -> str | None:
     return sorted(events, key=_session_event_sort_key)[-1].occurred_at
 
 
+def _recovery_sort_key(record: Any) -> tuple[str, int, str, str]:
+    return (
+        "0" if getattr(record, "log_seq", None) is not None else "1",
+        getattr(record, "log_seq", None) or 0,
+        str(getattr(record, "updated_at", "")),
+        str(getattr(record, "recovery_transaction_id", "")),
+    )
+
+
+def _build_recovery_projection(
+    *,
+    session_service: SessionService | None,
+    project_id: str,
+) -> dict[str, Any] | None:
+    if session_service is None:
+        return None
+    records = session_service.list_recovery_transactions(
+        parent_session_id=stable_thread_id_for_project(project_id),
+    )
+    if not records:
+        return None
+    latest = sorted(records, key=_recovery_sort_key)[-1]
+    resume_outcome = str(latest.metadata.get("resume_outcome") or "").strip() or None
+    if resume_outcome not in {"same_thread_resume", "new_child_session"}:
+        resume_outcome = None
+    if resume_outcome is None and latest.status in {"failed_retryable", "failed_manual"}:
+        resume_outcome = "resume_failed"
+    if resume_outcome is None and str(latest.metadata.get("resume_error") or "").strip():
+        resume_outcome = "resume_failed"
+    return {
+        "recovery_outcome": resume_outcome,
+        "recovery_status": latest.status,
+        "recovery_updated_at": latest.updated_at,
+        "recovery_child_session_id": latest.child_session_id,
+    }
+
+
 def _merge_fact_records(
     *collections: list[FactRecord],
 ) -> list[FactRecord]:
@@ -364,6 +402,7 @@ def _build_session_read_bundle_from_session_events(
     events: list[SessionEventRecord],
     persisted_record: PersistedSessionRecord | None = None,
     task: dict[str, Any] | None = None,
+    session_service: SessionService | None = None,
 ) -> SessionReadBundle:
     approvals = _build_approval_rows_from_session_events(events)
     projected_task = _build_event_projection_task(
@@ -384,6 +423,7 @@ def _build_session_read_bundle_from_session_events(
     )
     facts = _merge_fact_records(approval_facts, event_facts)
     native_thread_id = str(projected_task.get("thread_id") or "") or None
+    recovery = _build_recovery_projection(session_service=session_service, project_id=project_id)
     return SessionReadBundle(
         project_id=project_id,
         task=projected_task,
@@ -399,6 +439,7 @@ def _build_session_read_bundle_from_session_events(
             project_id=project_id,
             task=projected_task,
             facts=facts,
+            recovery=recovery,
         ),
         approval_queue=build_approval_projections(
             project_id=project_id,
@@ -551,9 +592,11 @@ def _build_session_read_bundle(
     project_id: str,
     task: dict[str, Any] | None,
     approvals: list[dict[str, Any]],
+    session_service: SessionService | None = None,
 ) -> SessionReadBundle:
     facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     native_thread_id = str(task.get("thread_id") or "") or None
+    recovery = _build_recovery_projection(session_service=session_service, project_id=project_id)
     return SessionReadBundle(
         project_id=project_id,
         task=task,
@@ -569,6 +612,7 @@ def _build_session_read_bundle(
             project_id=project_id,
             task=task,
             facts=facts,
+            recovery=recovery,
         ),
         approval_queue=build_approval_projections(
             project_id=project_id,
@@ -690,6 +734,7 @@ def _build_session_read_bundle_from_persisted_record(
     *,
     approval_store: CanonicalApprovalStore | None = None,
     freshness_window_seconds: float,
+    session_service: SessionService | None = None,
 ) -> SessionReadBundle:
     canonical_approvals = _list_actionable_canonical_approval_rows(
         approval_store,
@@ -702,6 +747,7 @@ def _build_session_read_bundle_from_persisted_record(
             project_id=record.project_id,
             task=synthesized_task,
             approvals=approvals,
+            session_service=session_service,
         )
         return SessionReadBundle(
             project_id=bundle.project_id,
@@ -716,13 +762,24 @@ def _build_session_read_bundle_from_persisted_record(
                 freshness_window_seconds=freshness_window_seconds,
             ),
         )
+    recovery = _build_recovery_projection(
+        session_service=session_service,
+        project_id=record.project_id,
+    )
     return SessionReadBundle(
         project_id=record.project_id,
         task=None,
         approvals=[],
         facts=list(record.facts),
         session=record.session,
-        progress=record.progress,
+        progress=record.progress.model_copy(
+            update={
+                "recovery_outcome": (recovery or {}).get("recovery_outcome"),
+                "recovery_status": (recovery or {}).get("recovery_status"),
+                "recovery_updated_at": (recovery or {}).get("recovery_updated_at"),
+                "recovery_child_session_id": (recovery or {}).get("recovery_child_session_id"),
+            }
+        ),
         approval_queue=list(record.approval_queue),
         snapshot=_build_snapshot_read_semantics_from_persisted_record(
             record,
@@ -782,6 +839,7 @@ def build_session_read_bundle(
                 project_id=project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                session_service=session_service,
             )
     if store is not None:
         if persisted_record is not None:
@@ -789,6 +847,7 @@ def build_session_read_bundle(
                 persisted_record,
                 approval_store=approval_store,
                 freshness_window_seconds=freshness_window_seconds,
+                session_service=session_service,
             )
     task = _load_task_or_raise(client, project_id)
     approvals = _load_approvals_or_raise(client, project_id)
@@ -796,6 +855,7 @@ def build_session_read_bundle(
         project_id=project_id,
         task=task,
         approvals=approvals,
+        session_service=session_service,
     )
     return SessionReadBundle(
         project_id=bundle.project_id,
@@ -826,6 +886,7 @@ def build_session_read_bundle_by_native_thread(
                 project_id=persisted_record.project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                session_service=session_service,
             )
     if store is not None:
         if persisted_record is not None:
@@ -833,6 +894,7 @@ def build_session_read_bundle_by_native_thread(
                 persisted_record,
                 approval_store=approval_store,
                 freshness_window_seconds=freshness_window_seconds,
+                session_service=session_service,
             )
     task = _load_task_by_native_thread_or_raise(client, native_thread_id)
     project_id = str(task.get("project_id") or "")
@@ -847,12 +909,14 @@ def build_session_read_bundle_by_native_thread(
                 project_id=project_id,
                 events=session_events,
                 task=task,
+                session_service=session_service,
             )
     approvals = _load_approvals_or_raise(client, project_id)
     bundle = _build_session_read_bundle(
         project_id=project_id,
         task=task,
         approvals=approvals,
+        session_service=session_service,
     )
     return SessionReadBundle(
         project_id=bundle.project_id,
@@ -1009,46 +1073,53 @@ def build_session_directory_bundle(
         )
         if grouped_events:
             sessions: list[SessionProjection] = []
+            progresses: list[TaskProgressView] = []
             ordered_project_ids = list(dict.fromkeys([*grouped_events.keys(), *persisted_by_project.keys()]))
             for current_project_id in ordered_project_ids:
                 if current_project_id in grouped_events:
-                    sessions.append(
-                        _build_session_read_bundle_from_session_events(
-                            project_id=current_project_id,
-                            events=grouped_events[current_project_id],
-                            persisted_record=persisted_by_project.get(current_project_id),
-                        ).session
+                    bundle = _build_session_read_bundle_from_session_events(
+                        project_id=current_project_id,
+                        events=grouped_events[current_project_id],
+                        persisted_record=persisted_by_project.get(current_project_id),
+                        session_service=session_service,
                     )
+                    sessions.append(bundle.session)
+                    progresses.append(bundle.progress)
                     continue
                 record = persisted_by_project.get(current_project_id)
                 if record is None:
                     continue
-                sessions.append(
-                    _build_session_read_bundle_from_persisted_record(
-                        record,
-                        approval_store=approval_store,
-                        freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
-                    ).session
+                bundle = _build_session_read_bundle_from_persisted_record(
+                    record,
+                    approval_store=approval_store,
+                    freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
+                    session_service=session_service,
                 )
+                sessions.append(bundle.session)
+                progresses.append(bundle.progress)
             if sessions:
                 return SessionDirectoryReadBundle(
                     tasks=[],
                     approvals=[],
                     sessions=sessions,
+                    progresses=progresses,
                 )
     if store is not None:
         if persisted_records:
+            bundles = [
+                _build_session_read_bundle_from_persisted_record(
+                    record,
+                    approval_store=approval_store,
+                    freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
+                    session_service=session_service,
+                )
+                for record in persisted_records
+            ]
             return SessionDirectoryReadBundle(
                 tasks=[],
                 approvals=[],
-                sessions=[
-                    _build_session_read_bundle_from_persisted_record(
-                        record,
-                        approval_store=approval_store,
-                        freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
-                    ).session
-                    for record in persisted_records
-                ],
+                sessions=[bundle.session for bundle in bundles],
+                progresses=[bundle.progress for bundle in bundles],
             )
     tasks = _load_tasks_or_raise(client)
     approvals = _load_approvals_or_raise(client)
@@ -1062,22 +1133,23 @@ def build_session_directory_bundle(
         tasks_by_project[project_id] = dict(task)
 
     sessions: list[SessionProjection] = []
+    progresses: list[TaskProgressView] = []
     for project_id, task in tasks_by_project.items():
         project_approvals = [
             row for row in approvals if str(row.get("project_id") or "") == project_id
         ]
-        facts = build_fact_records(project_id=project_id, task=task, approvals=project_approvals)
-        sessions.append(
-            build_session_projection(
-                project_id=project_id,
-                task=task,
-                approvals=project_approvals,
-                facts=facts,
-            )
+        bundle = _build_session_read_bundle(
+            project_id=project_id,
+            task=task,
+            approvals=project_approvals,
+            session_service=session_service,
         )
+        sessions.append(bundle.session)
+        progresses.append(bundle.progress)
 
     return SessionDirectoryReadBundle(
         tasks=list(tasks_by_project.values()),
         approvals=approvals,
         sessions=sessions,
+        progresses=progresses,
     )

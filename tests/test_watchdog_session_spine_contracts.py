@@ -303,12 +303,30 @@ def test_session_directory_contract_extension_is_stable() -> None:
         pending_approval_count=0,
         available_intents=["get_session", "continue_session"],
     )
+    progress = TaskProgressView(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        activity_phase="editing_source",
+        summary="editing files",
+        files_touched=["src/example.py"],
+        context_pressure="low",
+        stuck_level=0,
+        primary_fact_codes=[],
+        blocker_fact_codes=[],
+        last_progress_at="2026-04-05T05:20:00Z",
+        recovery_outcome="same_thread_resume",
+        recovery_status="completed",
+        recovery_updated_at="2026-04-05T05:21:00Z",
+        recovery_child_session_id=None,
+    )
     reply = ReplyModel(
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.SESSION_DIRECTORY,
         intent_code="list_sessions",
         message="1 session(s)",
         sessions=[session],
+        progresses=[progress],
     )
 
     payload = reply.model_dump(mode="json")
@@ -317,6 +335,8 @@ def test_session_directory_contract_extension_is_stable() -> None:
     assert payload["reply_kind"] == "session"
     assert payload["sessions"][0]["project_id"] == "repo-a"
     assert payload["sessions"][0]["thread_id"] == "session:repo-a"
+    assert payload["progresses"][0]["project_id"] == "repo-a"
+    assert payload["progresses"][0]["recovery_outcome"] == "same_thread_resume"
 
 
 def test_native_thread_resolution_reuses_session_projection_reply_contract() -> None:

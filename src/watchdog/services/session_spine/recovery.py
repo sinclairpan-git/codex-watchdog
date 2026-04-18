@@ -21,6 +21,9 @@ from watchdog.services.session_spine.service import (
 )
 from watchdog.settings import Settings
 
+_SAME_THREAD_RESUME = "same_thread_resume"
+_NEW_CHILD_SESSION = "new_child_session"
+
 
 @dataclass(frozen=True, slots=True)
 class RecoveryExecutionOutcome:
@@ -30,6 +33,7 @@ class RecoveryExecutionOutcome:
     facts: list[FactRecord] = field(default_factory=list)
     handoff: dict[str, Any] | None = None
     resume: dict[str, Any] | None = None
+    resume_outcome: str | None = None
     resume_error: str | None = None
     memory_advisory_context: dict[str, Any] | None = None
 
@@ -104,6 +108,25 @@ def _memory_source_ref(payload: dict[str, Any]) -> str | None:
             if source_ref:
                 return source_ref
     return None
+
+
+def _resolve_resume_outcome(
+    *,
+    task: dict[str, Any],
+    resume: dict[str, Any] | None,
+) -> str | None:
+    if resume is None:
+        return None
+    explicit = str(resume.get("resume_outcome") or "").strip()
+    if explicit in {_SAME_THREAD_RESUME, _NEW_CHILD_SESSION}:
+        return explicit
+    if any(str(resume.get(key) or "").strip() for key in ("session_id", "child_session_id")):
+        return _NEW_CHILD_SESSION
+    resumed_thread_id = str(resume.get("thread_id") or resume.get("native_thread_id") or "").strip()
+    parent_thread_id = str(task.get("thread_id") or "").strip()
+    if resumed_thread_id and parent_thread_id and resumed_thread_id != parent_thread_id:
+        return _NEW_CHILD_SESSION
+    return _SAME_THREAD_RESUME
 
 
 def _session_truth(
@@ -231,11 +254,12 @@ def perform_recovery_execution(
         )
         return outcome
 
+    handoff_summary = str(handoff.get("summary") or "").strip()
     try:
         resume_body = client.trigger_resume(
             project_id,
             mode="resume_or_new_thread",
-            handoff_summary="",
+            handoff_summary=handoff_summary,
         )
     except (httpx.RequestError, RuntimeError, OSError):
         outcome = RecoveryExecutionOutcome(
@@ -302,6 +326,7 @@ def perform_recovery_execution(
         facts=facts,
         handoff=handoff,
         resume=dict(resume),
+        resume_outcome=_resolve_resume_outcome(task=task, resume=resume),
         memory_advisory_context=memory_advisory_context,
     )
     _record_recovery_truth(
@@ -344,6 +369,7 @@ def _record_recovery_truth(
         failure_signature=outcome.context_pressure,
         handoff=outcome.handoff,
         resume=outcome.resume,
+        resume_outcome=outcome.resume_outcome,
         resume_error=outcome.resume_error,
         goal_contract_version=goal_contract_version,
         source_packet_id=source_packet_id,

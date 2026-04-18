@@ -257,6 +257,8 @@ def test_session_service_records_recovery_truth_in_canonical_order(
             "project_id": "repo-a",
             "status": "running",
             "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
         },
     )
 
@@ -291,6 +293,57 @@ def test_session_service_records_recovery_truth_in_canonical_order(
     assert lineage_records[0].parent_session_id == "session:repo-a"
     assert lineage_records[0].child_session_id == recorded.child_session_id
     assert lineage_records[0].relation == "resumes_after_interruption"
+
+
+def test_session_service_same_thread_resume_does_not_create_lineage(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+
+    events = service.list_events(correlation_id=recorded.correlation_id)
+    assert [event.event_type for event in events] == [
+        "recovery_tx_started",
+        "handoff_packet_frozen",
+        "recovery_tx_completed",
+    ]
+
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert [record.status for record in recovery_records] == [
+        "started",
+        "packet_frozen",
+        "completed",
+    ]
+    assert recovery_records[-1].metadata == {
+        "resume_error": None,
+        "resume_outcome": "same_thread_resume",
+    }
+    assert service.list_lineage(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    ) == []
+    assert recorded.child_session_id is None
+    assert recorded.lineage_id is None
 
 
 def test_session_service_record_event_once_accepts_legacy_subset_payload_during_schema_expansion(

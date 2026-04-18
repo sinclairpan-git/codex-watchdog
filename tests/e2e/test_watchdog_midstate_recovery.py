@@ -58,6 +58,9 @@ class _RecoveryAClient:
                 "project_id": project_id,
                 "status": "running",
                 "mode": mode,
+                "resume_outcome": "new_child_session",
+                "thread_id": "thr_child_1",
+                "session_id": f"session:{project_id}:thr_child_1",
                 "goal_contract_version": "goal-contract:v2",
             },
         }
@@ -163,4 +166,3 @@ def test_recovery_continuation_supersedes_stale_interaction_without_manual_patch
     ]
     assert len(active_contexts) == 1
     assert active_contexts[0].envelope_payload["interaction_context_id"] != "ctx-recovery-old"
-

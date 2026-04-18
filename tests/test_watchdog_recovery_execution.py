@@ -14,10 +14,12 @@ class FakeAClient:
         task: dict[str, object],
         resume_success: bool = True,
         handoff_data: dict[str, object] | None = None,
+        resume_data: dict[str, object] | None = None,
     ) -> None:
         self._task = dict(task)
         self._resume_success = resume_success
         self._handoff_data = dict(handoff_data or {})
+        self._resume_data = dict(resume_data or {})
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
@@ -50,9 +52,15 @@ class FakeAClient:
     ) -> dict[str, object]:
         self.resume_calls.append((project_id, mode, handoff_summary))
         if self._resume_success:
+            resume_data = {
+                "project_id": project_id,
+                "status": "running",
+                "mode": mode,
+            }
+            resume_data.update(self._resume_data)
             return {
                 "success": True,
-                "data": {"project_id": project_id, "status": "running", "mode": mode},
+                "data": resume_data,
             }
         return {"success": False, "error": {"code": "RESUME_FAILED", "message": "bridge unavailable"}}
 
@@ -121,11 +129,95 @@ def test_perform_recovery_execution_preserves_handoff_when_resume_fails(tmp_path
     )
 
     assert client.handoff_calls == [("repo-a", "context_critical")]
-    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "handoff")]
     assert outcome.action == "handoff_triggered"
     assert outcome.handoff is not None
     assert outcome.resume is None
     assert outcome.resume_error == "resume_call_failed"
+
+
+def test_perform_recovery_execution_replays_handoff_summary_into_auto_resume(tmp_path) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"summary": "resume from saved handoff"},
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+    assert outcome.resume_outcome == "same_thread_resume"
+    assert client.resume_calls == [
+        ("repo-a", "resume_or_new_thread", "resume from saved handoff")
+    ]
+
+
+def test_perform_recovery_execution_same_thread_resume_does_not_commit_lineage(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+    assert outcome.resume_outcome == "same_thread_resume"
+    assert session_service.list_lineage(parent_session_id="session:repo-a") == []
+    recovery_records = session_service.list_recovery_transactions(
+        parent_session_id="session:repo-a"
+    )
+    assert [record.status for record in recovery_records] == [
+        "started",
+        "packet_frozen",
+        "completed",
+    ]
+    assert recovery_records[-1].metadata["resume_outcome"] == "same_thread_resume"
 
 
 def test_perform_recovery_execution_persists_goal_contract_version_from_handoff(
@@ -147,6 +239,10 @@ def test_perform_recovery_execution_persists_goal_contract_version_from_handoff(
             "last_progress_at": "2026-04-05T05:20:00Z",
         },
         handoff_data={"goal_contract_version": "goal-v9"},
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
     )
 
     outcome = perform_recovery_execution(
@@ -192,6 +288,10 @@ def test_perform_recovery_execution_preserves_upstream_source_packet_id(
             "last_progress_at": "2026-04-05T05:20:00Z",
         },
         handoff_data={"source_packet_id": "packet:handoff-v9"},
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
     )
 
     outcome = perform_recovery_execution(
@@ -266,6 +366,10 @@ def test_perform_recovery_execution_adopts_goal_contract_for_child_session(
             "goal_contract_version": revised.version,
             "source_packet_id": "packet:handoff-v9",
         },
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
     )
 
     outcome = perform_recovery_execution(
@@ -323,6 +427,10 @@ def test_perform_recovery_execution_supersedes_parent_future_workers(tmp_path) -
             "last_progress_at": "2026-04-05T05:20:00Z",
         },
         handoff_data={"goal_contract_version": "goal-v9"},
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
     )
 
     future_workers.request_worker(

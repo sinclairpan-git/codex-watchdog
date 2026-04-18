@@ -29,7 +29,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--target",
         action="append",
-        choices=("all", "health", "feishu", "feishu-control", "provider", "memory"),
+        choices=("all", "health", "feishu", "feishu-control", "feishu-discovery", "provider", "memory"),
         default=None,
         help="Select a specific smoke target. May be passed multiple times.",
     )
@@ -61,8 +61,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         api_token=os.getenv("WATCHDOG_API_TOKEN", "").strip(),
         data_dir=os.getenv("WATCHDOG_DATA_DIR", ".data/watchdog").strip(),
         http_timeout_s=float(os.getenv("WATCHDOG_HTTP_TIMEOUT_S", "3.0")),
+        provider_http_timeout_s=float(
+            _optional_env("WATCHDOG_SMOKE_PROVIDER_HTTP_TIMEOUT_S")
+            or _optional_env("WATCHDOG_BRAIN_PROVIDER_HTTP_TIMEOUT_S")
+            or os.getenv("WATCHDOG_HTTP_TIMEOUT_S", "30.0")
+        ),
+        provider_live_mode=_parse_bool_env("WATCHDOG_SMOKE_PROVIDER_LIVE"),
         feishu_control_http_timeout_s=float(
             os.getenv("WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S", "15.0")
+        ),
+        feishu_discovery_http_timeout_s=float(
+            os.getenv("WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S", "15.0")
         ),
         feishu_event_ingress_mode=os.getenv(
             "WATCHDOG_FEISHU_EVENT_INGRESS_MODE",
@@ -82,6 +91,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         feishu_control_actor_open_id=os.getenv(
             "WATCHDOG_SMOKE_FEISHU_CONTROL_ACTOR_OPEN_ID",
+            "ou_watchdog_smoke",
+        ).strip(),
+        feishu_discovery_command_text=(
+            _optional_env("WATCHDOG_SMOKE_FEISHU_DISCOVERY_COMMAND_TEXT") or "项目列表"
+        ),
+        feishu_discovery_expected_project_ids=_parse_csv_env(
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS"
+        ),
+        feishu_discovery_actor_open_id=os.getenv(
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_ACTOR_OPEN_ID",
             "ou_watchdog_smoke",
         ).strip(),
         memory_preview_ai_autosdlc_cursor_enabled=_parse_bool_env(
@@ -118,6 +137,17 @@ def _parse_bool_env(name: str) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_csv_env(name: str) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return ()
+    return tuple(
+        item.strip()
+        for item in value.split(",")
+        if item.strip()
+    )
 
 
 if __name__ == "__main__":

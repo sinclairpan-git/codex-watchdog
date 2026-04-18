@@ -1914,7 +1914,7 @@ def test_background_runtime_auto_executes_context_critical_recovery(
         time.sleep(0.05)
 
     assert a_client.handoff_calls == [("repo-a", "context_critical")]
-    assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "handoff")]
     assert any(
         record.get("envelope_type") == "notification"
         and record.get("notification_kind") == "decision_result"

@@ -14,6 +14,8 @@ from a_control_agent.storage.handoff_manager import write_handoff_file
 from a_control_agent.storage.tasks_store import TaskStore
 
 router = APIRouter(prefix="/tasks", tags=["recovery"])
+_SAME_THREAD_RESUME = "same_thread_resume"
+_NEW_CHILD_SESSION = "new_child_session"
 
 
 def get_settings(request: Request) -> Settings:
@@ -26,6 +28,38 @@ def get_store(request: Request) -> TaskStore:
 
 def get_bridge(request: Request) -> Any:
     return getattr(request.app.state, "codex_bridge", None)
+
+
+def _resume_outcome_for_thread(
+    *,
+    parent_thread_id: str,
+    resumed_thread_id: str,
+) -> str:
+    if resumed_thread_id and resumed_thread_id != parent_thread_id:
+        return _NEW_CHILD_SESSION
+    return _SAME_THREAD_RESUME
+
+
+def _resume_response_payload(
+    *,
+    project_id: str,
+    status: str,
+    mode: str,
+    resume_outcome: str,
+    thread_id: str,
+    parent_thread_id: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "project_id": project_id,
+        "status": status,
+        "mode": mode,
+        "resume_outcome": resume_outcome,
+        "thread_id": thread_id,
+    }
+    if resume_outcome == _NEW_CHILD_SESSION:
+        payload["parent_thread_id"] = parent_thread_id
+        payload["child_session_id"] = f"session:{project_id}:{thread_id}"
+    return payload
 
 
 @router.post("/{project_id}/pause")
@@ -199,15 +233,26 @@ async def resume(
             "payload": {"handoff_summary_len": len(summary)},
         },
     )
-    thread_id = str(rec.get("thread_id") or "")
+    parent_thread_id = str(rec.get("thread_id") or "")
+    resumed_thread_id = parent_thread_id
+    resume_outcome = _SAME_THREAD_RESUME
     try:
-        if bridge is not None and thread_id:
-            await bridge.resume_thread(thread_id)
+        if bridge is not None and parent_thread_id:
+            resume_snapshot = await bridge.resume_thread(parent_thread_id)
+            if isinstance(resume_snapshot, dict):
+                resumed_thread_id = (
+                    str(resume_snapshot.get("thread_id") or "").strip()
+                    or parent_thread_id
+                )
+            resume_outcome = _resume_outcome_for_thread(
+                parent_thread_id=parent_thread_id,
+                resumed_thread_id=resumed_thread_id,
+            )
             if summary:
-                if bridge.active_turn_id(thread_id):
-                    await bridge.steer_turn(thread_id, message=summary)
+                if bridge.active_turn_id(resumed_thread_id):
+                    await bridge.steer_turn(resumed_thread_id, message=summary)
                 else:
-                    await bridge.start_turn(thread_id, prompt=summary)
+                    await bridge.start_turn(resumed_thread_id, prompt=summary)
                 store.record_service_input(
                     project_id,
                     message=summary,
@@ -244,14 +289,32 @@ async def resume(
                 "mode": mode,
             },
         )
-    store.merge_update(
-        project_id,
-        {
-            "status": "running",
-            "context_pressure": "medium",
-            "phase": str(rec.get("phase", "planning")),
-        },
-    )
+    next_state = {
+        "project_id": project_id,
+        "cwd": str(rec.get("cwd") or ""),
+        "task_title": str(rec.get("task_title") or ""),
+        "task_prompt": str(rec.get("task_prompt") or ""),
+        "model": str(rec.get("model") or ""),
+        "sandbox": str(rec.get("sandbox") or ""),
+        "approval_policy": str(rec.get("approval_policy") or ""),
+        "status": "running",
+        "context_pressure": "medium",
+        "phase": str(rec.get("phase", "planning")),
+        "thread_id": resumed_thread_id or parent_thread_id,
+        "goal_contract_version": rec.get("goal_contract_version"),
+    }
+    if resume_outcome == _NEW_CHILD_SESSION and resumed_thread_id:
+        rec3 = store.upsert_native_thread(next_state)
+    else:
+        store.merge_update(
+            project_id,
+            {
+                "status": "running",
+                "context_pressure": "medium",
+                "phase": str(rec.get("phase", "planning")),
+            },
+        )
+        rec3 = store.get(project_id)
     append_jsonl(
         Path(settings.data_dir) / "audit.jsonl",
         {
@@ -260,10 +323,18 @@ async def resume(
             "action": "resume",
             "reason": mode,
             "source": "a_control_agent",
-            "payload": {"handoff_summary_len": len(summary)},
+            "payload": {
+                "handoff_summary_len": len(summary),
+                "resume_outcome": resume_outcome,
+                "thread_id": resumed_thread_id or parent_thread_id,
+                **(
+                    {"parent_thread_id": parent_thread_id}
+                    if resume_outcome == _NEW_CHILD_SESSION and parent_thread_id
+                    else {}
+                ),
+            },
         },
     )
-    rec3 = store.get(project_id)
     if rec3 is not None:
         store.append_event(
             project_id,
@@ -275,13 +346,24 @@ async def resume(
                 "handoff_summary_len": len(summary),
                 "status": rec3.get("status"),
                 "phase": rec3.get("phase"),
+                "resume_outcome": resume_outcome,
+                "thread_id": str(rec3.get("thread_id") or ""),
+                **(
+                    {"parent_thread_id": parent_thread_id}
+                    if resume_outcome == _NEW_CHILD_SESSION and parent_thread_id
+                    else {}
+                ),
             },
         )
+    response_data = _resume_response_payload(
+        project_id=project_id,
+        status=rec3.get("status") if rec3 else "running",
+        mode=mode,
+        resume_outcome=resume_outcome,
+        thread_id=str((rec3 or {}).get("thread_id") or resumed_thread_id or parent_thread_id),
+        parent_thread_id=parent_thread_id,
+    )
     return ok(
         request.headers.get("x-request-id"),
-        {
-            "project_id": project_id,
-            "status": rec3.get("status") if rec3 else "running",
-            "mode": mode,
-        },
+        response_data,
     )

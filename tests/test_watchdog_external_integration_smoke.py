@@ -49,17 +49,33 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
             assert payload["schema"] == "2.0"
             assert payload["header"]["event_type"] == "im.message.receive_v1"
             content = json.loads(payload["event"]["message"]["content"])
-            assert content["text"] == "repo:repo-a /goal 继续补齐 Feishu 控制面验收"
+            if content["text"] == "repo:repo-a /goal 继续补齐 Feishu 控制面验收":
+                return httpx.Response(
+                    200,
+                    json={
+                        "accepted": True,
+                        "event_type": "goal_contract_bootstrap",
+                        "data": {
+                            "event_type": "goal_contract_bootstrap",
+                            "project_id": "repo-a",
+                            "session_id": "session:repo-a",
+                            "goal_contract_version": "goal-contract:v1",
+                        },
+                    },
+                )
+            assert content["text"] == "项目列表"
             return httpx.Response(
                 200,
                 json={
                     "accepted": True,
-                    "event_type": "goal_contract_bootstrap",
+                    "event_type": "command_request",
                     "data": {
-                        "event_type": "goal_contract_bootstrap",
-                        "project_id": "repo-a",
-                        "session_id": "session:repo-a",
-                        "goal_contract_version": "goal-contract:v1",
+                        "intent_code": "list_sessions",
+                        "reply_code": "session_directory",
+                        "sessions": [
+                            {"project_id": "repo-a"},
+                            {"project_id": "repo-b"},
+                        ],
                     },
                 },
             )
@@ -237,6 +253,48 @@ def test_feishu_control_check_verifies_goal_bootstrap_contract(tmp_path: Path) -
     assert results[0].evidence["goal_contract_version"] == "goal-contract:v1"
 
 
+def test_feishu_discovery_check_verifies_expected_project_ids(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+        feishu_discovery_expected_project_ids=("repo-a", "repo-b"),
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-discovery",),
+        remote_transport=_remote_transport(),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-discovery"
+    assert results[0].status == "passed"
+    assert results[0].evidence["command_text"] == "项目列表"
+    assert results[0].evidence["project_ids"] == ["repo-a", "repo-b"]
+
+
+def test_feishu_discovery_check_skips_when_expected_projects_not_configured(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-discovery",),
+        remote_transport=_remote_transport(),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-discovery"
+    assert results[0].status == "skipped"
+    assert results[0].reason == "feature_not_configured"
+
+
 def test_feishu_control_check_uses_dedicated_request_timeout(tmp_path: Path) -> None:
     seen_timeout: dict[str, float] = {}
 
@@ -321,11 +379,12 @@ def test_all_target_can_be_extended_with_optional_feishu_control(tmp_path: Path)
         feishu_verification_token="verify-token",
         feishu_control_project_id="repo-a",
         feishu_control_goal_message="继续补齐 Feishu 控制面验收",
+        feishu_discovery_expected_project_ids=("repo-a", "repo-b"),
     )
 
     results = run_smoke_checks(
         config=config,
-        targets=("all", "feishu-control"),
+        targets=("all", "feishu-control", "feishu-discovery"),
         remote_transport=_remote_transport(),
     )
 
@@ -335,6 +394,7 @@ def test_all_target_can_be_extended_with_optional_feishu_control(tmp_path: Path)
         "provider",
         "memory",
         "feishu-control",
+        "feishu-discovery",
     ]
 
 
@@ -397,6 +457,34 @@ def test_provider_check_proves_provider_and_fallback_paths(tmp_path: Path) -> No
     assert results[0].evidence["provider_intent"] == "propose_execute"
     assert results[0].evidence["provider_name"] == "openai-compatible"
     assert results[0].evidence["fallback_provider_name"] == "resident_orchestrator"
+    assert results[0].evidence["probe_mode"] == "synthetic"
+
+
+def test_provider_check_can_probe_live_provider_when_enabled(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        brain_provider_name="openai-compatible",
+        brain_provider_base_url="https://provider.example/v1",
+        brain_provider_api_key="sk-provider",
+        brain_provider_model="minimax-m2.7",
+        provider_live_mode=True,
+        provider_http_timeout_s=27.5,
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("provider",),
+        provider_live_transport=_provider_success_transport(),
+        provider_failure_transport=_provider_failure_transport(),
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "passed"
+    assert results[0].evidence["provider_name"] == "openai-compatible"
+    assert results[0].evidence["fallback_provider_name"] == "resident_orchestrator"
+    assert results[0].evidence["probe_mode"] == "live"
 
 
 def test_memory_check_fails_when_enabled_flag_does_not_match_response(tmp_path: Path) -> None:
@@ -479,6 +567,7 @@ def test_render_markdown_report_redacts_secret_values_and_includes_status(tmp_pa
     assert "# Watchdog External Integration Smoke Report" in rendered
     assert "- Overall Status: `passed`" in rendered
     assert "- Selected Targets: `provider`" in rendered
+    assert '"provider_live_mode": false' in rendered
     assert '"feishu_control_http_timeout_s": 15.0' in rendered
     assert "sk-provider" not in rendered
     assert '"brain_provider_api_key": "<redacted>"' in rendered
@@ -524,6 +613,36 @@ def test_cli_reads_feishu_control_timeout_env(monkeypatch: pytest.MonkeyPatch) -
     assert captured["config"].feishu_control_http_timeout_s == 21.5
 
 
+def test_cli_reads_feishu_discovery_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_script_module()
+    captured: dict[str, object] = {}
+
+    def fake_run_smoke_checks(*, config, targets, **_: object):
+        captured["config"] = config
+        captured["targets"] = targets
+        return []
+
+    monkeypatch.setenv("WATCHDOG_BASE_URL", "https://watchdog.example")
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DATA_DIR", "/tmp/watchdog-smoke")
+    monkeypatch.setenv("WATCHDOG_FEISHU_VERIFICATION_TOKEN", "verify-token")
+    monkeypatch.setenv("WATCHDOG_SMOKE_FEISHU_DISCOVERY_COMMAND_TEXT", "所有项目进展")
+    monkeypatch.setenv(
+        "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+        "repo-a, repo-b",
+    )
+    monkeypatch.setenv("WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S", "19.5")
+    monkeypatch.setattr(module, "run_smoke_checks", fake_run_smoke_checks)
+
+    exit_code = module.main(["--target", "feishu-discovery"])
+
+    assert exit_code == 0
+    assert captured["targets"] == ("feishu-discovery",)
+    assert captured["config"].feishu_discovery_command_text == "所有项目进展"
+    assert captured["config"].feishu_discovery_expected_project_ids == ("repo-a", "repo-b")
+    assert captured["config"].feishu_discovery_http_timeout_s == 19.5
+
+
 def test_cli_resolves_provider_api_key_from_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_smoke_script_module()
     captured: dict[str, object] = {}
@@ -555,3 +674,31 @@ def test_cli_resolves_provider_api_key_from_keychain(monkeypatch: pytest.MonkeyP
     assert exit_code == 0
     assert captured["targets"] == ("provider",)
     assert captured["config"].brain_provider_api_key == "sk-keychain"
+
+
+def test_cli_reads_provider_live_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_script_module()
+    captured: dict[str, object] = {}
+
+    def fake_run_smoke_checks(*, config, targets, **_: object):
+        captured["config"] = config
+        captured["targets"] = targets
+        return []
+
+    monkeypatch.setenv("WATCHDOG_BASE_URL", "https://watchdog.example")
+    monkeypatch.setenv("WATCHDOG_API_TOKEN", "wt")
+    monkeypatch.setenv("WATCHDOG_DATA_DIR", "/tmp/watchdog-smoke")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_NAME", "openai-compatible")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_MODEL", "minimax-m2.7")
+    monkeypatch.setenv("WATCHDOG_BRAIN_PROVIDER_API_KEY", "sk-provider")
+    monkeypatch.setenv("WATCHDOG_SMOKE_PROVIDER_LIVE", "true")
+    monkeypatch.setenv("WATCHDOG_SMOKE_PROVIDER_HTTP_TIMEOUT_S", "42.0")
+    monkeypatch.setattr(module, "run_smoke_checks", fake_run_smoke_checks)
+
+    exit_code = module.main(["--target", "provider"])
+
+    assert exit_code == 0
+    assert captured["targets"] == ("provider",)
+    assert captured["config"].provider_live_mode is True
+    assert captured["config"].provider_http_timeout_s == 42.0

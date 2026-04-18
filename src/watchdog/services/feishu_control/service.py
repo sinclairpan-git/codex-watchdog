@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
+from watchdog.services.adapters.openclaw.intents import GLOBAL_READ_INTENTS
+from watchdog.services.entrypoints.command_routing import resolve_entry_message
 from watchdog.services.approvals.service import (
     ApprovalResponseStore,
     CanonicalApprovalRecord,
@@ -258,7 +260,12 @@ class FeishuControlService:
                     }
                 )
             )
-        if project_id is None and native_thread_id is None:
+        intent_code = resolve_entry_message(command_text)
+        if (
+            project_id is None
+            and native_thread_id is None
+            and intent_code not in GLOBAL_READ_INTENTS
+        ):
             raise FeishuControlError("project_id or native_thread_id is required")
         adapter = OpenClawAdapter(
             settings=self._settings,

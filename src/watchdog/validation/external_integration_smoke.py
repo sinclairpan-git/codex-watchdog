@@ -20,9 +20,9 @@ from watchdog.settings import Settings
 SmokeStatus = Literal["passed", "failed", "skipped"]
 
 DEFAULT_TARGETS = ("health", "feishu", "provider", "memory")
-OPTIONAL_TARGETS = ("feishu-control",)
+OPTIONAL_TARGETS = ("feishu-control", "feishu-discovery")
 SUPPORTED_TARGETS = DEFAULT_TARGETS + OPTIONAL_TARGETS
-REMOTE_TARGETS = frozenset({"health", "feishu", "feishu-control", "memory"})
+REMOTE_TARGETS = frozenset({"health", "feishu", "feishu-control", "feishu-discovery", "memory"})
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,10 @@ class ExternalIntegrationSmokeConfig:
     api_token: str
     data_dir: str
     http_timeout_s: float = 3.0
+    provider_http_timeout_s: float = 30.0
+    provider_live_mode: bool = False
     feishu_control_http_timeout_s: float = 15.0
+    feishu_discovery_http_timeout_s: float = 15.0
     feishu_event_ingress_mode: str = "callback"
     feishu_callback_ingress_mode: str = "callback"
     feishu_app_id: str | None = None
@@ -41,6 +44,9 @@ class ExternalIntegrationSmokeConfig:
     feishu_control_goal_message: str | None = None
     feishu_control_expected_session_id: str | None = None
     feishu_control_actor_open_id: str = "ou_watchdog_smoke"
+    feishu_discovery_command_text: str = "项目列表"
+    feishu_discovery_expected_project_ids: tuple[str, ...] = ()
+    feishu_discovery_actor_open_id: str = "ou_watchdog_smoke"
     brain_provider_name: str = "resident_orchestrator"
     brain_provider_base_url: str | None = None
     brain_provider_api_key: str | None = None
@@ -63,6 +69,7 @@ def run_smoke_checks(
     remote_transport: httpx.BaseTransport | None = None,
     provider_success_transport: httpx.BaseTransport | None = None,
     provider_failure_transport: httpx.BaseTransport | None = None,
+    provider_live_transport: httpx.BaseTransport | None = None,
 ) -> list[SmokeCheckResult]:
     normalized_targets = _normalize_targets(targets)
     if normalized_targets & REMOTE_TARGETS:
@@ -114,11 +121,18 @@ def run_smoke_checks(
                     client=remote_client,
                     health_ok=health_ok,
                 )
+            elif target == "feishu-discovery":
+                result = _run_feishu_discovery_check(
+                    config=config,
+                    client=remote_client,
+                    health_ok=health_ok,
+                )
             elif target == "provider":
                 result = _run_provider_check(
                     config=config,
                     success_transport=provider_success_transport,
                     failure_transport=provider_failure_transport,
+                    live_transport=provider_live_transport,
                 )
             else:
                 result = _run_memory_check(
@@ -155,7 +169,10 @@ def render_markdown_report(
         {
             "base_url": config.base_url,
             "http_timeout_s": config.http_timeout_s,
+            "provider_http_timeout_s": config.provider_http_timeout_s,
+            "provider_live_mode": config.provider_live_mode,
             "feishu_control_http_timeout_s": config.feishu_control_http_timeout_s,
+            "feishu_discovery_http_timeout_s": config.feishu_discovery_http_timeout_s,
             "feishu_event_ingress_mode": config.feishu_event_ingress_mode,
             "feishu_callback_ingress_mode": config.feishu_callback_ingress_mode,
             "feishu_app_id": config.feishu_app_id,
@@ -168,6 +185,8 @@ def render_markdown_report(
             "feishu_verification_token": config.feishu_verification_token,
             "feishu_control_project_id": config.feishu_control_project_id,
             "feishu_control_expected_session_id": config.feishu_control_expected_session_id,
+            "feishu_discovery_command_text": config.feishu_discovery_command_text,
+            "feishu_discovery_expected_project_ids": list(config.feishu_discovery_expected_project_ids),
         }
     )
     lines = [
@@ -470,11 +489,136 @@ def _run_feishu_control_check(
     )
 
 
+def _run_feishu_discovery_check(
+    *,
+    config: ExternalIntegrationSmokeConfig,
+    client: httpx.Client | None,
+    health_ok: bool,
+) -> SmokeCheckResult:
+    if not health_ok:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="service_unreachable",
+            evidence={"blocked_by": "health"},
+        )
+    if not str(config.feishu_verification_token or "").strip():
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="missing_required_env",
+            evidence={"missing_fields": ["feishu_verification_token"]},
+        )
+    expected_project_ids = tuple(
+        str(project_id).strip()
+        for project_id in config.feishu_discovery_expected_project_ids
+        if str(project_id).strip()
+    )
+    if not expected_project_ids:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="skipped",
+            reason="feature_not_configured",
+            evidence={"missing_fields": ["feishu_discovery_expected_project_ids"]},
+        )
+    assert client is not None
+    command_text = str(config.feishu_discovery_command_text or "").strip() or "项目列表"
+    body = _feishu_event_body(
+        token=config.feishu_verification_token,
+        text=command_text,
+        actor_open_id=config.feishu_discovery_actor_open_id,
+    )
+    request_timeout_s = float(config.feishu_discovery_http_timeout_s)
+    try:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=body,
+            timeout=request_timeout_s,
+        )
+    except httpx.HTTPError as exc:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="service_unreachable",
+            evidence={"error": str(exc)},
+        )
+    if response.status_code != 200:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="unexpected_http_status",
+            evidence={"status_code": response.status_code},
+        )
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if payload.get("accepted") is not True or payload.get("event_type") != "command_request":
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    if not isinstance(data, Mapping):
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    if data.get("intent_code") != "list_sessions" or data.get("reply_code") != "session_directory":
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    raw_sessions = data.get("sessions")
+    if not isinstance(raw_sessions, list):
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    actual_project_ids = sorted(
+        {
+            str(session.get("project_id") or "").strip()
+            for session in raw_sessions
+            if isinstance(session, Mapping) and str(session.get("project_id") or "").strip()
+        }
+    )
+    missing_project_ids = [
+        project_id for project_id in sorted(expected_project_ids) if project_id not in actual_project_ids
+    ]
+    if missing_project_ids:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={
+                "command_text": command_text,
+                "expected_project_ids": sorted(expected_project_ids),
+                "actual_project_ids": actual_project_ids,
+                "missing_project_ids": missing_project_ids,
+            },
+        )
+    return SmokeCheckResult(
+        check_name="feishu-discovery",
+        status="passed",
+        reason="ok",
+        evidence={
+            "command_text": command_text,
+            "project_ids": actual_project_ids,
+        },
+    )
+
+
 def _run_provider_check(
     *,
     config: ExternalIntegrationSmokeConfig,
     success_transport: httpx.BaseTransport | None,
     failure_transport: httpx.BaseTransport | None,
+    live_transport: httpx.BaseTransport | None,
 ) -> SmokeCheckResult:
     if config.brain_provider_name != "openai-compatible":
         return SmokeCheckResult(
@@ -501,9 +645,14 @@ def _run_provider_check(
             evidence={"missing_fields": missing_fields},
         )
 
+    success_probe_transport = (
+        live_transport
+        if config.provider_live_mode
+        else success_transport or _default_provider_success_transport()
+    )
     success_intent = _probe_provider_intent(
         config=config,
-        transport=success_transport or _default_provider_success_transport(),
+        transport=success_probe_transport,
     )
     failure_intent = _probe_provider_intent(
         config=config,
@@ -534,6 +683,7 @@ def _run_provider_check(
             "provider_name": success_intent.provider,
             "provider_intent": success_intent.intent,
             "fallback_provider_name": failure_intent.provider,
+            "probe_mode": "live" if config.provider_live_mode else "synthetic",
             "model": config.brain_provider_model,
             "base_url": config.brain_provider_base_url,
             "api_key": config.brain_provider_api_key,
@@ -615,7 +765,7 @@ def _run_memory_check(
 def _probe_provider_intent(
     *,
     config: ExternalIntegrationSmokeConfig,
-    transport: httpx.BaseTransport,
+    transport: httpx.BaseTransport | None,
 ):
     data_dir = Path(config.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -627,6 +777,7 @@ def _probe_provider_intent(
             brain_provider_api_key=config.brain_provider_api_key,
             brain_provider_model=config.brain_provider_model,
             http_timeout_s=config.http_timeout_s,
+            brain_provider_http_timeout_s=config.provider_http_timeout_s,
         ),
         session_service=SessionService(SessionServiceStore(data_dir / "session_service_smoke.json")),
         provider_transport=transport,
@@ -692,18 +843,22 @@ def _memory_preview_body() -> dict[str, object]:
     }
 
 
-def _feishu_control_body(config: ExternalIntegrationSmokeConfig) -> dict[str, object]:
+def _feishu_event_body(
+    *,
+    token: str | None,
+    text: str,
+    actor_open_id: str,
+) -> dict[str, object]:
     event_id = f"evt-feishu-smoke-{uuid4().hex}"
     message_id = f"om_feishu_smoke_{uuid4().hex}"
     create_time = str(int(datetime.now(tz=UTC).timestamp() * 1000))
-    text = f"repo:{str(config.feishu_control_project_id).strip()} /goal {str(config.feishu_control_goal_message).strip()}"
     return {
         "schema": "2.0",
         "header": {
             "event_id": event_id,
             "event_type": "im.message.receive_v1",
             "create_time": create_time,
-            "token": config.feishu_verification_token,
+            "token": token,
             "app_id": "cli_watchdog_smoke",
             "tenant_key": "watchdog-smoke",
         },
@@ -715,10 +870,22 @@ def _feishu_control_body(config: ExternalIntegrationSmokeConfig) -> dict[str, ob
                 "content": json.dumps({"text": text}, ensure_ascii=False),
             },
             "sender": {
-                "sender_id": {"open_id": config.feishu_control_actor_open_id},
+                "sender_id": {"open_id": actor_open_id},
             },
         },
     }
+
+
+def _feishu_control_body(config: ExternalIntegrationSmokeConfig) -> dict[str, object]:
+    text = (
+        f"repo:{str(config.feishu_control_project_id).strip()} "
+        f"/goal {str(config.feishu_control_goal_message).strip()}"
+    )
+    return _feishu_event_body(
+        token=config.feishu_verification_token,
+        text=text,
+        actor_open_id=config.feishu_control_actor_open_id,
+    )
 
 
 def _default_provider_success_transport() -> httpx.BaseTransport:

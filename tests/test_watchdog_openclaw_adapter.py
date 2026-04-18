@@ -11,6 +11,7 @@ from watchdog.contracts.session_spine.enums import (
 )
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
+from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 
@@ -450,6 +451,44 @@ def test_adapter_list_approval_inbox_returns_stable_global_pending_queue(tmp_pat
 
 
 def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) -> None:
+    session_service = SessionService.from_data_dir(tmp_path)
+    session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    session_service.record_recovery_execution(
+        project_id="repo-b",
+        parent_session_id="session:repo-b",
+        parent_native_thread_id="thr_native_2",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-b.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-b",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "session_id": "session:repo-b:child-v1",
+        },
+    )
     adapter = _adapter(
         tmp_path,
         task={
@@ -515,6 +554,11 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
     assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b"]
     assert [session.thread_id for session in reply.sessions] == ["session:repo-a", "session:repo-b"]
     assert reply.sessions[1].pending_approval_count == 1
+    assert [progress.project_id for progress in reply.progresses] == ["repo-a", "repo-b"]
+    assert reply.progresses[0].recovery_outcome == "same_thread_resume"
+    assert reply.progresses[0].recovery_child_session_id is None
+    assert reply.progresses[1].recovery_outcome == "new_child_session"
+    assert reply.progresses[1].recovery_child_session_id == "session:repo-b:child-v1"
 
 
 def test_adapter_list_session_events_returns_stable_reply_model(tmp_path: Path) -> None:

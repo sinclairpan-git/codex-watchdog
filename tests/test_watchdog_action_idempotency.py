@@ -336,7 +336,7 @@ def test_execute_recovery_is_idempotent_and_can_resume_once(tmp_path: Path) -> N
     )
 
     assert client.handoff_calls == [("repo-a", "context_critical")]
-    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "handoff for repo-a")]
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
     assert first.action_status == "completed"
     assert first.effect == "handoff_and_resume"

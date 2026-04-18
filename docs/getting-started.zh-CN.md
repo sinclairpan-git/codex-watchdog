@@ -452,6 +452,8 @@ WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED=false
 
 - `WATCHDOG_BRAIN_PROVIDER_BASE_URL` 可以指向 OpenAI 官方接口，也可以指向其他兼容 `/chat/completions` contract 的 provider；
 - `WATCHDOG_BRAIN_PROVIDER_API_KEY` 与 `WATCHDOG_BRAIN_PROVIDER_MODEL` 缺一不可；
+- `WATCHDOG_SMOKE_PROVIDER_LIVE=true` 时，`scripts/watchdog_external_integration_smoke.py --target provider` 会真实请求当前 provider；未开启时默认仍走 synthetic contract，适合 repo-local 回归；
+- 若真实 provider 响应更慢，可单独设置 `WATCHDOG_SMOKE_PROVIDER_HTTP_TIMEOUT_S`，避免顺手放大全局 `WATCHDOG_HTTP_TIMEOUT_S`；
 - provider runtime 失败时，当前实现会 fail-closed 回退到既有 rule-based / resident runtime 路径，而不是直接放行。
 
 建议验收顺序：
@@ -516,6 +518,7 @@ export WATCHDOG_API_TOKEN=dev-token-change-me
 uv run python scripts/watchdog_external_integration_smoke.py
 uv run python scripts/watchdog_external_integration_smoke.py --target feishu
 uv run python scripts/watchdog_external_integration_smoke.py --target feishu-control
+uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery
 uv run python scripts/watchdog_external_integration_smoke.py --target provider
 uv run python scripts/watchdog_external_integration_smoke.py --target memory
 uv run python scripts/watchdog_external_integration_smoke.py --target provider --markdown-report artifacts/watchdog-live-acceptance.md
@@ -526,8 +529,11 @@ uv run python scripts/watchdog_external_integration_smoke.py --target provider -
 - 默认会跑 `health`、`feishu`、`provider`、`memory` 四类检查；
 - `feishu` 会验证 `POST /api/v1/watchdog/feishu/events` 的 `url_verification` 合约；
 - `feishu-control` 是额外的 repo-local callback contract smoke，会发送一条 `im.message.receive_v1` 的 DM 文本事件，内容固定为 `repo:<project_id> /goal <goal_message>`，验证官方入口能否真正落到 `goal_contract_bootstrap`；
+- `feishu-discovery` 会发送一条默认文本为 `项目列表` 的 Feishu DM synthetic event，要求官方入口真正落到 `list_sessions/session_directory`，并覆盖 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS` 中声明的项目集合；
 - 运行 `feishu-control` 前至少要配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID` 与 `WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE`；如果还希望锁定具体 session，可额外配置 `WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID`；若真实数据量较大导致 repo-local callback contract 超过默认 3 秒，可单独设置 `WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S` 放宽这一项窗口；
-- `provider` 会验证 `WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible` 时的外部模型接线，以及 provider 请求失败后的回退路径；
+- 运行 `feishu-discovery` 前至少要配置 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS`；若想调整查询文案或操作人，可额外配置 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_COMMAND_TEXT` 与 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_ACTOR_OPEN_ID`；若真实数据量较大导致这条目录发现 smoke 超过默认 3 秒，可单独设置 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S`；
+- `provider` 默认验证 `WATCHDOG_BRAIN_PROVIDER_NAME=openai-compatible` 时的结构化决策 contract 与 provider 请求失败后的回退路径；显式设置 `WATCHDOG_SMOKE_PROVIDER_LIVE=true` 后，success probe 会真实请求当前 provider；
+- 若真实 provider 验收需要更长等待时间，可单独设置 `WATCHDOG_SMOKE_PROVIDER_HTTP_TIMEOUT_S`；
 - `memory` 会验证 `POST /api/v1/watchdog/memory/preview/ai-autosdlc-cursor` 的 preview contract；
 - 某项能力未启用时允许返回 `skipped`；若能力已启用但配置缺失、返回字段不匹配或回退语义异常，则应视为阻断问题。
 

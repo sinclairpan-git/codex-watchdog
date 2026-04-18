@@ -149,7 +149,13 @@ def test_execute_canonical_decision_consumes_decision_record_without_rerunning_p
 ) -> None:
     from watchdog.services.actions.executor import execute_canonical_decision
 
-    client = FakeAClient(context_pressure="critical")
+    client = FakeAClient(
+        context_pressure="critical",
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
+    )
 
     result = execute_canonical_decision(
         _decision(action_ref="execute_recovery"),
@@ -249,7 +255,13 @@ def test_create_app_recovery_execution_records_canonical_truth_once(
     from watchdog.services.actions.executor import execute_canonical_decision
 
     settings = _settings(tmp_path).model_copy(update={"recover_auto_resume": True})
-    client = FakeAClient(context_pressure="critical")
+    client = FakeAClient(
+        context_pressure="critical",
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
+    )
     app = create_app(settings, a_client=client, start_background_workers=False)
     decision = _decision(action_ref="execute_recovery")
 
@@ -270,7 +282,7 @@ def test_create_app_recovery_execution_records_canonical_truth_once(
 
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
     assert client.handoff_calls == [("repo-a", "context_critical")]
-    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert client.resume_calls == [("repo-a", "resume_or_new_thread", "handoff")]
 
     recovery_records = app.state.session_service.list_recovery_transactions(
         parent_session_id="session:repo-a"

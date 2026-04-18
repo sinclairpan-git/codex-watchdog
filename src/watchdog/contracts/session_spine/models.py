@@ -91,6 +91,10 @@ class TaskProgressView(SessionSpineModel):
     primary_fact_codes: list[str] = Field(default_factory=list)
     blocker_fact_codes: list[str] = Field(default_factory=list)
     last_progress_at: str | None = None
+    recovery_outcome: str | None = None
+    recovery_status: str | None = None
+    recovery_updated_at: str | None = None
+    recovery_child_session_id: str | None = None
 
 
 class WorkspaceActivityView(SessionSpineModel):
@@ -142,6 +146,7 @@ class ReplyModel(SessionSpineModel):
     session: SessionProjection | None = None
     sessions: list[SessionProjection] = Field(default_factory=list)
     progress: TaskProgressView | None = None
+    progresses: list[TaskProgressView] = Field(default_factory=list)
     workspace_activity: WorkspaceActivityView | None = None
     action_result: WatchdogActionResult | None = None
     snapshot: SnapshotReadSemantics | None = None

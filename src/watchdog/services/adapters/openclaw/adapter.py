@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from watchdog.contracts.session_spine.models import (
     SessionEvent,
     WatchdogAction,
 )
+from watchdog.services.approvals.service import CanonicalApprovalStore
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.adapters.openclaw.intents import (
     READ_INTENTS,
@@ -36,6 +38,7 @@ from watchdog.services.entrypoints.command_routing import (
     resolve_entry_message,
     resolve_entry_route,
 )
+from watchdog.services.session_service import SessionService
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.services.session_spine.events import (
     iter_session_events as iter_projected_session_events,
@@ -50,6 +53,7 @@ from watchdog.services.session_spine.service import (
     build_session_read_bundle_by_native_thread,
     build_workspace_activity_bundle,
 )
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -67,6 +71,10 @@ class OpenClawAdapter:
         self._settings = settings
         self._client = client
         self._receipt_store = receipt_store
+        data_dir = Path(self._settings.data_dir)
+        self._session_service = SessionService.from_data_dir(data_dir)
+        self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
+        self._approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
 
     def handle_intent(
         self,
@@ -100,10 +108,21 @@ class OpenClawAdapter:
                 return lookup_action_receipt(query, receipt_store=self._receipt_store)
             if intent_code in READ_INTENTS:
                 if intent_code == "list_sessions":
-                    bundle = build_session_directory_bundle(self._client)
+                    bundle = build_session_directory_bundle(
+                        self._client,
+                        session_service=self._session_service,
+                        store=self._session_spine_store,
+                        approval_store=self._approval_store,
+                    )
                     return build_session_directory_reply(bundle)
                 if intent_code == "list_approval_inbox":
-                    bundle = build_approval_inbox_bundle(self._client, project_id)
+                    bundle = build_approval_inbox_bundle(
+                        self._client,
+                        project_id,
+                        session_service=self._session_service,
+                        store=self._session_spine_store,
+                        approval_store=self._approval_store,
+                    )
                     return build_approval_inbox_reply(bundle)
                 if intent_code == "get_session_by_native_thread":
                     native_thread_id = str((arguments or {}).get("native_thread_id") or "")
@@ -115,6 +134,9 @@ class OpenClawAdapter:
                     bundle = build_session_read_bundle_by_native_thread(
                         self._client,
                         native_thread_id,
+                        session_service=self._session_service,
+                        store=self._session_spine_store,
+                        approval_store=self._approval_store,
                     )
                     return build_session_reply(bundle, intent_code=intent_code)
                 if not project_id:
@@ -136,7 +158,13 @@ class OpenClawAdapter:
                         recent_minutes=recent_minutes,
                     )
                     return build_workspace_activity_reply(bundle)
-                bundle = build_session_read_bundle(self._client, project_id)
+                bundle = build_session_read_bundle(
+                    self._client,
+                    project_id,
+                    session_service=self._session_service,
+                    store=self._session_spine_store,
+                    approval_store=self._approval_store,
+                )
                 if intent_code == "get_session":
                     return build_session_reply(bundle)
                 if intent_code == "get_progress":

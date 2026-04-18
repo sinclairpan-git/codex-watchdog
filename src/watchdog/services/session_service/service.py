@@ -20,6 +20,8 @@ _TERMINAL_RECOVERY_TRANSACTION_STATUSES = {
     "failed_manual",
 }
 logger = logging.getLogger(__name__)
+_SAME_THREAD_RESUME = "same_thread_resume"
+_NEW_CHILD_SESSION = "new_child_session"
 
 
 def _utcnow() -> str:
@@ -59,6 +61,37 @@ def _infer_memory_reason_code(reason: str) -> str:
     if normalized in {"resident_goal_contract_mismatch", "goal_contract_version_mismatch"}:
         return "conflict"
     return "outage"
+
+
+def _normalize_resume_outcome(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    if normalized in {_SAME_THREAD_RESUME, _NEW_CHILD_SESSION}:
+        return normalized
+    return None
+
+
+def _resolve_resume_outcome(
+    *,
+    parent_native_thread_id: str | None,
+    resume: dict[str, Any] | None,
+    explicit_resume_outcome: str | None = None,
+) -> str | None:
+    if resume is None:
+        return None
+    normalized = _normalize_resume_outcome(explicit_resume_outcome)
+    if normalized is not None:
+        return normalized
+    normalized = _normalize_resume_outcome(resume.get("resume_outcome"))
+    if normalized is not None:
+        return normalized
+    for key in ("session_id", "child_session_id"):
+        if str(resume.get(key) or "").strip():
+            return _NEW_CHILD_SESSION
+    parent_thread_id = str(parent_native_thread_id or "").strip()
+    resumed_thread_id = str(resume.get("thread_id") or resume.get("native_thread_id") or "").strip()
+    if parent_thread_id and resumed_thread_id and resumed_thread_id != parent_thread_id:
+        return _NEW_CHILD_SESSION
+    return _SAME_THREAD_RESUME
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +355,7 @@ class SessionService:
         failure_signature: str,
         handoff: dict[str, Any],
         resume: dict[str, Any] | None = None,
+        resume_outcome: str | None = None,
         resume_error: str | None = None,
         goal_contract_version: str = "goal-contract:unknown",
         source_packet_id: str | None = None,
@@ -346,9 +380,15 @@ class SessionService:
             str(source_packet_id or "").strip()
             or _stable_id("packet:handoff", recovery_transaction_id, handoff_file)
         )
+        resolved_resume_outcome = _resolve_resume_outcome(
+            parent_native_thread_id=parent_native_thread_id,
+            resume=resume,
+            explicit_resume_outcome=resume_outcome,
+        )
         child_session_id = self._resolve_child_session_id(
             project_id=project_id,
             resume=resume,
+            resume_outcome=resolved_resume_outcome,
             recovery_transaction_id=recovery_transaction_id,
         )
         lineage_id = (
@@ -439,6 +479,9 @@ class SessionService:
         )
 
         if child_session_id is not None and lineage_id is not None and resume is not None:
+            child_payload = dict(resume)
+            if resolved_resume_outcome is not None:
+                child_payload.setdefault("resume_outcome", resolved_resume_outcome)
             child_created_at = _utcnow()
             self._append_event(
                 event_type="child_session_created",
@@ -452,7 +495,7 @@ class SessionService:
                     "parent_session_id": parent_session_id,
                     "source_packet_id": source_packet_id,
                 },
-                payload=dict(resume),
+                payload=child_payload,
             )
             self._append_recovery_status(
                 recovery_transaction_id=recovery_transaction_id,
@@ -469,7 +512,7 @@ class SessionService:
                 updated_at=child_created_at,
                 correlation_id=correlation_id,
                 lineage_id=None,
-                metadata=dict(resume),
+                metadata=child_payload,
             )
             lineage_pending_at = _utcnow()
             self._append_recovery_status(
@@ -600,6 +643,7 @@ class SessionService:
                 },
                 payload={
                     "status": "completed",
+                    "resume_outcome": resolved_resume_outcome,
                 },
             )
             self._append_recovery_status(
@@ -620,6 +664,7 @@ class SessionService:
                 lineage_id=lineage_id,
                 metadata={
                     "resume_status": str(resume.get("status") or ""),
+                    "resume_outcome": resolved_resume_outcome,
                 },
             )
             return RecordedRecoveryExecution(
@@ -647,6 +692,7 @@ class SessionService:
             payload={
                 "status": terminal_status,
                 "resume_error": resume_error,
+                "resume_outcome": resolved_resume_outcome,
             },
         )
         self._append_recovery_status(
@@ -667,6 +713,7 @@ class SessionService:
             lineage_id=None,
             metadata={
                 "resume_error": resume_error,
+                "resume_outcome": resolved_resume_outcome,
             },
         )
         return RecordedRecoveryExecution(
@@ -683,9 +730,10 @@ class SessionService:
         *,
         project_id: str,
         resume: dict[str, Any] | None,
+        resume_outcome: str | None,
         recovery_transaction_id: str,
     ) -> str | None:
-        if resume is None:
+        if resume is None or resume_outcome != _NEW_CHILD_SESSION:
             return None
         for key in ("session_id", "child_session_id"):
             value = str(resume.get(key) or "").strip()

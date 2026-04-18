@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from watchdog.main import create_app
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -848,6 +849,44 @@ def test_integration_api_and_adapter_share_session_directory_semantics(tmp_path:
         a_client=FakeAClient(task=tasks[0], tasks=tasks, approvals=approvals),
     )
     client = TestClient(app)
+    session_service = SessionService.from_data_dir(tmp_path)
+    session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    session_service.record_recovery_execution(
+        project_id="repo-b",
+        parent_session_id="session:repo-b",
+        parent_native_thread_id="thr_native_2",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-b.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-b",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "session_id": "session:repo-b:child-v1",
+        },
+    )
 
     adapter_reply = adapter.handle_intent("list_sessions")
     api_response = client.get(
@@ -863,6 +902,15 @@ def test_integration_api_and_adapter_share_session_directory_semantics(tmp_path:
     ]
     assert [item["pending_approval_count"] for item in api_reply["sessions"]] == [
         session.pending_approval_count for session in adapter_reply.sessions
+    ]
+    assert [item["project_id"] for item in api_reply["progresses"]] == [
+        progress.project_id for progress in adapter_reply.progresses
+    ]
+    assert [item["recovery_outcome"] for item in api_reply["progresses"]] == [
+        progress.recovery_outcome for progress in adapter_reply.progresses
+    ]
+    assert [item["recovery_child_session_id"] for item in api_reply["progresses"]] == [
+        progress.recovery_child_session_id for progress in adapter_reply.progresses
     ]
 
 

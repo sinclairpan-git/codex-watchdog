@@ -254,6 +254,7 @@ def build_task_progress_view(
     project_id: str,
     task: dict[str, Any] | None,
     facts: list[FactRecord],
+    recovery: dict[str, Any] | None = None,
 ) -> TaskProgressView:
     stable_thread_id = stable_thread_id_for_project(project_id)
     return TaskProgressView(
@@ -272,6 +273,10 @@ def build_task_progress_view(
         primary_fact_codes=[fact.fact_code for fact in facts],
         blocker_fact_codes=[fact.fact_code for fact in facts if fact.fact_kind == "blocker"],
         last_progress_at=str(_task_value(task, "last_progress_at", "")) or None,
+        recovery_outcome=str((recovery or {}).get("recovery_outcome") or "") or None,
+        recovery_status=str((recovery or {}).get("recovery_status") or "") or None,
+        recovery_updated_at=str((recovery or {}).get("recovery_updated_at") or "") or None,
+        recovery_child_session_id=str((recovery or {}).get("recovery_child_session_id") or "") or None,
     )
 
 

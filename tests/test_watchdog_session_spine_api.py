@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from watchdog.main import create_app
 from watchdog.settings import Settings
 from watchdog.services.approvals.service import materialize_canonical_approval
-from watchdog.services.delivery.envelopes import build_envelopes_for_decision
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
@@ -1015,6 +1014,19 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
                     "failure_count": 0,
                     "last_progress_at": "2026-04-05T05:21:00Z",
                 },
+                {
+                    "project_id": "repo-c",
+                    "thread_id": "thr_native_3",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "resuming after overflow",
+                    "files_touched": ["src/recovery.py"],
+                    "context_pressure": "high",
+                    "stuck_level": 1,
+                    "failure_count": 1,
+                    "last_progress_at": "2026-04-05T05:23:00Z",
+                },
             ],
             approvals=[
                 {
@@ -1031,6 +1043,58 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
             ],
         ),
     )
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-b",
+        parent_session_id="session:repo-b",
+        parent_native_thread_id="thr_native_2",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-b.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-b",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-b:child-v1",
+        },
+    )
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-c",
+        parent_session_id="session:repo-c",
+        parent_native_thread_id="thr_native_3",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-c.handoff.md",
+            "summary": "handoff",
+        },
+        resume=None,
+        resume_error="resume_call_failed",
+    )
     c = TestClient(app)
 
     response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
@@ -1038,10 +1102,24 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["reply_code"] == "session_directory"
-    assert [item["project_id"] for item in data["sessions"]] == ["repo-a", "repo-b"]
-    assert [item["thread_id"] for item in data["sessions"]] == ["session:repo-a", "session:repo-b"]
+    assert [item["project_id"] for item in data["sessions"]] == ["repo-a", "repo-b", "repo-c"]
+    assert [item["thread_id"] for item in data["sessions"]] == [
+        "session:repo-a",
+        "session:repo-b",
+        "session:repo-c",
+    ]
     assert data["sessions"][1]["pending_approval_count"] == 1
     assert "list_pending_approvals" in data["sessions"][1]["available_intents"]
+    assert [item["project_id"] for item in data["progresses"]] == ["repo-a", "repo-b", "repo-c"]
+    assert data["progresses"][0]["recovery_outcome"] == "same_thread_resume"
+    assert data["progresses"][0]["recovery_status"] == "completed"
+    assert data["progresses"][0]["recovery_child_session_id"] is None
+    assert data["progresses"][1]["recovery_outcome"] == "new_child_session"
+    assert data["progresses"][1]["recovery_status"] == "completed"
+    assert data["progresses"][1]["recovery_child_session_id"] == "session:repo-b:child-v1"
+    assert data["progresses"][2]["recovery_outcome"] == "resume_failed"
+    assert data["progresses"][2]["recovery_status"] == "failed_retryable"
+    assert data["progresses"][2]["recovery_child_session_id"] is None
 
 
 def test_session_by_native_thread_route_returns_stable_session_projection(tmp_path) -> None:
