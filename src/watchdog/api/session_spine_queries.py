@@ -9,6 +9,7 @@ from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.models import ActionReceiptQuery
 from watchdog.envelope import err, ok
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService
 from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.replies import (
@@ -61,6 +62,10 @@ def get_decision_store(request: Request) -> Any:
 
 def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
+
+
+def get_resident_expert_runtime_service(request: Request) -> ResidentExpertRuntimeService:
+    return request.app.state.resident_expert_runtime_service
 
 
 def _get_session_spine_freshness_window_seconds(request: Request) -> float:
@@ -128,6 +133,9 @@ def list_sessions(
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    resident_expert_runtime_service: ResidentExpertRuntimeService = Depends(
+        get_resident_expert_runtime_service
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -138,6 +146,7 @@ def list_sessions(
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            resident_expert_runtime_service=resident_expert_runtime_service,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)

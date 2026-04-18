@@ -35,6 +35,7 @@ from watchdog.services.adapters.openclaw.reply_model import (
     build_workspace_activity_reply,
 )
 from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.entrypoints.command_routing import (
     resolve_entry_message,
     resolve_entry_route,
@@ -77,6 +78,11 @@ class OpenClawAdapter:
         self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
         self._approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
         self._decision_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
+        self._resident_expert_runtime_service = ResidentExpertRuntimeService.from_data_dir(
+            data_dir,
+            stale_after_seconds=self._settings.resident_expert_stale_after_seconds,
+        )
+        self._resident_expert_runtime_service.ensure_registry()
 
     def handle_intent(
         self,
@@ -116,6 +122,7 @@ class OpenClawAdapter:
                         store=self._session_spine_store,
                         approval_store=self._approval_store,
                         decision_store=self._decision_store,
+                        resident_expert_runtime_service=self._resident_expert_runtime_service,
                     )
                     return build_session_directory_reply(bundle)
                 if intent_code == "list_approval_inbox":

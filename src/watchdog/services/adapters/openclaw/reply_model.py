@@ -204,6 +204,27 @@ def _directory_freshness_labels(bundle: SessionDirectoryReadBundle) -> dict[str,
     return labels
 
 
+def _render_resident_expert_coverage_summary(bundle: SessionDirectoryReadBundle) -> str | None:
+    coverage = bundle.resident_expert_coverage
+    if coverage is None:
+        return None
+    parts: list[str] = []
+    labels = (
+        ("available_expert_count", "在线"),
+        ("bound_expert_count", "已绑定"),
+        ("restoring_expert_count", "恢复中"),
+        ("stale_expert_count", "过期"),
+        ("unavailable_expert_count", "未就绪"),
+    )
+    for field_name, label in labels:
+        count = int(getattr(coverage, field_name, 0) or 0)
+        if count > 0:
+            parts.append(f"{label}{count}")
+    if not parts:
+        return None
+    return "、".join(parts)
+
+
 def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
     if not reply.message:
         return reply
@@ -217,6 +238,16 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
         return reply
 
     header_line = lines[0]
+    resident_expert_summary = _render_resident_expert_coverage_summary(bundle)
+    if resident_expert_summary and " | 监督=" not in header_line:
+        header_line = f"{header_line} | 监督={resident_expert_summary}"
+    latest_consultation_ref = (
+        str(bundle.resident_expert_coverage.latest_consultation_ref or "").strip()
+        if bundle.resident_expert_coverage is not None
+        else ""
+    )
+    if latest_consultation_ref and " | 最近合议=" not in header_line:
+        header_line = f"{header_line} | 最近合议={latest_consultation_ref}"
     state_summary = _render_directory_state_summary(bundle)
     if state_summary and " | 状态=" not in header_line:
         header_line = f"{header_line} | 状态={state_summary}"

@@ -110,6 +110,7 @@ def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyMo
         message=_build_session_directory_message(bundle),
         sessions=bundle.sessions,
         progresses=bundle.progresses,
+        resident_expert_coverage=bundle.resident_expert_coverage,
     )
 
 

@@ -9,11 +9,13 @@ import httpx
 from watchdog.contracts.session_spine.models import (
     ApprovalProjection,
     FactRecord,
+    ResidentExpertCoverageView,
     SessionProjection,
     SnapshotReadSemantics,
     TaskProgressView,
     WorkspaceActivityView,
 )
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.policy.decisions import (
     CanonicalDecisionRecord,
     PolicyDecisionStore,
@@ -116,6 +118,7 @@ class SessionDirectoryReadBundle:
     approvals: list[dict[str, Any]]
     sessions: list[SessionProjection]
     progresses: list[TaskProgressView] = field(default_factory=list)
+    resident_expert_coverage: ResidentExpertCoverageView | None = None
 
 
 def _canonical_decision_sort_key(record: CanonicalDecisionRecord) -> tuple[str, str]:
@@ -159,6 +162,58 @@ def _build_decision_trace_projection(
         "decision_degrade_reason": str(trace.get("degrade_reason") or "") or None,
         "provider_output_schema_ref": str(trace.get("provider_output_schema_ref") or "") or None,
     }
+
+
+def _build_resident_expert_coverage_view(
+    resident_expert_runtime_service: ResidentExpertRuntimeService | None,
+) -> ResidentExpertCoverageView | None:
+    if resident_expert_runtime_service is None:
+        return None
+    views = resident_expert_runtime_service.list_runtime_views(now=datetime.now(timezone.utc))
+    if not views:
+        return None
+    if not any(
+        view.runtime_handle_bound or view.last_consulted_at or view.last_consultation_ref
+        for view in views
+    ):
+        return None
+
+    latest_view = max(
+        (
+            view
+            for view in views
+            if view.last_consulted_at or view.last_consultation_ref
+        ),
+        key=lambda item: (
+            _parse_iso8601(item.last_consulted_at) or datetime.min.replace(tzinfo=timezone.utc),
+            item.expert_id,
+        ),
+        default=None,
+    )
+    degraded_expert_ids = [
+        view.expert_id
+        for view in views
+        if view.status != "available"
+    ]
+    return ResidentExpertCoverageView(
+        coverage_status="healthy" if not degraded_expert_ids else "degraded",
+        available_expert_count=sum(1 for view in views if view.status == "available"),
+        bound_expert_count=sum(1 for view in views if view.status == "bound"),
+        restoring_expert_count=sum(1 for view in views if view.status == "restoring"),
+        stale_expert_count=sum(1 for view in views if view.status == "stale"),
+        unavailable_expert_count=sum(1 for view in views if view.status == "unavailable"),
+        degraded_expert_ids=degraded_expert_ids,
+        latest_consultation_ref=(
+            str(latest_view.last_consultation_ref or "") or None
+            if latest_view is not None
+            else None
+        ),
+        latest_consulted_at=(
+            str(latest_view.last_consulted_at or "") or None
+            if latest_view is not None
+            else None
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1145,9 +1200,13 @@ def build_session_directory_bundle(
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    resident_expert_runtime_service: ResidentExpertRuntimeService | None = None,
 ) -> SessionDirectoryReadBundle:
     persisted_records = store.list_records() if store is not None else []
     persisted_by_project = {record.project_id: record for record in persisted_records}
+    resident_expert_coverage = _build_resident_expert_coverage_view(
+        resident_expert_runtime_service
+    )
     if session_service is not None:
         grouped_events = _group_project_session_events(
             session_service,
@@ -1187,6 +1246,7 @@ def build_session_directory_bundle(
                     approvals=[],
                     sessions=sessions,
                     progresses=progresses,
+                    resident_expert_coverage=resident_expert_coverage,
                 )
     if store is not None:
         if persisted_records:
@@ -1205,6 +1265,7 @@ def build_session_directory_bundle(
                 approvals=[],
                 sessions=[bundle.session for bundle in bundles],
                 progresses=[bundle.progress for bundle in bundles],
+                resident_expert_coverage=resident_expert_coverage,
             )
     tasks = _load_tasks_or_raise(client)
     approvals = _load_approvals_or_raise(client)
@@ -1238,4 +1299,5 @@ def build_session_directory_bundle(
         approvals=approvals,
         sessions=sessions,
         progresses=progresses,
+        resident_expert_coverage=resident_expert_coverage,
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from watchdog.contracts.session_spine.enums import (
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
@@ -174,6 +176,7 @@ def _adapter(
     task: dict[str, object],
     tasks: list[dict[str, object]] | None = None,
     approvals: list[dict[str, object]] | None = None,
+    resident_expert_stale_after_seconds: float = 900.0,
 ) -> OpenClawAdapter:
     return OpenClawAdapter(
         settings=Settings(
@@ -181,6 +184,7 @@ def _adapter(
             a_agent_token="at",
             a_agent_base_url="http://a.test",
             data_dir=str(tmp_path),
+            resident_expert_stale_after_seconds=resident_expert_stale_after_seconds,
         ),
         client=FakeAClient(task=task, tasks=tasks, approvals=approvals),
         receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
@@ -916,6 +920,101 @@ def test_adapter_list_sessions_surfaces_relative_freshness_buckets(tmp_path: Pat
     assert "- repo-b | planning | waiting | 上下文=low | 更新=较早" in reply.message
     assert "- repo-c | planning | waiting | 上下文=low | 更新=静默" in reply.message
     assert "- repo-d | planning | waiting | 上下文=low | 更新=未知" in reply.message
+
+
+def test_adapter_list_sessions_surfaces_resident_expert_coverage_summary(tmp_path: Path) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    stale_seen_at = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    fresh_seen_at = now.isoformat().replace("+00:00", "Z")
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": fresh_seen_at,
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": fresh_seen_at,
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": fresh_seen_at,
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": fresh_seen_at,
+            },
+        ],
+        resident_expert_stale_after_seconds=60.0,
+    )
+    resident_expert_runtime_service = ResidentExpertRuntimeService.from_data_dir(
+        tmp_path,
+        stale_after_seconds=60.0,
+    )
+    resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent://james",
+        observed_at=stale_seen_at,
+    )
+    resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="hermes-agent-expert",
+        runtime_handle="agent://hegel",
+        observed_at=fresh_seen_at,
+    )
+    resident_expert_runtime_service.consult_or_restore(
+        expert_ids=["managed-agent-expert", "hermes-agent-expert"],
+        consultation_ref="consult:repo-b:resident-experts",
+        observed_runtime_handles={"hermes-agent-expert": "agent://hegel"},
+        consulted_at=fresh_seen_at,
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.resident_expert_coverage is not None
+    assert reply.resident_expert_coverage.coverage_status == "degraded"
+    assert reply.resident_expert_coverage.latest_consultation_ref == "consult:repo-b:resident-experts"
+    assert reply.message.startswith(
+        "多项目进展（2） | 监督=在线1、过期1 | 最近合议=consult:repo-b:resident-experts"
+        " | 状态=进行中1、待审批1 | 先处理=repo-b:待审批\n"
+    )
 
 
 def test_adapter_list_session_events_returns_stable_reply_model(tmp_path: Path) -> None:

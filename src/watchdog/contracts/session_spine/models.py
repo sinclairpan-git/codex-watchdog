@@ -100,6 +100,18 @@ class TaskProgressView(SessionSpineModel):
     provider_output_schema_ref: str | None = None
 
 
+class ResidentExpertCoverageView(SessionSpineModel):
+    coverage_status: str
+    available_expert_count: int = 0
+    bound_expert_count: int = 0
+    restoring_expert_count: int = 0
+    stale_expert_count: int = 0
+    unavailable_expert_count: int = 0
+    degraded_expert_ids: list[str] = Field(default_factory=list)
+    latest_consultation_ref: str | None = None
+    latest_consulted_at: str | None = None
+
+
 class WorkspaceActivityView(SessionSpineModel):
     project_id: str
     thread_id: str
@@ -150,6 +162,7 @@ class ReplyModel(SessionSpineModel):
     sessions: list[SessionProjection] = Field(default_factory=list)
     progress: TaskProgressView | None = None
     progresses: list[TaskProgressView] = Field(default_factory=list)
+    resident_expert_coverage: ResidentExpertCoverageView | None = None
     workspace_activity: WorkspaceActivityView | None = None
     action_result: WatchdogActionResult | None = None
     snapshot: SnapshotReadSemantics | None = None

@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import importlib.util
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -254,13 +255,19 @@ def test_integration_fake_a_client_broken_stub_matches_a_control_agent_client_co
     _assert_a_client_signature_compatibility(BrokenAClient)
 
 
-def _adapter(tmp_path: Path, client) -> OpenClawAdapter:
+def _adapter(
+    tmp_path: Path,
+    client,
+    *,
+    resident_expert_stale_after_seconds: float = 900.0,
+) -> OpenClawAdapter:
     return OpenClawAdapter(
         settings=Settings(
             api_token="wt",
             a_agent_token="at",
             a_agent_base_url="http://a.test",
             data_dir=str(tmp_path),
+            resident_expert_stale_after_seconds=resident_expert_stale_after_seconds,
         ),
         client=client,
         receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
@@ -992,6 +999,77 @@ def test_integration_session_directory_adapter_adds_relative_freshness_without_m
         "多项目进展（2） | 状态=进行中2\n"
         "- repo-a | editing_source | editing files | 上下文=low\n"
         "- repo-b | planning | waiting | 上下文=low | 更新=静默"
+    )
+
+
+def test_integration_session_directory_api_and_adapter_share_resident_expert_coverage(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    stale_seen_at = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    fresh_seen_at = now.isoformat().replace("+00:00", "Z")
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": fresh_seen_at,
+    }
+    a_client = FakeAClient(task=task, tasks=[task])
+    adapter = _adapter(
+        tmp_path,
+        a_client,
+        resident_expert_stale_after_seconds=60.0,
+    )
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            resident_expert_stale_after_seconds=60.0,
+        ),
+        a_client=a_client,
+    )
+    resident_expert_runtime_service = app.state.resident_expert_runtime_service
+    resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent://james",
+        observed_at=stale_seen_at,
+    )
+    resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="hermes-agent-expert",
+        runtime_handle="agent://hegel",
+        observed_at=fresh_seen_at,
+    )
+    resident_expert_runtime_service.consult_or_restore(
+        expert_ids=["managed-agent-expert", "hermes-agent-expert"],
+        consultation_ref="consult:repo-a:resident-experts",
+        observed_runtime_handles={"hermes-agent-expert": "agent://hegel"},
+        consulted_at=fresh_seen_at,
+    )
+
+    with TestClient(app) as client:
+        api_response = client.get(
+            "/api/v1/watchdog/sessions",
+            headers={"Authorization": "Bearer wt"},
+        )
+
+    adapter_reply = adapter.handle_intent("list_sessions")
+
+    assert api_response.status_code == 200
+    api_reply = api_response.json()["data"]
+    assert api_reply["resident_expert_coverage"] == adapter_reply.resident_expert_coverage.model_dump(
+        mode="json"
+    )
+    assert adapter_reply.message.startswith(
+        "多项目进展（1） | 监督=在线1、过期1 | 最近合议=consult:repo-a:resident-experts"
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1249,6 +1250,54 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
         " | 决策=provider降级(schema:provider-decision-v2)\n"
         "- repo-c | editing_source | resuming after overflow | 上下文=high | 恢复=恢复失败(failed_retryable)"
     )
+
+
+def test_session_directory_route_surfaces_resident_expert_coverage(tmp_path) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    stale_seen_at = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    fresh_seen_at = now.isoformat().replace("+00:00", "Z")
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            resident_expert_stale_after_seconds=60.0,
+        ),
+        a_client=_client(),
+    )
+    resident_expert_runtime_service = app.state.resident_expert_runtime_service
+    resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent://james",
+        observed_at=stale_seen_at,
+    )
+    resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="hermes-agent-expert",
+        runtime_handle="agent://hegel",
+        observed_at=fresh_seen_at,
+    )
+    resident_expert_runtime_service.consult_or_restore(
+        expert_ids=["managed-agent-expert", "hermes-agent-expert"],
+        consultation_ref="consult:repo-a:resident-experts",
+        observed_runtime_handles={"hermes-agent-expert": "agent://hegel"},
+        consulted_at=fresh_seen_at,
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    coverage = response.json()["data"]["resident_expert_coverage"]
+    assert coverage["coverage_status"] == "degraded"
+    assert coverage["available_expert_count"] == 1
+    assert coverage["bound_expert_count"] == 0
+    assert coverage["restoring_expert_count"] == 0
+    assert coverage["stale_expert_count"] == 1
+    assert coverage["unavailable_expert_count"] == 0
+    assert coverage["degraded_expert_ids"] == ["managed-agent-expert"]
+    assert coverage["latest_consultation_ref"] == "consult:repo-a:resident-experts"
+    assert coverage["latest_consulted_at"] == fresh_seen_at
 
 
 def test_session_by_native_thread_route_returns_stable_session_projection(tmp_path) -> None:
