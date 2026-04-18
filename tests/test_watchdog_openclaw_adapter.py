@@ -559,6 +559,11 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
     assert reply.progresses[0].recovery_child_session_id is None
     assert reply.progresses[1].recovery_outcome == "new_child_session"
     assert reply.progresses[1].recovery_child_session_id == "session:repo-b:child-v1"
+    assert reply.message == (
+        "多项目进展（2）\n"
+        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
+        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+    )
 
 
 def test_adapter_list_session_events_returns_stable_reply_model(tmp_path: Path) -> None:

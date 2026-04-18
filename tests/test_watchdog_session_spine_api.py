@@ -1120,6 +1120,12 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
     assert data["progresses"][2]["recovery_outcome"] == "resume_failed"
     assert data["progresses"][2]["recovery_status"] == "failed_retryable"
     assert data["progresses"][2]["recovery_child_session_id"] is None
+    assert data["message"] == (
+        "多项目进展（3）\n"
+        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
+        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1\n"
+        "- repo-c | editing_source | resuming after overflow | 上下文=high | 恢复=恢复失败(failed_retryable)"
+    )
 
 
 def test_session_by_native_thread_route_returns_stable_session_projection(tmp_path) -> None:

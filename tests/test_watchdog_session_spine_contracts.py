@@ -324,7 +324,10 @@ def test_session_directory_contract_extension_is_stable() -> None:
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.SESSION_DIRECTORY,
         intent_code="list_sessions",
-        message="1 session(s)",
+        message=(
+            "多项目进展（1）\n"
+            "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑"
+        ),
         sessions=[session],
         progresses=[progress],
     )
@@ -335,6 +338,7 @@ def test_session_directory_contract_extension_is_stable() -> None:
     assert payload["reply_kind"] == "session"
     assert payload["sessions"][0]["project_id"] == "repo-a"
     assert payload["sessions"][0]["thread_id"] == "session:repo-a"
+    assert payload["message"].startswith("多项目进展（1）")
     assert payload["progresses"][0]["project_id"] == "repo-a"
     assert payload["progresses"][0]["recovery_outcome"] == "same_thread_resume"
 

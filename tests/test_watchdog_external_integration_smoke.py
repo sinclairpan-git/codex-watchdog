@@ -63,7 +63,7 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
                         },
                     },
                 )
-            assert content["text"] == "项目列表"
+            assert content["text"] == "所有项目进展"
             return httpx.Response(
                 200,
                 json={
@@ -72,9 +72,31 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
                     "data": {
                         "intent_code": "list_sessions",
                         "reply_code": "session_directory",
+                        "message": (
+                            "多项目进展（2）\n"
+                            "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
+                            "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+                        ),
                         "sessions": [
                             {"project_id": "repo-a"},
                             {"project_id": "repo-b"},
+                        ],
+                        "progresses": [
+                            {
+                                "project_id": "repo-a",
+                                "activity_phase": "editing_source",
+                                "summary": "editing files",
+                                "context_pressure": "low",
+                                "recovery_outcome": "same_thread_resume",
+                            },
+                            {
+                                "project_id": "repo-b",
+                                "activity_phase": "approval",
+                                "summary": "waiting for approval",
+                                "context_pressure": "low",
+                                "recovery_outcome": "new_child_session",
+                                "recovery_child_session_id": "session:repo-b:child-v1",
+                            },
                         ],
                     },
                 },
@@ -271,8 +293,10 @@ def test_feishu_discovery_check_verifies_expected_project_ids(tmp_path: Path) ->
     assert len(results) == 1
     assert results[0].check_name == "feishu-discovery"
     assert results[0].status == "passed"
-    assert results[0].evidence["command_text"] == "项目列表"
+    assert results[0].evidence["command_text"] == "所有项目进展"
     assert results[0].evidence["project_ids"] == ["repo-a", "repo-b"]
+    assert results[0].evidence["progress_project_ids"] == ["repo-a", "repo-b"]
+    assert results[0].evidence["message"].startswith("多项目进展（2）")
 
 
 def test_feishu_discovery_check_skips_when_expected_projects_not_configured(tmp_path: Path) -> None:

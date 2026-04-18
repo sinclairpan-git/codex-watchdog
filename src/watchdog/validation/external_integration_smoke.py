@@ -44,7 +44,7 @@ class ExternalIntegrationSmokeConfig:
     feishu_control_goal_message: str | None = None
     feishu_control_expected_session_id: str | None = None
     feishu_control_actor_open_id: str = "ou_watchdog_smoke"
-    feishu_discovery_command_text: str = "项目列表"
+    feishu_discovery_command_text: str = "所有项目进展"
     feishu_discovery_expected_project_ids: tuple[str, ...] = ()
     feishu_discovery_actor_open_id: str = "ou_watchdog_smoke"
     brain_provider_name: str = "resident_orchestrator"
@@ -522,7 +522,7 @@ def _run_feishu_discovery_check(
             evidence={"missing_fields": ["feishu_discovery_expected_project_ids"]},
         )
     assert client is not None
-    command_text = str(config.feishu_discovery_command_text or "").strip() or "项目列表"
+    command_text = str(config.feishu_discovery_command_text or "").strip() or "所有项目进展"
     body = _feishu_event_body(
         token=config.feishu_verification_token,
         text=command_text,
@@ -580,11 +580,34 @@ def _run_feishu_discovery_check(
             reason="contract_mismatch",
             evidence={"response": payload},
         )
+    raw_progresses = data.get("progresses")
+    if not isinstance(raw_progresses, list):
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
+    message = str(data.get("message") or "").strip()
+    if not message.startswith("多项目进展（"):
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={"response": payload},
+        )
     actual_project_ids = sorted(
         {
             str(session.get("project_id") or "").strip()
             for session in raw_sessions
             if isinstance(session, Mapping) and str(session.get("project_id") or "").strip()
+        }
+    )
+    progress_project_ids = sorted(
+        {
+            str(progress.get("project_id") or "").strip()
+            for progress in raw_progresses
+            if isinstance(progress, Mapping) and str(progress.get("project_id") or "").strip()
         }
     )
     missing_project_ids = [
@@ -602,6 +625,18 @@ def _run_feishu_discovery_check(
                 "missing_project_ids": missing_project_ids,
             },
         )
+    if progress_project_ids != actual_project_ids:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={
+                "command_text": command_text,
+                "project_ids": actual_project_ids,
+                "progress_project_ids": progress_project_ids,
+                "message": message,
+            },
+        )
     return SmokeCheckResult(
         check_name="feishu-discovery",
         status="passed",
@@ -609,6 +644,8 @@ def _run_feishu_discovery_check(
         evidence={
             "command_text": command_text,
             "project_ids": actual_project_ids,
+            "progress_project_ids": progress_project_ids,
+            "message": message,
         },
     )
 

@@ -291,6 +291,7 @@ def test_feishu_ingress_global_project_directory_command_skips_project_binding(t
         "repo-a",
         "repo-b",
     }
+    assert response.json()["data"]["message"].startswith("多项目进展（2）")
 
 
 def test_feishu_ingress_rejects_ambiguous_project_binding(tmp_path: Path) -> None:

@@ -912,6 +912,12 @@ def test_integration_api_and_adapter_share_session_directory_semantics(tmp_path:
     assert [item["recovery_child_session_id"] for item in api_reply["progresses"]] == [
         progress.recovery_child_session_id for progress in adapter_reply.progresses
     ]
+    assert api_reply["message"] == adapter_reply.message
+    assert api_reply["message"] == (
+        "多项目进展（2）\n"
+        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
+        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+    )
 
 
 def test_integration_api_and_adapter_share_native_thread_resolution_semantics(tmp_path: Path) -> None:

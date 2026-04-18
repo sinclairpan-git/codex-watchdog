@@ -10,6 +10,57 @@ from watchdog.services.session_spine.service import (
 )
 
 
+def _display_thread_id(thread_id: str | None) -> str:
+    normalized = str(thread_id or "").strip()
+    if normalized.startswith("session:"):
+        return normalized.removeprefix("session:")
+    return normalized
+
+
+def _render_recovery_summary(progress) -> str | None:
+    outcome = str(progress.recovery_outcome or "").strip()
+    status = str(progress.recovery_status or "").strip()
+    child_session_id = _display_thread_id(progress.recovery_child_session_id)
+    if outcome == "same_thread_resume":
+        return "原线程续跑"
+    if outcome == "new_child_session":
+        if child_session_id:
+            return f"新子会话 {child_session_id}"
+        return "新子会话"
+    if outcome == "resume_failed":
+        if status:
+            return f"恢复失败({status})"
+        return "恢复失败"
+    if outcome:
+        if status:
+            return f"{outcome}({status})"
+        return outcome
+    if status:
+        return status
+    return None
+
+
+def _build_session_directory_message(bundle: SessionDirectoryReadBundle) -> str:
+    count = len(bundle.progresses) if bundle.progresses else len(bundle.sessions)
+    lines = [f"多项目进展（{count}）"]
+    if bundle.progresses:
+        for progress in bundle.progresses:
+            line = (
+                f"- {progress.project_id} | {progress.activity_phase} | {progress.summary} "
+                f"| 上下文={progress.context_pressure}"
+            )
+            recovery_summary = _render_recovery_summary(progress)
+            if recovery_summary:
+                line = f"{line} | 恢复={recovery_summary}"
+            lines.append(line)
+        return "\n".join(lines)
+    for session in bundle.sessions:
+        lines.append(
+            f"- {session.project_id} | {session.activity_phase} | {session.headline}"
+        )
+    return "\n".join(lines)
+
+
 def build_session_reply(
     bundle: SessionReadBundle,
     *,
@@ -31,7 +82,7 @@ def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyMo
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.SESSION_DIRECTORY,
         intent_code="list_sessions",
-        message=f"{len(bundle.sessions)} session(s)",
+        message=_build_session_directory_message(bundle),
         sessions=bundle.sessions,
         progresses=bundle.progresses,
     )
