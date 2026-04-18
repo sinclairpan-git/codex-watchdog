@@ -4305,6 +4305,20 @@ def test_resident_orchestrator_persists_brain_requested_action_args_for_continue
         "reason_code": "brain_auto_continue",
         "stuck_level": 1,
     }
+    assert decision.evidence["managed_agent_boundary"] == {
+        "status": "pass",
+        "action_ref": "continue_session",
+        "brain_intent": "propose_execute",
+        "capability": "session_control",
+        "allowed_brain_intents": [
+            "propose_execute",
+            "require_approval",
+            "suggest_only",
+            "observe_only",
+        ],
+        "auto_execute_allowed_intents": ["propose_execute"],
+        "auto_execute_eligible": True,
+    }
     steer_mock.assert_called_once()
 
 

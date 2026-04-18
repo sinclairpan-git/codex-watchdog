@@ -22,6 +22,7 @@ from watchdog.services.policy.rules import (
     DECISION_REQUIRE_USER_DECISION,
     EXPLICIT_USER_DECISION_ACTION_REFS,
     HUMAN_GATE_FACT_CODES,
+    MANAGED_AGENT_ACTION_BOUNDARY,
     POLICY_VERSION,
     REGISTERED_ACTION_REFS,
     RISK_CLASS_HARD_BLOCK,
@@ -46,11 +47,41 @@ def evaluate_persisted_session_policy(
     uncertainty_reasons = [
         fact_code for fact_code in fact_codes if fact_code in CONTROLLED_UNCERTAINTY_REASONS
     ]
-    extra_evidence = _goal_contract_evidence(
-        goal_contract_readiness,
-        validator_verdict=validator_verdict,
-        release_gate_verdict=release_gate_verdict,
+    extra_evidence = _merge_extra_evidence(
+        _goal_contract_evidence(
+            goal_contract_readiness,
+            validator_verdict=validator_verdict,
+            release_gate_verdict=release_gate_verdict,
+        ),
+        _managed_agent_boundary_evidence(
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+        ),
     )
+    boundary = _managed_agent_boundary_snapshot(
+        brain_intent=brain_intent,
+        action_ref=action_ref,
+    )
+
+    if boundary["status"] == "blocked":
+        return build_canonical_decision_record(
+            persisted_record=persisted_record,
+            decision_result=DECISION_BLOCK_AND_ALERT,
+            brain_intent=brain_intent,
+            risk_class=RISK_CLASS_HARD_BLOCK,
+            action_ref=action_ref,
+            matched_policy_rules=["managed_agent_boundary"],
+            decision_reason="managed agent capability boundary rejected the requested action",
+            why_not_escalated=None,
+            why_escalated=(
+                "brain intent is outside the managed boundary for "
+                f"{action_ref}: {brain_intent}"
+            ),
+            uncertainty_reasons=["managed_boundary_mismatch"],
+            policy_version=policy_version,
+            trigger=trigger,
+            extra_evidence=extra_evidence,
+        )
 
     if any(fact_code in HUMAN_GATE_FACT_CODES for fact_code in fact_codes):
         return build_canonical_decision_record(
@@ -265,6 +296,58 @@ def _goal_contract_evidence(
             mode="json"
         )
     return evidence
+
+
+def _merge_extra_evidence(*bundles: dict[str, Any] | None) -> dict[str, Any] | None:
+    merged: dict[str, Any] = {}
+    for bundle in bundles:
+        if bundle:
+            merged.update(bundle)
+    return merged or None
+
+
+def _managed_agent_boundary_snapshot(
+    *,
+    brain_intent: str | None,
+    action_ref: str,
+) -> dict[str, Any]:
+    boundary = MANAGED_AGENT_ACTION_BOUNDARY.get(action_ref)
+    if boundary is None:
+        return {
+            "status": "unregistered_action",
+            "action_ref": action_ref,
+            "brain_intent": brain_intent,
+        }
+    allowed_brain_intents = list(boundary["allowed_brain_intents"])
+    auto_execute_allowed_intents = list(boundary["auto_execute_allowed_intents"])
+    if brain_intent is None:
+        status = "legacy_untyped"
+    elif brain_intent in allowed_brain_intents:
+        status = "pass"
+    else:
+        status = "blocked"
+    return {
+        "status": status,
+        "action_ref": action_ref,
+        "brain_intent": brain_intent,
+        "capability": boundary["capability"],
+        "allowed_brain_intents": allowed_brain_intents,
+        "auto_execute_allowed_intents": auto_execute_allowed_intents,
+        "auto_execute_eligible": brain_intent in auto_execute_allowed_intents,
+    }
+
+
+def _managed_agent_boundary_evidence(
+    *,
+    brain_intent: str | None,
+    action_ref: str,
+) -> dict[str, Any]:
+    return {
+        "managed_agent_boundary": _managed_agent_boundary_snapshot(
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+        )
+    }
 
 
 def _runtime_gate_override(

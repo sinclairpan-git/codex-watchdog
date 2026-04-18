@@ -34,3 +34,26 @@ REGISTERED_ACTION_REFS = {
 EXPLICIT_USER_DECISION_ACTION_REFS = {
     "execute_recovery",
 }
+
+MANAGED_AGENT_ACTION_BOUNDARY = {
+    "continue_session": {
+        "capability": "session_control",
+        "allowed_brain_intents": (
+            "propose_execute",
+            "require_approval",
+            "suggest_only",
+            "observe_only",
+        ),
+        "auto_execute_allowed_intents": ("propose_execute",),
+    },
+    "execute_recovery": {
+        "capability": "session_recovery",
+        "allowed_brain_intents": ("propose_recovery",),
+        "auto_execute_allowed_intents": ("propose_recovery",),
+    },
+    "post_operator_guidance": {
+        "capability": "operator_guidance",
+        "allowed_brain_intents": ("candidate_closure",),
+        "auto_execute_allowed_intents": (),
+    },
+}

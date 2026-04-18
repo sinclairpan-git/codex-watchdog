@@ -961,6 +961,12 @@ class ResidentOrchestrator:
         if decision.brain_intent not in (None, "propose_execute", "propose_recovery"):
             return False
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        managed_boundary = evidence.get("managed_agent_boundary")
+        if isinstance(managed_boundary, dict):
+            if managed_boundary.get("status") != "pass":
+                return False
+            if not bool(managed_boundary.get("auto_execute_eligible")):
+                return False
         validator_verdict = read_validator_decision_evidence(evidence).verdict
         if validator_verdict is None or validator_verdict.status != "pass":
             return False

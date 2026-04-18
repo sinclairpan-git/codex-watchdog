@@ -199,6 +199,40 @@ def test_policy_engine_allows_auto_execution_for_brain_proposed_recovery() -> No
     assert decision.why_not_escalated == "policy_allows_auto_execution"
     assert decision.why_escalated is None
     assert "registered_action" in decision.matched_policy_rules
+    assert decision.evidence["managed_agent_boundary"] == {
+        "status": "pass",
+        "action_ref": "execute_recovery",
+        "brain_intent": "propose_recovery",
+        "capability": "session_recovery",
+        "allowed_brain_intents": ["propose_recovery"],
+        "auto_execute_allowed_intents": ["propose_recovery"],
+        "auto_execute_eligible": True,
+    }
+
+
+def test_policy_engine_blocks_managed_agent_intent_action_mismatch() -> None:
+    record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        brain_intent="propose_execute",
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert decision.matched_policy_rules == ["managed_agent_boundary"]
+    assert decision.uncertainty_reasons == ["managed_boundary_mismatch"]
+    assert decision.evidence["managed_agent_boundary"] == {
+        "status": "blocked",
+        "action_ref": "execute_recovery",
+        "brain_intent": "propose_execute",
+        "capability": "session_recovery",
+        "allowed_brain_intents": ["propose_recovery"],
+        "auto_execute_allowed_intents": ["propose_recovery"],
+        "auto_execute_eligible": False,
+    }
 
 
 def test_policy_engine_requires_user_decision_when_goal_contract_is_not_ready() -> None:
