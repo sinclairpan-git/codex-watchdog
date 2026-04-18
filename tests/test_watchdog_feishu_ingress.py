@@ -447,7 +447,56 @@ def test_feishu_ingress_global_project_directory_command_skips_project_binding(t
         "repo-a",
         "repo-b",
     }
-    assert response.json()["data"]["message"].startswith("多项目进展（2）")
+    assert response.json()["data"]["message"] == (
+        "多项目进展（2）\n"
+        "- repo-a | planning | waiting | 上下文=low\n"
+        "- repo-b | planning | waiting | 上下文=low"
+    )
+
+
+def test_feishu_ingress_project_directory_surfaces_next_steps_for_pending_approval(
+    tmp_path: Path,
+) -> None:
+    a_client = _IngressAClient(
+        tasks=[
+            _task("repo-a", status="running"),
+            {
+                **_task("repo-b", status="waiting_human"),
+                "phase": "approval",
+                "pending_approval": True,
+                "last_summary": "waiting for approval",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-b",
+                "thread_id": "thr:repo-b",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-16T13:01:00Z",
+            }
+        ],
+    )
+    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("项目列表"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["data"]["message"] == (
+        "多项目进展（2）\n"
+        "- repo-a | planning | waiting | 上下文=low\n"
+        "- repo-b | approval | waiting for approval | 上下文=low"
+        " | 下一步=审批列表、回复同意/拒绝、卡在哪里"
+    )
 
 
 def test_feishu_ingress_rejects_ambiguous_project_binding(tmp_path: Path) -> None:

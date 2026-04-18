@@ -701,6 +701,7 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
         "多项目进展（2）\n"
         "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
         "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+        " | 下一步=审批列表、回复同意/拒绝、卡在哪里"
     )
 
 

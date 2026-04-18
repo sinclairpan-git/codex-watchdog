@@ -68,6 +68,34 @@ def _with_action_hint(reply: ReplyModel, *, available_intents: list[str]) -> Rep
     return reply.model_copy(update={"message": f"{reply.message} | 下一步={hint}"})
 
 
+def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
+    if not reply.message or " | 下一步=" in reply.message:
+        return reply
+
+    session_intents = {
+        session.project_id: session.available_intents for session in bundle.sessions
+    }
+    lines = reply.message.splitlines()
+    if not lines:
+        return reply
+
+    enriched_lines = [lines[0]]
+    progress_lines = lines[1:]
+    for index, line in enumerate(progress_lines):
+        if index >= len(bundle.progresses):
+            enriched_lines.append(line)
+            continue
+        progress = bundle.progresses[index]
+        hint = _render_action_hint(
+            intent_code=reply.intent_code,
+            available_intents=session_intents.get(progress.project_id, []),
+        )
+        if hint and " | 下一步=" not in line:
+            line = f"{line} | 下一步={hint}"
+        enriched_lines.append(line)
+    return reply.model_copy(update={"message": "\n".join(enriched_lines)})
+
+
 def build_session_reply(
     bundle: SessionReadBundle,
     *,
@@ -80,7 +108,10 @@ def build_session_reply(
 
 
 def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:
-    return build_session_directory_read_reply(bundle)
+    return _with_directory_action_hints(
+        build_session_directory_read_reply(bundle),
+        bundle=bundle,
+    )
 
 
 def build_session_event_snapshot_reply(events: list[SessionEvent]) -> ReplyModel:
