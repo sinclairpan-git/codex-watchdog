@@ -1,0 +1,21 @@
+work_item:
+  id: 081-autonomous-next-step-recovery
+  spec_dir: specs/081-autonomous-next-step-recovery
+  branch: codex/081-autonomous-next-step-recovery
+current_stage: execute
+current_batch: 2
+last_committed_task: ''
+current_branch: codex/081-autonomous-next-step-recovery
+status:
+  current_stage: execute
+  current_task: T812
+  next_action: freeze autonomous recovery and multi-project delivery contracts under WI-081
+artifacts:
+  - specs/081-autonomous-next-step-recovery/spec.md
+  - specs/081-autonomous-next-step-recovery/plan.md
+  - specs/081-autonomous-next-step-recovery/tasks.md
+  - specs/081-autonomous-next-step-recovery/task-execution-log.md
+  - .ai-sdlc/work-items/081-autonomous-next-step-recovery/execution-plan.yaml
+  - .ai-sdlc/work-items/081-autonomous-next-step-recovery/runtime.yaml
+  - .ai-sdlc/work-items/081-autonomous-next-step-recovery/latest-summary.md
+timestamp: '2026-04-18T04:25:24Z'

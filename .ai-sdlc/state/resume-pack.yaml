@@ -1,60 +1,69 @@
-current_stage: completed
-current_batch: 5
-last_committed_task: T805
+current_stage: execute
+current_batch: 2
+last_committed_task: ''
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/080-external-integration-live-acceptance-truth/spec.md
-  plan_path: specs/080-external-integration-live-acceptance-truth/plan.md
-  tasks_path: specs/080-external-integration-live-acceptance-truth/tasks.md
+  spec_path: specs/081-autonomous-next-step-recovery/spec.md
+  plan_path: specs/081-autonomous-next-step-recovery/plan.md
+  tasks_path: specs/081-autonomous-next-step-recovery/tasks.md
   active_files:
-  - '`docs/operations/external-integration-live-acceptance.md`'
-  - '`src/watchdog/validation/docs_contracts.py`'
-  - '`tests/test_long_running_autonomy_doc_contracts.py`'
-  - '`docs/framework-defect-backlog.zh-CN.md`'
-  - '`specs/080-external-integration-live-acceptance-truth/spec.md`'
-  - '`specs/080-external-integration-live-acceptance-truth/plan.md`'
-  - '`specs/080-external-integration-live-acceptance-truth/tasks.md`'
-  - '`specs/080-external-integration-live-acceptance-truth/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/runtime.yaml`'
-  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/resume-pack.yaml`'
-  - '`.ai-sdlc/work-items/080-external-integration-live-acceptance-truth/latest-summary.md`'
+  - '`src/watchdog/services/brain/models.py`'
+  - '`src/watchdog/services/brain/provider_runtime.py`'
+  - '`src/watchdog/services/brain/service.py`'
+  - '`src/watchdog/services/delivery/envelopes.py`'
+  - '`src/watchdog/services/delivery/feishu_client.py`'
+  - '`src/watchdog/services/policy/decisions.py`'
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/session_spine/actions.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_brain_provider_runtime.py`'
+  - '`tests/test_watchdog_feishu_delivery.py`'
+  - '`tests/test_watchdog_policy_decisions.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_api.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`specs/081-autonomous-next-step-recovery/spec.md`'
+  - '`specs/081-autonomous-next-step-recovery/plan.md`'
+  - '`specs/081-autonomous-next-step-recovery/tasks.md`'
+  - '`specs/081-autonomous-next-step-recovery/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/runtime.yaml`'
+  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/081-autonomous-next-step-recovery/latest-summary.md`'
   - '`.ai-sdlc/state/checkpoint.yml`'
   - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
   context_summary: '# Development Summary
 
 
-    Status: completed
+    Status: active
 
-    Total Tasks: 5
+    Total Tasks: 4
 
-    Completed Tasks: 5
+    Completed Tasks: 1
 
     Halted Tasks: 0
 
-    Total Batches: 5
+    Total Batches: 4
 
-    Completed Batches: 5
+    Completed Batches: 1
 
-    Last Committed Task: T805
+    Last Committed Task: none
 
 
     ## Notes
 
-    - `WI-080` 已把真实环境联调 runbook 的 truth-boundary 收口为 repo-local docs contract，后续文档不得再把外部平台 blocker 写成仓库已自动闭环。
+    - 提交 `794ebbd` 已把 autonomous next-step / context-critical recovery 的主补丁落到主仓，包括 `propose_recovery` 自动执行、`propose_execute` 与 `propose_recovery` 的 auto-execute 判定对齐，以及多项目 progress summary 的 Feishu 回归覆盖。
 
-    - `docs/operations/external-integration-live-acceptance.md` 现已显式声明：外部组织安装、域名、证书、密钥轮换、凭证发放不会因仓库 smoke 通过而被自动宣告完成。
+    - `require_approval -> continue_session -> require_user_decision` 仍保留人工闸门；只有 brain 提出的 `propose_recovery -> execute_recovery` 会自动 handoff / resume。
 
-    - `src/watchdog/validation/docs_contracts.py` 与 `tests/test_long_running_autonomy_doc_contracts.py` 已把“release gate + live acceptance 双成立”和“两种推荐结论口径”冻结为回归 contract。
-
-    - `docs/framework-defect-backlog.zh-CN.md` 中 `FD-004` 的状态已同步到 `WI-079` 完成态，不再保留过期的待补描述。'
-current_branch: codex/080-external-integration-live-acceptance-truth
+    - 当前 formal owner 已切到 `WI-081`，下一步是补齐针对 live runtime 与多项目投递链路的收口证据，而不是继续在 `WI-080` 上叠加功能。'
+current_branch: codex/081-autonomous-next-step-recovery
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-17T18:00:00Z'
+timestamp: '2026-04-18T04:25:24Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-17T18:00:00Z'
-checkpoint_fingerprint: 3d57b195be942864fc6810dc6e32afdd6b37df17b2cf2503f17571b928d7915f
+checkpoint_last_updated: '2026-04-18T04:25:24Z'
+checkpoint_fingerprint: ''
