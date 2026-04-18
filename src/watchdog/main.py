@@ -49,6 +49,7 @@ from watchdog.services.memory_hub.ingest_queue import (
 from watchdog.services.memory_hub.ingest_worker import MemoryIngestWorker
 from watchdog.services.memory_hub.service import MemoryHubService
 from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService, SessionServiceStore
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.command_leases import CommandLeaseStore
@@ -361,6 +362,10 @@ def create_app(
         settings.data_dir,
         preview_contract_overrides=settings.build_memory_preview_contract_overrides(),
     )
+    app.state.resident_expert_runtime_service = ResidentExpertRuntimeService.from_data_dir(
+        settings.data_dir
+    )
+    app.state.resident_expert_runtime_service.ensure_registry()
     app.state.memory_ingest_queue_store = MemoryIngestQueueStore(
         Path(settings.data_dir) / "memory_ingest_queue.json"
     )

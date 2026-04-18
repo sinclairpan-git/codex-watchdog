@@ -18,6 +18,7 @@ from watchdog.services.brain.release_gate_read_contract import (
 from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.policy.decisions import PolicyDecisionStore
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service.service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -109,6 +110,33 @@ class OpsSummary(BaseModel):
     alerts: list[OpsAlert] = Field(default_factory=list)
     release_gate_blockers: list[OpsReleaseGateBlocker] = Field(default_factory=list)
     future_workers: list[OpsFutureWorkerStatus] = Field(default_factory=list)
+
+
+class OpsResidentExpertStatus(BaseModel):
+    expert_id: str
+    name: str
+    display_name_zh_cn: str
+    layer: str
+    independence: str
+    role_summary: str
+    consult_before: list[str] = Field(default_factory=list)
+    focus_areas: list[str] = Field(default_factory=list)
+    non_goals: list[str] = Field(default_factory=list)
+    expected_output: list[str] = Field(default_factory=list)
+    charter_source_ref: str
+    charter_version_hash: str
+    status: str
+    runtime_handle: str | None = None
+    last_seen_at: str | None = None
+    last_consulted_at: str | None = None
+    last_consultation_ref: str | None = None
+
+
+class OpsResidentExpertConsultRequest(BaseModel):
+    expert_ids: list[str] = Field(default_factory=list)
+    consultation_ref: str | None = None
+    observed_runtime_handles: dict[str, str] = Field(default_factory=dict)
+    consulted_at: str | None = None
 
 
 class OpsDeliveryRequeueReceipt(BaseModel):
@@ -231,6 +259,10 @@ def _provider_degrade_reason_counts(decisions) -> dict[str, int]:
             continue
         counts[reason] = counts.get(reason, 0) + 1
     return counts
+
+
+def get_resident_expert_runtime_service(request: Request) -> ResidentExpertRuntimeService:
+    return request.app.state.resident_expert_runtime_service
 
 
 def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
@@ -703,6 +735,55 @@ def get_ops_alerts(
             "future_workers": [
                 item.model_dump(mode="json") for item in summary.future_workers
             ],
+        },
+    )
+
+
+@router.get("/resident-experts")
+def get_resident_experts(
+    request: Request,
+    _: None = Depends(require_token),
+    resident_expert_runtime_service: ResidentExpertRuntimeService = Depends(
+        get_resident_expert_runtime_service
+    ),
+) -> dict[str, object]:
+    return ok(
+        request.headers.get("x-request-id"),
+        {
+            "experts": [
+                OpsResidentExpertStatus.model_validate(
+                    view.model_dump(mode="json")
+                ).model_dump(mode="json")
+                for view in resident_expert_runtime_service.list_runtime_views()
+            ]
+        },
+    )
+
+
+@router.post("/resident-experts/consult")
+def post_resident_experts_consult(
+    request: Request,
+    payload: OpsResidentExpertConsultRequest,
+    _: None = Depends(require_token),
+    resident_expert_runtime_service: ResidentExpertRuntimeService = Depends(
+        get_resident_expert_runtime_service
+    ),
+) -> dict[str, object]:
+    resident_expert_runtime_service.consult_or_restore(
+        expert_ids=payload.expert_ids or None,
+        consultation_ref=payload.consultation_ref,
+        observed_runtime_handles=payload.observed_runtime_handles,
+        consulted_at=payload.consulted_at,
+    )
+    return ok(
+        request.headers.get("x-request-id"),
+        {
+            "experts": [
+                OpsResidentExpertStatus.model_validate(
+                    view.model_dump(mode="json")
+                ).model_dump(mode="json")
+                for view in resident_expert_runtime_service.list_runtime_views()
+            ]
         },
     )
 

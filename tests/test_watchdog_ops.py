@@ -252,6 +252,54 @@ def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> N
     assert 'watchdog_release_gate_blocker_active{reason="none"} 0' in response.text
 
 
+def test_watchdog_ops_exposes_fixed_resident_expert_runtime_registry(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/watchdog/ops/resident-experts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    experts = payload["data"]["experts"]
+    assert [expert["expert_id"] for expert in experts] == [
+        "managed-agent-expert",
+        "hermes-agent-expert",
+    ]
+    assert experts[0]["independence"] == "outside_project_delivery"
+    assert experts[0]["status"] == "unavailable"
+    assert experts[1]["display_name_zh_cn"] == "Hermes Agent专家"
+
+
+def test_watchdog_ops_can_mark_resident_expert_consult_restore_state(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/watchdog/ops/resident-experts/consult",
+        headers={"Authorization": "Bearer wt"},
+        json={
+            "expert_ids": ["managed-agent-expert"],
+            "consultation_ref": "decision:resident:1",
+            "observed_runtime_handles": {"managed-agent-expert": "agent:managed:1"},
+            "consulted_at": "2026-04-18T06:10:00Z",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    experts = {expert["expert_id"]: expert for expert in payload["data"]["experts"]}
+    assert experts["managed-agent-expert"]["status"] == "available"
+    assert experts["managed-agent-expert"]["runtime_handle"] == "agent:managed:1"
+    assert experts["managed-agent-expert"]["last_consultation_ref"] == "decision:resident:1"
+    assert experts["managed-agent-expert"]["last_seen_at"] == "2026-04-18T06:10:00Z"
+    assert experts["hermes-agent-expert"]["status"] == "unavailable"
+
+
 def test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_alert_bucket(
     tmp_path: Path,
 ) -> None:
