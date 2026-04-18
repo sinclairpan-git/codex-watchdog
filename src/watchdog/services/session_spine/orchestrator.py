@@ -64,6 +64,7 @@ from watchdog.services.policy.rules import (
     DECISION_REQUIRE_USER_DECISION,
     POLICY_VERSION,
 )
+from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
 from watchdog.services.session_spine.command_leases import CommandLeaseStore
@@ -151,6 +152,7 @@ class ResidentOrchestrator:
         replay_service: DecisionReplayService | None = None,
         decision_validator: DecisionValidator | None = None,
         release_gate_evaluator: ReleaseGateEvaluator | None = None,
+        resident_expert_runtime_service: ResidentExpertRuntimeService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
@@ -169,6 +171,7 @@ class ResidentOrchestrator:
         self._replay_service = replay_service or DecisionReplayService()
         self._decision_validator = decision_validator or DecisionValidator()
         self._release_gate_evaluator = release_gate_evaluator or ReleaseGateEvaluator()
+        self._resident_expert_runtime_service = resident_expert_runtime_service
 
     @staticmethod
     def _command_id_for_decision(decision) -> str:
@@ -400,6 +403,58 @@ class ResidentOrchestrator:
             return None
         trace_id = trace.get("trace_id")
         return trace_id if isinstance(trace_id, str) and trace_id else None
+
+    @staticmethod
+    def _resident_expert_consultation_ref(decision) -> str:
+        return decision.decision_id
+
+    @staticmethod
+    def _resident_expert_consultation_bundle(decision) -> dict[str, Any] | None:
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        bundle = evidence.get("resident_expert_consultation")
+        return bundle if isinstance(bundle, dict) else None
+
+    def _decision_has_resident_expert_consultation(self, decision) -> bool:
+        bundle = self._resident_expert_consultation_bundle(decision)
+        if bundle is None:
+            return False
+        return bundle.get("consultation_ref") == self._resident_expert_consultation_ref(decision)
+
+    def _with_resident_expert_consultation(self, decision):
+        if self._resident_expert_runtime_service is None:
+            return decision
+        if self._decision_has_resident_expert_consultation(decision):
+            return decision
+        consultation_ref = self._resident_expert_consultation_ref(decision)
+        consulted_at = decision.created_at
+        bindings = self._resident_expert_runtime_service.consult_or_restore(
+            consultation_ref=consultation_ref,
+            consulted_at=consulted_at,
+        )
+        consultation_bundle = {
+            "consultation_ref": consultation_ref,
+            "consulted_at": consulted_at,
+            "experts": [
+                {
+                    "expert_id": binding.expert_id,
+                    "status": binding.status,
+                    "runtime_handle": binding.runtime_handle,
+                    "last_seen_at": binding.last_seen_at,
+                    "last_consulted_at": binding.last_consulted_at,
+                    "last_consultation_ref": binding.last_consultation_ref,
+                }
+                for binding in bindings
+            ],
+        }
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        return decision.model_copy(
+            update={
+                "evidence": {
+                    **evidence,
+                    "resident_expert_consultation": consultation_bundle,
+                }
+            }
+        )
 
     def _future_worker_request_contracts(self, decision) -> list[FutureWorkerExecutionRequest]:
         evidence = self._decision_evidence_map(decision)
@@ -929,6 +984,8 @@ class ResidentOrchestrator:
 
     def _record_and_store_decision(self, decision):
         existing = self._decision_store.get(decision.decision_key)
+        if existing is None or not self._decision_has_resident_expert_consultation(existing):
+            decision = self._with_resident_expert_consultation(decision)
         if existing is not None:
             has_canonical_events = self._has_canonical_decision_events(existing)
             if not self._decision_has_runtime_gate(existing):
@@ -940,6 +997,9 @@ class ResidentOrchestrator:
                 return self._decision_store.update(updated)
             if not has_canonical_events:
                 self._record_decision_lifecycle(existing)
+            if not self._decision_has_resident_expert_consultation(existing):
+                updated = self._merge_existing_lifecycle_evidence(existing, decision)
+                return self._decision_store.update(updated)
             return existing
         if self._has_canonical_decision_events(decision):
             return self._decision_store.put(decision)

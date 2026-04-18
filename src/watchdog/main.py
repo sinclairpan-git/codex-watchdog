@@ -431,6 +431,7 @@ def create_app(
             memory_hub_service=app.state.memory_hub_service,
             session_service=app.state.session_service,
         ),
+        resident_expert_runtime_service=app.state.resident_expert_runtime_service,
     )
     app.state.resident_orchestrator_run_lock = asyncio.Lock()
     app.state.delivery_run_lock = asyncio.Lock()

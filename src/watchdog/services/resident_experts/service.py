@@ -156,7 +156,17 @@ class ResidentExpertRuntimeService:
     ) -> list[ResidentExpertRuntimeBinding]:
         now = consulted_at or _utcnow()
         self.ensure_registry()
-        requested_ids = set(expert_ids or [definition.expert_id for definition in self._definitions])
+        if expert_ids is None:
+            requested_ids = [definition.expert_id for definition in self._definitions]
+        else:
+            requested_ids = []
+            seen_ids: set[str] = set()
+            for expert_id in expert_ids:
+                normalized = str(expert_id or "").strip()
+                if not normalized or normalized in seen_ids:
+                    continue
+                requested_ids.append(normalized)
+                seen_ids.add(normalized)
         observed = {key: value for key, value in (observed_runtime_handles or {}).items() if value}
         updated: list[ResidentExpertRuntimeBinding] = []
         for expert_id in requested_ids:

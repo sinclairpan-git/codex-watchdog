@@ -33,6 +33,7 @@ from watchdog.services.policy.decisions import (
     CanonicalDecisionRecord,
     build_canonical_decision_record,
 )
+from watchdog.services.resident_experts.models import ResidentExpertRuntimeBinding
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.session_spine.orchestrator import (
     ResidentOrchestrationOutcome,
@@ -591,6 +592,46 @@ class StaticBrainService:
     def evaluate_session(self, **kwargs) -> DecisionIntent:
         _ = kwargs
         return DecisionIntent(intent=self.intent, rationale=self.rationale)
+
+
+class SpyResidentExpertRuntimeService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def consult_or_restore(
+        self,
+        *,
+        expert_ids: list[str] | None = None,
+        consultation_ref: str | None = None,
+        observed_runtime_handles: dict[str, str] | None = None,
+        consulted_at: str | None = None,
+    ) -> list[ResidentExpertRuntimeBinding]:
+        self.calls.append(
+            {
+                "expert_ids": expert_ids,
+                "consultation_ref": consultation_ref,
+                "observed_runtime_handles": observed_runtime_handles,
+                "consulted_at": consulted_at,
+            }
+        )
+        return [
+            ResidentExpertRuntimeBinding(
+                expert_id="managed-agent-expert",
+                charter_source_ref="docs/operations/resident-expert-agents.yaml",
+                charter_version_hash="sha256:test",
+                status="unavailable",
+                last_consulted_at=consulted_at,
+                last_consultation_ref=consultation_ref,
+            ),
+            ResidentExpertRuntimeBinding(
+                expert_id="hermes-agent-expert",
+                charter_source_ref="docs/operations/resident-expert-agents.yaml",
+                charter_version_hash="sha256:test",
+                status="unavailable",
+                last_consulted_at=consulted_at,
+                last_consultation_ref=consultation_ref,
+            ),
+        ]
 
 
 def _store_path(root: Path) -> Path:
@@ -2103,6 +2144,120 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
         session_events[1].payload["decision_trace"]["trace_id"]
     )
     assert session_events[2].related_ids["command_id"] == command_id
+
+
+def test_resident_orchestrator_records_resident_expert_consultation_evidence(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "still stuck",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    steer_mock.assert_not_called()
+    decision = app.state.policy_decision_store.list_records()[0]
+    consultation = decision.evidence["resident_expert_consultation"]
+    assert consultation["consultation_ref"] == decision.decision_id
+    assert consultation["consulted_at"] == decision.created_at
+    assert [item["expert_id"] for item in consultation["experts"]] == [
+        "managed-agent-expert",
+        "hermes-agent-expert",
+    ]
+    assert [item["status"] for item in consultation["experts"]] == [
+        "unavailable",
+        "unavailable",
+    ]
+
+    runtime_views = app.state.resident_expert_runtime_service.list_runtime_views()
+    assert [view.last_consultation_ref for view in runtime_views] == [
+        decision.decision_id,
+        decision.decision_id,
+    ]
+    assert [view.last_consulted_at for view in runtime_views] == [
+        decision.created_at,
+        decision.created_at,
+    ]
+
+
+def test_resident_orchestrator_does_not_reconsult_resident_experts_for_identical_replay(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "completed",
+            "phase": "done",
+            "pending_approval": False,
+            "last_summary": "finished",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.session_spine_runtime.refresh_all()
+    spy_runtime_service = SpyResidentExpertRuntimeService()
+    app.state.resident_orchestrator._resident_expert_runtime_service = spy_runtime_service
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.assert_not_called()
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    assert len(spy_runtime_service.calls) == 1
+
+    regenerated = decision.model_copy(
+        update={
+            "evidence": {
+                **decision.evidence,
+                "goal_contract_version": "goal-contract:test-replay",
+            }
+        }
+    )
+
+    stored = app.state.resident_orchestrator._record_and_store_decision(regenerated)
+
+    assert stored.evidence["resident_expert_consultation"]["consultation_ref"] == decision.decision_id
+    assert len(spy_runtime_service.calls) == 1
 
 
 def test_resident_orchestrator_reuses_existing_decision_lifecycle_events_on_identical_replay(
