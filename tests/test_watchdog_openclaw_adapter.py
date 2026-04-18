@@ -698,7 +698,7 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
     assert reply.progresses[1].recovery_outcome == "new_child_session"
     assert reply.progresses[1].recovery_child_session_id == "session:repo-b:child-v1"
     assert reply.message == (
-        "多项目进展（2） | 先处理=repo-b:待审批\n"
+        "多项目进展（2） | 状态=进行中1、待审批1 | 先处理=repo-b:待审批\n"
         "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
         "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
         " | 下一步=审批列表、回复同意/拒绝、卡在哪里"
@@ -817,7 +817,8 @@ def test_adapter_list_sessions_prioritizes_recovery_failures_before_approval_and
     reply = adapter.handle_intent("list_sessions")
 
     assert reply.message.startswith(
-        "多项目进展（4） | 先处理=repo-c:恢复失败、repo-b:待审批、repo-a:provider降级\n"
+        "多项目进展（4） | 状态=进行中2、待审批1、受阻1"
+        " | 先处理=repo-c:恢复失败、repo-b:待审批、repo-a:provider降级\n"
     )
 
 

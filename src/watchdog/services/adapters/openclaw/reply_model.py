@@ -113,6 +113,31 @@ def _render_directory_priority_summary(bundle: SessionDirectoryReadBundle) -> st
     )
 
 
+def _render_directory_state_summary(bundle: SessionDirectoryReadBundle) -> str | None:
+    state_order = (
+        ("active", "进行中"),
+        ("awaiting_approval", "待审批"),
+        ("blocked", "受阻"),
+        ("unavailable", "不可达"),
+    )
+    state_counts = {
+        state_code: sum(
+            1
+            for session in bundle.sessions
+            if str(session.session_state or "").strip() == state_code
+        )
+        for state_code, _ in state_order
+    }
+    parts = [
+        f"{label}{state_counts[state_code]}"
+        for state_code, label in state_order
+        if state_counts[state_code] > 0
+    ]
+    if not parts:
+        return None
+    return "、".join(parts)
+
+
 def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
     if not reply.message:
         return reply
@@ -125,6 +150,9 @@ def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryR
         return reply
 
     header_line = lines[0]
+    state_summary = _render_directory_state_summary(bundle)
+    if state_summary and " | 状态=" not in header_line:
+        header_line = f"{header_line} | 状态={state_summary}"
     priority_summary = _render_directory_priority_summary(bundle)
     if priority_summary and " | 先处理=" not in header_line:
         header_line = f"{header_line} | 先处理={priority_summary}"
