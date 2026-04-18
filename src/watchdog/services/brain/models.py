@@ -19,7 +19,9 @@ class DecisionIntent(_BrainModel):
     model: str = Field(default="rule-based-brain", min_length=1)
     prompt_schema_ref: str = Field(default="prompt:none", min_length=1)
     output_schema_ref: str = Field(default="schema:decision-trace-v1", min_length=1)
+    provider_output_schema_ref: str | None = None
     provider_request_id: str | None = None
+    degrade_reason: str | None = None
 
 
 class DecisionPacketInput(_BrainModel):
@@ -55,6 +57,7 @@ class DecisionTrace(_BrainModel):
     model: str = Field(min_length=1)
     prompt_schema_ref: str = Field(min_length=1)
     output_schema_ref: str = Field(min_length=1)
+    provider_output_schema_ref: str | None = None
     approval_read: ApprovalReadSnapshot | None = None
     degrade_reason: str | None = None
 

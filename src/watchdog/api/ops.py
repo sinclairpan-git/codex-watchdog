@@ -217,6 +217,22 @@ def _runtime_gate_reason_counts(decisions) -> dict[str, int]:
     return counts
 
 
+def _provider_degrade_reason_counts(decisions) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in decisions:
+        evidence = record.evidence if isinstance(record.evidence, dict) else None
+        if evidence is None:
+            continue
+        trace = evidence.get("decision_trace")
+        if not isinstance(trace, dict):
+            continue
+        reason = str(trace.get("degrade_reason") or "").strip()
+        if not reason:
+            continue
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
 def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
     blockers: list[OpsReleaseGateBlocker] = []
     for record in decisions:
@@ -475,6 +491,7 @@ def build_ops_summary(
         1 for record in decisions if "mapping_incomplete" in record.uncertainty_reasons
     )
     runtime_gate_reason_counts = _runtime_gate_reason_counts(decisions)
+    provider_degrade_reason_counts = _provider_degrade_reason_counts(decisions)
     release_gate_blockers = _release_gate_blockers(decisions)
     future_workers = _future_worker_statuses(data_dir=data_dir)
     recovery_failed = sum(
@@ -528,6 +545,15 @@ def build_ops_summary(
                 severity="warning",
                 count=count,
                 summary=f"runtime gate degradation: {reason}",
+            )
+        )
+    for reason, count in sorted(provider_degrade_reason_counts.items()):
+        alerts.append(
+            OpsAlert(
+                alert_code=reason,
+                severity="warning",
+                count=count,
+                summary=f"brain provider degradation: {reason}",
             )
         )
     if recovery_failed:

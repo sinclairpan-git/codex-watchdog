@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from watchdog.services.goal_contract.service import GoalContractService
-from watchdog.services.brain.provider_runtime import OpenAICompatibleBrainProvider
+from watchdog.services.brain.provider_runtime import (
+    OpenAICompatibleBrainProvider,
+    ProviderOutputSchemaError,
+)
 from watchdog.services.memory_hub.models import ContextQualitySnapshot
 from watchdog.services.memory_hub.service import MemoryHubService
 from watchdog.services.brain.models import DecisionIntent, DecisionTrace
@@ -127,6 +130,8 @@ class BrainDecisionService:
         record: PersistedSessionRecord | None,
         intent: str | None = None,
         rationale: str | None = None,
+        provider_output_schema_ref: str | None = None,
+        degrade_reason: str | None = None,
     ) -> DecisionIntent:
         if intent is None:
             fact_codes = {fact.fact_code for fact in record.facts} if record is not None else set()
@@ -153,6 +158,8 @@ class BrainDecisionService:
                 intent=intent,
                 rationale=rationale,
             ),
+            provider_output_schema_ref=provider_output_schema_ref,
+            degrade_reason=degrade_reason,
         )
 
     @staticmethod
@@ -203,6 +210,14 @@ class BrainDecisionService:
                     record=record,
                     session_truth=self._session_truth(record),
                     memory_advisory_context=memory_context,
+                )
+            except ProviderOutputSchemaError as exc:
+                return self._rule_based_intent(
+                    record=record,
+                    intent=intent,
+                    rationale=rationale,
+                    provider_output_schema_ref=exc.schema_ref,
+                    degrade_reason=exc.degrade_reason,
                 )
             except Exception:
                 pass

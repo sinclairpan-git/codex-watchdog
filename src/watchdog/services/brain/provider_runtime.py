@@ -41,6 +41,23 @@ class _StructuredProviderDecision(_ProviderRuntimeModel):
     evidence_codes: list[str] = Field(default_factory=list)
 
 
+PROVIDER_DECISION_OUTPUT_SCHEMA_REF = "schema:provider-decision-v2"
+PROVIDER_OUTPUT_INVALID_DEGRADE_REASON = "provider_output_invalid"
+
+
+class ProviderOutputSchemaError(ValueError):
+    def __init__(
+        self,
+        message: str = "provider response violates schema",
+        *,
+        schema_ref: str = PROVIDER_DECISION_OUTPUT_SCHEMA_REF,
+        degrade_reason: str = PROVIDER_OUTPUT_INVALID_DEGRADE_REASON,
+    ) -> None:
+        super().__init__(message)
+        self.schema_ref = schema_ref
+        self.degrade_reason = degrade_reason
+
+
 @dataclass(frozen=True, slots=True)
 class OpenAICompatibleBrainProvider:
     settings: Settings
@@ -187,7 +204,8 @@ class OpenAICompatibleBrainProvider:
             provider=profile.name,
             model=str(profile.model or "openai-compatible-model"),
             prompt_schema_ref="prompt:brain-decision-v2",
-            output_schema_ref="schema:provider-decision-v2",
+            output_schema_ref=PROVIDER_DECISION_OUTPUT_SCHEMA_REF,
+            provider_output_schema_ref=PROVIDER_DECISION_OUTPUT_SCHEMA_REF,
             provider_request_id=request_id,
         )
 
@@ -196,7 +214,7 @@ class OpenAICompatibleBrainProvider:
         try:
             return _StructuredProviderDecision.model_validate_json(content)
         except Exception as exc:
-            raise ValueError("provider response violates schema") from exc
+            raise ProviderOutputSchemaError() from exc
 
     @staticmethod
     def _extract_content(payload: dict[str, object]) -> str:

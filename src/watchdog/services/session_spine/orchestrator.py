@@ -1506,10 +1506,12 @@ class ResidentOrchestrator:
             model=brain_intent.model,
             prompt_schema_ref=brain_intent.prompt_schema_ref,
             output_schema_ref=brain_intent.output_schema_ref,
+            provider_output_schema_ref=brain_intent.provider_output_schema_ref,
             approval_read=self._approval_read_snapshot_for_session(
                 record,
                 allow_canonical_fallback=False,
             ),
+            degrade_reason=brain_intent.degrade_reason,
         )
 
     def orchestrate_all(

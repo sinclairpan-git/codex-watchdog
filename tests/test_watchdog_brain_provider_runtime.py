@@ -352,6 +352,9 @@ def test_brain_service_falls_back_when_provider_output_violates_schema(tmp_path:
     }
     assert intent.provider == "resident_orchestrator"
     assert intent.model == "rule-based-brain"
+    assert intent.output_schema_ref == "schema:decision-trace-v1"
+    assert intent.provider_output_schema_ref == "schema:provider-decision-v2"
+    assert intent.degrade_reason == "provider_output_invalid"
 
 
 def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_path: Path) -> None:
@@ -650,7 +653,9 @@ def test_resident_orchestrator_decision_trace_uses_provider_metadata(tmp_path: P
                 model="minimax-m2.7",
                 prompt_schema_ref="prompt:brain-decision-v1",
                 output_schema_ref="schema:provider-decision-v1",
+                provider_output_schema_ref="schema:provider-decision-v1",
                 provider_request_id="chatcmpl-trace-1",
+                degrade_reason="provider_output_invalid",
             )
 
     app = create_app(
@@ -678,3 +683,5 @@ def test_resident_orchestrator_decision_trace_uses_provider_metadata(tmp_path: P
     assert trace.model == "minimax-m2.7"
     assert trace.prompt_schema_ref == "prompt:brain-decision-v1"
     assert trace.output_schema_ref == "schema:provider-decision-v1"
+    assert trace.provider_output_schema_ref == "schema:provider-decision-v1"
+    assert trace.degrade_reason == "provider_output_invalid"
