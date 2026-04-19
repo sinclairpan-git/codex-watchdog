@@ -11,8 +11,12 @@ if str(ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-import ai_sdlc.cli as ai_sdlc_cli
-from watchdog.validation.ai_sdlc_reconciliation import ReconciliationInventory
+import ai_sdlc.cli as ai_sdlc_cli  # noqa: E402
+from watchdog.validation.ai_sdlc_reconciliation import ReconciliationInventory  # noqa: E402
+
+
+def _no_violations(_repo_root: Path) -> list[str]:
+    return []
 
 
 def test_repo_local_ai_sdlc_status_reports_current_checkpoint() -> None:
@@ -55,6 +59,39 @@ def test_repo_local_ai_sdlc_verify_constraints_passes_in_repo() -> None:
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert "Constraints OK" in result.stdout
+
+
+def test_run_verify_github_branch_protection_reports_ok(monkeypatch, capsys, tmp_path: Path) -> None:
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_live_github_branch_protection", _no_violations)
+
+    result = ai_sdlc_cli._run_verify_github_branch_protection(tmp_path)
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.out == "GitHub branch protection OK\n"
+
+
+def test_run_verify_github_branch_protection_reports_violations(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "validate_branch_protection_contract_surfaces",
+        lambda _repo_root: [
+            "github branch protection contract missing: .github/branch-protection.main.json"
+        ],
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_live_github_branch_protection", _no_violations)
+
+    result = ai_sdlc_cli._run_verify_github_branch_protection(tmp_path)
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == (
+        "GitHub branch protection violations\n"
+        "  BLOCKER: github branch protection contract missing: .github/branch-protection.main.json\n"
+    )
 
 
 def test_repo_local_ai_sdlc_verify_constraints_reports_release_docs_drift(tmp_path) -> None:
@@ -133,16 +170,17 @@ def test_repo_local_ai_sdlc_verify_constraints_reports_release_docs_drift(tmp_pa
 def test_collect_constraint_violations_includes_active_work_item_lifecycle(
     monkeypatch, tmp_path: Path
 ) -> None:
-    no_violations = lambda _repo_root: []
-    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
 
     inventory = ReconciliationInventory(
         spec_work_items=(),
@@ -174,16 +212,17 @@ def test_collect_constraint_violations_includes_active_work_item_lifecycle(
 def test_collect_constraint_violations_includes_completed_review_gate_mirror_drift(
     monkeypatch, tmp_path: Path
 ) -> None:
-    no_violations = lambda _repo_root: []
-    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
     monkeypatch.setattr(
         ai_sdlc_cli,
         "collect_reconciliation_inventory",
@@ -216,20 +255,148 @@ def test_collect_constraint_violations_includes_completed_review_gate_mirror_dri
     ]
 
 
+def test_collect_constraint_violations_includes_runtime_truth_integrity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "validate_runtime_truth_integrity",
+        lambda _repo_root: [
+            "runtime truth integrity (083-broken-runtime): runtime.yaml: invalid YAML"
+        ],
+    )
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "collect_reconciliation_inventory",
+        lambda _repo_root: ReconciliationInventory(
+            spec_work_items=(),
+            mirrored_work_items=(),
+            missing_work_item_mirrors=(),
+            next_work_item_seq=84,
+            active_work_item_id=None,
+            stale_pointers=(),
+        ),
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_work_item_lifecycle", lambda _work_item_root: [])
+
+    violations = ai_sdlc_cli._collect_constraint_violations(tmp_path)
+
+    assert violations == [
+        "runtime truth integrity (083-broken-runtime): runtime.yaml: invalid YAML"
+    ]
+
+
+def test_collect_constraint_violations_includes_runtime_write_entrypoints(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_runtime_truth_integrity", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "validate_runtime_write_entrypoints",
+        lambda _repo_root: [
+            "runtime write entrypoint (src/watchdog/services/runtime_writer.py): "
+            "runtime.yaml writes must go through watchdog.validation.ai_sdlc_runtime_io.write_yaml_atomic"
+        ],
+    )
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "collect_reconciliation_inventory",
+        lambda _repo_root: ReconciliationInventory(
+            spec_work_items=(),
+            mirrored_work_items=(),
+            missing_work_item_mirrors=(),
+            next_work_item_seq=84,
+            active_work_item_id=None,
+            stale_pointers=(),
+        ),
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_work_item_lifecycle", lambda _work_item_root: [])
+
+    violations = ai_sdlc_cli._collect_constraint_violations(tmp_path)
+
+    assert violations == [
+        "runtime write entrypoint (src/watchdog/services/runtime_writer.py): "
+        "runtime.yaml writes must go through watchdog.validation.ai_sdlc_runtime_io.write_yaml_atomic"
+    ]
+
+
+def test_collect_constraint_violations_includes_ci_gate_surfaces(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_runtime_truth_integrity", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_runtime_write_entrypoints", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", lambda _repo_root: [
+        "ci gate surface missing: .github/workflows/pr-gate.yml"
+    ])
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "collect_reconciliation_inventory",
+        lambda _repo_root: ReconciliationInventory(
+            spec_work_items=(),
+            mirrored_work_items=(),
+            missing_work_item_mirrors=(),
+            next_work_item_seq=84,
+            active_work_item_id=None,
+            stale_pointers=(),
+        ),
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_work_item_lifecycle", lambda _work_item_root: [])
+
+    violations = ai_sdlc_cli._collect_constraint_violations(tmp_path)
+
+    assert violations == ["ci gate surface missing: .github/workflows/pr-gate.yml"]
+
+
 def test_collect_constraint_violations_includes_reconciliation_stale_pointers(
     monkeypatch, tmp_path: Path
 ) -> None:
-    no_violations = lambda _repo_root: []
-    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", no_violations)
-    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
     monkeypatch.setattr(
         ai_sdlc_cli,
         "collect_reconciliation_inventory",
@@ -250,4 +417,48 @@ def test_collect_constraint_violations_includes_reconciliation_stale_pointers(
 
     assert violations == [
         ".ai-sdlc/state/resume-pack.yaml: current_branch=codex/023 does not match checkpoint current_branch=codex/079"
+    ]
+
+
+def test_collect_constraint_violations_includes_branch_protection_contract_surfaces(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "validate_branch_protection_contract_surfaces",
+        lambda _repo_root: [
+            "github branch protection contract missing: .github/branch-protection.main.json"
+        ],
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_checkpoint_yaml_string_compatibility", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_runtime_truth_integrity", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_runtime_write_entrypoints", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_completed_review_gate_mirror_drift", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_coverage_audit_snapshot_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_release_docs_consistency", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_task_doc_status_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_framework_contracts", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_backlog_reference_sync", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_verification_profile_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_ci_gate_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_autonomy_docs", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_long_running_residual_contracts", _no_violations)
+    monkeypatch.setattr(
+        ai_sdlc_cli,
+        "collect_reconciliation_inventory",
+        lambda _repo_root: ReconciliationInventory(
+            spec_work_items=(),
+            mirrored_work_items=(),
+            missing_work_item_mirrors=(),
+            next_work_item_seq=84,
+            active_work_item_id=None,
+            stale_pointers=(),
+        ),
+    )
+    monkeypatch.setattr(ai_sdlc_cli, "validate_work_item_lifecycle", lambda _work_item_root: [])
+
+    violations = ai_sdlc_cli._collect_constraint_violations(tmp_path)
+
+    assert violations == [
+        "github branch protection contract missing: .github/branch-protection.main.json"
     ]

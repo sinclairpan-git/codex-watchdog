@@ -228,6 +228,8 @@ def exit_code_for_results(results: Sequence[SmokeCheckResult]) -> int:
         return 2
     if any(result.status == "failed" for result in results):
         return 1
+    if any(result.status == "skipped" for result in results):
+        return 1
     return 0
 
 

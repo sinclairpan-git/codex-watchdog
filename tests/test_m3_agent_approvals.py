@@ -79,7 +79,7 @@ def test_list_approvals_supports_project_and_callback_filters(tmp_path) -> None:
     c = TestClient(create_app(s))
     h = {"Authorization": "Bearer t"}
 
-    pending = c.post(
+    c.post(
         "/api/v1/approvals",
         json={
             "project_id": "repo-a",

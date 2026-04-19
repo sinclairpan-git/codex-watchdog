@@ -359,8 +359,13 @@ pytest -q
 
 ```bash
 python -m ai_sdlc verify constraints
+python -m ai_sdlc verify github-branch-protection
 python -m ai_sdlc status
 ```
+
+`github-branch-protection` 是独立的在线漂移校验，不挂到 PR gate。仓库内同时提供 `.github/workflows/branch-protection-audit.yml`，按小时巡检并支持手动触发；运行前需要配置仓库 secret `BRANCH_PROTECTION_AUDIT_TOKEN`。
+
+该 token 应使用能读取当前公开仓库 branch protection 的凭证，最小要求是仓库 `Administration: read`。GitHub 官方文档见：[Get branch protection](https://docs.github.com/en/rest/branches/branch-protection?apiVersion=2022-11-28#get-branch-protection)。
 
 当前 release entry docs 固定为 `v0.6.0`：
 

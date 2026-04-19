@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+import yaml
+
 WORK_ITEM_PATTERN = re.compile(r"^(?P<number>\d{3})-(?P<slug>.+)$")
 SUMMARY_LAST_TASK_PATTERN = re.compile(r"(?m)^Last Committed Task:\s*(?P<task>T\d+)\s*$")
 SUMMARY_NEXT_TASK_PATTERN = re.compile(r"`(?P<task>T\d+)`")
@@ -28,6 +30,18 @@ LIFECYCLE_SYNC_FIELDS = (
     "docs_baseline_at",
     "review_approval_status",
 )
+RUNTIME_STAGE_ALLOWLIST = (
+    "init",
+    "refine",
+    "design",
+    "decompose",
+    "execute",
+    "verify",
+    "completed",
+    "close",
+    "archived",
+)
+RUNTIME_ACTIVE_EXCLUDED_STAGES = {"archived", "close"}
 
 
 @dataclass(frozen=True)
@@ -77,6 +91,12 @@ class _ExecutionPlanState:
     current_batch: str | None
     task_statuses: dict[str, str]
     batch_statuses: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _RuntimeTruthState:
+    current_stage: str | None
+    violations: tuple[str, ...]
 
 
 def collect_reconciliation_inventory(repo_root: Path | None = None) -> ReconciliationInventory:
@@ -296,6 +316,20 @@ def validate_completed_review_gate_mirror_drift(repo_root: Path | None = None) -
     return violations
 
 
+def validate_runtime_truth_integrity(repo_root: Path | None = None) -> list[str]:
+    root = repo_root or Path(__file__).resolve().parents[3]
+    violations: list[str] = []
+
+    for item in _list_work_items(root / ".ai-sdlc/work-items"):
+        runtime_state = _inspect_runtime_truth(item)
+        violations.extend(
+            f"runtime truth integrity ({item.work_item_id}): {violation}"
+            for violation in runtime_state.violations
+        )
+
+    return violations
+
+
 def build_owner_ledger(rows: Sequence[MatrixGapRow]) -> list[OwnerLedgerEntry]:
     seen_ids: set[str] = set()
     ledger: list[OwnerLedgerEntry] = []
@@ -408,21 +442,23 @@ def _max_work_item_number(*groups: Iterable[WorkItemRef]) -> int | None:
 
 def _detect_runtime_active_work_item(work_items_root: Path) -> str | None:
     candidates: list[tuple[int, str]] = []
+    completed_candidates: list[tuple[int, str]] = []
     for item in _list_work_items(work_items_root):
-        runtime_text = _read_text_if_exists(item.path / "runtime.yaml")
-        if not runtime_text:
+        runtime_state = _inspect_runtime_truth(item)
+        current_stage = runtime_state.current_stage
+        if runtime_state.violations or not current_stage:
             continue
-        current_stage = _extract_scalar(runtime_text, "current_stage") or ""
-        current_task = _extract_scalar(runtime_text, "current_task") or ""
-        if current_stage != "completed" or current_task:
-            candidates.append((item.number, item.work_item_id))
+        if current_stage in RUNTIME_ACTIVE_EXCLUDED_STAGES:
+            continue
+        if current_stage == "completed":
+            completed_candidates.append((item.number, item.work_item_id))
+            continue
+        candidates.append((item.number, item.work_item_id))
 
     if candidates:
         return max(candidates, key=lambda item: item[0])[1]
-
-    mirrored_items = _list_work_items(work_items_root)
-    if mirrored_items:
-        return max(mirrored_items, key=lambda item: item.number).work_item_id
+    if completed_candidates:
+        return max(completed_candidates, key=lambda item: item[0])[1]
     return None
 
 
@@ -439,6 +475,65 @@ def _select_highest_work_item_id(*work_item_ids: str | None) -> str | None:
     if not candidates:
         return None
     return max(candidates, key=lambda item: item[0])[1]
+
+
+def _inspect_runtime_truth(item: WorkItemRef) -> _RuntimeTruthState:
+    runtime_path = item.path / "runtime.yaml"
+    violations: list[str] = []
+
+    for temp_path in sorted(_iter_runtime_atomic_temp_files(item.path)):
+        violations.append(f"runtime.yaml: leftover atomic temp file {temp_path.name}")
+
+    if not runtime_path.exists():
+        return _RuntimeTruthState(current_stage=None, violations=tuple(violations))
+
+    try:
+        payload = yaml.safe_load(runtime_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return _RuntimeTruthState(current_stage=None, violations=tuple([*violations, "runtime.yaml: invalid YAML"]))
+
+    if not isinstance(payload, dict):
+        return _RuntimeTruthState(
+            current_stage=None,
+            violations=tuple([*violations, "runtime.yaml: top-level YAML must be a mapping"]),
+        )
+
+    current_stage = payload.get("current_stage")
+    if current_stage is None:
+        violations.append("runtime.yaml: missing current_stage")
+    elif not isinstance(current_stage, str) or not current_stage.strip():
+        violations.append("runtime.yaml: current_stage must be a non-empty string")
+    else:
+        current_stage = current_stage.strip()
+        if current_stage not in RUNTIME_STAGE_ALLOWLIST:
+            violations.append(f"runtime.yaml: current_stage={current_stage} is not allowed")
+
+    work_item_id = payload.get("work_item_id")
+    if work_item_id is not None:
+        if not isinstance(work_item_id, str) or not work_item_id.strip():
+            violations.append("runtime.yaml: work_item_id must be a non-empty string when present")
+        elif work_item_id.strip() != item.work_item_id:
+            violations.append(
+                "runtime.yaml: "
+                f"work_item_id={work_item_id.strip()} does not match directory={item.work_item_id}"
+            )
+
+    if violations:
+        return _RuntimeTruthState(current_stage=None, violations=tuple(violations))
+
+    return _RuntimeTruthState(current_stage=current_stage, violations=())
+
+
+def _iter_runtime_atomic_temp_files(work_item_root: Path) -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in work_item_root.iterdir()
+        if path.is_file()
+        and (
+            path.name == "runtime.yaml.tmp"
+            or (path.name.startswith(".runtime.yaml.") and path.name.endswith(".tmp"))
+        )
+    )
 
 
 def _extract_scalar(text: str, key: str) -> str | None:

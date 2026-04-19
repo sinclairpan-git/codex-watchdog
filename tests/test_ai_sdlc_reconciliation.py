@@ -550,3 +550,350 @@ def test_collect_reconciliation_inventory_flags_top_level_state_resume_pack_drif
         and "specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/spec.md" in violation
         for violation in inventory.stale_pointers
     )
+
+
+def test_collect_reconciliation_inventory_ignores_completed_runtime_with_stale_current_task(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(
+        tmp_path / "specs/037-autonomy-golden-path-and-release-gate-e2e/spec.md",
+        "# 037\n",
+    )
+    _write(
+        tmp_path / "specs/082-external-integration-live-runtime-acceptance-closeout/spec.md",
+        "# 082\n",
+    )
+    _write(
+        tmp_path / "specs/083-feishu-discovery-session-directory-routing/spec.md",
+        "# 083\n",
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 5
+        current_task: T375
+        last_committed_task: T375
+        current_branch: codex/wi-036-feishu-control-plane
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 4
+        current_task: ''
+        last_committed_task: ''
+        current_branch: codex/083-feishu-discovery-session-directory-routing
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 4
+        current_task: ''
+        last_committed_task: ''
+        current_branch: codex/083-feishu-discovery-session-directory-routing
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/checkpoint.yml",
+        """
+        current_stage: completed
+        feature:
+          id: 082-external-integration-live-runtime-acceptance-closeout
+          current_branch: codex/083-feishu-discovery-session-directory-routing
+        linked_wi_id: 082-external-integration-live-runtime-acceptance-closeout
+        current_branch: codex/083-feishu-discovery-session-directory-routing
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/resume-pack.yaml",
+        """
+        current_stage: completed
+        current_branch: codex/083-feishu-discovery-session-directory-routing
+        working_set_snapshot:
+          spec_path: specs/082-external-integration-live-runtime-acceptance-closeout/spec.md
+          plan_path: specs/082-external-integration-live-runtime-acceptance-closeout/plan.md
+          tasks_path: specs/082-external-integration-live-runtime-acceptance-closeout/tasks.md
+        checkpoint_path: .ai-sdlc/state/checkpoint.yml
+        checkpoint_last_updated: '2026-04-19T00:40:00Z'
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/project/config/project-state.yaml",
+        """
+        status: initialized
+        next_work_item_seq: 84
+        """,
+    )
+
+    inventory = reconciliation.collect_reconciliation_inventory(tmp_path)
+
+    assert inventory.active_work_item_id == "083-feishu-discovery-session-directory-routing"
+    assert any(
+        ".ai-sdlc/state/checkpoint.yml" in violation
+        and "082-external-integration-live-runtime-acceptance-closeout" in violation
+        and "083-feishu-discovery-session-directory-routing" in violation
+        for violation in inventory.stale_pointers
+    )
+    assert any(
+        ".ai-sdlc/state/resume-pack.yaml" in violation
+        and "spec_path=specs/082-external-integration-live-runtime-acceptance-closeout/spec.md" in violation
+        and "specs/083-feishu-discovery-session-directory-routing/spec.md" in violation
+        for violation in inventory.stale_pointers
+    )
+
+
+def test_collect_reconciliation_inventory_keeps_lower_number_runtime_active_over_newer_completed_mirror(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(tmp_path / "specs/050-some-active-work-item/spec.md", "# 050\n")
+    _write(tmp_path / "specs/083-feishu-discovery-session-directory-routing/spec.md", "# 083\n")
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-some-active-work-item/runtime.yaml",
+        """
+        current_stage: execute
+        current_batch: 3
+        current_task: T503
+        last_committed_task: T502
+        current_branch: codex/050-some-active-work-item
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 4
+        current_task: ''
+        last_committed_task: ''
+        current_branch: codex/083-feishu-discovery-session-directory-routing
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/checkpoint.yml",
+        """
+        current_stage: execute
+        feature:
+          id: 050-some-active-work-item
+          current_branch: codex/050-some-active-work-item
+        linked_wi_id: 050-some-active-work-item
+        current_branch: codex/050-some-active-work-item
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/project/config/project-state.yaml",
+        """
+        status: initialized
+        next_work_item_seq: 84
+        """,
+    )
+
+    inventory = reconciliation.collect_reconciliation_inventory(tmp_path)
+
+    assert inventory.active_work_item_id == "050-some-active-work-item"
+    assert not any(".ai-sdlc/state/checkpoint.yml" in violation for violation in inventory.stale_pointers)
+
+
+def test_collect_reconciliation_inventory_ignores_archived_and_close_runtime_states(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(tmp_path / "specs/050-latest-completed/spec.md", "# 050\n")
+    _write(tmp_path / "specs/082-retired-close/spec.md", "# 082\n")
+    _write(tmp_path / "specs/083-retired-archived/spec.md", "# 083\n")
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-latest-completed/runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 4
+        current_task: ''
+        last_committed_task: T504
+        current_branch: codex/050-latest-completed
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/082-retired-close/runtime.yaml",
+        """
+        current_stage: close
+        current_batch: 5
+        current_task: ''
+        last_committed_task: T824
+        current_branch: codex/082-retired-close
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/083-retired-archived/runtime.yaml",
+        """
+        current_stage: archived
+        current_batch: 5
+        current_task: ''
+        last_committed_task: T834
+        current_branch: codex/083-retired-archived
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/checkpoint.yml",
+        """
+        current_stage: completed
+        feature:
+          id: 050-latest-completed
+          current_branch: codex/050-latest-completed
+        linked_wi_id: 050-latest-completed
+        current_branch: codex/050-latest-completed
+        """,
+    )
+
+    inventory = reconciliation.collect_reconciliation_inventory(tmp_path)
+
+    assert inventory.active_work_item_id == "050-latest-completed"
+    assert not any(".ai-sdlc/state/checkpoint.yml" in violation for violation in inventory.stale_pointers)
+
+
+def test_validate_runtime_truth_integrity_flags_unknown_stage_and_invalid_yaml(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-unknown-stage/runtime.yaml",
+        """
+        current_stage: exectue
+        current_batch: 3
+        current_task: T503
+        last_committed_task: T502
+        current_branch: codex/050-unknown-stage
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/083-invalid-yaml/runtime.yaml",
+        """
+        current_stage: [execute
+        current_branch: codex/083-invalid-yaml
+        """,
+    )
+
+    violations = reconciliation.validate_runtime_truth_integrity(tmp_path)
+
+    assert any(
+        "runtime truth integrity (050-unknown-stage):" in violation
+        and "current_stage=exectue is not allowed" in violation
+        for violation in violations
+    )
+    assert any(
+        "runtime truth integrity (083-invalid-yaml):" in violation
+        and "invalid YAML" in violation
+        for violation in violations
+    )
+
+
+def test_validate_runtime_truth_integrity_flags_leftover_runtime_atomic_temp_file(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-runtime-truth-hardening/runtime.yaml",
+        """
+        current_stage: verify
+        current_batch: 2
+        current_task: T500
+        last_committed_task: T499
+        current_branch: codex/050-runtime-truth-hardening
+        work_item_id: 050-runtime-truth-hardening
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-runtime-truth-hardening/.runtime.yaml.123abc.tmp",
+        """
+        current_stage: execute
+        """,
+    )
+
+    assert reconciliation.validate_runtime_truth_integrity(tmp_path) == [
+        "runtime truth integrity (050-runtime-truth-hardening): "
+        "runtime.yaml: leftover atomic temp file .runtime.yaml.123abc.tmp"
+    ]
+
+
+def test_collect_reconciliation_inventory_ignores_unknown_stage_runtime_when_selecting_active(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(tmp_path / "specs/050-valid-active/spec.md", "# 050\n")
+    _write(tmp_path / "specs/083-invalid-active/spec.md", "# 083\n")
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-valid-active/runtime.yaml",
+        """
+        current_stage: execute
+        current_batch: 3
+        current_task: T503
+        last_committed_task: T502
+        current_branch: codex/050-valid-active
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/083-invalid-active/runtime.yaml",
+        """
+        current_stage: exectue
+        current_batch: 4
+        current_task: T834
+        last_committed_task: T833
+        current_branch: codex/083-invalid-active
+        """,
+    )
+
+    inventory = reconciliation.collect_reconciliation_inventory(tmp_path)
+
+    assert inventory.active_work_item_id == "050-valid-active"
+
+
+def test_collect_reconciliation_inventory_falls_back_to_completed_when_higher_runtime_is_invalid(
+    tmp_path: Path,
+) -> None:
+    reconciliation = _load_reconciliation_module()
+
+    _write(tmp_path / "specs/050-latest-completed/spec.md", "# 050\n")
+    _write(tmp_path / "specs/083-broken-runtime/spec.md", "# 083\n")
+    _write(
+        tmp_path / ".ai-sdlc/work-items/050-latest-completed/runtime.yaml",
+        """
+        current_stage: completed
+        current_batch: 4
+        current_task: ''
+        last_committed_task: T504
+        current_branch: codex/050-latest-completed
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/work-items/083-broken-runtime/runtime.yaml",
+        """
+        current_stage: [execute
+        current_branch: codex/083-broken-runtime
+        """,
+    )
+    _write(
+        tmp_path / ".ai-sdlc/state/checkpoint.yml",
+        """
+        current_stage: completed
+        feature:
+          id: 050-latest-completed
+          current_branch: codex/050-latest-completed
+        linked_wi_id: 050-latest-completed
+        current_branch: codex/050-latest-completed
+        """,
+    )
+
+    inventory = reconciliation.collect_reconciliation_inventory(tmp_path)
+
+    assert inventory.active_work_item_id == "050-latest-completed"
+    assert reconciliation.validate_runtime_truth_integrity(tmp_path) == [
+        "runtime truth integrity (083-broken-runtime): runtime.yaml: invalid YAML"
+    ]

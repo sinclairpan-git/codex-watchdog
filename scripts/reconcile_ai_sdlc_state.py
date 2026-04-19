@@ -20,6 +20,7 @@ from watchdog.validation.ai_sdlc_reconciliation import (  # noqa: E402
     collect_reconciliation_inventory,
     parse_unlanded_matrix_rows,
 )
+from watchdog.validation.ai_sdlc_runtime_io import write_yaml_atomic  # noqa: E402
 
 WI_047_ID = "047-ai-sdlc-state-reconciliation-and-canonical-gate-repair"
 WI_047_BRANCH = "codex/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair"
@@ -150,6 +151,9 @@ def _format_scalar(value: Any) -> str:
 
 def _write_yaml(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.name == "runtime.yaml":
+        write_yaml_atomic(path, _normalize(payload))
+        return
     path.write_text(_dump_yaml(_normalize(payload)) + "\n", encoding="utf-8")
 
 

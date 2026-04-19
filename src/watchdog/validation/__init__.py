@@ -7,7 +7,16 @@ from watchdog.validation.ai_sdlc_reconciliation import (
     collect_reconciliation_inventory,
     parse_unlanded_matrix_rows,
     validate_completed_review_gate_mirror_drift,
+    validate_runtime_truth_integrity,
     validate_work_item_lifecycle,
+)
+from watchdog.validation.ai_sdlc_runtime_write_contracts import (
+    validate_runtime_write_entrypoints,
+)
+from watchdog.validation.ci_gate_contracts import (
+    CI_GATE_SURFACES,
+    PR_GATE_WORKFLOW_REL,
+    validate_ci_gate_surfaces,
 )
 from watchdog.validation.checkpoint_yaml_contracts import (
     validate_checkpoint_yaml_string_compatibility,
@@ -28,6 +37,13 @@ from watchdog.validation.framework_contracts import (
     validate_backlog_reference_sync,
     validate_formal_doc_candidate,
     validate_framework_contracts,
+)
+from watchdog.validation.github_branch_protection_contracts import (
+    BRANCH_PROTECTION_AUDIT_WORKFLOW_REL,
+    BRANCH_PROTECTION_CONTRACT_REL,
+    validate_branch_protection_audit_workflow_surfaces,
+    validate_branch_protection_contract_surfaces,
+    validate_live_github_branch_protection,
 )
 from watchdog.validation.long_running_residual_contracts import (
     ALLOWED_DISPOSITIONS,
@@ -57,7 +73,12 @@ __all__ = [
     "collect_reconciliation_inventory",
     "parse_unlanded_matrix_rows",
     "validate_completed_review_gate_mirror_drift",
+    "validate_runtime_truth_integrity",
+    "validate_runtime_write_entrypoints",
     "validate_work_item_lifecycle",
+    "CI_GATE_SURFACES",
+    "PR_GATE_WORKFLOW_REL",
+    "validate_ci_gate_surfaces",
     "validate_checkpoint_yaml_string_compatibility",
     "COVERAGE_AUDIT_SNAPSHOT_CONTRACTS",
     "CoverageAuditContractCheck",
@@ -70,6 +91,11 @@ __all__ = [
     "validate_backlog_reference_sync",
     "validate_formal_doc_candidate",
     "validate_framework_contracts",
+    "BRANCH_PROTECTION_AUDIT_WORKFLOW_REL",
+    "BRANCH_PROTECTION_CONTRACT_REL",
+    "validate_branch_protection_audit_workflow_surfaces",
+    "validate_branch_protection_contract_surfaces",
+    "validate_live_github_branch_protection",
     "ALLOWED_DISPOSITIONS",
     "LONG_RUNNING_RESIDUAL_LEDGER",
     "LONG_RUNNING_RESIDUAL_STATUS",

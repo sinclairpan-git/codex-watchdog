@@ -12,12 +12,18 @@ if str(SRC_ROOT) not in sys.path:
 
 from watchdog.validation import (  # noqa: E402
     collect_reconciliation_inventory,
+    validate_branch_protection_audit_workflow_surfaces,
     validate_backlog_reference_sync,
+    validate_branch_protection_contract_surfaces,
+    validate_ci_gate_surfaces,
     validate_checkpoint_yaml_string_compatibility,
     validate_completed_review_gate_mirror_drift,
     validate_coverage_audit_snapshot_contracts,
+    validate_live_github_branch_protection,
     validate_long_running_residual_contracts,
     validate_release_docs_consistency,
+    validate_runtime_truth_integrity,
+    validate_runtime_write_entrypoints,
     validate_task_doc_status_contracts,
     validate_verification_profile_surfaces,
     validate_framework_contracts,
@@ -34,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     verify_subparsers = verify_parser.add_subparsers(dest="verify_command", required=True)
     verify_constraints_parser = verify_subparsers.add_parser("constraints")
     verify_constraints_parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    verify_branch_protection_parser = verify_subparsers.add_parser("github-branch-protection")
+    verify_branch_protection_parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
 
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
@@ -41,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "verify" and args.verify_command == "constraints":
         return _run_verify_constraints(args.repo_root)
+    if args.command == "verify" and args.verify_command == "github-branch-protection":
+        return _run_verify_github_branch_protection(args.repo_root)
     if args.command == "status":
         return _run_status(args.repo_root)
     parser.error("unsupported command")
@@ -61,7 +71,12 @@ def _run_verify_constraints(repo_root: Path) -> int:
 
 def _collect_constraint_violations(repo_root: Path) -> list[str]:
     violations = [
+        *validate_branch_protection_contract_surfaces(repo_root),
+        *validate_branch_protection_audit_workflow_surfaces(repo_root),
         *validate_checkpoint_yaml_string_compatibility(repo_root),
+        *validate_runtime_truth_integrity(repo_root),
+        *validate_runtime_write_entrypoints(repo_root),
+        *validate_ci_gate_surfaces(repo_root),
         *validate_completed_review_gate_mirror_drift(repo_root),
         *validate_coverage_audit_snapshot_contracts(repo_root),
         *validate_release_docs_consistency(repo_root),
@@ -82,6 +97,20 @@ def _collect_constraint_violations(repo_root: Path) -> list[str]:
         )
 
     return violations
+
+
+def _run_verify_github_branch_protection(repo_root: Path) -> int:
+    violations = validate_branch_protection_contract_surfaces(repo_root)
+    if not violations:
+        violations.extend(validate_live_github_branch_protection(repo_root))
+    if violations:
+        print("GitHub branch protection violations")
+        for violation in violations:
+            print(f"  BLOCKER: {violation}")
+        return 1
+
+    print("GitHub branch protection OK")
+    return 0
 
 
 def _run_status(repo_root: Path) -> int:

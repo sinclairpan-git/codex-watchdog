@@ -1,25 +1,33 @@
 current_stage: completed
-current_batch: 4
+current_batch: 5
 last_committed_task: ''
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/082-external-integration-live-runtime-acceptance-closeout/spec.md
-  plan_path: specs/082-external-integration-live-runtime-acceptance-closeout/plan.md
-  tasks_path: specs/082-external-integration-live-runtime-acceptance-closeout/tasks.md
+  spec_path: specs/084-runtime-truth-and-github-gate-hardening/spec.md
+  plan_path: specs/084-runtime-truth-and-github-gate-hardening/plan.md
+  tasks_path: specs/084-runtime-truth-and-github-gate-hardening/tasks.md
   active_files:
-  - '`artifacts/watchdog-live-acceptance.md`'
-  - '`docs/architecture/long-running-residual-backlog-ledger.yaml`'
-  - '`docs/architecture/long-running-residual-backlog-status.md`'
-  - '`specs/082-external-integration-live-runtime-acceptance-closeout/spec.md`'
-  - '`specs/082-external-integration-live-runtime-acceptance-closeout/plan.md`'
-  - '`specs/082-external-integration-live-runtime-acceptance-closeout/tasks.md`'
-  - '`specs/082-external-integration-live-runtime-acceptance-closeout/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/runtime.yaml`'
-  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/resume-pack.yaml`'
-  - '`.ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/latest-summary.md`'
+  - '`README.md`'
+  - '`ai_sdlc/cli.py`'
+  - '`scripts/reconcile_ai_sdlc_state.py`'
+  - '`src/watchdog/validation/ai_sdlc_reconciliation.py`'
+  - '`src/watchdog/validation/ai_sdlc_runtime_io.py`'
+  - '`src/watchdog/validation/ai_sdlc_runtime_write_contracts.py`'
+  - '`src/watchdog/validation/ci_gate_contracts.py`'
+  - '`src/watchdog/validation/github_branch_protection_contracts.py`'
+  - '`.github/workflows/pr-gate.yml`'
+  - '`.github/workflows/branch-protection-audit.yml`'
+  - '`.github/branch-protection.main.json`'
+  - '`specs/084-runtime-truth-and-github-gate-hardening/spec.md`'
+  - '`specs/084-runtime-truth-and-github-gate-hardening/plan.md`'
+  - '`specs/084-runtime-truth-and-github-gate-hardening/tasks.md`'
+  - '`specs/084-runtime-truth-and-github-gate-hardening/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/runtime.yaml`'
+  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/latest-summary.md`'
   - '`.ai-sdlc/state/checkpoint.yml`'
   - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
@@ -28,32 +36,32 @@ working_set_snapshot:
 
     Status: completed
 
-    Total Tasks: 4
+    Total Tasks: 5
 
-    Completed Tasks: 4
+    Completed Tasks: 5
 
     Halted Tasks: 0
 
-    Total Batches: 4
+    Total Batches: 5
 
-    Completed Batches: 4
+    Completed Batches: 5
 
     Last Committed Task: none
 
 
     ## Notes
 
-    - 2026-04-19 已建立隔离 `feishu-control` live target，并把其 `thread_id` 锁定为 smoke 预期 session。
+    - 已把 runtime truth 从弱字符串读取收口到正式 YAML contract；invalid stage、invalid YAML、work_item_id 漂移与 leftover atomic temp file 现在都会成为 repo-local blocker。
 
-    - `health`、`feishu`、`provider`、`memory`、`feishu-control`、`feishu-discovery` 六项 target 全部通过，`artifacts/watchdog-live-acceptance.md` 已收敛为 `Overall Status: passed`。
+    - 新增 shared `write_yaml_atomic()` 与 runtime write scan，后续任何绕开 atomic writer 的 `runtime.yaml` 写入口都会被 `verify constraints` 阻断。
 
-    - `WI-082/T824` 已完成 formal closeout；当前仓库内不再存在 live smoke blocker。
+    - 仓库已补齐 `.github/workflows/pr-gate.yml`、`.github/branch-protection.main.json` 与 `.github/workflows/branch-protection-audit.yml`，并新增独立 `python -m ai_sdlc verify github-branch-protection` 在线审计入口。
 
-    - 最新文档契约已覆盖设计文档、README、getting-started 与 live acceptance，并锁定 `skipped` / `confirm_mutating_live_target` / `project_id + goal_message` 不可猜填，以及 `feishu-discovery` 的 `项目列表` -> `list_sessions/session_directory` 语义。'
-current_branch: codex/083-feishu-discovery-session-directory-routing
+    - 已修复 `.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/runtime.yaml` 的 completed stale `current_task` 漂移，避免历史 completed mirror 影响 active WI 推断。'
+current_branch: codex/084-runtime-truth-and-github-gate-hardening
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-18T17:34:06Z'
+timestamp: '2026-04-19T06:14:17Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-18T17:34:06Z'
+checkpoint_last_updated: '2026-04-19T06:14:17Z'
 checkpoint_fingerprint: ''

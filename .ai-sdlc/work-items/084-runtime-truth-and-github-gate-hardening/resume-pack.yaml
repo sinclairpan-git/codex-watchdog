@@ -1,0 +1,21 @@
+work_item:
+  id: 084-runtime-truth-and-github-gate-hardening
+  spec_dir: specs/084-runtime-truth-and-github-gate-hardening
+  branch: codex/084-runtime-truth-and-github-gate-hardening
+current_stage: completed
+current_batch: 5
+last_committed_task: ''
+current_branch: codex/084-runtime-truth-and-github-gate-hardening
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: work item closed; keep branch protection live drift on the dedicated audit path, and route all future runtime.yaml writes through write_yaml_atomic before opening follow-on hardening
+artifacts:
+  - specs/084-runtime-truth-and-github-gate-hardening/spec.md
+  - specs/084-runtime-truth-and-github-gate-hardening/plan.md
+  - specs/084-runtime-truth-and-github-gate-hardening/tasks.md
+  - specs/084-runtime-truth-and-github-gate-hardening/task-execution-log.md
+  - .ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/execution-plan.yaml
+  - .ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/runtime.yaml
+  - .ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/latest-summary.md
+timestamp: '2026-04-19T06:14:17Z'

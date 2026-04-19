@@ -1,6 +1,6 @@
 current_stage: completed
 current_batch: 5
-current_task: T375
+current_task: ''
 last_committed_task: T375
 current_branch: codex/wi-036-feishu-control-plane
 ai_decisions_count: 2

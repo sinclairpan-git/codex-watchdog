@@ -238,6 +238,7 @@ def test_feishu_control_check_skips_when_project_binding_not_configured(tmp_path
     assert results[0].reason == "operator_confirmation_required"
     assert results[0].evidence["required_action"] == "confirm_mutating_live_target"
     assert results[0].evidence["mutation_path"] == "goal_contract_bootstrap"
+    assert exit_code_for_results(results) == 1
 
 
 def test_feishu_control_check_verifies_goal_bootstrap_contract(tmp_path: Path) -> None:
@@ -463,7 +464,7 @@ def test_provider_check_skips_when_external_provider_not_enabled(tmp_path: Path)
     assert results[0].check_name == "provider"
     assert results[0].status == "skipped"
     assert results[0].reason == "feature_not_enabled"
-    assert exit_code_for_results(results) == 0
+    assert exit_code_for_results(results) == 1
 
 
 def test_provider_check_fails_when_openai_mode_is_incomplete(tmp_path: Path) -> None:
@@ -597,7 +598,7 @@ def test_cli_target_defaults_to_all_only_when_not_explicit() -> None:
     targeted_exit_code = module.main(["--target", "provider"])
 
     assert default_exit_code == 2
-    assert targeted_exit_code == 0
+    assert targeted_exit_code == 1
 
 
 def test_render_results_redacts_secret_values(tmp_path: Path) -> None:
