@@ -48,3 +48,24 @@ def test_repo_local_wheel_target_includes_ai_sdlc_cli_package() -> None:
     packages = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
 
     assert "ai_sdlc" in packages
+
+
+def test_main_defaults_repo_root_to_current_working_directory(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    seen: dict[str, Path] = {}
+
+    def capture_constraints(repo_root: Path) -> list[str]:
+        seen["repo_root"] = repo_root
+        return []
+
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_contract_surfaces", capture_constraints)
+    monkeypatch.setattr(ai_sdlc_cli, "validate_branch_protection_audit_workflow_surfaces", _no_violations)
+    monkeypatch.setattr(ai_sdlc_cli.Path, "cwd", classmethod(lambda cls: tmp_path))
+
+    result = ai_sdlc_cli.main(["verify", "constraints"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert seen["repo_root"] == tmp_path
+    assert captured.out == "Constraints OK\n"

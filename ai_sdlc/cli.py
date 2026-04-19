@@ -24,16 +24,17 @@ def main(argv: list[str] | None = None) -> int:
     verify_subparsers = verify_parser.add_subparsers(dest="verify_command", required=True)
 
     verify_constraints_parser = verify_subparsers.add_parser("constraints")
-    verify_constraints_parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    verify_constraints_parser.add_argument("--repo-root", type=Path, default=None)
 
     verify_branch_protection_parser = verify_subparsers.add_parser("github-branch-protection")
-    verify_branch_protection_parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    verify_branch_protection_parser.add_argument("--repo-root", type=Path, default=None)
 
     args = parser.parse_args(argv)
+    repo_root = args.repo_root or Path.cwd()
     if args.command == "verify" and args.verify_command == "constraints":
-        return _run_verify_constraints(args.repo_root)
+        return _run_verify_constraints(repo_root)
     if args.command == "verify" and args.verify_command == "github-branch-protection":
-        return _run_verify_github_branch_protection(args.repo_root)
+        return _run_verify_github_branch_protection(repo_root)
     parser.error("unsupported command")
     return 2
 
