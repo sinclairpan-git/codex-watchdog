@@ -1,0 +1,25 @@
+name: Branch Protection Audit
+permissions:
+  contents: read
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 * * * *"
+jobs:
+  branch-protection-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require audit token
+        env:
+          GH_TOKEN: ${{ secrets.BRANCH_PROTECTION_AUDIT_TOKEN }}
+        run: 'test -n "$GH_TOKEN" || (echo "Missing secret: BRANCH_PROTECTION_AUDIT_TOKEN" >&2; exit 1)'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --dev
+      - env:
+          GH_TOKEN: ${{ secrets.BRANCH_PROTECTION_AUDIT_TOKEN }}
+        run: uv run python -m ai_sdlc verify github-branch-protection
