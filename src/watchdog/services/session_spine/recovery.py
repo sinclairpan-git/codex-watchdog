@@ -218,6 +218,7 @@ def _record_recovery_suppressed(
             "suppression_reason": suppression_reason,
             "task_status": task_status,
             "context_pressure": context_pressure,
+            "last_progress_at": str(task.get("last_progress_at") or ""),
             **(
                 {"project_execution_state": project_execution_state}
                 if project_execution_state not in (None, "", "unknown")
