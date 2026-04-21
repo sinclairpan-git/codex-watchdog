@@ -703,6 +703,21 @@ def _execute_continue(
             message="session is already complete",
             facts=bundle.facts,
         )
+    verdict = validate_action_transition("continue", task=bundle.task)
+    if not verdict["allowed"]:
+        _record_continuation_gate_for_action(
+            action,
+            settings=settings,
+            bundle=bundle,
+            gate_status="suppressed",
+            suppression_reason="continue_not_allowed",
+            session_service=session_service,
+        )
+        return _rejected_transition(
+            action,
+            message="continue is not allowed from current state",
+            facts=bundle.facts,
+        )
     continue_args = _normalize_continue_arguments(
         action,
         current_stuck_level=(bundle.task or {}).get("stuck_level", 0),
