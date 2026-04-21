@@ -102,8 +102,12 @@ def _task_with_authoritative_project_execution_state(
     explicit_state = normalize_project_execution_state(task)
     updated = dict(task)
     if authoritative_state == "unknown":
-        updated["project_execution_state"] = "unknown"
-        updated["authoritative_project_execution_state_missing"] = True
+        if explicit_state == "unknown":
+            updated["project_execution_state"] = "unknown"
+            updated["authoritative_project_execution_state_missing"] = True
+            return updated
+        updated["project_execution_state"] = explicit_state
+        updated.pop("authoritative_project_execution_state_missing", None)
         return updated
     updated.pop("authoritative_project_execution_state_missing", None)
     if explicit_state == "unknown":
