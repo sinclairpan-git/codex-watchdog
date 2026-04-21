@@ -6844,6 +6844,69 @@ async def test_startup_waits_for_approval_reconcile_before_starting_orchestrator
 
 
 @pytest.mark.asyncio
+async def test_startup_does_not_start_background_loops_when_reconcile_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    session_spine_started = asyncio.Event()
+    memory_ingest_started = asyncio.Event()
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        if step_name == "canonical_approval_store.reconcile_pending_records_against_decisions":
+            raise RuntimeError("boom")
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def gated_session_spine_loop(_app) -> None:
+        _ = _app
+        session_spine_started.set()
+        await asyncio.Event().wait()
+
+    async def gated_memory_ingest_loop(_app) -> None:
+        _ = _app
+        memory_ingest_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+    monkeypatch.setattr("watchdog.main._run_session_spine_refresh_loop", gated_session_spine_loop)
+    monkeypatch.setattr("watchdog.main._run_memory_ingest_loop", gated_memory_ingest_loop)
+
+    lifespan = app.router.lifespan_context(app)
+    with pytest.raises(RuntimeError, match="boom"):
+        await lifespan.__aenter__()
+
+    assert not session_spine_started.is_set()
+    assert not memory_ingest_started.is_set()
+
+
+@pytest.mark.asyncio
 async def test_startup_does_not_wait_for_initial_orchestrator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
