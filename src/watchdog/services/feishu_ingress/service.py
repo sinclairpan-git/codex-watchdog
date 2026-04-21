@@ -263,6 +263,11 @@ class FeishuIngressNormalizationService:
                 "event_type": "command_request",
                 "command_text": command_text,
             }
+        elif self._normalized_text(command_text) in self._APPROVAL_REPLY_TEXTS:
+            return {
+                "event_type": "command_request",
+                "command_text": command_text,
+            }
         elif default_project_id:
             project_id = default_project_id
         else:
