@@ -361,7 +361,7 @@ def _runtime_gate_override(
     release_gate_verdict: Mapping[str, Any] | None,
     extra_evidence: dict[str, Any] | None,
 ) -> CanonicalDecisionRecord | None:
-    if brain_intent not in {"propose_execute", "branch_complete_switch"}:
+    if brain_intent not in {"propose_execute", "propose_recovery", "branch_complete_switch"}:
         return None
     validator = read_validator_decision_evidence(validator_verdict)
     if not _validator_snapshot_is_pass(validator):
@@ -387,7 +387,7 @@ def _runtime_gate_override(
             extra_evidence=extra_evidence,
         )
     release_gate = read_release_gate_decision_evidence(release_gate_verdict)
-    if brain_intent == "branch_complete_switch":
+    if brain_intent in {"propose_recovery", "branch_complete_switch"}:
         if (
             release_gate.verdict is None
             or release_gate.verdict.status not in {"pass", "not_applicable"}
