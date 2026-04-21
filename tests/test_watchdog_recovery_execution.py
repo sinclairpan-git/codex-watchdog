@@ -729,6 +729,98 @@ def test_perform_recovery_execution_reissued_interaction_uses_fresh_global_outbo
     assert records["notification-envelope:ctx-recovery-old:recovery"].delivery_status == "pending"
 
 
+def test_perform_recovery_execution_rewrites_reissued_payload_ids_to_match_record_metadata(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:ctx-recovery-old",
+            envelope_type="notification",
+            correlation_id="corr:family-recovery-1:ctx-recovery-old",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:ctx-recovery-old",
+            audit_ref="audit:ctx-recovery-old",
+            created_at="2026-04-14T03:10:00Z",
+            updated_at="2026-04-14T03:10:00Z",
+            outbox_seq=1,
+            delivery_status="delivered",
+            envelope_payload={
+                "envelope_id": "notification-envelope:ctx-recovery-old",
+                "envelope_type": "notification",
+                "correlation_id": "corr:family-recovery-1:ctx-recovery-old",
+                "session_id": "session:repo-a",
+                "project_id": "repo-a",
+                "native_thread_id": "thr_native_1",
+                "policy_version": "policy-v1",
+                "fact_snapshot_version": "fact-v7",
+                "idempotency_key": "idem:ctx-recovery-old",
+                "audit_ref": "audit:ctx-recovery-old",
+                "created_at": "2026-04-14T03:10:00Z",
+                "interaction_context_id": "ctx-recovery-old",
+                "interaction_family_id": "family-recovery-1",
+                "actor_id": "user:alice",
+                "channel_kind": "dm",
+                "event_id": "event:ctx-recovery-old",
+                "severity": "warning",
+                "notification_kind": "progress_summary",
+                "title": "old title",
+                "summary": "old summary",
+                "reason": "old reason",
+            },
+        )
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"goal_contract_version": "goal-v9"},
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+    reissued = delivery_store.get_delivery_record("notification-envelope:ctx-recovery-old:recovery")
+    assert reissued is not None
+    assert reissued.envelope_payload["envelope_id"] == reissued.envelope_id
+    assert reissued.envelope_payload["correlation_id"] == reissued.correlation_id
+    assert reissued.envelope_payload["idempotency_key"] == reissued.idempotency_key
+    assert reissued.envelope_payload["audit_ref"] == reissued.audit_ref
+    assert reissued.envelope_payload["created_at"] == reissued.created_at
+    assert reissued.envelope_payload["interaction_context_id"] == "ctx-recovery-old:recovery"
+
+
 def test_perform_recovery_execution_treats_stable_parent_session_id_as_same_thread_when_task_thread_is_native(
     tmp_path,
 ) -> None:
