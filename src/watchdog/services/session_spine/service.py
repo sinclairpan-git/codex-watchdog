@@ -1561,11 +1561,14 @@ def _task_from_persisted_record(
     native_thread_id: str | None = None,
 ) -> dict[str, Any]:
     fact_codes = {fact.fact_code for fact in record.facts}
-    status = "completed"
-    if approvals:
-        status = "waiting_human"
-    elif record.session.session_state == "blocked":
-        status = "running"
+    session_state = str(record.session.session_state or "").strip()
+    status_by_session_state = {
+        "active": "running",
+        "blocked": "running",
+        "awaiting_approval": "waiting_human",
+        "unavailable": "running",
+    }
+    status = "waiting_human" if approvals else status_by_session_state.get(session_state, "running")
     return {
         "project_id": record.project_id,
         "thread_id": record.thread_id,
