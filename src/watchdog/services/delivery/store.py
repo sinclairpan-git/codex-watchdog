@@ -178,8 +178,17 @@ class DeliveryOutboxStore:
             data = self._read()
             data.decision_outbox[record.envelope_id] = record
             data.delivery_outbox[record.envelope_id] = record
+            data.next_outbox_seq = max(data.next_outbox_seq, record.outbox_seq + 1)
             self._write(data)
         return record
+
+    def reserve_outbox_seq(self) -> int:
+        with self._guard_io():
+            data = self._read()
+            outbox_seq = data.next_outbox_seq
+            data.next_outbox_seq += 1
+            self._write(data)
+        return outbox_seq
 
     def snapshot_rows(self) -> list[DeliveryOutboxRecord]:
         with self._guard_io():
