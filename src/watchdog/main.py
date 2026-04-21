@@ -191,6 +191,11 @@ async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         await _run_background_step_async(
+            "canonical_approval_store.reconcile_pending_records_against_decisions",
+            _reconcile_stale_pending_approvals,
+            app,
+        )
+        await _run_background_step_async(
             "session_spine_runtime.refresh_all",
             app.state.session_spine_runtime.refresh_all,
         )
