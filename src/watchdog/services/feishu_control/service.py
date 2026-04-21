@@ -714,7 +714,7 @@ class FeishuControlService:
         request: FeishuControlRequest,
     ) -> None:
         occurred_at = _parse_timestamp(request.occurred_at)
-        expires_at_raw = request.action_window_expires_at
+        expires_at_raw = str(approval.expires_at or "").strip()
         expires_at = _maybe_parse_timestamp(approval.expires_at)
         if expires_at is None and self._settings.approval_expiration_seconds > 0:
             created_at = _maybe_parse_timestamp(approval.created_at)
@@ -724,7 +724,7 @@ class FeishuControlService:
                 )
                 expires_at_raw = _format_timestamp(expires_at)
         if expires_at is None:
-            expires_at = _parse_timestamp(request.action_window_expires_at)
+            return
         if occurred_at < expires_at:
             return
         self._session_service.record_event(
