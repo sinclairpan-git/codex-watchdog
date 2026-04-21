@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
@@ -1007,6 +1008,65 @@ def test_persisted_session_route_updates_native_thread_from_child_event_only_fal
         "awaiting_human_direction",
         "interaction_window_expired",
     ]
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+@pytest.mark.parametrize("session_state", ["active", "unavailable"])
+def test_persisted_session_event_only_fallback_keeps_nonterminal_task_status(tmp_path, session_state: str) -> None:
+    path = _seed_persisted_session_spine(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    session_record = payload["sessions"]["repo-a"]
+    session_record["session"]["session_state"] = session_state
+    session_record["session"]["headline"] = "session active"
+    session_record["progress"]["summary"] = "session active"
+    session_record["approval_queue"] = []
+    session_record["facts"] = []
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=a_client,
+    )
+    app.state.session_service.record_event(
+        event_type="interaction_window_expired",
+        project_id="repo-a",
+        session_id="session:repo-a:thr_child_1",
+        correlation_id=f"corr:interaction:repo-a:{session_state}",
+        related_ids={
+            "interaction_context_id": "ctx-child-1",
+            "interaction_family_id": "family-child-1",
+            "actor_id": "user:alice",
+            "native_thread_id": "thr_child_1",
+        },
+        payload={
+            "channel_kind": "dm",
+            "expired_at": "2026-04-07T00:30:00Z",
+            "received_at": "2026-04-07T00:40:00Z",
+        },
+        occurred_at="2026-04-07T00:40:00Z",
+    )
+    c = TestClient(app)
+
+    session_response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    facts_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert facts_response.status_code == 200
+    session_data = session_response.json()["data"]
+    fact_codes = [fact["fact_code"] for fact in facts_response.json()["data"]["facts"]]
+
+    assert session_data["snapshot"]["read_source"] == "persisted_spine"
+    assert session_data["session"]["native_thread_id"] == "thr_child_1"
+    assert session_data["progress"]["native_thread_id"] == "thr_child_1"
+    assert session_data["session"]["session_state"] == "active"
+    assert "continue_session" in session_data["session"]["available_intents"]
+    assert "task_completed" not in fact_codes
+    assert fact_codes == ["interaction_window_expired"]
     assert a_client.get_envelope_calls == []
     assert a_client.list_approvals_calls == []
 
