@@ -730,6 +730,63 @@ def test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_aler
     assert response.json()["release_gate_blockers"] == 1
 
 
+def test_watchdog_healthz_ignores_not_applicable_release_gate_verdict(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:healthz-release-gate-na",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="recover_current_branch",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="observe_only",
+            decision_result="observe_only",
+            risk_class="runtime_gate",
+            decision_reason="release gate does not apply",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "not_applicable",
+                    "report_id": "report:not_applicable",
+                    "report_hash": "sha256:not_applicable",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:healthz-na",
+                    "approval_read_ref": "approval:none",
+                }
+            },
+        )
+    )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["active_alerts"] == 0
+    assert response.json()["release_gate_blockers"] == 0
+
+
 def test_watchdog_metrics_exports_task_approval_and_recovery_totals(tmp_path: Path) -> None:
     task_store = TaskStore(tmp_path / "tasks.json")
     approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
@@ -2002,6 +2059,63 @@ def test_build_ops_summary_surfaces_provider_output_schema_degradation(
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["provider_output_invalid"]
     assert summary.alerts[0].count == 1
+
+
+def test_build_ops_summary_ignores_not_applicable_release_gate_verdict(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:release-gate-na",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="recover_current_branch",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="observe_only",
+            decision_result="observe_only",
+            risk_class="low",
+            decision_reason="release gate does not apply",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "not_applicable",
+                    "report_id": "report:not_applicable",
+                    "report_hash": "sha256:not_applicable",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:release-gate-na",
+                    "approval_read_ref": "approval:none",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.release_gate_blockers == []
 
 
 def test_build_ops_health_summary_counts_provider_output_schema_degradation(
