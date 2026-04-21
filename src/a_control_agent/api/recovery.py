@@ -73,7 +73,9 @@ def _resume_response_payload(
     }
     if resume_outcome == _NEW_CHILD_SESSION:
         payload["parent_thread_id"] = parent_thread_id
-        payload["child_session_id"] = f"session:{project_id}:{thread_id}"
+        payload["child_session_id"] = (
+            thread_id if thread_id.startswith("session:") else f"session:{project_id}:{thread_id}"
+        )
     return payload
 
 
