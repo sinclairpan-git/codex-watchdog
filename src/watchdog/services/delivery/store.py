@@ -1,4 +1,5 @@
 from __future__ import annotations
+from copy import deepcopy
 import fcntl
 import os
 import re
@@ -100,13 +101,13 @@ class DeliveryOutboxStore:
     def _read(self) -> _DeliveryStoreFile:
         signature = self._file_signature()
         if self._cache is not None and signature == self._cache_signature:
-            return self._cache
+            return deepcopy(self._cache)
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
             data = _DeliveryStoreFile()
         else:
             data = _DeliveryStoreFile.model_validate_json(raw)
-        self._cache = data
+        self._cache = deepcopy(data)
         self._cache_signature = self._file_signature()
         return data
 
@@ -115,7 +116,7 @@ class DeliveryOutboxStore:
         try:
             tmp.write_text(data.model_dump_json(indent=2), encoding="utf-8")
             tmp.replace(self._path)
-            self._cache = data
+            self._cache = deepcopy(data)
             self._cache_signature = self._file_signature()
         finally:
             with suppress(FileNotFoundError):
