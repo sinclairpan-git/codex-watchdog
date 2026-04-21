@@ -1394,6 +1394,129 @@ def test_perform_recovery_execution_persists_goal_contract_version_from_handoff(
     assert lineage_events[0].payload["goal_contract_version"] == "goal-v9"
 
 
+def test_perform_recovery_execution_uses_goal_contract_version_from_continuation_packet(
+    tmp_path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    goal_contracts = GoalContractService(session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继承 continuation packet 里的 goal contract version",
+        task_prompt="确保 recovery child session 会沿用 packet source_refs 里的 contract version。",
+        last_user_instruction="继续当前 branch 的 recovery 继承链路。",
+        phase="editing_source",
+        last_summary="recovery handoff top-level 缺失 contract version。",
+    )
+    revised = goal_contracts.revise_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        expected_version=created.version,
+        current_phase_goal="从 continuation packet source_refs 继承 goal contract version",
+        last_user_instruction="继续沿用 packet source refs 的 goal contract truth。",
+        last_summary="回归覆盖 handoff 顶层缺失 contract version 的恢复路径。",
+        phase="editing_source",
+    )
+    continuation_packet = {
+        "packet_id": "packet:continuation:repo-a:goal-v2",
+        "packet_version": "continuation-packet/v1",
+        "packet_state": "issued",
+        "decision_class": "recover_current_branch",
+        "continuation_identity": "repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        "project_id": "repo-a",
+        "session_id": "session:repo-a",
+        "native_thread_id": "thr_native_1",
+        "route_key": "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        "target_route": {
+            "route_kind": "same_thread",
+            "target_project_id": "repo-a",
+            "target_session_id": "session:repo-a",
+            "target_thread_id": "thr_native_1",
+            "target_work_item_id": "WI-085",
+        },
+        "project_total_goal": "让 recovery child session 继承 active goal contract。",
+        "branch_goal": "补 continuation packet source refs fallback。",
+        "current_progress_summary": "handoff 顶层没有 goal contract version。",
+        "completed_work": ["T856 control-plane projection complete"],
+        "remaining_tasks": ["从 packet source refs 继承 goal_contract_version"],
+        "first_action": "先读取 structured continuation packet。",
+        "execution_mode": "resume_or_new_thread",
+        "action_ref": "continue_current_branch",
+        "action_args": {"resume_target_phase": "editing_source"},
+        "expected_next_state": "running",
+        "continue_boundary": "只继续当前分支",
+        "stop_conditions": ["需要新的人工批准"],
+        "operator_boundary": "不要把 markdown 当作 truth。",
+        "source_refs": {
+            "decision_source": "recovery_guard",
+            "goal_contract_version": revised.version,
+            "authoritative_snapshot_version": "fact-v9",
+            "snapshot_epoch": "session-seq:9",
+            "decision_trace_ref": "trace:packet:goal-v2",
+            "lineage_refs": ["recovery-tx:goal-v2"],
+        },
+        "freshness": {
+            "generated_at": "2026-04-21T01:20:00Z",
+            "expires_at": "2026-04-21T02:20:00Z",
+        },
+        "dedupe": {
+            "dedupe_key": "dedupe:repo-a:packet:goal-v2",
+            "supersedes_packet_id": None,
+        },
+        "render_contract_ref": "continuation-packet-markdown/v1",
+    }
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={
+            "source_packet_id": "packet:handoff-v9",
+            "continuation_packet": continuation_packet,
+        },
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+    lineage_records = session_service.list_lineage(parent_session_id="session:repo-a")
+    assert len(lineage_records) == 1
+    assert lineage_records[0].goal_contract_version == revised.version
+
+    child_contract = goal_contracts.get_current_contract(
+        project_id="repo-a",
+        session_id=lineage_records[0].child_session_id,
+    )
+    assert child_contract is not None
+    assert child_contract.version == revised.version
+
+
 def test_perform_recovery_execution_uses_child_session_thread_when_native_missing(
     tmp_path,
 ) -> None:
