@@ -935,6 +935,11 @@ def _supersede_stale_interactions_for_recovery(
                     ],
                     "envelope_payload": {
                         **record.envelope_payload,
+                        "envelope_id": new_envelope_id,
+                        "correlation_id": f"{record.correlation_id}:recovery",
+                        "idempotency_key": f"{record.idempotency_key}:recovery",
+                        "audit_ref": f"{record.audit_ref}:recovery",
+                        "created_at": now,
                         "interaction_context_id": new_context_id,
                     },
                 }
