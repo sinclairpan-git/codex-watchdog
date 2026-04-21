@@ -521,7 +521,10 @@ class DeliveryWorker:
         if not events:
             return None
         scoped_events = self._scope_dynamic_route_candidate_events(events=events, record=record)
-        return self._resolve_dynamic_route_candidate_set(scoped_events)
+        return self._resolve_dynamic_route_candidate_set(
+            scoped_events,
+            require_unique=scoped_events is events,
+        )
 
     @staticmethod
     def _scope_dynamic_route_candidate_events(
@@ -565,6 +568,8 @@ class DeliveryWorker:
     @staticmethod
     def _resolve_dynamic_route_candidate_set(
         events: list,
+        *,
+        require_unique: bool = False,
     ) -> tuple[str, str, str] | None:
         for candidate in (
             DeliveryWorker._unique_route_candidate(
@@ -572,18 +577,21 @@ class DeliveryWorker:
                 value_key="feishu_receive_id",
                 type_key="feishu_receive_id_type",
                 default_type=None,
+                require_unique=require_unique,
             ),
             DeliveryWorker._unique_route_candidate(
                 events=events,
                 value_key="feishu_chat_id",
                 type_key=None,
                 default_type="chat_id",
+                require_unique=require_unique,
             ),
             DeliveryWorker._unique_route_candidate(
                 events=events,
                 value_key="feishu_actor_id",
                 type_key=None,
                 default_type="open_id",
+                require_unique=require_unique,
             ),
         ):
             if candidate is not None:
@@ -597,7 +605,9 @@ class DeliveryWorker:
         value_key: str,
         type_key: str | None,
         default_type: str | None,
+        require_unique: bool,
     ) -> tuple[str, str, str] | None:
+        selected: tuple[str, str, str] | None = None
         for event in reversed(events):
             related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
             receive_id = str(related_ids.get(value_key) or "").strip()
@@ -610,8 +620,13 @@ class DeliveryWorker:
                 receive_id_type = str(default_type or "").strip()
             if not receive_id_type:
                 continue
-            return (receive_id, receive_id_type, event.event_id)
-        return None
+            candidate = (receive_id, receive_id_type, event.event_id)
+            if selected is None:
+                selected = candidate
+                continue
+            if require_unique and candidate[:2] != selected[:2]:
+                return None
+        return selected
 
     def process_next_ready(
         self,
