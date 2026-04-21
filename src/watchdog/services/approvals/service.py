@@ -1024,6 +1024,27 @@ def respond_to_canonical_approval(
             raise ValueError("rejected approval cannot be approved or executed")
         if approval.status == "approved" and response_action == "reject":
             raise ValueError("approved approval cannot be rejected")
+        if approval.status == "approved" and response_action in {"approve", "execute_action"}:
+            return CanonicalApprovalResponseRecord(
+                response_id=f"approval-response:{_short_hash(response_key)}",
+                envelope_id=envelope_id,
+                approval_id=approval.approval_id,
+                response_action=response_action,
+                client_request_id=client_request_id,
+                idempotency_key=response_key,
+                project_id=approval.project_id,
+                approval_status="approved",
+                operator=operator,
+                note=note,
+                created_at=_utc_now_iso(),
+                operator_notes=[
+                    f"response={response_action} operator={operator}",
+                    "approval_status=approved",
+                    "replayed_existing_approved_response",
+                ],
+                approval_result=None,
+                execution_result=None,
+            )
 
         approval_result: WatchdogActionResult | None = None
         execution_result: WatchdogActionResult | None = None
