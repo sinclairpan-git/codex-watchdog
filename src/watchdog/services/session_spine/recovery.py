@@ -822,15 +822,14 @@ def _record_recovery_truth(
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
     )
+    if recorded.child_session_id is None:
+        return
     _supersede_parent_future_workers_for_recovery(
         project_id=project_id,
         parent_session_id=recorded.parent_session_id,
         session_service=service,
     )
-    if (
-        recorded.child_session_id is None
-        or goal_contract_version == "goal-contract:unknown"
-    ):
+    if goal_contract_version == "goal-contract:unknown":
         return
     goal_contracts = GoalContractService(service)
     if goal_contracts.get_current_contract(
