@@ -226,6 +226,45 @@ def test_resume_reports_new_child_session_outcome_when_bridge_switches_threads(
     )
 
 
+def test_resume_preserves_canonical_child_session_id_when_bridge_returns_session_thread(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="session:p1:child-1")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    created = c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    ).json()["data"]
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["data"] == {
+        "project_id": "p1",
+        "status": "running",
+        "mode": "resume_or_new_thread",
+        "resume_outcome": "new_child_session",
+        "thread_id": "session:p1:child-1",
+        "parent_thread_id": created["thread_id"],
+        "child_session_id": "session:p1:child-1",
+        "resume_target_phase": "editing_source",
+    }
+
+
 def test_handoff_unknown(tmp_path: Path) -> None:
     s = Settings(api_token="t", data_dir=str(tmp_path / "d"))
     c = TestClient(create_app(s))
