@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-set -euo pipefail
+set -eu
 
 SCRIPT_PATH=$0
 case "$SCRIPT_PATH" in
@@ -14,7 +14,7 @@ cd "$APP_DIR"
 export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 set -a
-source "$APP_DIR/.env.a"
+. "$APP_DIR/.env.a"
 set +a
 
 UV_BIN="${UV_BIN:-$(command -v uv || true)}"
