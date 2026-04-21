@@ -956,7 +956,7 @@ def test_delivery_worker_prefers_matching_interaction_family_feishu_route(
     assert client.payloads[0]["receive_id_type"] == "open_id"
 
 
-def test_delivery_worker_leaves_feishu_route_empty_when_candidates_are_ambiguous(
+def test_delivery_worker_prefers_latest_feishu_route_when_history_contains_multiple_candidates(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1002,12 +1002,15 @@ def test_delivery_worker_leaves_feishu_route_empty_when_candidates_are_ambiguous
         now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
     )
 
-    assert updated.envelope_payload.get("receive_id") in {None, ""}
-    assert updated.envelope_payload.get("receive_id_type") in {None, ""}
+    latest_route_event = service.list_events(session_id="session:repo-a")[-1]
+    assert updated.envelope_payload["receive_id"] == "ou_route_b"
+    assert updated.envelope_payload["receive_id_type"] == "open_id"
+    assert updated.operator_notes[-1].startswith("delivery_route_resolved ")
+    assert f"source_event_id={latest_route_event.event_id}" in updated.operator_notes[-1]
     persisted = store.get_delivery_record(record.envelope_id)
     assert persisted is not None
-    assert persisted.envelope_payload.get("receive_id") in {None, ""}
-    assert persisted.envelope_payload.get("receive_id_type") in {None, ""}
+    assert persisted.envelope_payload["receive_id"] == "ou_route_b"
+    assert persisted.envelope_payload["receive_id_type"] == "open_id"
 
 
 def test_delivery_worker_records_notification_requeued_after_retryable_failure(
