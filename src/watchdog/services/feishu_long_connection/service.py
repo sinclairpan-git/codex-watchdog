@@ -142,10 +142,6 @@ class FeishuLongConnectionGateway:
 
     def _canonicalize_payload_for_long_connection(self, payload: object) -> dict[str, Any]:
         body = self._sdk_payload_to_mapping(payload)
-        expected = str(self._settings.feishu_verification_token or "").strip()
-        header = body.get("header")
-        if expected and isinstance(header, dict):
-            header["token"] = expected
         return body
 
     @staticmethod
