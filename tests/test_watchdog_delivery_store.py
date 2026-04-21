@@ -105,3 +105,25 @@ def test_delivery_outbox_store_reuses_cached_snapshot_until_file_changes(
 
     assert store.get_delivery_record(record.envelope_id) == record
     assert read_calls == 1
+
+
+def test_delivery_outbox_store_returns_defensive_copies_from_cached_reads(tmp_path: Path) -> None:
+    store_path = tmp_path / "delivery_outbox.json"
+    store = DeliveryOutboxStore(store_path)
+    record = _record(note="seed", attempt=0)
+    store.update_delivery_record(record)
+
+    fetched = store.get_delivery_record(record.envelope_id)
+    assert fetched is not None
+    fetched.delivery_status = "delivery_failed"
+    fetched.operator_notes.append("mutated")
+
+    pending = store.list_pending_delivery_records(session_id=record.session_id)
+    assert len(pending) == 1
+    pending[0].delivery_status = "superseded"
+    pending[0].operator_notes.append("mutated-again")
+
+    reparsed = store.get_delivery_record(record.envelope_id)
+    assert reparsed is not None
+    assert reparsed.delivery_status == "pending"
+    assert reparsed.operator_notes == ["seed"]
