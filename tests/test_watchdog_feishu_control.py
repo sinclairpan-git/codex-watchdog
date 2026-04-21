@@ -251,6 +251,48 @@ def _seed_delivery_context(
     )
 
 
+def _seed_approval_delivery_binding(
+    app,
+    approval,
+    *,
+    actor_id: str,
+    interaction_context_id: str,
+    interaction_family_id: str,
+    receive_id: str | None = None,
+    receive_id_type: str | None = None,
+    updated_at: str = "2026-04-07T00:10:00Z",
+) -> None:
+    payload = {
+        "envelope_type": "approval",
+        "interaction_context_id": interaction_context_id,
+        "interaction_family_id": interaction_family_id,
+        "actor_id": actor_id,
+        "channel_kind": "dm",
+    }
+    if receive_id and receive_id_type:
+        payload["receive_id"] = receive_id
+        payload["receive_id_type"] = receive_id_type
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id=approval.envelope_id,
+            envelope_type="approval",
+            correlation_id=f"corr:{approval.approval_id}:{interaction_context_id}",
+            session_id=approval.session_id,
+            project_id=approval.project_id,
+            native_thread_id=approval.effective_native_thread_id,
+            policy_version=approval.policy_version,
+            fact_snapshot_version=approval.fact_snapshot_version,
+            idempotency_key=f"idem:{approval.approval_id}:{interaction_context_id}",
+            audit_ref=approval.decision.decision_id,
+            created_at=approval.created_at,
+            updated_at=updated_at,
+            outbox_seq=app.state.delivery_outbox_store.reserve_outbox_seq(),
+            delivery_status="delivered",
+            envelope_payload=payload,
+        )
+    )
+
+
 def test_feishu_control_requires_dm_for_approval_responses(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     app = create_app(settings=settings, a_client=FakeAClient())
@@ -547,6 +589,224 @@ def test_feishu_control_command_request_maps_plain_approval_reply_to_latest_pend
         "approval_approved",
         "human_override_recorded",
     ]
+
+
+def test_feishu_control_command_request_binds_plain_approval_reply_to_matching_delivery_route(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+    approval_a = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-a",
+                "decision_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001a"
+                ),
+                "approval_id": "appr_001a",
+                "idempotency_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001a"
+                ),
+                "native_thread_id": "thr_native_1",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_001a",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    approval_b = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-b",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001b"
+                ),
+                "approval_id": "appr_001b",
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001b"
+                ),
+                "native_thread_id": "thr_native_2",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_001b",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_a,
+        actor_id="user:alice",
+        receive_id="chat-a",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-a",
+        interaction_family_id="family-approval-a",
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_b,
+        actor_id="user:carol",
+        receive_id="chat-b",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-b",
+        interaction_family_id="family-approval-b",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-bound",
+                "interaction_family_id": "family-command-approval-bound",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-bound",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+                "receive_id": "chat-b",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["approval_id"] == approval_b.approval_id
+    assert a_client.decision_calls == [(approval_b.approval_id, "approve", "user:carol", "")]
+
+
+def test_feishu_control_command_request_rejects_ambiguous_plain_approval_reply(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient())
+    approval_a = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-ambiguous-a",
+                "decision_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_a"
+                ),
+                "approval_id": "appr_ambiguous_a",
+                "idempotency_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_a"
+                ),
+                "native_thread_id": "thr_native_1",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_ambiguous_a",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    approval_b = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-ambiguous-b",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_b"
+                ),
+                "approval_id": "appr_ambiguous_b",
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_b"
+                ),
+                "native_thread_id": "thr_native_2",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_ambiguous_b",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_a,
+        actor_id="user:carol",
+        receive_id="chat-shared",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-shared-a",
+        interaction_family_id="family-approval-shared-a",
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_b,
+        actor_id="user:carol",
+        receive_id="chat-shared",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-shared-b",
+        interaction_family_id="family-approval-shared-b",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-ambiguous",
+                "interaction_family_id": "family-command-approval-ambiguous",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-ambiguous",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+                "receive_id": "chat-shared",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert "specific pending approval" in response.json()["error"]["message"]
+
 
 
 def test_feishu_control_command_request_routes_pause_and_persists_receipt(
