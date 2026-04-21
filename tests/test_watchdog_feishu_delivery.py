@@ -8,6 +8,7 @@ import pytest
 
 from watchdog.main import create_app
 from watchdog.services.delivery.http_client import OpenClawDeliveryClient
+from watchdog.services.delivery.store import DeliveryOutboxRecord
 from watchdog.services.delivery.envelopes import NotificationEnvelope, build_envelopes_for_decision
 from watchdog.services.delivery.feishu_client import FeishuAppDeliveryClient
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
@@ -151,6 +152,42 @@ def test_feishu_app_delivery_client_uses_envelope_receive_target_when_static_tar
     assert result.delivery_status == "delivered"
     assert result.receipt_id == "om_feishu_message_dynamic"
     assert len(calls) == 2
+
+
+def test_feishu_app_delivery_client_marks_invalid_persisted_payload_as_failed(
+    tmp_path: Path,
+) -> None:
+    client = FeishuAppDeliveryClient(
+        settings=_settings(tmp_path),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+    malformed = DeliveryOutboxRecord(
+        envelope_id="approval-envelope:legacy-invalid",
+        envelope_type="approval",
+        correlation_id="corr:approval:legacy-invalid",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="approval:legacy-invalid",
+        audit_ref="audit:legacy-invalid",
+        created_at="2026-04-16T12:20:00Z",
+        updated_at="2026-04-16T12:20:00Z",
+        outbox_seq=1,
+        envelope_payload={
+            "envelope_type": "approval",
+            "envelope_id": "approval-envelope:legacy-invalid",
+            "project_id": "repo-a",
+            "session_id": "session:repo-a",
+        },
+    )
+
+    result = client.deliver_record(malformed)
+
+    assert result.delivery_status == "delivery_failed"
+    assert result.accepted is False
+    assert result.failure_code == "invalid_envelope_payload"
 
 
 def test_create_app_uses_feishu_delivery_client_when_transport_configured(tmp_path: Path) -> None:
