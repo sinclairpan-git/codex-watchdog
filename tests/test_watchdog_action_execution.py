@@ -461,6 +461,51 @@ def test_execute_watchdog_continue_handles_taskless_session_bundle(
     assert steer_mock.call_args.kwargs["stuck_level"] == 0
 
 
+def test_execute_watchdog_continue_rejects_paused_session(
+    tmp_path: Path,
+) -> None:
+    from watchdog.contracts.session_spine.enums import ActionCode
+    from watchdog.contracts.session_spine.models import WatchdogAction
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+    from watchdog.services.session_spine.actions import execute_watchdog_action
+
+    class PausedClient(FakeAClient):
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            envelope = super().get_envelope(project_id)
+            envelope["data"]["status"] = "paused"
+            return envelope
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    client = PausedClient(context_pressure="low")
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        result = execute_watchdog_action(
+            WatchdogAction(
+                action_code=ActionCode.CONTINUE_SESSION,
+                project_id="repo-a",
+                operator="operator",
+                idempotency_key="idem:paused-continue",
+                arguments={"message": "继续推进当前任务"},
+            ),
+            settings=_settings(tmp_path),
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+        )
+
+    assert result.action_status == "rejected"
+    assert result.reply_code == "action_not_available"
+    assert result.message == "continue is not allowed from current state"
+    assert steer_mock.call_count == 0
+    gate_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    assert len(gate_events) == 1
+    assert gate_events[0].payload["gate_status"] == "suppressed"
+    assert gate_events[0].payload["suppression_reason"] == "continue_not_allowed"
+
+
 def test_execute_watchdog_resume_records_continuation_identity_lifecycle(
     tmp_path: Path,
 ) -> None:
