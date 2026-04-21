@@ -701,6 +701,78 @@ def test_feishu_control_command_request_binds_plain_approval_reply_to_matching_d
     assert a_client.decision_calls == [(approval_b.approval_id, "approve", "user:carol", "")]
 
 
+def test_feishu_control_command_request_ignores_default_project_for_bound_plain_reply(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+    approval = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-default-project-bound",
+                "decision_key": (
+                    "session:repo-b|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_repo_b"
+                ),
+                "approval_id": "appr_repo_b",
+                "idempotency_key": (
+                    "session:repo-b|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_repo_b"
+                ),
+                "project_id": "repo-b",
+                "session_id": "session:repo-b",
+                "thread_id": "session:repo-b",
+                "native_thread_id": "thr_native_repo_b",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_repo_b",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval,
+        actor_id="user:carol",
+        receive_id="chat-b",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-default-project-bound",
+        interaction_family_id="family-approval-default-project-bound",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-default-project-bound",
+                "interaction_family_id": "family-command-approval-default-project-bound",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-default-project-bound",
+                "command_text": "批准",
+                "receive_id": "chat-b",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["approval_id"] == approval.approval_id
+    assert a_client.decision_calls == [(approval.approval_id, "approve", "user:carol", "")]
+
+
 def test_feishu_control_command_request_uses_bound_approval_interaction_metadata(
     tmp_path: Path,
 ) -> None:
