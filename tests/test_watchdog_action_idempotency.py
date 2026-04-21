@@ -675,6 +675,58 @@ def test_continue_session_fails_closed_when_authoritative_project_state_is_unkno
     assert [fact.fact_code for fact in result.facts] == ["project_state_unavailable"]
 
 
+def test_continue_session_preserves_explicit_project_state_when_authoritative_state_is_unknown(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "project_execution_state": "active",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-continue-authoritative-project-state-explicit",
+        arguments={},
+    )
+
+    with patch(
+        "watchdog.services.session_spine.service._authoritative_project_execution_state",
+        return_value="unknown",
+    ), patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        result = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+        )
+
+    assert steer_mock.call_count == 1
+    assert result.action_status == "completed"
+    assert result.effect == "steer_posted"
+    assert result.reply_code == "action_result"
+    assert [fact.fact_code for fact in result.facts] == []
+
+
 @pytest.mark.parametrize(
     ("action_code", "arguments"),
     [
