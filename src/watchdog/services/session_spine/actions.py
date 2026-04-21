@@ -34,6 +34,8 @@ from watchdog.services.session_spine.task_state import (
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
+_CONTINUATION_IDENTITY_ISSUED_TTL_SECONDS = 900.0
+
 
 def _build_action_read_bundle(
     action: WatchdogAction,
@@ -302,6 +304,88 @@ def _latest_continuation_identity_state(
     return str(latest.payload.get("state") or "").strip() or None
 
 
+def _latest_continuation_identity_event(
+    service: SessionService,
+    *,
+    session_id: str,
+    continuation_identity: str | None,
+):
+    if continuation_identity is None:
+        return None
+    events = service.list_events(
+        session_id=session_id,
+        related_id_key="continuation_identity",
+        related_id_value=continuation_identity,
+    )
+    relevant = [
+        event
+        for event in events
+        if event.event_type
+        in {
+            "continuation_identity_issued",
+            "continuation_identity_consumed",
+            "continuation_identity_invalidated",
+        }
+    ]
+    if not relevant:
+        return None
+    return max(relevant, key=lambda event: event.log_seq or 0)
+
+
+def _parse_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _continuation_identity_issued_ttl_seconds(settings: Settings) -> float:
+    return max(
+        _CONTINUATION_IDENTITY_ISSUED_TTL_SECONDS,
+        float(getattr(settings, "auto_continue_cooldown_seconds", 0.0) or 0.0),
+        float(getattr(settings, "auto_recovery_cooldown_seconds", 0.0) or 0.0),
+    )
+
+
+def _issued_continuation_identity_is_stale(
+    event,
+    *,
+    governance: dict[str, str | None],
+    settings: Settings,
+) -> bool:
+    event_route_key = str(event.related_ids.get("route_key") or "").strip() or None
+    current_route_key = str(governance.get("route_key") or "").strip() or None
+    if (
+        event_route_key is not None
+        and current_route_key is not None
+        and event_route_key != current_route_key
+    ):
+        return True
+
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    event_snapshot_version = str(payload.get("authoritative_snapshot_version") or "").strip() or None
+    current_snapshot_version = (
+        str(governance.get("authoritative_snapshot_version") or "").strip() or None
+    )
+    if (
+        event_snapshot_version is not None
+        and current_snapshot_version is not None
+        and event_snapshot_version != current_snapshot_version
+    ):
+        return True
+
+    event_snapshot_epoch = str(payload.get("snapshot_epoch") or "").strip() or None
+    current_snapshot_epoch = str(governance.get("snapshot_epoch") or "").strip() or None
+    if (
+        event_snapshot_epoch is not None
+        and current_snapshot_epoch is not None
+        and event_snapshot_epoch != current_snapshot_epoch
+    ):
+        return True
+
+    age_seconds = (
+        datetime.now(UTC) - _parse_timestamp(event.occurred_at)
+    ).total_seconds()
+    return age_seconds >= _continuation_identity_issued_ttl_seconds(settings)
+
+
 def _record_continuation_identity_for_action(
     action: WatchdogAction,
     *,
@@ -344,20 +428,36 @@ def _preflight_continuation_identity_for_action(
 ) -> tuple[SessionService, WatchdogActionResult | None]:
     service = session_service or SessionService.from_data_dir(settings.data_dir)
     governance = _continuation_governance_for_action(action, bundle=bundle)
-    if (
-        _latest_continuation_identity_state(
-            service,
-            session_id=bundle.session.thread_id,
-            continuation_identity=governance["continuation_identity"],
-        )
-        == "issued"
-    ):
-        return service, _continuation_identity_in_flight_result(
-            action,
+    latest_event = _latest_continuation_identity_event(
+        service,
+        session_id=bundle.session.thread_id,
+        continuation_identity=governance["continuation_identity"],
+    )
+    latest_state = (
+        str((latest_event.payload if latest_event is not None else {}).get("state") or "").strip()
+        or None
+    )
+    if latest_state == "issued":
+        if latest_event is not None and _issued_continuation_identity_is_stale(
+            latest_event,
+            governance=governance,
             settings=settings,
-            bundle=bundle,
-            session_service=service,
-        )
+        ):
+            _record_continuation_identity_for_action(
+                action,
+                settings=settings,
+                bundle=bundle,
+                state="invalidated",
+                session_service=service,
+                suppression_reason="stale_entry",
+            )
+        else:
+            return service, _continuation_identity_in_flight_result(
+                action,
+                settings=settings,
+                bundle=bundle,
+                session_service=service,
+            )
     _record_continuation_identity_for_action(
         action,
         settings=settings,
