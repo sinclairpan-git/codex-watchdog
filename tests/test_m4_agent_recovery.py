@@ -297,6 +297,35 @@ def test_handoff_prefers_supplied_continuation_packet_as_truth(tmp_path: Path) -
     assert "这是旧摘要，不该覆盖 packet 真值" not in handoff_text
 
 
+def test_handoff_rejects_malformed_continuation_packet_without_state_changes(tmp_path: Path) -> None:
+    root = tmp_path / "d"
+    s = Settings(api_token="t", data_dir=str(root))
+    c = TestClient(create_app(s))
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/handoff",
+        json={"reason": "ctx", "continuation_packet": {"packet_id": "broken-packet"}},
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet" in body["error"]["message"]
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
+    assert not (root / "handoffs").exists()
+
+
 def test_resume_prefers_continuation_packet_render_over_raw_handoff_summary(
     tmp_path: Path,
 ) -> None:
@@ -332,6 +361,45 @@ def test_resume_prefers_continuation_packet_render_over_raw_handoff_summary(
     assert "IGNORE THIS RAW SUMMARY" not in prompt
     assert "项目总目标：把 watchdog 自动推进收口为 model-first continuation governance" in prompt
     assert "第一步动作：先读取 recovery packet，并只继续当前分支内的 recovery/handoff 改造。" in prompt
+
+
+def test_resume_rejects_malformed_continuation_packet_without_side_effects(tmp_path: Path) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge()
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={
+            "mode": "resume_or_new_thread",
+            "handoff_summary": "resume",
+            "continuation_packet": {"packet_id": "broken-packet"},
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet" in body["error"]["message"]
+    assert bridge.resume_calls == []
+    assert bridge.started_turns == []
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
 
 
 def test_child_resume_preserves_last_summary_for_followup_handoff(tmp_path: Path) -> None:
