@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,9 @@ from watchdog.services.session_spine.task_state import (
 router = APIRouter(prefix="/tasks", tags=["recovery"])
 _SAME_THREAD_RESUME = "same_thread_resume"
 _NEW_CHILD_SESSION = "new_child_session"
+_PAUSE_STEER_MESSAGE = (
+    "Pause execution now. Do not run more commands, edits, or analysis until an explicit resume request arrives."
+)
 
 
 class _InvalidContinuationPacket(ValueError):
@@ -79,6 +83,30 @@ def _resume_response_payload(
     return payload
 
 
+async def _await_if_needed(value: Any) -> Any:
+    if isawaitable(value):
+        return await value
+    return value
+
+
+async def _pause_runtime(bridge: Any, thread_id: str) -> Any:
+    if bridge is None or not thread_id:
+        return None
+    pause_thread = getattr(bridge, "pause_thread", None)
+    if callable(pause_thread):
+        return await _await_if_needed(pause_thread(thread_id))
+    active_turn_id = getattr(bridge, "active_turn_id", None)
+    steer_turn = getattr(bridge, "steer_turn", None)
+    read_thread = getattr(bridge, "read_thread", None)
+    active_turn = active_turn_id(thread_id) if callable(active_turn_id) else None
+    if not active_turn and callable(read_thread):
+        await _await_if_needed(read_thread(thread_id))
+        active_turn = active_turn_id(thread_id) if callable(active_turn_id) else None
+    if active_turn and callable(steer_turn):
+        return await _await_if_needed(steer_turn(thread_id, message=_PAUSE_STEER_MESSAGE))
+    return None
+
+
 def _continuation_packet_from_body(body: dict[str, Any]) -> dict[str, Any] | None:
     raw = body.get("continuation_packet")
     if raw is None:
@@ -116,7 +144,7 @@ def _resume_target_phase(task: dict[str, Any] | None) -> str:
 
 
 @router.post("/{project_id}/pause")
-def pause(
+async def pause(
     project_id: str,
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -129,6 +157,15 @@ def pause(
             request.headers.get("x-request-id"),
             {"code": "NOT_FOUND", "message": project_id},
         )
+    thread_id = str(rec.get("thread_id") or "")
+    bridge = get_bridge(request)
+    try:
+        await _pause_runtime(bridge, thread_id)
+    except Exception:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "CONTROL_LINK_ERROR", "message": "pause runtime request failed"},
+        )
     store.merge_update(
         project_id,
         {
@@ -137,7 +174,7 @@ def pause(
         },
     )
     rec2 = store.get(project_id)
-    thread_id = str((rec2 or rec).get("thread_id") or "")
+    thread_id = str((rec2 or rec).get("thread_id") or thread_id)
     store.append_event(
         project_id,
         thread_id=thread_id,
