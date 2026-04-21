@@ -419,7 +419,7 @@ def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
             record.evidence if isinstance(record.evidence, dict) else None
         )
         verdict = release_gate.verdict
-        if verdict is None or verdict.status == "pass":
+        if verdict is None or verdict.status in {"pass", "not_applicable"}:
             continue
         bundle = release_gate.evidence_bundle
         reason = normalize_runtime_gate_reason(verdict.degrade_reason or "unknown")
@@ -872,7 +872,7 @@ def build_ops_health_summary(
             row.get("evidence") if isinstance(row.get("evidence"), dict) else None
         )
         verdict = release_gate.verdict
-        if verdict is not None and verdict.status != "pass":
+        if verdict is not None and verdict.status not in {"pass", "not_applicable"}:
             release_gate_blockers += 1
     recovery_failed = sum(
         1
