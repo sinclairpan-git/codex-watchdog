@@ -259,6 +259,82 @@ def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) 
     assert summary.active_alerts == 0
 
 
+def test_watchdog_ops_can_record_repeated_notification_requeue_events(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:historical-failed-repeat",
+            envelope_type="notification",
+            correlation_id="corr:historical-failed-repeat",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:historical-failed-repeat",
+            audit_ref="audit:historical-failed-repeat",
+            created_at="2099-01-01T00:20:00Z",
+            updated_at="2099-01-01T00:21:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            failure_code="transport_error",
+            operator_notes=["delivery_failed failure_code=transport_error attempts=3"],
+            envelope_payload={
+                "envelope_type": "notification",
+                "event_id": "event:historical-failed-repeat",
+                "notification_kind": "decision_result",
+                "severity": "warning",
+                "title": "decision update",
+                "summary": "historical failed notification",
+                "occurred_at": "2099-01-01T00:20:00Z",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    first = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+    assert first.status_code == 200
+
+    updated = app.state.delivery_outbox_store.get_delivery_record(
+        "notification-envelope:historical-failed-repeat"
+    )
+    assert updated is not None
+    app.state.delivery_outbox_store.update_delivery_record(
+        updated.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "delivery_attempt": 4,
+                "failure_code": "transport_error",
+                "updated_at": "2099-01-01T00:23:00Z",
+                "operator_notes": list(updated.operator_notes)
+                + ["delivery_failed failure_code=transport_error attempts=4"],
+            }
+        )
+    )
+
+    second = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert second.status_code == 200
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value="notification-envelope:historical-failed-repeat",
+    )
+    assert [event.event_type for event in events] == [
+        "notification_requeued",
+        "notification_requeued",
+    ]
+    assert [event.payload["delivery_attempt"] for event in events] == [3, 4]
+    assert events[0].event_id != events[1].event_id
+
+
 def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> None:
     _seed_ops_alerts(tmp_path)
 
