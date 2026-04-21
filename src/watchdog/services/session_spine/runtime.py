@@ -24,16 +24,22 @@ class SessionSpineRuntime:
     def refresh_all(self) -> None:
         try:
             tasks = self._client.list_tasks()
-            approvals = _load_approvals_or_raise(self._client)
         except (httpx.RequestError, RuntimeError, OSError):
             return
+        try:
+            approvals = _load_approvals_or_raise(self._client)
+        except RuntimeError:
+            approvals = None
 
-        approvals_by_project: dict[str, list[dict[str, Any]]] = {}
-        for approval in approvals:
-            project_id = str(approval.get("project_id") or "")
-            if not project_id:
-                continue
-            approvals_by_project.setdefault(project_id, []).append(dict(approval))
+        approvals_by_project: dict[str, list[dict[str, Any]]] | None = {}
+        if approvals is None:
+            approvals_by_project = None
+        else:
+            for approval in approvals:
+                project_id = str(approval.get("project_id") or "")
+                if not project_id:
+                    continue
+                approvals_by_project.setdefault(project_id, []).append(dict(approval))
 
         for task in tasks:
             if not isinstance(task, dict):
@@ -44,7 +50,11 @@ class SessionSpineRuntime:
             self.refresh_project(
                 project_id,
                 task=task,
-                approvals=approvals_by_project.get(project_id, []),
+                approvals=(
+                    approvals_by_project.get(project_id, [])
+                    if approvals_by_project is not None
+                    else None
+                ),
             )
 
     def refresh_project(
@@ -70,7 +80,7 @@ class SessionSpineRuntime:
             try:
                 approvals = _load_approvals_or_raise(self._client, project_id)
             except RuntimeError:
-                return
+                approvals = []
 
         bundle = _build_session_read_bundle(
             project_id=project_id,
