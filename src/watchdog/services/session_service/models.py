@@ -28,6 +28,7 @@ CONTROLLED_SESSION_EVENT_TYPES = (
     "notification_delivery_failed",
     "notification_requeued",
     "notification_receipt_recorded",
+    "feishu_command_route_bound",
     "interaction_context_superseded",
     "interaction_window_expired",
     "human_override_recorded",
