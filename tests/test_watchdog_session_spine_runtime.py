@@ -1655,6 +1655,101 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
     assert [approval.approval_id for approval in records["repo-b"].approval_queue] == ["appr_002"]
 
 
+def test_session_spine_runtime_refresh_all_falls_back_when_shared_approvals_fail(
+    tmp_path: Path,
+) -> None:
+    class SharedApprovalFailureClient(MultiProjectResidentAClient):
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            if project_id is None:
+                self.list_approvals_calls.append((status, project_id, callback_status))
+                raise RuntimeError("shared approvals unavailable")
+            if project_id == "repo-b":
+                self.list_approvals_calls.append((status, project_id, callback_status))
+                raise RuntimeError("repo-b approvals unavailable")
+            return super().list_approvals(
+                status=status,
+                project_id=project_id,
+                decided_by=decided_by,
+                callback_status=callback_status,
+            )
+
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = SharedApprovalFailureClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval a",
+                "files_touched": ["src/a.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "keep coding repo-b",
+                "files_touched": ["src/b.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:01:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest repo-a",
+                "reason": "verify repo-a",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2099-01-01T00:00:30Z",
+            }
+        ],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    app.state.session_spine_runtime.refresh_all()
+
+    records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+
+    assert sorted(records) == ["repo-a", "repo-b"]
+    assert [approval.approval_id for approval in records["repo-a"].approval_queue] == ["appr_001"]
+    assert records["repo-b"].approval_queue == []
+    assert records["repo-b"].session.headline == "keep coding repo-b"
+    assert a_client.list_approvals_calls == [
+        ("pending", None, None),
+        ("pending", "repo-a", None),
+        ("approved", "repo-a", "deferred"),
+        ("pending", "repo-b", None),
+    ]
+
+
 def test_background_runtime_approval_queue_uses_effective_native_thread_from_legacy_approval_record(
     tmp_path: Path,
 ) -> None:
