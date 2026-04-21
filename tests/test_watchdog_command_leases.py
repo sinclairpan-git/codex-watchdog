@@ -221,6 +221,43 @@ def test_command_lease_store_mirrors_lifecycle_events_into_session_service(
     assert events[-1].payload["worker_id"] == "worker:d"
 
 
+def test_command_lease_store_does_not_mirror_claim_when_persist_fails(tmp_path: Path) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    original_write = store._write
+
+    def raising_write(data):  # type: ignore[no-untyped-def]
+        if data.commands:
+            raise OSError("disk full")
+        original_write(data)
+
+    store._write = raising_write  # type: ignore[method-assign]
+
+    with pytest.raises(OSError, match="disk full"):
+        store.claim_command(
+            command_id="command:repo-a:ghost",
+            session_id="session:repo-a",
+            worker_id="worker:ghost",
+            claimed_at="2026-04-12T03:30:00Z",
+            lease_expires_at="2026-04-12T03:35:00Z",
+        )
+
+    assert store.get_command("command:repo-a:ghost") is None
+    assert store.list_events(command_id="command:repo-a:ghost") == []
+    assert session_service.list_events(
+        session_id="session:repo-a",
+        related_id_key="command_id",
+        related_id_value="command:repo-a:ghost",
+    ) == []
+
+
 def test_command_lease_store_mirrors_terminal_payload_into_session_service(tmp_path: Path) -> None:
     from watchdog.services.session_service.service import SessionService
     from watchdog.services.session_service.store import SessionServiceStore
