@@ -944,6 +944,64 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
     assert pending[1].envelope_payload["notification_kind"] == "approval_result"
 
 
+def test_repeated_approve_with_new_request_id_replays_cleanly(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        ApprovalResponseStore,
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    client = FakeAClient(context_pressure="critical")
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        session_service=session_service,
+    )
+
+    first = respond_to_canonical_approval(
+        envelope_id=approval.envelope_id,
+        response_action="approve",
+        client_request_id="req-001",
+        operator="alice",
+        note="looks safe",
+        approval_store=approval_store,
+        response_store=response_store,
+        settings=_settings(tmp_path),
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+    )
+    second = respond_to_canonical_approval(
+        envelope_id=approval.envelope_id,
+        response_action="approve",
+        client_request_id="req-002",
+        operator="alice",
+        note="looks safe",
+        approval_store=approval_store,
+        response_store=response_store,
+        settings=_settings(tmp_path),
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+    )
+
+    assert client.decision_calls == [("appr_001", "approve", "alice", "looks safe")]
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert first.approval_status == "approved"
+    assert second.approval_status == "approved"
+    assert second.execution_result is None
+    assert len(session_service.list_events(session_id=approval.session_id, event_type="approval_approved")) == 1
+
+
 def test_approve_response_executes_registered_action_from_persisted_spine_when_live_read_is_unavailable(
     tmp_path: Path,
 ) -> None:
