@@ -346,7 +346,7 @@ def _build_approval_envelope(decision: CanonicalDecisionRecord) -> ApprovalEnvel
 
 def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> ApprovalEnvelope:
     decision = approval.decision
-    occurred_at = _canonical_timestamp(decision.created_at)
+    occurred_at = _canonical_timestamp(approval.created_at)
     requested_action_args = dict(approval.requested_action_args)
     return ApprovalEnvelope(
         envelope_id=approval.envelope_id,
@@ -358,7 +358,7 @@ def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> App
         fact_snapshot_version=approval.fact_snapshot_version,
         idempotency_key=approval.idempotency_key,
         audit_ref=decision.decision_id,
-        created_at=occurred_at or decision.created_at,
+        created_at=occurred_at or approval.created_at,
         approval_id=approval.approval_id,
         approval_kind=approval.approval_kind,
         requested_action=approval.requested_action,
@@ -369,7 +369,7 @@ def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> App
         reason=decision.decision_reason,
         alternative="",
         status=approval.status,
-        requested_at=occurred_at or decision.created_at,
+        requested_at=occurred_at or approval.created_at,
         title=f"approval required for {approval.requested_action}",
         summary=decision.decision_reason,
         facts=_facts_from_decision(decision),
