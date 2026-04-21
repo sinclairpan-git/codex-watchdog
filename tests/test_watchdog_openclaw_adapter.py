@@ -18,6 +18,7 @@ from watchdog.services.adapters.openclaw.intents import resolve_message_to_inten
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService
+from watchdog.services.session_service.store import SessionServiceStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 
@@ -3356,6 +3357,50 @@ def test_adapter_routes_natural_language_pause_message_to_canonical_action(
     assert reply.action_result is not None
     assert reply.action_result.effect == "session_paused"
     assert adapter._client.pause_calls == ["repo-a"]
+
+
+def test_adapter_reuses_shared_session_service_with_event_listeners(tmp_path: Path) -> None:
+    recorded_event_types: list[str] = []
+    session_service = SessionService(
+        SessionServiceStore(tmp_path / "session_service.json"),
+        event_listeners=[lambda event: recorded_event_types.append(event.event_type)],
+    )
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+        session_service=session_service,
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        reply = adapter.handle_message(
+            "继续",
+            project_id="repo-a",
+            idempotency_key="idem-continue-shared-session-service",
+        )
+
+    assert reply.reply_code == "action_result"
+    assert "continuation_gate_evaluated" in recorded_event_types
 
 
 def test_adapter_routes_natural_language_message_by_native_thread(
