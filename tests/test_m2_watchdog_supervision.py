@@ -181,3 +181,69 @@ def test_background_supervision_prefers_explicit_native_thread_id(tmp_path: Path
 
     called_threads = [call.args[2] for call in steer_mock.call_args_list]
     assert called_threads == ["thr_run"]
+
+
+def test_background_supervision_scans_canonical_waiting_for_direction_status(tmp_path: Path) -> None:
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        a_client=FakeAClient(
+            tasks=[
+                {
+                    "project_id": "proj-a",
+                    "thread_id": "thr_wait",
+                    "status": "waiting_for_direction",
+                    "phase": "planning",
+                    "cwd": "",
+                    "last_progress_at": old,
+                    "stuck_level": 0,
+                }
+            ]
+        ),
+        start_background_workers=True,
+    )
+    with patch("watchdog.api.supervision.post_steer_thread") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"status": "running"}}
+        with TestClient(app):
+            pass
+
+    called_threads = [call.args[2] for call in steer_mock.call_args_list]
+    assert called_threads == ["thr_wait"]
+
+
+def test_background_supervision_falls_back_to_stable_session_thread_id(tmp_path: Path) -> None:
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        a_client=FakeAClient(
+            tasks=[
+                {
+                    "project_id": "proj-a",
+                    "thread_id": "session:proj-a",
+                    "status": "running",
+                    "phase": "coding",
+                    "cwd": "",
+                    "last_progress_at": old,
+                    "stuck_level": 0,
+                }
+            ]
+        ),
+        start_background_workers=True,
+    )
+    with patch("watchdog.api.supervision.post_steer_thread") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"status": "running"}}
+        with TestClient(app):
+            pass
+
+    called_threads = [call.args[2] for call in steer_mock.call_args_list]
+    assert called_threads == ["session:proj-a"]
