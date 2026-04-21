@@ -378,6 +378,47 @@ def test_feishu_control_records_interaction_window_expired_and_rejects(tmp_path:
     ) == []
 
 
+def test_feishu_control_rejects_expired_pending_approval_from_canonical_lifecycle(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"approval_expiration_seconds": 60.0})
+    app = create_app(settings=settings, a_client=FakeAClient())
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    approval = app.state.canonical_approval_store.update(
+        approval.model_copy(update={"created_at": "2026-04-07T00:00:00Z"})
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json=_control_body(
+                approval,
+                occurred_at="2026-04-07T00:10:00Z",
+                action_window_expires_at="2026-04-07T00:30:00Z",
+                client_request_id="req-feishu-expired-lifecycle",
+            ),
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="interaction_window_expired",
+    )
+    assert len(events) == 1
+    assert events[0].payload["expired_at"] == "2026-04-07T00:01:00Z"
+    assert app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="human_override_recorded",
+    ) == []
+
+
 def test_feishu_control_rejects_superseded_context_and_audits_it(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     app = create_app(settings=settings, a_client=FakeAClient())
