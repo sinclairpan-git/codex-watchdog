@@ -463,6 +463,57 @@ def test_record_recovery_execution_freezes_structured_continuation_packet_and_ha
     assert frozen.payload["rendered_from_packet_id"] == packet["packet_id"]
 
 
+def test_record_recovery_execution_persists_normalized_goal_contract_version_to_lineage(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    packet = _continuation_packet()
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+            "continuation_packet": packet,
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+            "source_packet_id": packet["packet_id"],
+        },
+        goal_contract_version="goal-contract:unknown",
+        source_packet_id="packet:handoff-v9",
+    )
+
+    lineage_records = service.list_lineage(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert len(lineage_records) == 1
+    assert lineage_records[0].goal_contract_version == "goal-v9"
+
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    lineage_pending = next(record for record in recovery_records if record.status == "lineage_pending")
+    lineage_committed = next(
+        record for record in recovery_records if record.status == "lineage_committed"
+    )
+    assert lineage_pending.metadata["goal_contract_version"] == "goal-v9"
+    assert lineage_committed.metadata["goal_contract_version"] == "goal-v9"
+
+    lineage_events = service.list_events(correlation_id=recorded.correlation_id)
+    committed = next(event for event in lineage_events if event.event_type == "lineage_committed")
+    assert committed.payload["goal_contract_version"] == "goal-v9"
+
+
 @pytest.mark.parametrize(
     ("resume_payload", "expected_child_session_id"),
     [
