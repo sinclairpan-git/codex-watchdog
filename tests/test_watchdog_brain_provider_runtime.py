@@ -428,6 +428,57 @@ def test_provider_runtime_maps_branch_switch_decision_to_observe_only_metadata(t
     assert intent.branch_switch_token == "branch-switch:repo-a:86:fact-v1"
 
 
+def test_provider_runtime_does_not_emit_continue_args_for_recovery_intents(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-recovery-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "continuation_decision": "recover_current_branch",
+                                    "routing_preference": "same_thread",
+                                    "goal_coverage": "partial",
+                                    "remaining_work_hypothesis": ["回滚最近的坏状态", "重试控制链路"],
+                                    "completion_confidence": 0.72,
+                                    "next_branch_hypothesis": "",
+                                    "decision_reason": "需要执行恢复动作",
+                                    "evidence_codes": ["recovery_required"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "active", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+        decision_context=_decision_context_payload(),
+    )
+
+    assert intent.intent == "propose_recovery"
+    assert intent.continuation_decision == "recover_current_branch"
+    assert intent.action_arguments == {}
+    assert intent.remaining_work_hypothesis == ["回滚最近的坏状态", "重试控制链路"]
+
+
 def test_brain_service_falls_back_when_provider_output_violates_schema(tmp_path: Path) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
