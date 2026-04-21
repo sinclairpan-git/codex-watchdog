@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import inspect
 import json
 import threading
 import time
@@ -6610,6 +6611,76 @@ async def test_startup_does_not_wait_for_full_delivery_drain(
 
     try:
         await asyncio.wait_for(startup_task, timeout=0.05)
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_waits_for_approval_reconcile_before_starting_delivery_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    reconcile_started = asyncio.Event()
+    release_reconcile = asyncio.Event()
+    delivery_started = asyncio.Event()
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        if step_name == "canonical_approval_store.reconcile_pending_records_against_decisions":
+            reconcile_started.set()
+            await release_reconcile.wait()
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def gated_delivery_loop(_app) -> None:
+        _ = _app
+        delivery_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+    monkeypatch.setattr("watchdog.main._run_delivery_loop", gated_delivery_loop)
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+
+    try:
+        await asyncio.wait_for(reconcile_started.wait(), timeout=0.1)
+        await asyncio.sleep(0)
+        assert not delivery_started.is_set()
+        release_reconcile.set()
+        await asyncio.wait_for(startup_task, timeout=0.1)
+        assert delivery_started.is_set()
     finally:
         if startup_task.done() and not startup_task.cancelled():
             await lifespan.__aexit__(None, None, None)
