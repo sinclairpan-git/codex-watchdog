@@ -158,6 +158,76 @@ def test_future_worker_service_emits_heartbeat_failed_and_cancelled_events(tmp_p
     assert events[4].payload["reason"] == "superseded_by_new_worker"
 
 
+def test_future_worker_service_allows_repeated_heartbeat_events(tmp_path: Path) -> None:
+    from watchdog.main import create_app
+    from watchdog.settings import Settings
+
+    app = create_app(
+        Settings(
+            api_token="watchdog-token",
+            a_agent_token="a-agent-token",
+            a_agent_base_url="http://a-control.test",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=False,
+    )
+
+    service = app.state.future_worker_service
+    service.request_worker(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:task-heartbeats",
+        decision_trace_ref="trace:heartbeats",
+        goal_contract_version="goal-contract:v1",
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:heartbeats"],
+        retrieval_handles=["handle:heartbeats"],
+        distilled_summary_ref="summary:heartbeats",
+        execution_budget_ref="budget:heartbeats",
+        occurred_at="2026-04-14T06:00:00Z",
+    )
+    service.record_started(
+        worker_task_ref="worker:task-heartbeats",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T06:01:00Z",
+        worker_runtime_contract={"provider": "codex", "model": "gpt-5.4"},
+    )
+    service.record_heartbeat(
+        worker_task_ref="worker:task-heartbeats",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T06:02:00Z",
+        heartbeat={"progress": "indexing", "stuck_level": 0},
+    )
+    service.record_heartbeat(
+        worker_task_ref="worker:task-heartbeats",
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        occurred_at="2026-04-14T06:03:00Z",
+        heartbeat={"progress": "summarizing", "stuck_level": 1},
+    )
+
+    events = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.related_ids.get("worker_task_ref") == "worker:task-heartbeats"
+    ]
+
+    assert [event.event_type for event in events] == [
+        "future_worker_requested",
+        "future_worker_started",
+        "future_worker_heartbeat",
+        "future_worker_heartbeat",
+    ]
+    assert [event.occurred_at for event in events[-2:]] == [
+        "2026-04-14T06:02:00Z",
+        "2026-04-14T06:03:00Z",
+    ]
+    assert events[-2].event_id != events[-1].event_id
+
+
 def test_future_worker_service_carries_parent_native_thread_id_across_lifecycle_events(
     tmp_path: Path,
 ) -> None:
