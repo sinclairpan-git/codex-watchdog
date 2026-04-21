@@ -989,6 +989,46 @@ def test_feishu_control_command_request_routes_pause_and_persists_receipt(
     assert stored.effect == "session_paused"
 
 
+def test_feishu_control_command_request_persists_feishu_route_binding(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-route-bind",
+                "interaction_family_id": "family-command-route-bind",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-route-bind",
+                "project_id": "repo-a",
+                "command_text": "暂停",
+                "receive_id": "chat-command-route",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="feishu_command_route_bound",
+    )
+    assert len(events) == 1
+    assert events[0].related_ids["feishu_actor_id"] == "user:carol"
+    assert events[0].related_ids["feishu_receive_id"] == "chat-command-route"
+    assert events[0].related_ids["feishu_receive_id_type"] == "chat_id"
+    assert events[0].related_ids["feishu_chat_id"] == "chat-command-route"
+    assert events[0].payload["intent_code"] == "pause_session"
+
+
 def test_feishu_control_command_request_can_route_by_native_thread(
     tmp_path: Path,
 ) -> None:
