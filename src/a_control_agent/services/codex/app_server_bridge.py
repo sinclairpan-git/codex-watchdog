@@ -14,6 +14,9 @@ _APPROVAL_REQUEST_METHODS = {
     "item/fileChange/requestApproval",
     "item/permissions/requestApproval",
 }
+_PAUSE_STEER_MESSAGE = (
+    "Pause execution now. Do not run more commands, edits, or analysis until an explicit resume request arrives."
+)
 
 
 class CodexAppServerBridge:
@@ -97,6 +100,17 @@ class CodexAppServerBridge:
             params["expectedTurnId"] = expected_turn_id
         payload = await self._transport.request("turn/steer", params)
         return self._remember_turn(thread_id, payload)
+
+    async def pause_thread(self, thread_id: str) -> dict[str, Any]:
+        snapshot = await self.read_thread(thread_id)
+        if self.active_turn_id(thread_id):
+            await self.steer_turn(thread_id, message=_PAUSE_STEER_MESSAGE)
+        remembered = self.thread_snapshot(thread_id) or snapshot or {"thread_id": thread_id}
+        paused_snapshot = dict(remembered)
+        paused_snapshot["status"] = "paused"
+        paused_snapshot["pause_requested"] = True
+        self._thread_snapshots[thread_id] = paused_snapshot
+        return paused_snapshot
 
     async def ingest_server_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
         if self._approvals_store is None or self._task_store is None:
