@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +30,20 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _maybe_parse_timestamp(value: str | None) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        return _parse_timestamp(normalized)
+    except ValueError:
+        return None
+
+
+def _format_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _fact_snapshot_order(value: str) -> tuple[int, str]:
@@ -523,7 +537,17 @@ class FeishuControlService:
         request: FeishuControlRequest,
     ) -> None:
         occurred_at = _parse_timestamp(request.occurred_at)
-        expires_at = _parse_timestamp(request.action_window_expires_at)
+        expires_at_raw = request.action_window_expires_at
+        expires_at = _maybe_parse_timestamp(approval.expires_at)
+        if expires_at is None and self._settings.approval_expiration_seconds > 0:
+            created_at = _maybe_parse_timestamp(approval.created_at)
+            if created_at is not None:
+                expires_at = created_at + timedelta(
+                    seconds=float(self._settings.approval_expiration_seconds)
+                )
+                expires_at_raw = _format_timestamp(expires_at)
+        if expires_at is None:
+            expires_at = _parse_timestamp(request.action_window_expires_at)
         if occurred_at < expires_at:
             return
         self._session_service.record_event(
@@ -544,7 +568,7 @@ class FeishuControlService:
             occurred_at=request.occurred_at,
             payload={
                 "channel_kind": request.channel_kind,
-                "expired_at": request.action_window_expires_at,
+                "expired_at": expires_at_raw,
                 "received_at": request.occurred_at,
             },
         )
