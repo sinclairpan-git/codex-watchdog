@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -273,6 +274,162 @@ def test_continue_session_is_suppressed_when_continuation_identity_is_already_is
     assert len(gate_events) == 1
     assert gate_events[0].payload["gate_status"] == "suppressed"
     assert gate_events[0].payload["suppression_reason"] == "continuation_identity_in_flight"
+
+
+def test_continue_session_ignores_stale_issued_continuation_identity_after_ttl(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    stale_occurred_at = (
+        datetime.now(UTC) - timedelta(minutes=30)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    session_service.record_continuation_identity_state(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:continue_current_branch",
+        state="issued",
+        decision_source="manual_action",
+        decision_class="continue_current_branch",
+        action_ref="continue_session",
+        authoritative_snapshot_version="fact-v1",
+        snapshot_epoch="session-seq:1",
+        goal_contract_version="goal-contract:unknown",
+        route_key="repo-a:session:repo-a:thr_native_1:continue_current_branch:fact-v1",
+        occurred_at=stale_occurred_at,
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-continue-stale-issued",
+        arguments={},
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        result = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+        )
+
+    assert steer_mock.call_count == 1
+    assert result.action_status == "completed"
+    assert result.reply_code == "action_result"
+    invalidated_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_identity_invalidated",
+    )
+    assert len(invalidated_events) == 1
+    assert invalidated_events[0].payload["suppression_reason"] == "stale_entry"
+    issued_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_identity_issued",
+    )
+    assert len(issued_events) == 2
+    assert issued_events[-1].causation_id == "idem-continue-stale-issued"
+
+
+def test_continue_session_ignores_issued_continuation_identity_from_stale_route(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    continuation_identity = "repo-a:session:repo-a:thr_native_1:continue_current_branch"
+    session_service.record_continuation_identity_state(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        continuation_identity=continuation_identity,
+        state="issued",
+        decision_source="manual_action",
+        decision_class="continue_current_branch",
+        action_ref="continue_session",
+        authoritative_snapshot_version="fact-v1",
+        snapshot_epoch="session-seq:1",
+        goal_contract_version="goal-contract:unknown",
+        route_key=f"{continuation_identity}:fact-v1",
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.CONTINUE_SESSION,
+        project_id="repo-a",
+        operator="openclaw",
+        idempotency_key="idem-continue-stale-route",
+        arguments={
+            "_continuation_governance": {
+                "decision_source": "manual_action",
+                "decision_class": "continue_current_branch",
+                "action_ref": "continue_session",
+                "authoritative_snapshot_version": "fact-v2",
+                "snapshot_epoch": "session-seq:2",
+                "goal_contract_version": "goal-contract:unknown",
+                "continuation_identity": continuation_identity,
+                "route_key": f"{continuation_identity}:fact-v2",
+            }
+        },
+    )
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        result = execute_watchdog_action(
+            action,
+            settings=settings,
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+        )
+
+    assert steer_mock.call_count == 1
+    assert result.action_status == "completed"
+    invalidated_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_identity_invalidated",
+    )
+    assert len(invalidated_events) == 1
+    assert invalidated_events[0].payload["suppression_reason"] == "stale_entry"
+    assert invalidated_events[0].related_ids["route_key"] == f"{continuation_identity}:fact-v2"
 
 
 @pytest.mark.parametrize(
