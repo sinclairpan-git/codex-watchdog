@@ -598,7 +598,6 @@ class DeliveryWorker:
         type_key: str | None,
         default_type: str | None,
     ) -> tuple[str, str, str] | None:
-        candidate_by_route: dict[tuple[str, str], str] = {}
         for event in reversed(events):
             related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
             receive_id = str(related_ids.get(value_key) or "").strip()
@@ -611,11 +610,8 @@ class DeliveryWorker:
                 receive_id_type = str(default_type or "").strip()
             if not receive_id_type:
                 continue
-            candidate_by_route.setdefault((receive_id, receive_id_type), event.event_id)
-        if len(candidate_by_route) != 1:
-            return None
-        (receive_id, receive_id_type), source_event_id = next(iter(candidate_by_route.items()))
-        return (receive_id, receive_id_type, source_event_id)
+            return (receive_id, receive_id_type, event.event_id)
+        return None
 
     def process_next_ready(
         self,
