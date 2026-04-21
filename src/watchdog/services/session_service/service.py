@@ -982,7 +982,7 @@ class SessionService:
                 correlation_id=correlation_id,
                 lineage_id=lineage_id,
                 metadata={
-                    "goal_contract_version": goal_contract_version,
+                    "goal_contract_version": normalized_goal_contract_version,
                 },
             )
             lineage_committed_at = _utcnow()
@@ -995,7 +995,7 @@ class SessionService:
                     relation="resumes_after_interruption",
                     source_packet_id=source_packet_id,
                     recovery_reason=recovery_reason,
-                    goal_contract_version=goal_contract_version,
+                    goal_contract_version=normalized_goal_contract_version,
                     recovery_transaction_id=recovery_transaction_id,
                     committed_at=lineage_committed_at,
                     causation_id=recovery_transaction_id,
@@ -1020,7 +1020,7 @@ class SessionService:
                     **child_native_related_ids,
                 },
                 payload={
-                    "goal_contract_version": goal_contract_version,
+                    "goal_contract_version": normalized_goal_contract_version,
                     "relation": "resumes_after_interruption",
                 },
             )
@@ -1040,7 +1040,7 @@ class SessionService:
                 correlation_id=correlation_id,
                 lineage_id=lineage_id,
                 metadata={
-                    "goal_contract_version": goal_contract_version,
+                    "goal_contract_version": normalized_goal_contract_version,
                 },
             )
             parent_cooled_at = _utcnow()
