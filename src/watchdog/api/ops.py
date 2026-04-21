@@ -807,6 +807,9 @@ def build_ops_health_summary(
     approval_rows = approval_store.snapshot_rows()
     delivery_rows = delivery_store.snapshot_rows()
     receipt_rows = receipt_store.snapshot_rows()
+    provider_degrade_reason_counts = _provider_degrade_reason_counts(
+        decision_store.list_records()
+    )
 
     blocked_too_long = sum(
         1
@@ -890,6 +893,7 @@ def build_ops_health_summary(
         )
         if value
     ) + sum(1 for count in runtime_gate_reason_counts.values() if count)
+    active_alerts += sum(1 for count in provider_degrade_reason_counts.values() if count)
 
     return {
         "status": "degraded" if active_alerts or release_gate_blockers else "ok",
