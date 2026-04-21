@@ -913,6 +913,7 @@ def _supersede_stale_interactions_for_recovery(
                 }
             )
         )
+        fresh_outbox_seq = store.reserve_outbox_seq()
         store.update_delivery_record(
             record.model_copy(
                 update={
@@ -922,7 +923,7 @@ def _supersede_stale_interactions_for_recovery(
                     "audit_ref": f"{record.audit_ref}:recovery",
                     "created_at": now,
                     "updated_at": now,
-                    "outbox_seq": record.outbox_seq + 1,
+                    "outbox_seq": fresh_outbox_seq,
                     "delivery_status": "pending",
                     "delivery_attempt": 0,
                     "receipt_id": None,
