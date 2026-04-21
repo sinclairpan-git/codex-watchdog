@@ -1,8 +1,13 @@
-#!/bin/zsh
+#!/usr/bin/env sh
 set -euo pipefail
 
-SCRIPT_DIR=${0:A:h}
-APP_DIR=${APP_DIR:-${SCRIPT_DIR:h}}
+SCRIPT_PATH=$0
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+APP_DIR=${APP_DIR:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}
 
 cd "$APP_DIR"
 
@@ -13,7 +18,7 @@ source "$APP_DIR/.env.a"
 set +a
 
 UV_BIN="${UV_BIN:-$(command -v uv || true)}"
-if [[ -z "$UV_BIN" ]]; then
+if [ -z "$UV_BIN" ]; then
   echo "uv is required on PATH" >&2
   exit 1
 fi
