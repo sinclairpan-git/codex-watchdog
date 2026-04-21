@@ -57,6 +57,15 @@ class DeliveryOutboxRecord(BaseModel):
     operator_notes: list[str] = Field(default_factory=list)
     envelope_payload: dict[str, Any] = Field(default_factory=dict)
 
+    @property
+    def effective_native_thread_id(self) -> str | None:
+        payload = self.envelope_payload if isinstance(self.envelope_payload, dict) else {}
+        for candidate in (self.native_thread_id, payload.get("native_thread_id")):
+            normalized = str(candidate or "").strip()
+            if normalized:
+                return normalized
+        return None
+
 
 class _DeliveryStoreFile(BaseModel):
     next_outbox_seq: int = 1

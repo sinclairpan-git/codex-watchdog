@@ -167,6 +167,17 @@ class CanonicalApprovalRecord(BaseModel):
     operator_notes: list[str] = Field(default_factory=list)
     decision: CanonicalDecisionRecord
 
+    @property
+    def effective_native_thread_id(self) -> str | None:
+        for candidate in (
+            self.native_thread_id,
+            self.decision.effective_native_thread_id,
+        ):
+            normalized = str(candidate or "").strip()
+            if normalized:
+                return normalized
+        return None
+
 
 class CanonicalApprovalResponseRecord(BaseModel):
     response_id: str
@@ -734,7 +745,7 @@ def build_canonical_approval_record(
         project_id=decision.project_id,
         session_id=decision.session_id,
         thread_id=decision.thread_id,
-        native_thread_id=decision.native_thread_id,
+        native_thread_id=decision.effective_native_thread_id,
         status="pending",
         created_at=_utc_now_iso(),
         operator_notes=[
@@ -799,6 +810,7 @@ def materialize_canonical_approval(
                 related_ids={
                     "approval_id": record.approval_id,
                     "decision_id": record.decision.decision_id,
+                    "native_thread_id": str(record.effective_native_thread_id or "").strip(),
                 },
                 payload={
                     "requested_action": record.requested_action,
@@ -901,6 +913,7 @@ def expire_pending_canonical_approvals(
                 approval_id=current.approval_id,
                 decision_id=current.decision.decision_id,
                 envelope_id=current.envelope_id,
+                native_thread_id=current.effective_native_thread_id,
                 requested_action=current.requested_action,
                 expiration_reason=expiration_reason,
                 causation_id=causation_id,
@@ -1071,6 +1084,9 @@ def respond_to_canonical_approval(
                     "approval_id": updated_approval.approval_id,
                     "decision_id": updated_approval.decision.decision_id,
                     "response_id": response_id,
+                    "native_thread_id": str(
+                        updated_approval.effective_native_thread_id or ""
+                    ).strip(),
                 },
                 payload={
                     "response_action": response_action,
@@ -1100,6 +1116,9 @@ def respond_to_canonical_approval(
                     "decision_id": updated_approval.decision.decision_id,
                     "response_id": response_id,
                     "envelope_id": updated_approval.envelope_id,
+                    "native_thread_id": str(
+                        updated_approval.effective_native_thread_id or ""
+                    ).strip(),
                 },
                 payload=override_payload,
             )

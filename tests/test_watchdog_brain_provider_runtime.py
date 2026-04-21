@@ -11,6 +11,7 @@ from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.contracts.session_spine.models import SessionProjection, TaskProgressView
 from watchdog.services.brain.models import DecisionIntent
 from watchdog.services.brain.provider_runtime import OpenAICompatibleBrainProvider
+from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.rules import MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.session_service.service import SessionService
@@ -21,6 +22,73 @@ from watchdog.settings import Settings
 
 def _session_service(tmp_path: Path) -> SessionService:
     return SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+
+def _bootstrap_goal_contract(session_service: SessionService) -> None:
+    GoalContractService(session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="invoice assistant",
+        task_prompt="Build the invoice assistant end to end",
+        last_user_instruction="Continue the export audit refresh work",
+        phase="editing_source",
+        last_summary="Implemented the export audit surfaces",
+        current_phase_goal="Refresh the export audit surface",
+        explicit_deliverables=["export audit surface", "verification evidence"],
+        completion_signals=["export audit refresh merged", "targeted tests green"],
+        active_goal="Refresh the export audit surface",
+    )
+
+
+def _seed_active_state(repo_root: Path) -> None:
+    project_state_dir = repo_root / ".ai-sdlc" / "project" / "config"
+    project_state_dir.mkdir(parents=True, exist_ok=True)
+    (project_state_dir / "project-state.yaml").write_text(
+        "status: initialized\nproject_execution_state: active\nnext_work_item_seq: 86\n",
+        encoding="utf-8",
+    )
+    checkpoint_dir = repo_root / ".ai-sdlc" / "state"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    (checkpoint_dir / "checkpoint.yml").write_text(
+        "current_stage: execute\nfeature:\n  id: 085-model-first-continuation-governance\n  current_branch: codex/085-model-first-continuation-governance\n",
+        encoding="utf-8",
+    )
+
+
+def _decision_context_payload() -> dict[str, object]:
+    return {
+        "packet_version": "pcdi:v1",
+        "project_ref": {
+            "project_id": "repo-a",
+            "project_execution_state": "active",
+            "project_total_goal": "Build the invoice assistant end to end",
+        },
+        "branch_ref": {
+            "branch_goal": "Refresh the export audit surface",
+            "next_work_item_seq": 86,
+            "target_work_item_seq": 86,
+        },
+        "progress_ref": {
+            "current_phase": "editing_source",
+            "current_progress_summary": "ship feishu and memory hub integration",
+        },
+        "session_ref": {
+            "session_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "task_status": "active",
+        },
+        "governance_ref": {
+            "goal_contract_version": "goal-v1",
+        },
+        "freshness_ref": {
+            "snapshot_epoch": "session-seq:1",
+            "snapshot_version": "fact-v1",
+            "snapshot_observed_at": "2026-04-16T00:00:00Z",
+        },
+        "continuation_identity": "repo-a:session:repo-a:thr_native_1",
+        "route_key": "repo-a:session:repo-a:thr_native_1:fact-v1",
+        "branch_switch_token": "branch-switch:repo-a:86:fact-v1",
+    }
 
 
 def _record() -> PersistedSessionRecord:
@@ -66,6 +134,14 @@ def test_brain_service_uses_openai_compatible_provider_when_configured(tmp_path:
         assert request.headers["Authorization"] == "Bearer sk-provider"
         payload = json.loads(request.content.decode("utf-8"))
         assert payload["model"] == "minimax-m2.7"
+        decision_context = json.loads(payload["messages"][1]["content"])["decision_context"]
+        assert decision_context["project_ref"]["project_total_goal"] == "Build the invoice assistant end to end"
+        assert decision_context["branch_ref"]["branch_goal"] == "Refresh the export audit surface"
+        assert decision_context["branch_ref"]["next_branch_candidate"] == "work-item-seq:86"
+        assert decision_context["progress_ref"]["current_progress_summary"] == "ship feishu and memory hub integration"
+        assert decision_context["governance_ref"]["goal_contract_version"] == "goal-v1"
+        assert decision_context["continuation_identity"] == "repo-a:session:repo-a:thr_native_1"
+        assert decision_context["route_key"] == "repo-a:session:repo-a:thr_native_1:fact-v1"
         return httpx.Response(
             200,
             json={
@@ -75,14 +151,13 @@ def test_brain_service_uses_openai_compatible_provider_when_configured(tmp_path:
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "session_decision": "active",
-                                    "execution_advice": "auto_execute",
-                                    "approval_advice": "none",
-                                    "risk_band": "low",
+                                    "continuation_decision": "continue_current_branch",
+                                    "routing_preference": "same_thread",
                                     "goal_coverage": "partial",
                                     "remaining_work_hypothesis": ["continue implementation"],
-                                    "confidence": 0.91,
-                                    "reason_short": "current work can continue",
+                                    "completion_confidence": 0.91,
+                                    "next_branch_hypothesis": "",
+                                    "decision_reason": "current work can continue",
                                     "evidence_codes": ["active_goal_present"],
                                 }
                             )
@@ -92,6 +167,10 @@ def test_brain_service_uses_openai_compatible_provider_when_configured(tmp_path:
             },
         )
 
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
+
     service = BrainDecisionService(
         settings=Settings(
             data_dir=str(tmp_path),
@@ -100,13 +179,15 @@ def test_brain_service_uses_openai_compatible_provider_when_configured(tmp_path:
             brain_provider_api_key="sk-provider",
             brain_provider_model="minimax-m2.7",
         ),
-        session_service=_session_service(tmp_path),
+        session_service=session_service,
+        repo_root=tmp_path,
         provider_transport=httpx.MockTransport(handler),
     )
 
     intent = service.evaluate_session(record=_record())
 
     assert intent.intent == "propose_execute"
+    assert intent.continuation_decision == "continue_current_branch"
     assert intent.provider == "openai-compatible"
     assert intent.model == "minimax-m2.7"
 
@@ -126,14 +207,13 @@ def test_brain_service_uses_named_provider_profile_when_selected(tmp_path: Path)
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "session_decision": "active",
-                                    "execution_advice": "auto_execute",
-                                    "approval_advice": "none",
-                                    "risk_band": "low",
+                                    "continuation_decision": "continue_current_branch",
+                                    "routing_preference": "same_thread",
                                     "goal_coverage": "partial",
                                     "remaining_work_hypothesis": ["continue implementation"],
-                                    "confidence": 0.91,
-                                    "reason_short": "current work can continue",
+                                    "completion_confidence": 0.91,
+                                    "next_branch_hypothesis": "",
+                                    "decision_reason": "current work can continue",
                                     "evidence_codes": ["active_goal_present"],
                                 }
                             )
@@ -142,6 +222,10 @@ def test_brain_service_uses_named_provider_profile_when_selected(tmp_path: Path)
                 ],
             },
         )
+
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
 
     service = BrainDecisionService(
         settings=Settings(
@@ -154,7 +238,8 @@ def test_brain_service_uses_named_provider_profile_when_selected(tmp_path: Path)
                 '"model": "deepseek-chat"}}'
             ),
         ),
-        session_service=_session_service(tmp_path),
+        session_service=session_service,
+        repo_root=tmp_path,
         provider_transport=httpx.MockTransport(handler),
     )
 
@@ -176,6 +261,9 @@ def test_provider_runtime_sends_managed_action_contract_surface(tmp_path: Path) 
         post_operator_guidance = user_payload["managed_agent_contract"]["actions"]["post_operator_guidance"]
 
         assert "Do not emit action_ref, action_arguments, approval_id, mode, or resume payloads." in system_prompt
+        assert user_payload["decision_context"]["packet_version"] == "pcdi:v1"
+        assert user_payload["decision_context"]["session_ref"]["native_thread_id"] == "thr_native_1"
+        assert user_payload["decision_context"]["branch_switch_token"] == "branch-switch:repo-a:86:fact-v1"
         assert continue_session["allowed_keys"] == list(
             MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS["continue_session"]["allowed_keys"]
         )
@@ -195,14 +283,13 @@ def test_provider_runtime_sends_managed_action_contract_surface(tmp_path: Path) 
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "session_decision": "active",
-                                    "execution_advice": "auto_execute",
-                                    "approval_advice": "none",
-                                    "risk_band": "low",
+                                    "continuation_decision": "continue_current_branch",
+                                    "routing_preference": "same_thread",
                                     "goal_coverage": "partial",
                                     "remaining_work_hypothesis": ["continue implementation"],
-                                    "confidence": 0.91,
-                                    "reason_short": "current work can continue",
+                                    "completion_confidence": 0.91,
+                                    "next_branch_hypothesis": "",
+                                    "decision_reason": "current work can continue",
                                     "evidence_codes": ["active_goal_present"],
                                 }
                             )
@@ -227,10 +314,12 @@ def test_provider_runtime_sends_managed_action_contract_surface(tmp_path: Path) 
         record=_record(),
         session_truth={"status": "active", "activity_phase": "editing_source"},
         memory_advisory_context=None,
+        decision_context=_decision_context_payload(),
     )
 
-    assert intent.prompt_schema_ref == "prompt:brain-decision-v2"
-    assert intent.output_schema_ref == "schema:provider-decision-v2"
+    assert intent.prompt_schema_ref == "prompt:brain-continuation-decision-v3"
+    assert intent.output_schema_ref == "schema:provider-continuation-decision-v3"
+    assert intent.continuation_decision == "continue_current_branch"
 
 
 def test_provider_runtime_rejects_raw_action_arguments_from_provider(tmp_path: Path) -> None:
@@ -244,14 +333,13 @@ def test_provider_runtime_rejects_raw_action_arguments_from_provider(tmp_path: P
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "session_decision": "active",
-                                    "execution_advice": "auto_execute",
-                                    "approval_advice": "none",
-                                    "risk_band": "low",
+                                    "continuation_decision": "continue_current_branch",
+                                    "routing_preference": "same_thread",
                                     "goal_coverage": "partial",
                                     "remaining_work_hypothesis": ["continue implementation"],
-                                    "confidence": 0.77,
-                                    "reason_short": "current work can continue",
+                                    "completion_confidence": 0.77,
+                                    "next_branch_hypothesis": "",
+                                    "decision_reason": "current work can continue",
                                     "evidence_codes": ["active_goal_present"],
                                     "action_arguments": {
                                         "message": "override",
@@ -283,7 +371,61 @@ def test_provider_runtime_rejects_raw_action_arguments_from_provider(tmp_path: P
             record=_record(),
             session_truth={"status": "active", "activity_phase": "editing_source"},
             memory_advisory_context=None,
+            decision_context=_decision_context_payload(),
         )
+
+
+def test_provider_runtime_maps_branch_switch_decision_to_observe_only_metadata(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-branch-switch-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "continuation_decision": "branch_complete_switch",
+                                    "routing_preference": "next_branch_session",
+                                    "goal_coverage": "complete",
+                                    "remaining_work_hypothesis": [],
+                                    "completion_confidence": 0.96,
+                                    "next_branch_hypothesis": "086-continuation-routing",
+                                    "decision_reason": "current branch goal is complete",
+                                    "evidence_codes": ["branch_goal_complete", "next_work_item_available"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "active", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+        decision_context=_decision_context_payload(),
+    )
+
+    assert intent.intent == "branch_complete_switch"
+    assert intent.continuation_decision == "branch_complete_switch"
+    assert intent.routing_preference == "next_branch_session"
+    assert intent.next_branch_hypothesis == "086-continuation-routing"
+    assert intent.target_work_item_seq == 86
+    assert intent.branch_switch_token == "branch-switch:repo-a:86:fact-v1"
 
 
 def test_brain_service_falls_back_when_provider_output_violates_schema(tmp_path: Path) -> None:
@@ -330,6 +472,9 @@ def test_brain_service_falls_back_when_provider_output_violates_schema(tmp_path:
         }
     )
 
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
     service = BrainDecisionService(
         settings=Settings(
             data_dir=str(tmp_path),
@@ -338,7 +483,8 @@ def test_brain_service_falls_back_when_provider_output_violates_schema(tmp_path:
             brain_provider_api_key="sk-provider",
             brain_provider_model="minimax-m2.7",
         ),
-        session_service=_session_service(tmp_path),
+        session_service=session_service,
+        repo_root=tmp_path,
         provider_transport=httpx.MockTransport(handler),
     )
 
@@ -378,6 +524,34 @@ def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_pa
         }
     )
 
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=session_service,
+        repo_root=tmp_path,
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=record)
+
+    assert intent.intent == "candidate_closure"
+    assert intent.provider == "resident_orchestrator"
+    assert intent.model == "rule-based-brain"
+
+
+def test_brain_service_blocks_provider_when_goal_contract_missing(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("provider should not be called without authoritative goal contract")
+
+    _seed_active_state(tmp_path)
     service = BrainDecisionService(
         settings=Settings(
             data_dir=str(tmp_path),
@@ -387,14 +561,112 @@ def test_brain_service_falls_back_to_rule_based_when_provider_unavailable(tmp_pa
             brain_provider_model="minimax-m2.7",
         ),
         session_service=_session_service(tmp_path),
+        repo_root=tmp_path,
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=_record())
+
+    assert intent.intent == "observe_only"
+    assert intent.rationale == "goal contract is not ready for autonomous continuation"
+
+
+def test_brain_service_blocks_provider_when_project_is_paused(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("provider should not be called for paused projects")
+
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
+    resume_dir = tmp_path / ".ai-sdlc" / "state"
+    resume_dir.mkdir(parents=True, exist_ok=True)
+    (resume_dir / "resume-pack.yaml").write_text("current_stage: paused\n", encoding="utf-8")
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=session_service,
+        repo_root=tmp_path,
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=_record())
+
+    assert intent.intent == "observe_only"
+    assert intent.rationale == "project is not active for autonomous continuation"
+
+
+def test_brain_service_prefers_authoritative_project_state_over_resume_pack_stage(
+    tmp_path: Path,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("provider should not be called for completed projects")
+
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
+    (tmp_path / ".ai-sdlc" / "project" / "config" / "project-state.yaml").write_text(
+        "status: initialized\nproject_execution_state: completed\nnext_work_item_seq: 86\n",
+        encoding="utf-8",
+    )
+    resume_dir = tmp_path / ".ai-sdlc" / "state"
+    resume_dir.mkdir(parents=True, exist_ok=True)
+    (resume_dir / "resume-pack.yaml").write_text("current_stage: design\n", encoding="utf-8")
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=session_service,
+        repo_root=tmp_path,
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=_record())
+
+    assert intent.intent == "observe_only"
+    assert intent.rationale == "project is not active for autonomous continuation"
+
+
+def test_brain_service_blocks_provider_when_pending_approval_exists(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("provider should not be called while approval is pending")
+
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
+    record = _record().model_copy(
+        update={
+            "session": _record().session.model_copy(update={"pending_approval_count": 1}),
+        }
+    )
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=session_service,
+        repo_root=tmp_path,
         provider_transport=httpx.MockTransport(handler),
     )
 
     intent = service.evaluate_session(record=record)
 
-    assert intent.intent == "candidate_closure"
-    assert intent.provider == "resident_orchestrator"
-    assert intent.model == "rule-based-brain"
+    assert intent.intent == "require_approval"
+    assert intent.rationale == "pending approval blocks autonomous continuation"
 
 
 def test_brain_service_rule_based_continue_keeps_next_step_when_provider_unavailable(
@@ -420,6 +692,9 @@ def test_brain_service_rule_based_continue_keeps_next_step_when_provider_unavail
         }
     )
 
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
     service = BrainDecisionService(
         settings=Settings(
             data_dir=str(tmp_path),
@@ -428,7 +703,8 @@ def test_brain_service_rule_based_continue_keeps_next_step_when_provider_unavail
             brain_provider_api_key="sk-provider",
             brain_provider_model="minimax-m2.7",
         ),
-        session_service=_session_service(tmp_path),
+        session_service=session_service,
+        repo_root=tmp_path,
         provider_transport=httpx.MockTransport(handler),
     )
 
@@ -589,6 +865,9 @@ def test_brain_service_keeps_structured_next_step_from_provider(tmp_path: Path) 
             },
         )
 
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
     service = BrainDecisionService(
         settings=Settings(
             data_dir=str(tmp_path),
@@ -597,7 +876,8 @@ def test_brain_service_keeps_structured_next_step_from_provider(tmp_path: Path) 
             brain_provider_api_key="sk-provider",
             brain_provider_model="minimax-m2.7",
         ),
-        session_service=_session_service(tmp_path),
+        session_service=session_service,
+        repo_root=tmp_path,
         provider_transport=httpx.MockTransport(handler),
     )
 

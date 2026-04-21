@@ -58,6 +58,44 @@ def test_recovery_transaction_persists_intermediate_lineage_and_parent_cooling_s
     assert parent_cooling.metadata == {"status": "cooled"}
 
 
+def test_recovery_transaction_accepts_child_session_id_from_current_resume_payload(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "child_session_id": "session:repo-a:thr_child_1",
+            "thread_id": "thr_child_1",
+        },
+        goal_contract_version="goal-v9",
+        source_packet_id="packet:handoff-v9",
+    )
+
+    assert recorded.child_session_id == "session:repo-a:thr_child_1"
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert recovery_records[-1].child_session_id == "session:repo-a:thr_child_1"
+    lineage_records = service.list_lineage(parent_session_id="session:repo-a")
+    assert len(lineage_records) == 1
+    assert lineage_records[0].child_session_id == "session:repo-a:thr_child_1"
+
+
 def test_recovery_transaction_rejects_second_active_transaction_for_same_recovery_key(
     tmp_path: Path,
 ) -> None:

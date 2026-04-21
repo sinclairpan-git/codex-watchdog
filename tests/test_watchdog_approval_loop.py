@@ -17,6 +17,8 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 class FakeAClient:
     def __init__(self, *, context_pressure: str = "critical") -> None:
         self._context_pressure = context_pressure
+        self._pending_approval = True
+        self._phase = "approval"
         self.decision_calls: list[tuple[str, str, str, str]] = []
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
@@ -28,8 +30,8 @@ class FakeAClient:
                 "project_id": project_id,
                 "thread_id": "thr_native_1",
                 "status": "running",
-                "phase": "approval",
-                "pending_approval": True,
+                "phase": self._phase,
+                "pending_approval": self._pending_approval,
                 "last_summary": "waiting for approval",
                 "files_touched": ["src/example.py"],
                 "context_pressure": self._context_pressure,
@@ -38,6 +40,17 @@ class FakeAClient:
                 "last_progress_at": "2026-04-05T05:20:00Z",
             },
         }
+
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        _ = (status, project_id, decided_by, callback_status)
+        return []
 
     def decide_approval(
         self,
@@ -48,6 +61,8 @@ class FakeAClient:
         note: str = "",
     ) -> dict[str, object]:
         self.decision_calls.append((approval_id, decision, operator, note))
+        self._pending_approval = False
+        self._phase = "editing_source"
         return {
             "success": True,
             "data": {
@@ -63,7 +78,9 @@ class FakeAClient:
         project_id: str,
         *,
         reason: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.handoff_calls.append((project_id, reason))
         return {
             "success": True,
@@ -76,7 +93,9 @@ class FakeAClient:
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.resume_calls.append((project_id, mode, handoff_summary))
         return {
             "success": True,
@@ -925,6 +944,87 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
     assert pending[1].envelope_payload["notification_kind"] == "approval_result"
 
 
+def test_approve_response_executes_registered_action_from_persisted_spine_when_live_read_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        ApprovalResponseStore,
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+
+    class ApprovalOnlyClient(FakeAClient):
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            raise RuntimeError(f"live read unavailable: {project_id}")
+
+    class RuntimeSeedClient(FakeAClient):
+        def list_tasks(self) -> list[dict[str, object]]:
+            return [self.get_envelope("repo-a")["data"]]
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
+    live_client = RuntimeSeedClient(context_pressure="low")
+    app = create_app(_settings(tmp_path), a_client=live_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    approval = materialize_canonical_approval(
+        _decision(action_ref="post_operator_guidance").model_copy(
+            update={
+                "evidence": {
+                    "goal_contract_version": "goal-v1",
+                    "decision": {
+                        "action_ref": "post_operator_guidance",
+                        "decision_result": "require_user_decision",
+                        "action_arguments": {
+                            "message": "继续沿着 persisted spine 执行，不要等 live envelope。",
+                            "reason_code": "approval_guidance",
+                            "stuck_level": 2,
+                        },
+                    },
+                }
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
+    approval_client = ApprovalOnlyClient(context_pressure="low")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "watchdog.services.session_spine.actions.post_steer",
+            lambda *args, **kwargs: {"success": True, "data": {"accepted": True}},
+        )
+        result = respond_to_canonical_approval(
+            envelope_id=approval.envelope_id,
+            response_action="approve",
+            client_request_id="req-guidance-from-spine",
+            operator="alice",
+            note="use persisted spine",
+            approval_store=app.state.canonical_approval_store,
+            response_store=response_store,
+            settings=_settings(tmp_path),
+            client=approval_client,
+            receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+            session_service=app.state.session_service,
+        )
+
+    assert approval_client.decision_calls == [("appr_001", "approve", "alice", "use persisted spine")]
+    assert result.approval_status == "approved"
+    assert result.execution_result is not None
+    assert result.execution_result.effect == "steer_posted"
+    assert result.execution_result.message == "operator guidance posted"
+
+
 def test_reject_response_records_rejection_without_executing_requested_action(
     tmp_path: Path,
 ) -> None:
@@ -996,6 +1096,7 @@ def test_materialize_canonical_approval_records_session_event(tmp_path: Path) ->
     assert events[0].related_ids == {
         "approval_id": approval.approval_id,
         "decision_id": approval.decision.decision_id,
+        "native_thread_id": "thr_native_1",
     }
     assert events[0].payload["requested_action"] == "execute_recovery"
 
@@ -1034,6 +1135,7 @@ def test_materialize_canonical_approval_reuses_existing_session_event_on_identic
     assert events[0].related_ids == {
         "approval_id": first.approval_id,
         "decision_id": first.decision.decision_id,
+        "native_thread_id": "thr_native_1",
     }
     assert events[0].payload["fact_snapshot_version"] == "fact-v7"
 
@@ -1237,6 +1339,7 @@ def test_materialize_canonical_approval_raises_when_fact_snapshot_advances_with_
     assert events[0].related_ids == {
         "approval_id": initial.approval_id,
         "decision_id": initial.decision.decision_id,
+        "native_thread_id": "thr_native_1",
     }
     assert events[0].payload["fact_snapshot_version"] == "fact-v7"
     assert events[0].payload["requested_action_args"] == {"mode": "safe"}
@@ -1290,6 +1393,7 @@ def test_materialize_canonical_approval_reuses_existing_session_event_when_fact_
     assert events[0].related_ids == {
         "approval_id": initial.approval_id,
         "decision_id": initial.decision.decision_id,
+        "native_thread_id": "thr_native_1",
     }
     assert events[0].payload["fact_snapshot_version"] == "fact-v7"
     assert replayed.approval_id == initial.approval_id
@@ -1457,6 +1561,7 @@ def test_materialize_canonical_approval_reuses_existing_session_event_when_decis
     assert events[0].related_ids == {
         "approval_id": initial.approval_id,
         "decision_id": initial.decision.decision_id,
+        "native_thread_id": "thr_native_1",
     }
     assert replayed.approval_id == initial.approval_id
     assert replayed.decision.decision_id == "decision:needs-human-replayed"
@@ -1524,6 +1629,7 @@ def test_expire_pending_canonical_approval_records_session_event_before_closing_
         "approval_id": approval.approval_id,
         "decision_id": approval.decision.decision_id,
         "envelope_id": approval.envelope_id,
+        "native_thread_id": approval.native_thread_id,
     }
     assert events[0].payload == {
         "approval_status": "expired",
@@ -1570,6 +1676,7 @@ def test_startup_reconcile_expires_stale_pending_approvals(tmp_path: Path) -> No
     )
     assert len(events) == 1
     assert events[0].related_ids["approval_id"] == approval.approval_id
+    assert events[0].related_ids["native_thread_id"] == approval.native_thread_id
 
     with pytest.raises(
         ValueError,
@@ -1653,6 +1760,7 @@ def test_respond_to_canonical_approval_records_session_event(
         "approval_id": approval.approval_id,
         "decision_id": approval.decision.decision_id,
         "response_id": result.response_id,
+        "native_thread_id": "thr_native_1",
     }
     assert events[0].payload["response_action"] == response_action
     assert override_events[0].related_ids == {
@@ -1660,6 +1768,7 @@ def test_respond_to_canonical_approval_records_session_event(
         "decision_id": approval.decision.decision_id,
         "response_id": result.response_id,
         "envelope_id": approval.envelope_id,
+        "native_thread_id": "thr_native_1",
     }
     assert override_events[0].payload["response_action"] == response_action
     assert override_events[0].payload["approval_status"] == expected_status
@@ -1711,6 +1820,133 @@ def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: 
     assert len(override_events) == 1
     assert override_events[0].payload["response_action"] == "approve"
     assert override_events[0].payload["operator"] == "carol"
+
+
+def test_openclaw_response_api_records_receipt_with_native_thread_id(tmp_path: Path) -> None:
+    from watchdog.services.approvals.service import materialize_canonical_approval
+
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/openclaw/responses",
+            json={
+                "envelope_id": approval.envelope_id,
+                "envelope_type": "approval",
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "response_action": "approve",
+                "response_token": approval.approval_token,
+                "user_ref": "user:carol",
+                "channel_ref": "feishu:chat:approval-room",
+                "client_request_id": "req-native-receipt-1",
+                "operator": "carol",
+                "note": "ship it",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    receipt_events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="notification_receipt_recorded",
+    )
+    assert len(receipt_events) == 1
+    assert receipt_events[0].related_ids["native_thread_id"] == "thr_native_1"
+
+
+def test_openclaw_response_api_uses_effective_native_thread_from_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import materialize_canonical_approval
+
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/openclaw/responses",
+            json={
+                "envelope_id": approval.envelope_id,
+                "envelope_type": "approval",
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "response_action": "approve",
+                "response_token": approval.approval_token,
+                "user_ref": "user:carol",
+                "channel_ref": "feishu:chat:approval-room",
+                "client_request_id": "req-native-receipt-legacy",
+                "operator": "carol",
+                "note": "ship it",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    receipt_events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="notification_receipt_recorded",
+    )
+    assert len(receipt_events) == 1
+    assert receipt_events[0].related_ids["native_thread_id"] == "thr_native_1"
+
+
+def test_expired_approval_event_uses_effective_native_thread_from_deep_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    from watchdog.main import _reconcile_stale_pending_approvals
+    from watchdog.services.approvals.service import materialize_canonical_approval
+
+    settings = _settings(tmp_path).model_copy(update={"approval_expiration_seconds": 60.0})
+    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(update={"created_at": "2026-04-07T00:00:00Z"})
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    payload[approval.envelope_id]["decision"]["native_thread_id"] = None
+    payload[approval.envelope_id]["decision"].setdefault("evidence", {})
+    payload[approval.envelope_id]["decision"]["evidence"]["target"] = {
+        "session_id": "session:repo-a",
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "native_thread_id": "thr_native_1",
+        "approval_id": approval.approval_id,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    reconciled = _reconcile_stale_pending_approvals(app)
+
+    assert reconciled == 1
+    events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="approval_expired",
+    )
+    assert len(events) == 1
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
 
 
 def test_concurrent_approval_responses_execute_side_effects_once(tmp_path: Path) -> None:

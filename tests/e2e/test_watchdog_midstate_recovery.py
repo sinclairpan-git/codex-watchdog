@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from watchdog.main import create_app
 from watchdog.services.delivery.store import DeliveryOutboxRecord
 from watchdog.services.goal_contract.service import GoalContractService
@@ -10,9 +12,10 @@ from watchdog.settings import Settings
 
 
 class _RecoveryAClient:
-    def __init__(self) -> None:
+    def __init__(self, *, use_current_child_session_shape: bool = False) -> None:
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
+        self.use_current_child_session_shape = use_current_child_session_shape
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         return {
@@ -32,7 +35,25 @@ class _RecoveryAClient:
             },
         }
 
-    def trigger_handoff(self, project_id: str, *, reason: str) -> dict[str, object]:
+    def list_approvals(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        decided_by: str | None = None,
+        callback_status: str | None = None,
+    ) -> list[dict[str, object]]:
+        _ = (status, project_id, decided_by, callback_status)
+        return []
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
         self.handoff_calls.append((project_id, reason))
         return {
             "success": True,
@@ -50,19 +71,26 @@ class _RecoveryAClient:
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.resume_calls.append((project_id, mode, handoff_summary))
+        payload = {
+            "project_id": project_id,
+            "status": "running",
+            "mode": mode,
+            "resume_outcome": "new_child_session",
+            "thread_id": "thr_child_1",
+            "goal_contract_version": "goal-contract:v2",
+        }
+        if self.use_current_child_session_shape:
+            payload["child_session_id"] = f"session:{project_id}:thr_child_1"
+            payload["native_thread_id"] = "thr_child_1"
+        else:
+            payload["session_id"] = f"session:{project_id}:thr_child_1"
         return {
             "success": True,
-            "data": {
-                "project_id": project_id,
-                "status": "running",
-                "mode": mode,
-                "resume_outcome": "new_child_session",
-                "thread_id": "thr_child_1",
-                "session_id": f"session:{project_id}:thr_child_1",
-                "goal_contract_version": "goal-contract:v2",
-            },
+            "data": payload,
         }
 
 
@@ -76,11 +104,13 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
+@pytest.mark.parametrize("use_current_child_session_shape", [False, True])
 def test_recovery_continuation_supersedes_stale_interaction_without_manual_patch(
     tmp_path: Path,
+    use_current_child_session_shape: bool,
 ) -> None:
     settings = _settings(tmp_path)
-    client = _RecoveryAClient()
+    client = _RecoveryAClient(use_current_child_session_shape=use_current_child_session_shape)
     app = create_app(settings=settings, a_client=client, start_background_workers=False)
 
     goal_contracts = GoalContractService(app.state.session_service)
@@ -127,7 +157,7 @@ def test_recovery_continuation_supersedes_stale_interaction_without_manual_patch
         )
     )
 
-    client.trigger_handoff = lambda project_id, reason: {  # type: ignore[method-assign]
+    client.trigger_handoff = lambda project_id, reason, continuation_packet=None: {  # type: ignore[method-assign]
         "success": True,
         "data": {
             "handoff_file": f"/tmp/{project_id}.handoff.md",
@@ -151,6 +181,8 @@ def test_recovery_continuation_supersedes_stale_interaction_without_manual_patch
         event_type="goal_contract_adopted_by_child_session"
     )
     assert len(adoption_events) == 1
+    assert adoption_events[0].related_ids["child_session_id"] == "session:repo-a:thr_child_1"
+    assert adoption_events[0].payload["child_session_id"] == "session:repo-a:thr_child_1"
 
     supersede_events = app.state.session_service.list_events(
         session_id="session:repo-a",

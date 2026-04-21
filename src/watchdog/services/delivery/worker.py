@@ -58,6 +58,9 @@ class DeliveryWorker:
         extra: dict[str, str] | None = None,
     ) -> dict[str, str]:
         related_ids = {"envelope_id": record.envelope_id}
+        native_thread_id = str(record.effective_native_thread_id or "").strip()
+        if native_thread_id:
+            related_ids["native_thread_id"] = native_thread_id
         event_id = payload.get("event_id")
         if isinstance(event_id, str) and event_id:
             related_ids["notification_event_id"] = event_id

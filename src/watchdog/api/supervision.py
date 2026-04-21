@@ -15,6 +15,7 @@ from watchdog.contracts.session_spine.models import SupervisionEvaluation, Watch
 from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
 from watchdog.services.audit import append_watchdog_audit
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_spine.projection import task_native_thread_id
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
 from watchdog.services.session_spine.supervision import execute_supervision_evaluation
 from watchdog.services.status_analyzer.stuck import evaluate_stuck
@@ -84,7 +85,7 @@ def run_background_supervision(settings: Settings, client: AControlAgentClient) 
     for task in tasks:
         status = task.get("status")
         project_id = task.get("project_id")
-        thread_id = task.get("thread_id")
+        thread_id = task_native_thread_id(task)
         if status not in {"running", "waiting_human"}:
             continue
         if not isinstance(project_id, str) or not project_id:

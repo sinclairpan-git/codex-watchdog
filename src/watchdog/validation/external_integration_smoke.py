@@ -12,6 +12,7 @@ import httpx
 
 from watchdog.contracts.session_spine.models import SessionProjection, TaskProgressView
 from watchdog.services.brain.service import BrainDecisionService
+from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
 from watchdog.services.session_spine.store import PersistedSessionRecord
@@ -240,6 +241,13 @@ def _normalize_targets(targets: Sequence[str]) -> set[str]:
     unknown = normalized.difference(SUPPORTED_TARGETS)
     if unknown:
         raise ValueError(f"unsupported targets: {', '.join(sorted(unknown))}")
+    return normalized
+
+
+def _display_thread_id(thread_id: object) -> str:
+    normalized = str(thread_id or "").strip()
+    if normalized.startswith("session:"):
+        return normalized.removeprefix("session:")
     return normalized
 
 
@@ -617,6 +625,15 @@ def _run_feishu_discovery_check(
             if isinstance(progress, Mapping) and str(progress.get("project_id") or "").strip()
         }
     )
+    recovery_child_session_displays = sorted(
+        {
+            _display_thread_id(progress.get("recovery_child_session_id"))
+            for progress in raw_progresses
+            if isinstance(progress, Mapping)
+            and str(progress.get("recovery_outcome") or "").strip() == "new_child_session"
+            and _display_thread_id(progress.get("recovery_child_session_id"))
+        }
+    )
     missing_project_ids = [
         project_id for project_id in sorted(expected_project_ids) if project_id not in actual_project_ids
     ]
@@ -644,6 +661,25 @@ def _run_feishu_discovery_check(
                 "message": message,
             },
         )
+    missing_recovery_child_session_mentions = [
+        child_session_display
+        for child_session_display in recovery_child_session_displays
+        if child_session_display not in message
+    ]
+    if missing_recovery_child_session_mentions:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={
+                "command_text": command_text,
+                "project_ids": actual_project_ids,
+                "progress_project_ids": progress_project_ids,
+                "recovery_child_session_displays": recovery_child_session_displays,
+                "missing_recovery_child_session_mentions": missing_recovery_child_session_mentions,
+                "message": message,
+            },
+        )
     return SmokeCheckResult(
         check_name="feishu-discovery",
         status="passed",
@@ -652,6 +688,7 @@ def _run_feishu_discovery_check(
             "command_text": command_text,
             "project_ids": actual_project_ids,
             "progress_project_ids": progress_project_ids,
+            "recovery_child_session_displays": recovery_child_session_displays,
             "message": message,
         },
     )
@@ -826,12 +863,32 @@ def _probe_provider_intent(
 ):
     data_dir = Path(config.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    session_service = SessionService(SessionServiceStore(data_dir / "session_service_smoke.json"))
+    _seed_provider_goal_contract(session_service)
     service = BrainDecisionService(
         settings=_provider_settings(config),
-        session_service=SessionService(SessionServiceStore(data_dir / "session_service_smoke.json")),
+        session_service=session_service,
         provider_transport=transport,
     )
     return service.evaluate_session(record=_synthetic_record())
+
+
+def _seed_provider_goal_contract(session_service: SessionService) -> None:
+    contracts = GoalContractService(session_service)
+    if contracts.get_current_contract(project_id="repo-a", session_id="session:repo-a") is not None:
+        return
+    contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="ship feishu and memory hub integration",
+        task_prompt="ship feishu and memory hub integration",
+        last_user_instruction="continue shipping feishu and memory hub integration",
+        phase="editing_source",
+        last_summary="ship feishu and memory hub integration",
+        current_phase_goal="ship feishu and memory hub integration",
+        explicit_deliverables=["provider success probe returns actionable continuation intent"],
+        completion_signals=["provider fallback probe degrades to resident_orchestrator"],
+    )
 
 
 def _provider_settings(config: ExternalIntegrationSmokeConfig) -> Settings:

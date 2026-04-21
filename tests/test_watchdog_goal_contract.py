@@ -77,6 +77,17 @@ def test_goal_contract_lifecycle_rebuilds_latest_version_from_session_events(
     ]
     assert parent_events == ["goal_contract_created", "goal_contract_revised"]
     assert child_events == ["goal_contract_adopted_by_child_session"]
+    adopted_events = session_service.list_events(
+        session_id="session:repo-a:child-1",
+        event_type="goal_contract_adopted_by_child_session",
+    )
+    assert len(adopted_events) == 1
+    assert adopted_events[0].related_ids["parent_session_id"] == "session:repo-a"
+    assert adopted_events[0].related_ids["child_session_id"] == "session:repo-a:child-1"
+    assert adopted_events[0].related_ids["source_packet_id"] == "packet:handoff-v9"
+    assert adopted_events[0].related_ids["recovery_transaction_id"] == "recovery-tx:1"
+    assert adopted_events[0].payload["parent_session_id"] == "session:repo-a"
+    assert adopted_events[0].payload["child_session_id"] == "session:repo-a:child-1"
 
 
 def test_goal_contract_lifecycle_preserves_identity_constraints_and_provenance(tmp_path) -> None:
@@ -208,6 +219,39 @@ def test_goal_contract_revise_contract_can_reuse_prefetched_snapshot(tmp_path) -
 
     assert revised.version == "goal-v2"
     assert revised.current_phase_goal == "把飞书私聊 goal bootstrap 压到时限内"
+
+
+def test_goal_contract_revise_contract_refreshes_latest_instruction_metadata(tmp_path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    service = GoalContractService(session_service)
+    created = service.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续飞书联调",
+        task_prompt="把控制链路跑通",
+        last_user_instruction="继续飞书联调",
+        phase="implementation",
+        last_summary="正在收敛 goal contract 写面",
+        explicit_deliverables=["飞书控制链路通过冒烟"],
+        completion_signals=["相关 pytest 通过"],
+    )
+
+    revised = service.revise_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        expected_version=created.version,
+        current=created,
+        current_phase_goal="把飞书私聊 goal bootstrap 压到时限内",
+        last_user_instruction="继续把飞书私聊 goal bootstrap 压到时限内",
+        last_summary="正在按新目标收口飞书私聊 bootstrap",
+    )
+
+    assert revised.version == "goal-v2"
+    assert revised.current_phase_goal == "把飞书私聊 goal bootstrap 压到时限内"
+    assert revised.metadata["last_user_instruction"] == "继续把飞书私聊 goal bootstrap 压到时限内"
+    assert revised.metadata["last_summary"] == "正在按新目标收口飞书私聊 bootstrap"
 
 
 def test_goal_contract_bootstrap_without_explicit_evidence_stays_observe_only(tmp_path) -> None:

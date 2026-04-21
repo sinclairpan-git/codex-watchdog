@@ -56,11 +56,41 @@ def _render_decision_summary(progress) -> str | None:
     return None
 
 
-def _append_progress_annotations(message: str, progress) -> str:
+def _render_goal_summary(progress) -> str | None:
+    goal = str(progress.current_phase_goal or "").strip()
+    if goal:
+        return goal
+    last_instruction = str(progress.last_user_instruction or "").strip()
+    return last_instruction or None
+
+
+def _render_recovery_suppression_summary(progress) -> str | None:
+    reason = str(progress.recovery_suppression_reason or "").strip()
+    if reason == "reentry_without_newer_progress":
+        return "等待新进展"
+    if reason == "recovery_in_flight":
+        return "恢复进行中"
+    if reason == "cooldown_window_active":
+        return "恢复冷却中"
+    return reason or None
+
+
+def _append_progress_annotations(
+    message: str,
+    progress,
+    *,
+    include_goal_summary: bool = False,
+) -> str:
     enriched = message
+    goal_summary = _render_goal_summary(progress) if include_goal_summary else None
+    if goal_summary:
+        enriched = f"{enriched} | 当前目标={goal_summary}"
     recovery_summary = _render_recovery_summary(progress)
     if recovery_summary:
         enriched = f"{enriched} | 恢复={recovery_summary}"
+    suppression_summary = _render_recovery_suppression_summary(progress)
+    if suppression_summary:
+        enriched = f"{enriched} | 恢复抑制={suppression_summary}"
     decision_summary = _render_decision_summary(progress)
     if decision_summary:
         enriched = f"{enriched} | 决策={decision_summary}"
@@ -76,7 +106,11 @@ def _build_session_directory_message(bundle: SessionDirectoryReadBundle) -> str:
                 f"- {progress.project_id} | {progress.activity_phase} | {progress.summary} "
                 f"| 上下文={progress.context_pressure}"
             )
-            line = _append_progress_annotations(line, progress)
+            line = _append_progress_annotations(
+                line,
+                progress,
+                include_goal_summary=True,
+            )
             lines.append(line)
         return "\n".join(lines)
     for session in bundle.sessions:
@@ -95,8 +129,13 @@ def build_session_reply(
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.SESSION_PROJECTION,
         intent_code=intent_code,
-        message=bundle.session.headline,
+        message=_append_progress_annotations(
+            bundle.session.headline,
+            bundle.progress,
+            include_goal_summary=True,
+        ),
         session=bundle.session,
+        progress=bundle.progress,
         snapshot=bundle.snapshot,
         facts=bundle.facts,
     )
@@ -132,6 +171,7 @@ def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
         message=_append_progress_annotations(
             bundle.progress.summary or bundle.session.headline,
             bundle.progress,
+            include_goal_summary=True,
         ),
         progress=bundle.progress,
         snapshot=bundle.snapshot,
@@ -205,7 +245,11 @@ def build_stuck_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_kind=ReplyKind.EXPLANATION,
         reply_code=ReplyCode.STUCK_EXPLANATION,
         intent_code="why_stuck",
-        message=_append_progress_annotations(message, bundle.progress),
+        message=_append_progress_annotations(
+            message,
+            bundle.progress,
+            include_goal_summary=True,
+        ),
         session=bundle.session,
         progress=bundle.progress,
         snapshot=bundle.snapshot,
@@ -224,7 +268,11 @@ def build_blocker_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
         reply_kind=ReplyKind.EXPLANATION,
         reply_code=ReplyCode.BLOCKER_EXPLANATION,
         intent_code="explain_blocker",
-        message=_append_progress_annotations(message, bundle.progress),
+        message=_append_progress_annotations(
+            message,
+            bundle.progress,
+            include_goal_summary=True,
+        ),
         session=bundle.session,
         progress=bundle.progress,
         snapshot=bundle.snapshot,

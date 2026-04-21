@@ -17,10 +17,71 @@ from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
 
 
+def _continuation_packet() -> dict[str, object]:
+    return {
+        "packet_id": "packet:continuation:repo-a:1",
+        "packet_version": "continuation-packet/v1",
+        "packet_state": "issued",
+        "decision_class": "recover_current_branch",
+        "continuation_identity": "repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        "project_id": "repo-a",
+        "session_id": "session:repo-a",
+        "native_thread_id": "thr_native_1",
+        "route_key": "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        "target_route": {
+            "route_kind": "same_thread",
+            "target_project_id": "repo-a",
+            "target_session_id": "session:repo-a",
+            "target_thread_id": "thr_native_1",
+            "target_work_item_id": "WI-085",
+        },
+        "project_total_goal": "把 watchdog 自动推进收口为 model-first continuation governance",
+        "branch_goal": "实现 ContinuationPacket 真值对象",
+        "current_progress_summary": "已经锁定 markdown 回流口",
+        "completed_work": ["T856 control-plane projection complete"],
+        "remaining_tasks": ["切换 handoff/resume 到 packet truth"],
+        "first_action": "先读取 structured continuation packet。",
+        "execution_mode": "resume_or_new_thread",
+        "action_ref": "continue_current_branch",
+        "action_args": {"resume_target_phase": "editing_source"},
+        "expected_next_state": "running",
+        "continue_boundary": "只继续当前分支",
+        "stop_conditions": ["需要新的人工批准"],
+        "operator_boundary": "不要把 markdown 当作 truth。",
+        "source_refs": {
+            "decision_source": "recovery_guard",
+            "goal_contract_version": "goal-v9",
+            "authoritative_snapshot_version": "fact-v9",
+            "snapshot_epoch": "session-seq:9",
+            "decision_trace_ref": "trace:packet:1",
+            "lineage_refs": ["recovery-tx:1"],
+        },
+        "freshness": {
+            "generated_at": "2026-04-21T01:20:00Z",
+            "expires_at": "2026-04-21T02:20:00Z",
+        },
+        "dedupe": {
+            "dedupe_key": "dedupe:repo-a:packet:1",
+            "supersedes_packet_id": None,
+        },
+        "render_contract_ref": "continuation-packet-markdown/v1",
+    }
+
+
 def test_session_service_models_freeze_canonical_truth_primitives() -> None:
     assert "memory_unavailable_degraded" in CONTROLLED_SESSION_EVENT_TYPES
     assert "memory_conflict_detected" in CONTROLLED_SESSION_EVENT_TYPES
     assert "stage_goal_conflict_detected" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "recovery_dispatch_started" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "recovery_execution_suppressed" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "continuation_gate_evaluated" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "continuation_identity_issued" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "continuation_identity_consumed" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "continuation_identity_invalidated" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "branch_switch_token_issued" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "branch_switch_token_consumed" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "branch_switch_token_invalidated" in CONTROLLED_SESSION_EVENT_TYPES
+    assert "continuation_replay_invalidated" in CONTROLLED_SESSION_EVENT_TYPES
     assert "resumes_after_interruption" in SESSION_LINEAGE_RELATIONS
     assert "lineage_pending" in RECOVERY_TRANSACTION_STATUSES
 
@@ -266,11 +327,19 @@ def test_session_service_records_recovery_truth_in_canonical_order(
     assert [event.event_type for event in events] == [
         "recovery_tx_started",
         "handoff_packet_frozen",
+        "continuation_identity_issued",
         "child_session_created",
         "lineage_committed",
         "parent_session_closed_or_cooled",
         "recovery_tx_completed",
+        "continuation_identity_consumed",
     ]
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[1].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[5].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[7].related_ids["continuation_identity"].startswith(
+        "repo-a:session:repo-a:thr_native_1"
+    )
 
     recovery_records = service.list_recovery_transactions(
         recovery_transaction_id=recorded.recovery_transaction_id
@@ -293,6 +362,167 @@ def test_session_service_records_recovery_truth_in_canonical_order(
     assert lineage_records[0].parent_session_id == "session:repo-a"
     assert lineage_records[0].child_session_id == recorded.child_session_id
     assert lineage_records[0].relation == "resumes_after_interruption"
+
+
+def test_session_service_records_recovery_packet_lineage_and_identity_transitions(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+        goal_contract_version="goal-v9",
+        source_packet_id="packet:handoff-v9",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+    )
+
+    events = service.list_events(correlation_id=recorded.correlation_id)
+
+    assert [event.event_type for event in events] == [
+        "recovery_tx_started",
+        "handoff_packet_frozen",
+        "continuation_identity_issued",
+        "continuation_identity_consumed",
+        "recovery_tx_completed",
+    ]
+    assert events[1].payload["decision_source"] == "recovery_guard"
+    assert events[1].payload["decision_class"] == "recover_current_branch"
+    assert events[1].payload["authoritative_snapshot_version"] == "fact-v9"
+    assert events[1].payload["snapshot_epoch"] == "session-seq:9"
+    assert events[1].payload["goal_contract_version"] == "goal-v9"
+    assert events[1].related_ids["continuation_identity"] == (
+        "repo-a:session:repo-a:thr_native_1:recover_current_branch"
+    )
+    assert events[1].related_ids["route_key"] == (
+        "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9"
+    )
+    assert events[2].related_ids["source_packet_id"] == "packet:handoff-v9"
+    assert events[3].payload["state"] == "consumed"
+
+
+def test_record_recovery_execution_freezes_structured_continuation_packet_and_hashes(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    packet = _continuation_packet()
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "# Continuation packet\npacket_id=packet:continuation:repo-a:1\n",
+            "continuation_packet": packet,
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+            "source_packet_id": packet["packet_id"],
+        },
+        resume_outcome="same_thread_resume",
+        goal_contract_version="goal-v9",
+        source_packet_id="packet:handoff-v9",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+    )
+
+    events = service.list_events(correlation_id=recorded.correlation_id)
+    frozen = next(event for event in events if event.event_type == "handoff_packet_frozen")
+
+    assert frozen.related_ids["source_packet_id"] == packet["packet_id"]
+    assert frozen.payload["continuation_packet"]["packet_id"] == packet["packet_id"]
+    assert frozen.payload["packet_hash"]
+    assert frozen.payload["rendered_markdown_hash"]
+    assert frozen.payload["rendered_from_packet_id"] == packet["packet_id"]
+
+
+@pytest.mark.parametrize(
+    ("resume_payload", "expected_child_session_id"),
+    [
+        (
+            {
+                "project_id": "repo-a",
+                "status": "running",
+                "mode": "resume_or_new_thread",
+                "resume_outcome": "new_child_session",
+                "session_id": "session:repo-a:child-v9",
+            },
+            "session:repo-a:child-v9",
+        ),
+        (
+            {
+                "project_id": "repo-a",
+                "status": "running",
+                "mode": "resume_or_new_thread",
+                "resume_outcome": "new_child_session",
+                "child_session_id": "session:repo-a:thr_child_v9",
+                "thread_id": "thr_child_v9",
+                "native_thread_id": "thr_child_v9",
+            },
+            "session:repo-a:thr_child_v9",
+        ),
+    ],
+)
+def test_session_service_resolves_legacy_and_current_new_child_resume_shapes_equally(
+    tmp_path: Path,
+    resume_payload: dict[str, str],
+    expected_child_session_id: str,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume=resume_payload,
+    )
+
+    assert recorded.child_session_id == expected_child_session_id
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert recovery_records[-1].status == "completed"
+    assert recovery_records[-1].child_session_id == expected_child_session_id
+    assert recovery_records[-1].metadata["resume_outcome"] == "new_child_session"
+    lineage_records = service.list_lineage(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert len(lineage_records) == 1
+    assert lineage_records[0].child_session_id == expected_child_session_id
 
 
 def test_session_service_same_thread_resume_does_not_create_lineage(
@@ -324,8 +554,15 @@ def test_session_service_same_thread_resume_does_not_create_lineage(
     assert [event.event_type for event in events] == [
         "recovery_tx_started",
         "handoff_packet_frozen",
+        "continuation_identity_issued",
+        "continuation_identity_consumed",
         "recovery_tx_completed",
     ]
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[1].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[2].related_ids["continuation_identity"].startswith(
+        "repo-a:session:repo-a:thr_native_1"
+    )
 
     recovery_records = service.list_recovery_transactions(
         recovery_transaction_id=recorded.recovery_transaction_id
@@ -344,6 +581,233 @@ def test_session_service_same_thread_resume_does_not_create_lineage(
     ) == []
     assert recorded.child_session_id is None
     assert recorded.lineage_id is None
+
+
+def test_session_service_recovery_transaction_identity_ignores_handoff_summary_text(
+    tmp_path: Path,
+) -> None:
+    first = SessionService(SessionServiceStore(tmp_path / "session_service_a.json"))
+    second = SessionService(SessionServiceStore(tmp_path / "session_service_b.json"))
+
+    recorded_first = first.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "first rendered handoff summary",
+        },
+    )
+    recorded_second = second.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "second rendered handoff summary",
+        },
+    )
+
+    assert recorded_first.recovery_transaction_id == recorded_second.recovery_transaction_id
+    assert recorded_first.correlation_id == recorded_second.correlation_id
+    assert recorded_first.source_packet_id == recorded_second.source_packet_id
+
+
+def test_session_service_same_thread_resume_prefers_explicit_native_thread_id(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+        },
+    )
+
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert recovery_records[-1].metadata == {
+        "resume_error": None,
+        "resume_outcome": "same_thread_resume",
+    }
+    assert service.list_lineage(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    ) == []
+    assert recorded.child_session_id is None
+    assert recorded.lineage_id is None
+
+
+def test_session_service_same_thread_resume_does_not_treat_stable_session_thread_as_child(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "session:repo-a",
+        },
+    )
+
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert recovery_records[-1].metadata == {
+        "resume_error": None,
+        "resume_outcome": "same_thread_resume",
+    }
+    assert service.list_lineage(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    ) == []
+    assert recorded.child_session_id is None
+    assert recorded.lineage_id is None
+
+
+def test_session_service_child_session_fallback_id_prefers_explicit_native_thread_id(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_child_2",
+        },
+        resume_outcome="new_child_session",
+    )
+
+    assert recorded.child_session_id == "session:repo-a:thr_child_2"
+    child_events = service.list_events(correlation_id=recorded.correlation_id)
+    assert child_events[3].event_type == "child_session_created"
+    assert child_events[3].related_ids["native_thread_id"] == "thr_child_2"
+    assert child_events[4].event_type == "lineage_committed"
+    assert child_events[4].related_ids["native_thread_id"] == "thr_child_2"
+
+
+def test_session_service_failed_retryable_recovery_invalidates_continuation_identity(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume_error="resume_call_failed",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+    )
+
+    events = service.list_events(correlation_id=recorded.correlation_id)
+    assert [event.event_type for event in events] == [
+        "recovery_tx_started",
+        "handoff_packet_frozen",
+        "continuation_identity_issued",
+        "continuation_identity_invalidated",
+        "continuation_replay_invalidated",
+        "recovery_tx_completed",
+    ]
+    assert events[3].payload["state"] == "invalidated"
+    assert events[3].payload["suppression_reason"] == "resume_call_failed"
+    assert events[3].related_ids["source_packet_id"] == recorded.source_packet_id
+    assert events[4].payload["invalidation_reason"] == "resume_call_failed"
+    assert events[4].related_ids == {
+        "continuation_identity": "repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        "route_key": "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        "source_packet_id": recorded.source_packet_id,
+    }
+
+    recovery_records = service.list_recovery_transactions(
+        recovery_transaction_id=recorded.recovery_transaction_id
+    )
+    assert [record.status for record in recovery_records] == [
+        "started",
+        "packet_frozen",
+        "failed_retryable",
+    ]
+
+
+def test_session_service_child_session_fallback_id_accepts_stable_session_thread_when_native_missing(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    recorded = service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "session:repo-a:child-v9",
+        },
+    )
+
+    assert recorded.child_session_id == "session:repo-a:child-v9"
 
 
 def test_session_service_record_event_once_accepts_legacy_subset_payload_during_schema_expansion(
@@ -467,6 +931,7 @@ def test_session_service_records_approval_expired_with_stable_writer(
         approval_id="approval:123",
         decision_id="decision:456",
         envelope_id="approval-envelope:789",
+        native_thread_id="thr_native_1",
         requested_action="system.shell.exec",
         expiration_reason="timeout_elapsed",
         causation_id="approval-timeout:tick-1",
@@ -478,6 +943,7 @@ def test_session_service_records_approval_expired_with_stable_writer(
         approval_id="approval:123",
         decision_id="decision:456",
         envelope_id="approval-envelope:789",
+        native_thread_id="thr_native_1",
         requested_action="system.shell.exec",
         expiration_reason="timeout_elapsed",
         causation_id="approval-timeout:tick-1",
@@ -494,6 +960,7 @@ def test_session_service_records_approval_expired_with_stable_writer(
         "approval_id": "approval:123",
         "decision_id": "decision:456",
         "envelope_id": "approval-envelope:789",
+        "native_thread_id": "thr_native_1",
     }
     assert first.payload == {
         "approval_status": "expired",
@@ -501,3 +968,150 @@ def test_session_service_records_approval_expired_with_stable_writer(
         "expiration_reason": "timeout_elapsed",
     }
     assert [event.event_type for event in events] == ["approval_expired"]
+
+
+def test_session_service_records_continuation_governance_events_with_stable_writers(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+
+    gate = service.record_continuation_gate_verdict(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        gate_kind="eligibility",
+        gate_status="suppressed",
+        decision_source="rules_fallback",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+        suppression_reason="pending_approval",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        branch_switch_token="branch-switch:repo-a:86:fact-v9",
+        lineage_refs=["trace:continuation-1", "goal-contract:goal-v9"],
+    )
+    replayed_gate = service.record_continuation_gate_verdict(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        gate_kind="eligibility",
+        gate_status="suppressed",
+        decision_source="rules_fallback",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+        suppression_reason="pending_approval",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        branch_switch_token="branch-switch:repo-a:86:fact-v9",
+        lineage_refs=["trace:continuation-1", "goal-contract:goal-v9"],
+    )
+    issued = service.record_continuation_identity_state(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        state="issued",
+        decision_source="recovery_guard",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        source_packet_id="packet:handoff-v9",
+        lineage_refs=["trace:continuation-1"],
+    )
+    consumed = service.record_continuation_identity_state(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        state="consumed",
+        decision_source="recovery_guard",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        source_packet_id="packet:handoff-v9",
+        lineage_refs=["trace:continuation-1"],
+        consumed_at="2026-04-20T08:00:03Z",
+    )
+    token_invalidated = service.record_branch_switch_token_state(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        branch_switch_token="branch-switch:repo-a:86:fact-v9",
+        state="invalidated",
+        decision_source="rules_fallback",
+        decision_class="branch_complete_switch",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+        suppression_reason="project_not_active",
+        lineage_refs=["trace:continuation-1"],
+    )
+    replay_invalidated = service.record_continuation_replay_invalidated(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        decision_source="recovery_guard",
+        decision_class="recover_current_branch",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:9",
+        goal_contract_version="goal-v9",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        route_key="repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        source_packet_id="packet:handoff-v9",
+        invalidation_reason="project_not_active",
+        lineage_refs=["trace:continuation-1", "packet:handoff-v9"],
+    )
+
+    events = service.list_events(session_id="session:repo-a")
+
+    assert replayed_gate.event_id == gate.event_id
+    assert gate.log_seq == replayed_gate.log_seq == 1
+    assert [event.event_type for event in events] == [
+        "continuation_gate_evaluated",
+        "continuation_identity_issued",
+        "continuation_identity_consumed",
+        "branch_switch_token_invalidated",
+        "continuation_replay_invalidated",
+    ]
+    assert gate.payload == {
+        "gate_kind": "eligibility",
+        "gate_status": "suppressed",
+        "decision_source": "rules_fallback",
+        "decision_class": "recover_current_branch",
+        "action_ref": "execute_recovery",
+        "authoritative_snapshot_version": "fact-v9",
+        "snapshot_epoch": "session-seq:9",
+        "goal_contract_version": "goal-v9",
+        "suppression_reason": "pending_approval",
+        "lineage_refs": ["trace:continuation-1", "goal-contract:goal-v9"],
+    }
+    assert gate.related_ids == {
+        "continuation_identity": "repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        "route_key": "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        "branch_switch_token": "branch-switch:repo-a:86:fact-v9",
+    }
+    assert issued.payload["state"] == "issued"
+    assert issued.related_ids["source_packet_id"] == "packet:handoff-v9"
+    assert consumed.payload["state"] == "consumed"
+    assert consumed.payload["consumed_at"] == "2026-04-20T08:00:03Z"
+    assert token_invalidated.payload["suppression_reason"] == "project_not_active"
+    assert replay_invalidated.payload == {
+        "decision_source": "recovery_guard",
+        "decision_class": "recover_current_branch",
+        "authoritative_snapshot_version": "fact-v9",
+        "snapshot_epoch": "session-seq:9",
+        "goal_contract_version": "goal-v9",
+        "invalidation_reason": "project_not_active",
+        "lineage_refs": ["trace:continuation-1", "packet:handoff-v9"],
+    }
+    assert replay_invalidated.related_ids == {
+        "continuation_identity": "repo-a:session:repo-a:thr_native_1:recover_current_branch",
+        "route_key": "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
+        "source_packet_id": "packet:handoff-v9",
+    }

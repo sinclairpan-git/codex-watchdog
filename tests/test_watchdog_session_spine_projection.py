@@ -115,6 +115,38 @@ def test_projection_marks_done_session_complete_and_omits_continue_intent() -> N
     assert progress.blocker_fact_codes == []
 
 
+def test_projection_builds_goal_context_into_task_progress_view() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=raw_task,
+        facts=facts,
+        goal_context={
+            "goal_contract_version": "goal-v2",
+            "current_phase_goal": "继续把 recovery 自动重入收口到 child continuation",
+            "last_user_instruction": "继续把 recovery 自动重入收口到 child continuation",
+        },
+    )
+
+    assert progress.goal_contract_version == "goal-v2"
+    assert progress.current_phase_goal == "继续把 recovery 自动重入收口到 child continuation"
+    assert progress.last_user_instruction == "继续把 recovery 自动重入收口到 child continuation"
+
+
 def test_projection_builds_recovery_related_facts_from_stuck_and_critical_pressure() -> None:
     raw_task = {
         "project_id": "repo-a",
@@ -148,6 +180,105 @@ def test_projection_builds_recovery_related_facts_from_stuck_and_critical_pressu
         "context_critical",
         "recovery_available",
     ]
+
+
+def test_projection_suppresses_recovery_facts_while_handoff_is_in_progress() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_2",
+        "status": "handoff_in_progress",
+        "phase": "handoff",
+        "pending_approval": False,
+        "last_summary": "handoff drafted",
+        "files_touched": ["src/watchdog/services/session_spine/facts.py"],
+        "context_pressure": "critical",
+        "stuck_level": 4,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T04:00:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
+
+    fact_codes = {fact.fact_code for fact in facts}
+    assert fact_codes.isdisjoint(
+        {"stuck_no_progress", "repeat_failure", "context_critical", "recovery_available"}
+    )
+    assert "execute_recovery" not in session.available_intents
+
+
+def test_projection_suppresses_recovery_facts_while_session_is_resuming() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_2",
+        "status": "resuming",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "resuming after overflow",
+        "files_touched": ["src/watchdog/services/session_spine/recovery.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T04:00:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
+
+    fact_codes = {fact.fact_code for fact in facts}
+    assert fact_codes.isdisjoint(
+        {"stuck_no_progress", "repeat_failure", "context_critical", "recovery_available"}
+    )
+    assert "execute_recovery" not in session.available_intents
+
+
+def test_projection_suppresses_recovery_facts_while_session_is_paused() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_2",
+        "status": "paused",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "paused by operator",
+        "files_touched": ["src/watchdog/services/session_spine/facts.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T04:00:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
+
+    fact_codes = {fact.fact_code for fact in facts}
+    assert fact_codes.isdisjoint(
+        {"stuck_no_progress", "repeat_failure", "context_critical", "recovery_available"}
+    )
+    assert "execute_recovery" not in session.available_intents
+
+
+def test_projection_blocks_autonomous_continuation_when_project_is_not_active() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_2",
+        "status": "running",
+        "phase": "editing_source",
+        "project_execution_state": "completed",
+        "pending_approval": False,
+        "last_summary": "branch work already done",
+        "files_touched": ["src/watchdog/services/session_spine/facts.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T04:00:00Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+    session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
+
+    assert [fact.fact_code for fact in facts] == ["project_not_active"]
+    assert "continue_session" not in session.available_intents
+    assert "execute_recovery" not in session.available_intents
 
 
 def test_projection_surfaces_control_link_error_without_raw_task() -> None:
@@ -343,3 +474,39 @@ def test_projection_builds_human_override_and_notification_facts_from_session_se
         "notification_kind": "approval_result",
         "receipt_id": "receipt:test",
     }
+
+
+def test_projection_humanizes_recovery_suppression_fact_detail_from_session_service_events() -> None:
+    expectations = {
+        "reentry_without_newer_progress": "等待新进展",
+        "recovery_in_flight": "恢复进行中",
+        "cooldown_window_active": "恢复冷却中",
+    }
+
+    for index, (reason, label) in enumerate(expectations.items(), start=1):
+        events = [
+            SessionEventRecord(
+                event_id=f"evt-recovery-suppressed-{index}",
+                project_id="repo-a",
+                session_id="session:repo-a",
+                event_type="recovery_execution_suppressed",
+                occurred_at=f"2026-04-12T01:0{index}:00Z",
+                causation_id=f"recovery:tx:{index}",
+                correlation_id=f"corr:recovery-suppressed:{index}",
+                idempotency_key=f"idem:recovery-suppressed:{index}",
+                related_ids={"recovery_transaction_id": f"recovery-tx:{index}"},
+                payload={
+                    "suppression_reason": reason,
+                    "suppression_source": "resident_orchestrator",
+                },
+                log_seq=index,
+            )
+        ]
+
+        facts = build_session_service_fact_records(project_id="repo-a", events=events)
+
+        assert len(facts) == 1
+        assert facts[0].fact_code == "recovery_execution_suppressed"
+        assert facts[0].detail == (
+            f"suppression_reason={label} suppression_source=resident_orchestrator"
+        )

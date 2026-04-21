@@ -103,24 +103,59 @@ def test_recover_handoff_and_resume_when_enabled(tmp_path: Path) -> None:
     def _env(_pid: str) -> dict:
         return {
             "success": True,
-            "data": {"context_pressure": "critical", "cwd": "/"},
+            "data": {
+                "project_id": "p1",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "context_pressure": "critical",
+                "cwd": "/",
+                "last_summary": "context exhausted",
+                "files_touched": ["src/watchdog/api/recover_watchdog.py"],
+                "stuck_level": 2,
+                "failure_count": 1,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
         }
 
     app.state.a_client.get_envelope = _env  # type: ignore[method-assign]
+    app.state.a_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
+    handoff_calls: list[tuple[str, str, dict[str, object] | None]] = []
+    resume_calls: list[tuple[str, str, str, dict[str, object] | None]] = []
+
+    def _trigger_handoff(
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        handoff_calls.append((project_id, reason, continuation_packet))
+        return {"success": True, "data": {"handoff_file": "/h.md", "continuation_packet": continuation_packet}}
+
+    def _trigger_resume(
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        resume_calls.append((project_id, mode, handoff_summary, continuation_packet))
+        return {"success": True, "data": {"status": "running", "resume_outcome": "same_thread_resume"}}
+
+    app.state.a_client.trigger_handoff = _trigger_handoff  # type: ignore[method-assign]
+    app.state.a_client.trigger_resume = _trigger_resume  # type: ignore[method-assign]
     c = TestClient(app)
-    with patch("watchdog.api.recover_watchdog.httpx.Client") as mcli:
-        mi = MagicMock()
-        mcli.return_value.__enter__.return_value = mi
-        mi.post.return_value.json.side_effect = [
-            {"success": True, "data": {"handoff_file": "/h.md"}},
-            {"success": True, "data": {"status": "running"}},
-        ]
-        mi.post.return_value.raise_for_status = MagicMock()
-        r = c.post(
-            "/api/v1/watchdog/tasks/p1/recover",
-            headers={"Authorization": "Bearer wt"},
-        )
+    r = c.post(
+        "/api/v1/watchdog/tasks/p1/recover",
+        headers={"Authorization": "Bearer wt"},
+    )
     out = r.json()
     assert out["success"] is True
     assert out["data"]["action"] == "handoff_and_resume"
-    assert mi.post.call_count == 2
+    assert len(handoff_calls) == 1
+    assert len(resume_calls) == 1
+    assert handoff_calls[0][0:2] == ("p1", "context_critical")
+    assert handoff_calls[0][2] is not None
+    assert resume_calls[0][0:3] == ("p1", "resume_or_new_thread", "")
+    assert resume_calls[0][3] == handoff_calls[0][2]

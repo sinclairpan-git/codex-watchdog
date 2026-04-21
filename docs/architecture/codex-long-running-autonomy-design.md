@@ -642,6 +642,15 @@ flowchart LR
 
 新会话必须继承父会话最新的 `goal_contract_version`，不能重新自由解释目标。
 
+当恢复链路创建子会话并执行 `goal_contract_adopted_by_child_session` 时，事件必须显式记录以下 lineage / 恢复关联字段，不能只靠 event 自身挂载的 session 推断：
+
+- `parent_session_id`
+- `child_session_id`
+- `source_packet_id`
+- `recovery_transaction_id`
+
+若当次恢复已经拿到子线程标识，还应一并记录 `native_thread_id`，保证 Goal Contract 继承和 recovery lineage 可以用同一组关联键追溯。
+
 ### 7.4 Goal Contract Source And Governance
 
 `Goal Contract` 中的字段分为三类来源：

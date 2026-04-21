@@ -35,6 +35,7 @@ from watchdog.services.session_spine.service import (
     build_workspace_activity_bundle,
 )
 from watchdog.services.session_spine.store import SessionSpineStore
+from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.storage.action_receipts import ActionReceiptStore
 
 router = APIRouter(prefix="/watchdog", tags=["session-spine"])
@@ -50,6 +51,10 @@ def get_receipt_store(request: Request) -> ActionReceiptStore:
 
 def get_session_spine_store(request: Request) -> SessionSpineStore:
     return request.app.state.session_spine_store
+
+
+def get_resident_orchestration_state_store(request: Request) -> ResidentOrchestrationStateStore:
+    return request.app.state.resident_orchestration_state_store
 
 
 def get_canonical_approval_store(request: Request) -> Any:
@@ -76,6 +81,10 @@ def _get_session_spine_freshness_window_seconds(request: Request) -> float:
             DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
         )
     )
+
+
+def _get_auto_dispatch_cooldown_seconds(request: Request) -> float:
+    return float(getattr(request.app.state.settings, "auto_continue_cooldown_seconds", 0.0))
 
 
 def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuery | None:
@@ -133,6 +142,10 @@ def list_sessions(
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     resident_expert_runtime_service: ResidentExpertRuntimeService = Depends(
         get_resident_expert_runtime_service
     ),
@@ -146,6 +159,9 @@ def list_sessions(
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             resident_expert_runtime_service=resident_expert_runtime_service,
         )
     except SessionSpineUpstreamError as exc:
@@ -169,6 +185,10 @@ def get_session_by_native_thread(
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -181,6 +201,9 @@ def get_session_by_native_thread(
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -210,6 +233,10 @@ def get_session(
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -222,6 +249,9 @@ def get_session(
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -245,6 +275,10 @@ def get_progress(
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -257,6 +291,9 @@ def get_progress(
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -281,6 +318,10 @@ def get_session_facts(
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -293,6 +334,9 @@ def get_session_facts(
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -340,9 +384,14 @@ def get_pending_approvals(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -351,9 +400,13 @@ def get_pending_approvals(
         bundle = build_session_read_bundle(
             client,
             project_id,
+            session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -366,18 +419,26 @@ def get_pending_approvals(
     summary="Get stable session event snapshot",
     description=(
         "Stable JSON read surface for session events. Returns a versioned ReplyModel "
-        "carrying SessionEvent rows while leaving the stable SSE route unchanged."
+        "carrying SessionEvent rows. The snapshot merges projected raw task events with "
+        "selected canonical Session Service events, synthesizes deterministic ids when "
+        "raw events omit `event_id`, dedupes repeated event_ids, and keeps recovery and "
+        "goal-contract lineage visible even when the control link is degraded."
     ),
 )
 def get_session_event_snapshot(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
     try:
-        events = list_projected_session_events(client, project_id)
+        events = list_projected_session_events(
+            client,
+            project_id,
+            session_service=session_service,
+        )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_session_event_snapshot_reply(events).model_dump(mode="json"))
@@ -395,9 +456,14 @@ def get_stuck_explanation(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -406,9 +472,13 @@ def get_stuck_explanation(
         bundle = build_session_read_bundle(
             client,
             project_id,
+            session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
@@ -428,9 +498,14 @@ def get_blocker_explanation(
     project_id: str,
     request: Request,
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
     decision_store: Any = Depends(get_decision_store),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    orchestration_state_store: ResidentOrchestrationStateStore = Depends(
+        get_resident_orchestration_state_store
+    ),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -439,9 +514,13 @@ def get_blocker_explanation(
         bundle = build_session_read_bundle(
             client,
             project_id,
+            session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
             freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:

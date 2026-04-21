@@ -301,6 +301,65 @@ def test_policy_engine_allows_auto_execution_when_goal_contract_is_ready() -> No
     }
 
 
+def test_policy_engine_allows_auto_execution_for_branch_complete_switch() -> None:
+    record = _record(facts=[_fact("branch_goal_complete", fact_kind="signal", severity="info")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="post_operator_guidance",
+        trigger="resident_supervision",
+        brain_intent="branch_complete_switch",
+        validator_verdict={
+            "status": "pass",
+            "reason": "non_executing_intent",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "not_applicable",
+                "decision_trace_ref": "trace:branch-switch",
+                "approval_read_ref": "approval:none",
+                "report_id": "report:not_applicable",
+                "report_hash": "sha256:not_applicable",
+                "input_hash": "sha256:branch-switch",
+            }
+        },
+    )
+
+    assert decision.decision_result == "auto_execute_and_notify"
+    assert decision.risk_class == "none"
+    assert decision.action_ref == "post_operator_guidance"
+
+
+def test_policy_engine_blocks_branch_complete_switch_when_validator_degrades() -> None:
+    record = _record(facts=[_fact("branch_goal_complete", fact_kind="signal", severity="info")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="post_operator_guidance",
+        trigger="resident_supervision",
+        brain_intent="branch_complete_switch",
+        validator_verdict={
+            "status": "degraded",
+            "reason": "action_args_invalid",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "not_applicable",
+                "decision_trace_ref": "trace:branch-switch",
+                "approval_read_ref": "approval:none",
+                "report_id": "report:not_applicable",
+                "report_hash": "sha256:not_applicable",
+                "input_hash": "sha256:branch-switch",
+            }
+        },
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "validator_gate_degraded" in decision.matched_policy_rules
+    assert decision.uncertainty_reasons == ["action_args_invalid"]
+
+
 def test_policy_engine_fails_closed_when_propose_execute_lacks_runtime_gate_evidence() -> None:
     record = _record(facts=[_fact("stuck_no_progress", fact_kind="signal", severity="warning")])
 

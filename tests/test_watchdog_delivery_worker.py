@@ -303,6 +303,45 @@ def test_approval_envelope_carries_openclaw_compatibility_fields_and_action_args
     assert envelope.risk_level == "L2"
 
 
+def test_decision_artifacts_use_effective_native_thread_id_from_legacy_decision_record() -> None:
+    decision = _decision(
+        decision_result="require_user_decision",
+        action_ref="execute_recovery",
+        approval_id="appr_001",
+    ).model_copy(
+        update={
+            "native_thread_id": None,
+            "evidence": {
+                **_decision(
+                    decision_result="require_user_decision",
+                    action_ref="execute_recovery",
+                    approval_id="appr_001",
+                ).evidence,
+                "target": {
+                    "session_id": "session:repo-a",
+                    "project_id": "repo-a",
+                    "thread_id": "session:repo-a",
+                    "native_thread_id": "thr_native_legacy",
+                    "approval_id": "appr_001",
+                },
+            },
+        }
+    )
+
+    approval_record = build_canonical_approval_record(decision)
+    envelope = build_envelopes_for_decision(decision)[0]
+    legacy_approval = approval_record.model_copy(
+        update={
+            "native_thread_id": None,
+            "decision": approval_record.decision.model_copy(update={"native_thread_id": None}),
+        }
+    )
+
+    assert approval_record.native_thread_id == "thr_native_legacy"
+    assert legacy_approval.effective_native_thread_id == "thr_native_legacy"
+    assert envelope.native_thread_id == "thr_native_legacy"
+
+
 def test_decision_envelope_carries_openclaw_compatibility_fields_and_action_args() -> None:
     decision = _decision(
         decision_result="auto_execute_and_notify",

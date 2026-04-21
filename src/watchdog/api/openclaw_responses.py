@@ -90,6 +90,7 @@ def _record_compatibility_receipt(
             "envelope_id": approval.envelope_id,
             "receipt_id": f"openclaw-receipt:{request.client_request_id}",
             "actor_id": request.user_ref,
+            "native_thread_id": str(approval.effective_native_thread_id or "").strip(),
         },
         payload={
             "channel_kind": "compatibility_openclaw",

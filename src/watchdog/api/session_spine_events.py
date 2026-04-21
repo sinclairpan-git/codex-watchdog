@@ -8,11 +8,12 @@ from fastapi.responses import Response, StreamingResponse
 from watchdog.api.deps import require_token
 from watchdog.envelope import err
 from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.events import (
-    _load_raw_events_snapshot_or_raise,
     iter_session_events,
     render_stable_sse_event,
-    render_stable_sse_snapshot,
+    render_stable_sse_events,
+    list_session_events,
 )
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
 
@@ -23,12 +24,22 @@ def get_client(request: Request) -> AControlAgentClient:
     return request.app.state.a_client
 
 
+def get_session_service(request: Request) -> SessionService:
+    return request.app.state.session_service
+
+
 @router.get(
     "/sessions/{project_id}/events",
     summary="Get stable session events stream",
     description=(
-        "Stable read-only event surface. This route projects raw task events "
-        "into versioned SessionEvent records and keeps the legacy raw proxy unchanged."
+        "Stable read-only event surface. `follow=true` first emits a stable bootstrap "
+        "snapshot made from projected raw snapshot events plus continuity-related "
+        "canonical Session Service events, then follows the projected raw task event "
+        "stream with duplicate event_ids suppressed. When raw events omit `event_id`, "
+        "the projection synthesizes deterministic ids before dedupe. If stream startup "
+        "fails it falls back to the bootstrap events already available. `follow=false` "
+        "returns a versioned SessionEvent snapshot with a broader selected canonical "
+        "Session Service merge."
     ),
 )
 def get_session_events(
@@ -37,6 +48,7 @@ def get_session_events(
     follow: bool = Query(default=True),
     poll_interval: float = Query(default=0.5, ge=0.1, le=10.0),
     client: AControlAgentClient = Depends(get_client),
+    session_service: SessionService = Depends(get_session_service),
     _: None = Depends(require_token),
 ) -> Any:
     rid = request.headers.get("x-request-id")
@@ -46,15 +58,16 @@ def get_session_events(
     }
     if not follow:
         try:
-            raw_snapshot = _load_raw_events_snapshot_or_raise(
+            events = list_session_events(
                 client,
                 project_id,
                 poll_interval=poll_interval,
+                session_service=session_service,
             )
         except SessionSpineUpstreamError as exc:
             return err(rid, exc.error)
         return Response(
-            content=render_stable_sse_snapshot(raw_snapshot),
+            content=render_stable_sse_events(events),
             media_type="text/event-stream",
             headers=headers,
         )
@@ -64,6 +77,7 @@ def get_session_events(
             client,
             project_id,
             poll_interval=poll_interval,
+            session_service=session_service,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)

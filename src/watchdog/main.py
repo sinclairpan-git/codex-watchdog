@@ -276,16 +276,19 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        startup_reconcile_task: asyncio.Task[object] | None = None
         session_spine_loop_task: asyncio.Task[None] | None = None
         startup_orchestrator_task: asyncio.Task[None] | None = None
         resident_orchestrator_task: asyncio.Task[None] | None = None
         memory_ingest_loop_task: asyncio.Task[None] | None = None
         delivery_loop_task: asyncio.Task[None] | None = None
         if start_background_workers:
-            await _run_background_step_async(
-                "canonical_approval_store.reconcile_pending_records_against_decisions",
-                _reconcile_stale_pending_approvals,
-                app,
+            startup_reconcile_task = asyncio.create_task(
+                _run_background_step_async(
+                    "canonical_approval_store.reconcile_pending_records_against_decisions",
+                    _reconcile_stale_pending_approvals,
+                    app,
+                )
             )
             await _run_background_step_async(
                 "session_spine_runtime.refresh_all",
@@ -316,6 +319,10 @@ def create_app(
         try:
             yield
         finally:
+            if startup_reconcile_task is not None:
+                startup_reconcile_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await startup_reconcile_task
             if session_spine_loop_task is not None:
                 session_spine_loop_task.cancel()
                 with suppress(asyncio.CancelledError):

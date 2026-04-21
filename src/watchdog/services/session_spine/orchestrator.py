@@ -194,6 +194,68 @@ class ResidentOrchestrator:
                 related_ids[key] = value
         return related_ids
 
+    @staticmethod
+    def _decision_source_for_brain_intent(brain_intent) -> str:
+        provider = str(getattr(brain_intent, "provider", "") or "").strip().lower()
+        if provider and provider != "rule-based-brain":
+            return "external_model"
+        return "rules_fallback"
+
+    @staticmethod
+    def _continuation_decision_class_for_intent(
+        *,
+        record: PersistedSessionRecord,
+        brain_intent,
+        action_ref: str | None,
+    ) -> str | None:
+        explicit = str(getattr(brain_intent, "continuation_decision", "") or "").strip()
+        if explicit:
+            return explicit
+        intent = str(getattr(brain_intent, "intent", "") or "").strip()
+        if action_ref == "continue_session" and intent == "propose_execute":
+            return "continue_current_branch"
+        if action_ref == "execute_recovery" and intent == "propose_recovery":
+            return "recover_current_branch"
+        if intent == "candidate_closure":
+            return "project_complete"
+        if intent == "require_approval":
+            return "await_human"
+        if "project_not_active" in {fact.fact_code for fact in record.facts}:
+            return "blocked"
+        return None
+
+    @staticmethod
+    def _continuation_identity_for_record(
+        *,
+        record: PersistedSessionRecord,
+        decision_class: str | None,
+        brain_intent,
+    ) -> str | None:
+        explicit = str(getattr(brain_intent, "continuation_identity", "") or "").strip()
+        if explicit:
+            return explicit
+        normalized_decision_class = str(decision_class or "").strip()
+        if not normalized_decision_class or normalized_decision_class in {"project_complete", "await_human", "blocked"}:
+            return None
+        return (
+            f"{record.project_id}:{record.thread_id}:"
+            f"{record.effective_native_thread_id or 'none'}:{normalized_decision_class}"
+        )
+
+    @staticmethod
+    def _route_key_for_record(
+        *,
+        record: PersistedSessionRecord,
+        continuation_identity: str | None,
+        brain_intent,
+    ) -> str | None:
+        explicit = str(getattr(brain_intent, "route_key", "") or "").strip()
+        if explicit:
+            return explicit
+        if continuation_identity is None:
+            return None
+        return f"{continuation_identity}:{record.fact_snapshot_version}"
+
     def _record_decision_lifecycle(self, decision) -> None:
         if self._session_service is None:
             return
@@ -248,6 +310,79 @@ class ResidentOrchestrator:
                 ),
             },
         )
+        governance = (
+            decision_evidence.get("continuation_governance")
+            if isinstance(decision_evidence.get("continuation_governance"), dict)
+            else None
+        )
+        if governance is not None:
+            self._session_service.record_continuation_gate_verdict(
+                project_id=decision.project_id,
+                session_id=decision.session_id,
+                gate_kind=str(governance.get("gate_kind") or "continuation_governance"),
+                gate_status=str(governance.get("gate_status") or "eligible"),
+                decision_source=str(governance.get("decision_source") or "rules_fallback"),
+                decision_class=str(governance.get("decision_class") or "blocked"),
+                action_ref=str(governance.get("action_ref") or "") or None,
+                authoritative_snapshot_version=(
+                    str(governance.get("authoritative_snapshot_version") or "") or None
+                ),
+                snapshot_epoch=str(governance.get("snapshot_epoch") or "") or None,
+                goal_contract_version=str(governance.get("goal_contract_version") or "") or None,
+                suppression_reason=str(governance.get("suppression_reason") or "") or None,
+                continuation_identity=(
+                    str(governance.get("continuation_identity") or "") or None
+                ),
+                route_key=str(governance.get("route_key") or "") or None,
+                branch_switch_token=str(governance.get("branch_switch_token") or "") or None,
+                lineage_refs=(
+                    governance.get("lineage_refs")
+                    if isinstance(governance.get("lineage_refs"), list)
+                    else None
+                ),
+                causation_id=decision.decision_id,
+                occurred_at=decision.created_at,
+            )
+            branch_switch_token = str(governance.get("branch_switch_token") or "") or None
+            decision_class = str(governance.get("decision_class") or "") or None
+            gate_status = str(governance.get("gate_status") or "eligible")
+            if branch_switch_token and decision_class == "branch_complete_switch":
+                token_state = None
+                if gate_status == "eligible":
+                    token_state = "issued"
+                elif gate_status == "suppressed":
+                    token_state = "invalidated"
+                if token_state is not None:
+                    self._session_service.record_branch_switch_token_state(
+                        project_id=decision.project_id,
+                        session_id=decision.session_id,
+                        branch_switch_token=branch_switch_token,
+                        state=token_state,
+                        decision_source=str(governance.get("decision_source") or "rules_fallback"),
+                        decision_class=decision_class,
+                        authoritative_snapshot_version=(
+                            str(governance.get("authoritative_snapshot_version") or "") or None
+                        ),
+                        snapshot_epoch=str(governance.get("snapshot_epoch") or "") or None,
+                        goal_contract_version=(
+                            str(governance.get("goal_contract_version") or "") or None
+                        ),
+                        continuation_identity=(
+                            str(governance.get("continuation_identity") or "") or None
+                        ),
+                        route_key=str(governance.get("route_key") or "") or None,
+                        suppression_reason=(
+                            str(governance.get("suppression_reason") or "") or None
+                        ),
+                        lineage_refs=(
+                            governance.get("lineage_refs")
+                            if isinstance(governance.get("lineage_refs"), list)
+                            else None
+                        ),
+                        causation_id=decision.decision_id,
+                        correlation_id=correlation_id,
+                        occurred_at=decision.created_at,
+                    )
 
     def _record_command_created(self, decision, *, command_id: str) -> None:
         if self._session_service is None:
@@ -513,6 +648,7 @@ class ResidentOrchestrator:
             self._future_worker_service.request_worker(
                 project_id=request.project_id,
                 parent_session_id=request.parent_session_id,
+                parent_native_thread_id=decision.effective_native_thread_id,
                 worker_task_ref=request.worker_task_ref,
                 decision_trace_ref=request.decision_trace_ref,
                 goal_contract_version=request.goal_contract_version,
@@ -759,31 +895,346 @@ class ResidentOrchestrator:
         )
         return True
 
-    def _is_auto_continue_in_cooldown(
-        self,
-        project_id: str,
-        *,
-        now: datetime,
-    ) -> bool:
-        checkpoint = self._state_store.get_auto_continue_checkpoint(project_id)
-        if checkpoint is None:
-            return False
-        last_auto_continue = _parse_iso(checkpoint.last_auto_continue_at)
-        if last_auto_continue is None:
-            return False
-        elapsed = (now - last_auto_continue.astimezone(UTC)).total_seconds()
-        return elapsed < max(self._settings.auto_continue_cooldown_seconds, 0.0)
+    def _shared_auto_dispatch_cooldown_seconds(self, *, action_ref: str | None) -> float:
+        if action_ref not in {"continue_session", "post_operator_guidance"}:
+            return 0.0
+        return max(self._settings.auto_continue_cooldown_seconds, 0.0)
 
-    def _record_auto_continue(
+    def _auto_dispatch_cooldown_details(
         self,
-        project_id: str,
+        record: PersistedSessionRecord,
         *,
+        brain_intent,
+        action_ref: str | None,
+        now: datetime,
+    ) -> dict[str, str] | None:
+        cooldown_seconds = self._shared_auto_dispatch_cooldown_seconds(action_ref=action_ref)
+        if cooldown_seconds <= 0.0 or action_ref is None:
+            return None
+        decision_class = self._continuation_decision_class_for_intent(
+            record=record,
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+        )
+        continuation_identity = self._continuation_identity_for_record(
+            record=record,
+            decision_class=decision_class,
+            brain_intent=brain_intent,
+        )
+        route_key = self._route_key_for_record(
+            record=record,
+            continuation_identity=continuation_identity,
+            brain_intent=brain_intent,
+        )
+        if continuation_identity is None or route_key is None:
+            return None
+        checkpoint = self._state_store.get_auto_dispatch_checkpoint(
+            project_id=record.project_id,
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+        )
+        if checkpoint is None:
+            checkpoint = self._state_store.get_latest_auto_dispatch_checkpoint(
+                project_id=record.project_id,
+                continuation_identity=continuation_identity,
+            )
+        if checkpoint is None:
+            return None
+        if checkpoint.status == "failed":
+            return None
+        last_auto_dispatch = _parse_iso(checkpoint.last_auto_dispatch_at)
+        if last_auto_dispatch is None:
+            return None
+        elapsed = (now - last_auto_dispatch.astimezone(UTC)).total_seconds()
+        if elapsed >= cooldown_seconds:
+            return None
+        return {
+            "decision_class": str(decision_class or ""),
+            "decision_source": self._decision_source_for_brain_intent(brain_intent),
+            "continuation_identity": continuation_identity,
+            "route_key": route_key,
+            "last_auto_dispatch_at": checkpoint.last_auto_dispatch_at,
+            "cooldown_seconds": str(int(cooldown_seconds)),
+            "remaining_seconds": str(int(max(cooldown_seconds - elapsed, 0.0))),
+            "action_ref": action_ref,
+        }
+
+    def _record_auto_dispatch_suppressed(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        details: dict[str, str],
+    ) -> None:
+        if self._session_service is None:
+            return
+        correlation_id = (
+            "corr:auto-dispatch-suppressed:"
+            f"{record.project_id}:{details.get('continuation_identity', 'unknown')}:"
+            f"{details.get('route_key', 'unknown')}:cooldown"
+        )
+        self._session_service.record_continuation_gate_verdict(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+            gate_kind="dispatch_cooldown",
+            gate_status="suppressed",
+            decision_source=str(details.get("decision_source") or "rules_fallback"),
+            decision_class=str(details.get("decision_class") or "blocked"),
+            action_ref=str(details.get("action_ref") or "") or None,
+            authoritative_snapshot_version=record.fact_snapshot_version,
+            snapshot_epoch=f"session-seq:{record.session_seq}",
+            goal_contract_version=self._goal_contract_version_for_record(record),
+            suppression_reason="cooldown_window_active",
+            continuation_identity=str(details.get("continuation_identity") or "") or None,
+            route_key=str(details.get("route_key") or "") or None,
+            correlation_id=correlation_id,
+            occurred_at=record.last_refreshed_at,
+        )
+
+    def _record_auto_dispatch(
+        self,
+        decision,
+        *,
+        status: str,
         now: datetime,
     ) -> None:
+        if decision.action_ref not in {"continue_session", "post_operator_guidance"}:
+            return
+        evidence = self._decision_evidence_map(decision)
+        governance = (
+            evidence.get("continuation_governance")
+            if isinstance(evidence.get("continuation_governance"), dict)
+            else {}
+        )
+        continuation_identity = str(governance.get("continuation_identity") or "").strip()
+        route_key = str(governance.get("route_key") or "").strip()
+        if not continuation_identity or not route_key:
+            return
         created_at = now.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        self._state_store.put_auto_continue_checkpoint(
-            project_id=project_id,
-            last_auto_continue_at=created_at,
+        self._state_store.put_auto_dispatch_checkpoint(
+            project_id=decision.project_id,
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+            action_ref=decision.action_ref,
+            status=status,
+            last_auto_dispatch_at=created_at,
+        )
+        if decision.action_ref == "continue_session" and status == "completed":
+            self._state_store.put_auto_continue_checkpoint(
+                project_id=decision.project_id,
+                last_auto_continue_at=created_at,
+            )
+
+    def _recovery_reentry_suppression_details(
+        self,
+        record: PersistedSessionRecord,
+    ) -> dict[str, str] | None:
+        if self._session_service is None:
+            return None
+        if str(record.progress.context_pressure or "").strip() != "critical":
+            return None
+        progress_at = _parse_iso(record.progress.last_progress_at)
+        dispatch_events = self._session_service.list_events(
+            session_id=record.thread_id,
+            event_type="recovery_dispatch_started",
+        )
+        latest_dispatch = None
+        matching_dispatch = [
+            event
+            for event in dispatch_events
+            if event.payload.get("recovery_reason") == "context_critical"
+            and event.payload.get("failure_signature") == "critical"
+        ]
+        if matching_dispatch:
+            latest_dispatch = max(matching_dispatch, key=lambda item: item.log_seq or 0)
+        records = self._session_service.list_recovery_transactions(
+            parent_session_id=record.thread_id
+        )
+        matching = [
+            item
+            for item in records
+            if item.recovery_reason == "context_critical"
+            and item.failure_signature == "critical"
+        ]
+        if not matching:
+            if latest_dispatch is None:
+                return None
+            dispatch_at = _parse_iso(latest_dispatch.occurred_at)
+            if progress_at is not None and dispatch_at is not None and progress_at > dispatch_at:
+                return None
+            return {
+                "recovery_status": "dispatch_started",
+                "recovery_updated_at": latest_dispatch.occurred_at,
+                "last_progress_at": str(record.progress.last_progress_at or ""),
+                "suppression_reason": "recovery_in_flight",
+            }
+        latest = max(matching, key=lambda item: item.log_seq or 0)
+        if latest_dispatch is not None:
+            latest_updated_at = _parse_iso(latest.updated_at)
+            dispatch_at = _parse_iso(latest_dispatch.occurred_at)
+            if (
+                dispatch_at is not None
+                and (latest_updated_at is None or dispatch_at > latest_updated_at)
+                and (progress_at is None or progress_at <= dispatch_at)
+            ):
+                return {
+                    "recovery_status": "dispatch_started",
+                    "recovery_updated_at": latest_dispatch.occurred_at,
+                    "last_progress_at": str(record.progress.last_progress_at or ""),
+                    "suppression_reason": "recovery_in_flight",
+                }
+        details = {
+            "recovery_transaction_id": latest.recovery_transaction_id,
+            "recovery_status": latest.status,
+            "recovery_updated_at": latest.updated_at,
+            "last_progress_at": str(record.progress.last_progress_at or ""),
+            "suppression_reason": "reentry_without_newer_progress",
+        }
+        if latest.source_packet_id:
+            details["source_packet_id"] = latest.source_packet_id
+        if latest.status not in {"completed", "failed_retryable", "failed_manual"}:
+            details["suppression_reason"] = "recovery_in_flight"
+            return details
+        recovery_updated_at = _parse_iso(latest.updated_at)
+        if progress_at is None or recovery_updated_at is None:
+            return details
+        if progress_at <= recovery_updated_at:
+            return details
+        return None
+
+    def _recovery_cooldown_suppression_details(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        now: datetime,
+    ) -> dict[str, str] | None:
+        if self._session_service is None:
+            return None
+        if str(record.progress.context_pressure or "").strip() != "critical":
+            return None
+        cooldown_seconds = max(self._settings.auto_recovery_cooldown_seconds, 0.0)
+        if cooldown_seconds <= 0.0:
+            return None
+        records = self._session_service.list_recovery_transactions(
+            parent_session_id=record.thread_id
+        )
+        matching = [
+            item
+            for item in records
+            if item.recovery_reason == "context_critical"
+            and item.failure_signature == "critical"
+        ]
+        if not matching:
+            return None
+        latest = max(matching, key=lambda item: item.log_seq or 0)
+        recovery_updated_at = _parse_iso(latest.updated_at)
+        if recovery_updated_at is None:
+            return None
+        elapsed = (now - recovery_updated_at.astimezone(UTC)).total_seconds()
+        if elapsed >= cooldown_seconds:
+            return None
+        details = {
+            "recovery_transaction_id": latest.recovery_transaction_id,
+            "recovery_status": latest.status,
+            "recovery_updated_at": latest.updated_at,
+            "last_progress_at": str(record.progress.last_progress_at or ""),
+            "suppression_reason": "cooldown_window_active",
+            "cooldown_seconds": str(int(cooldown_seconds)),
+        }
+        if latest.source_packet_id:
+            details["source_packet_id"] = latest.source_packet_id
+        return details
+
+    def _is_stale_persisted_record(
+        self,
+        record: PersistedSessionRecord,
+    ) -> bool:
+        freshness_window_seconds = max(
+            float(self._settings.session_spine_freshness_window_seconds or 0.0),
+            0.0,
+        )
+        if freshness_window_seconds <= 0.0:
+            return False
+        last_refreshed_at = _parse_iso(record.last_refreshed_at)
+        if last_refreshed_at is None:
+            return False
+        age_seconds = (datetime.now(UTC) - last_refreshed_at.astimezone(UTC)).total_seconds()
+        return age_seconds > freshness_window_seconds
+
+    def _record_recovery_reentry_suppressed(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        details: dict[str, str],
+    ) -> None:
+        if self._session_service is None:
+            return
+        correlation_id = (
+            "corr:recovery-suppressed:"
+            f"{record.project_id}:{details.get('recovery_transaction_id', 'unknown')}:"
+            f"{details.get('last_progress_at', '')}:{details.get('suppression_reason', 'unknown')}"
+        )
+        related_ids = {
+            "recovery_transaction_id": details.get("recovery_transaction_id", ""),
+        }
+        if record.effective_native_thread_id:
+            related_ids["native_thread_id"] = record.effective_native_thread_id
+        if details.get("source_packet_id"):
+            related_ids["source_packet_id"] = details["source_packet_id"]
+        correlation_id = (
+            "corr:recovery-suppressed:"
+            f"{record.project_id}:{details.get('recovery_transaction_id', 'unknown')}:"
+            f"{details.get('last_progress_at', '')}:{details.get('suppression_reason', 'unknown')}"
+        )
+        self._session_service.record_event_once(
+            event_type="recovery_execution_suppressed",
+            project_id=record.project_id,
+            session_id=record.thread_id,
+            correlation_id=correlation_id,
+            related_ids=related_ids,
+            payload={
+                "suppression_reason": details.get("suppression_reason"),
+                "suppression_source": "resident_orchestrator",
+                "task_status": str(record.session.session_state or ""),
+                "context_pressure": str(record.progress.context_pressure or ""),
+                "recovery_status": details.get("recovery_status"),
+                "recovery_updated_at": details.get("recovery_updated_at"),
+                "last_progress_at": details.get("last_progress_at"),
+                **(
+                    {"cooldown_seconds": details["cooldown_seconds"]}
+                    if details.get("cooldown_seconds")
+                    else {}
+                ),
+            },
+        )
+        continuation_identity = (
+            f"{record.project_id}:{record.thread_id}:"
+            f"{record.effective_native_thread_id or 'none'}:recover_current_branch"
+        )
+        route_key = f"{continuation_identity}:{record.fact_snapshot_version}"
+        self._session_service.record_continuation_gate_verdict(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+            gate_kind="recovery_execution",
+            gate_status="suppressed",
+            decision_source="rules_fallback",
+            decision_class="recover_current_branch",
+            action_ref="execute_recovery",
+            authoritative_snapshot_version=record.fact_snapshot_version,
+            snapshot_epoch=f"session-seq:{record.session_seq}",
+            goal_contract_version=self._goal_contract_version_for_record(record),
+            suppression_reason=details.get("suppression_reason"),
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+            source_packet_id=details.get("source_packet_id"),
+            lineage_refs=[
+                value
+                for value in [
+                    details.get("recovery_transaction_id"),
+                    details.get("source_packet_id"),
+                ]
+                if value
+            ],
+            correlation_id=correlation_id,
         )
 
     def _goal_contract_readiness_for_record(
@@ -816,22 +1267,48 @@ class ResidentOrchestrator:
             return "goal-contract:unknown"
         return contract.version
 
+    def _goal_contract_for_record(self, record: PersistedSessionRecord):
+        if self._session_service is None:
+            return None
+        service = GoalContractService(self._session_service)
+        return service.get_current_contract(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+        )
+
     def _evaluate_brain_intent(self, record: PersistedSessionRecord):
         return self._brain_service.evaluate_session(
             record=record,
         )
 
-    @staticmethod
     def _action_ref_for_brain_intent(
+        self,
         record: PersistedSessionRecord,
         brain_intent: str,
     ) -> str | None:
+        available_intents = set(record.session.available_intents or [])
+        fact_codes = {fact.fact_code for fact in record.facts}
+        if fact_codes.intersection({"project_not_active", "project_state_unavailable"}) and brain_intent in {
+            "propose_execute",
+            "require_approval",
+            "propose_recovery",
+        }:
+            return None
         if brain_intent in {"propose_execute", "require_approval", "suggest_only", "observe_only"}:
             if brain_intent == "observe_only" and not record.facts:
                 return None
+            if (
+                brain_intent in {"propose_execute", "require_approval"}
+                and "continue_session" not in available_intents
+            ):
+                return None
             return "continue_session"
         if brain_intent == "propose_recovery":
+            if "execute_recovery" not in available_intents:
+                return None
             return "execute_recovery"
+        if brain_intent == "branch_complete_switch":
+            return "post_operator_guidance"
         if brain_intent == "candidate_closure":
             return "post_operator_guidance"
         return None
@@ -844,6 +1321,57 @@ class ResidentOrchestrator:
                 f"{record.project_id}: {record.progress.summary or 'session reached done state'}"
             ),
             "reason_code": "candidate_closure",
+            "stuck_level": 0,
+        }
+
+    def _branch_complete_switch_action_args(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        brain_intent,
+    ) -> dict[str, object]:
+        target_work_item_seq = getattr(brain_intent, "target_work_item_seq", None)
+        branch_switch_token = str(getattr(brain_intent, "branch_switch_token", "") or "").strip()
+        if target_work_item_seq in (None, "") or not branch_switch_token:
+            return {}
+        contract = self._goal_contract_for_record(record)
+        project_total_goal = (
+            str(getattr(contract, "original_goal", "") or "").strip()
+            or record.project_id
+        )
+        branch_goal = (
+            str(getattr(contract, "current_phase_goal", "") or "").strip()
+            or str(getattr(contract, "active_goal", "") or "").strip()
+            or record.progress.activity_phase
+        )
+        current_progress = (
+            str(record.progress.summary or "").strip()
+            or "current progress summary unavailable"
+        )
+        next_branch_hypothesis = str(getattr(brain_intent, "next_branch_hypothesis", "") or "").strip()
+        remaining_work = [
+            str(item or "").strip()
+            for item in getattr(brain_intent, "remaining_work_hypothesis", []) or []
+            if str(item or "").strip()
+        ]
+        next_branch_line = f"权威 work item {target_work_item_seq}"
+        if next_branch_hypothesis:
+            next_branch_line = f"{next_branch_line}（分支候选：{next_branch_hypothesis}）"
+        message_lines = [
+            "不要继续总结当前分支；基于权威工程状态推进下一个分支任务。",
+            f"项目总目标：{project_total_goal}",
+            f"当前分支目标：{branch_goal}",
+            f"当前进度：{current_progress}",
+            "后续任务：",
+            "1. 当前分支目标已完成，不再继续推进本分支。",
+            f"2. 切换到{next_branch_line}。",
+            "3. 进入下一分支后，先读取 spec/plan/tasks 与当前工程状态，再继续执行。",
+        ]
+        if remaining_work:
+            message_lines.append(f"4. 优先任务：{'；'.join(remaining_work)}。")
+        return {
+            "message": "\n".join(message_lines),
+            "reason_code": "branch_complete_switch",
             "stuck_level": 0,
         }
 
@@ -978,10 +1506,42 @@ class ResidentOrchestrator:
             ),
             shadow_decision_ledger_ref=self._settings.release_gate_shadow_decision_ledger_ref,
         )
+        continuation_decision_class = self._continuation_decision_class_for_intent(
+            record=record,
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+        )
+        continuation_identity = self._continuation_identity_for_record(
+            record=record,
+            decision_class=continuation_decision_class,
+            brain_intent=brain_intent,
+        )
+        route_key = self._route_key_for_record(
+            record=record,
+            continuation_identity=continuation_identity,
+            brain_intent=brain_intent,
+        )
+        lineage_refs = [decision_trace.trace_id]
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
         evidence["managed_action_args_contract"] = action_args_contract.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
         evidence["release_gate_verdict"] = release_gate_evidence.verdict.model_dump(mode="json")
+        evidence["continuation_governance"] = {
+            "gate_kind": "continuation_governance",
+            "gate_status": "eligible",
+            "decision_source": self._decision_source_for_brain_intent(brain_intent),
+            "decision_class": continuation_decision_class,
+            "action_ref": action_ref,
+            "authoritative_snapshot_version": record.fact_snapshot_version,
+            "snapshot_epoch": f"session-seq:{record.session_seq}",
+            "goal_contract_version": self._goal_contract_version_for_record(record),
+            "suppression_reason": None,
+            "continuation_identity": continuation_identity,
+            "route_key": route_key,
+            "branch_switch_token": str(getattr(brain_intent, "branch_switch_token", "") or "").strip()
+            or None,
+            "lineage_refs": lineage_refs,
+        }
         if release_gate_evidence.evidence_bundle is not None:
             evidence["release_gate_evidence_bundle"] = release_gate_evidence.evidence_bundle.model_dump(
                 mode="json",
@@ -1034,7 +1594,12 @@ class ResidentOrchestrator:
 
     @staticmethod
     def _decision_allows_auto_execute(decision) -> bool:
-        if decision.brain_intent not in (None, "propose_execute", "propose_recovery"):
+        if decision.brain_intent not in (
+            None,
+            "propose_execute",
+            "propose_recovery",
+            "branch_complete_switch",
+        ):
             return False
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         managed_boundary = evidence.get("managed_agent_boundary")
@@ -1050,7 +1615,7 @@ class ResidentOrchestrator:
         release_gate_verdict = release_gate.verdict
         if release_gate_verdict is None:
             return False
-        if decision.brain_intent == "propose_recovery":
+        if decision.brain_intent in {"propose_recovery", "branch_complete_switch"}:
             return release_gate_verdict.status in {"pass", "not_applicable"}
         if release_gate_verdict.status != "pass":
             return False
@@ -1078,7 +1643,7 @@ class ResidentOrchestrator:
         validator_verdict = read_validator_decision_evidence(evidence).verdict
         release_gate_verdict = release_gate.verdict
         if (
-            decision.brain_intent == "propose_recovery"
+            decision.brain_intent in {"propose_recovery", "branch_complete_switch"}
             and validator_verdict is not None
             and validator_verdict.status == "pass"
             and release_gate_verdict is not None
@@ -1174,7 +1739,7 @@ class ResidentOrchestrator:
                 approval_id=approval.approval_id,
                 project_id=record.project_id,
                 thread_id=record.thread_id,
-                native_thread_id=approval.native_thread_id or record.native_thread_id,
+                native_thread_id=approval.effective_native_thread_id or record.effective_native_thread_id,
                 risk_level=approval.decision.risk_class,
                 command=approval.requested_action,
                 reason=approval.decision.decision_reason,
@@ -1242,6 +1807,11 @@ class ResidentOrchestrator:
         *,
         brain_intent,
     ) -> dict[str, Any]:
+        if brain_intent.intent == "branch_complete_switch":
+            return self._branch_complete_switch_action_args(
+                record,
+                brain_intent=brain_intent,
+            )
         if brain_intent.action_arguments:
             return dict(brain_intent.action_arguments)
         if brain_intent.intent == "candidate_closure":
@@ -1526,6 +2096,7 @@ class ResidentOrchestrator:
             requested_action=str(payload.get("requested_action") or approval.command),
             session_id=approval.thread_id,
             project_id=approval.project_id,
+            native_thread_id=approval.native_thread_id or record.effective_native_thread_id,
             fact_snapshot_version=str(
                 payload.get("fact_snapshot_version") or record.fact_snapshot_version
             ),
@@ -1613,21 +2184,45 @@ class ResidentOrchestrator:
         now: datetime,
     ) -> ResidentOrchestrationOutcome:
         record = self._record_with_local_approval_overlay(record)
+        if self._is_stale_persisted_record(record):
+            return ResidentOrchestrationOutcome(
+                project_id=record.project_id,
+                action_ref=None,
+                decision_result=None,
+                emitted_progress_summary=False,
+            )
         overlay_record = record
         brain_intent = self._evaluate_brain_intent(record)
         action_ref = self._action_ref_for_brain_intent(record, brain_intent.intent)
         decision_result: str | None = None
         goal_contract_readiness = self._goal_contract_readiness_for_record(record)
 
-        if (
-            brain_intent.intent == "propose_execute"
-            and action_ref == "continue_session"
-            and self._is_auto_continue_in_cooldown(
-            record.project_id,
-            now=now,
+        if brain_intent.intent in {"propose_execute", "branch_complete_switch"}:
+            dispatch_cooldown_details = self._auto_dispatch_cooldown_details(
+                record,
+                brain_intent=brain_intent,
+                action_ref=action_ref,
+                now=now,
             )
-        ):
-            action_ref = None
+            if dispatch_cooldown_details is not None:
+                action_ref = None
+                self._record_auto_dispatch_suppressed(
+                    record,
+                    details=dispatch_cooldown_details,
+                )
+        if brain_intent.intent == "propose_recovery" and action_ref == "execute_recovery":
+            suppression_details = self._recovery_reentry_suppression_details(record)
+            if suppression_details is None:
+                suppression_details = self._recovery_cooldown_suppression_details(
+                    record,
+                    now=now,
+                )
+            if suppression_details is not None:
+                action_ref = None
+                self._record_recovery_reentry_suppressed(
+                    record,
+                    details=suppression_details,
+                )
 
         if action_ref is not None:
             requested_action_args = self._requested_action_args_for_intent(
@@ -1711,6 +2306,11 @@ class ResidentOrchestrator:
                     ),
                 )
                 if command_plan.should_execute:
+                    self._record_auto_dispatch(
+                        decision,
+                        status="claimed",
+                        now=now,
+                    )
                     try:
                         result = execute_canonical_decision(
                             decision,
@@ -1735,11 +2335,18 @@ class ResidentOrchestrator:
                             claim_seq=command_plan.claim_seq,
                             now=now,
                         )
-                        if (
-                            decision.action_ref == "continue_session"
-                            and result.action_status == ActionStatus.COMPLETED
-                        ):
-                            self._record_auto_continue(record.project_id, now=now)
+                        if result.action_status == ActionStatus.COMPLETED:
+                            self._record_auto_dispatch(
+                                decision,
+                                status="completed",
+                                now=now,
+                            )
+                        else:
+                            self._record_auto_dispatch(
+                                decision,
+                                status="failed",
+                                now=now,
+                            )
                         if result.action_status == ActionStatus.COMPLETED:
                             self._delivery_outbox_store.enqueue_envelopes(
                                 build_envelopes_for_decision(decision)
@@ -1761,6 +2368,11 @@ class ResidentOrchestrator:
                             ),
                             command_id=command_plan.command_id,
                             claim_seq=command_plan.claim_seq,
+                            now=now,
+                        )
+                        self._record_auto_dispatch(
+                            decision,
+                            status="failed",
                             now=now,
                         )
                         if not self._cache_auto_continue_control_link_error(decision, exc):

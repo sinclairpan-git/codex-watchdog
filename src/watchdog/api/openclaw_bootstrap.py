@@ -90,6 +90,12 @@ def _record_notification_requeued(
         related_ids={
             "envelope_id": record.envelope_id,
             **(
+                {"native_thread_id": record.effective_native_thread_id}
+                if isinstance(record.effective_native_thread_id, str)
+                and record.effective_native_thread_id
+                else {}
+            ),
+            **(
                 {"notification_event_id": payload["event_id"]}
                 if isinstance(payload.get("event_id"), str) and payload.get("event_id")
                 else {}

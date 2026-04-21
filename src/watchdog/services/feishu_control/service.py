@@ -176,6 +176,11 @@ class FeishuControlService:
                 raise FeishuControlError(
                     "goal bootstrap replay payload drifted from existing contract"
                 )
+            self._sync_goal_contract_metadata_to_a_task(
+                project_id=project_id,
+                goal_message=goal_message,
+                contract=contract,
+            )
             return {
                 "event_type": request.event_type,
                 "project_id": project_id,
@@ -194,7 +199,7 @@ class FeishuControlService:
                 task_prompt=goal_message,
                 last_user_instruction=goal_message,
                 phase="bootstrap",
-                last_summary="feishu dm bootstrap",
+                last_summary=goal_message,
                 explicit_deliverables=[goal_message],
                 completion_signals=["autonomy golden path release blocker passes"],
                 causation_id=request.client_request_id,
@@ -207,6 +212,8 @@ class FeishuControlService:
                 expected_version=current.version,
                 current=current,
                 current_phase_goal=goal_message,
+                last_user_instruction=goal_message,
+                last_summary=goal_message,
                 explicit_deliverables=current.explicit_deliverables or [goal_message],
                 completion_signals=current.completion_signals
                 or ["autonomy golden path release blocker passes"],
@@ -219,6 +226,11 @@ class FeishuControlService:
             session_id=session_id,
             contract=contract,
         )
+        self._sync_goal_contract_metadata_to_a_task(
+            project_id=project_id,
+            goal_message=goal_message,
+            contract=contract,
+        )
         return {
             "event_type": request.event_type,
             "project_id": project_id,
@@ -226,6 +238,39 @@ class FeishuControlService:
             "goal_contract_version": contract.version,
             "superseded_approval_count": len(superseded),
         }
+
+    def _sync_goal_contract_metadata_to_a_task(
+        self,
+        *,
+        project_id: str,
+        goal_message: str,
+        contract: GoalContractSnapshot,
+    ) -> None:
+        try:
+            envelope = self._client.get_envelope(project_id)
+        except Exception:
+            return
+        if not isinstance(envelope, dict) or not envelope.get("success"):
+            return
+        task = envelope.get("data")
+        if not isinstance(task, dict):
+            return
+        thread_id = str(task.get("thread_id") or "").strip()
+        if not thread_id:
+            return
+        try:
+            self._client.register_native_thread(
+                {
+                    "project_id": project_id,
+                    "thread_id": thread_id,
+                    "goal_contract_version": contract.version,
+                    "current_phase_goal": contract.current_phase_goal,
+                    "last_user_instruction": goal_message,
+                    "last_summary": goal_message,
+                }
+            )
+        except Exception:
+            return
 
     def handle_command_request(
         self,
@@ -256,7 +301,7 @@ class FeishuControlService:
                         "response_token": approval.approval_token,
                         "project_id": approval.project_id,
                         "session_id": approval.session_id,
-                        "native_thread_id": approval.native_thread_id,
+                        "native_thread_id": approval.effective_native_thread_id,
                     }
                 )
             )
@@ -316,7 +361,8 @@ class FeishuControlService:
                 continue
             if (
                 normalized_native_thread_id is not None
-                and str(record.native_thread_id or "").strip() != normalized_native_thread_id
+                and str(record.effective_native_thread_id or "").strip()
+                != normalized_native_thread_id
             ):
                 continue
             candidates.append(record)
@@ -333,6 +379,9 @@ class FeishuControlService:
             "interaction_context_id": request.interaction_context_id,
             "interaction_family_id": request.interaction_family_id,
         }
+        native_thread_id = str(request.native_thread_id or "").strip()
+        if native_thread_id:
+            related_ids["native_thread_id"] = native_thread_id
         receive_id = str(request.receive_id or "").strip()
         receive_id_type = str(request.receive_id_type or "").strip()
         if receive_id and receive_id_type:
@@ -389,6 +438,26 @@ class FeishuControlService:
                 "goal_contract_version": contract.version,
                 "feishu_event_id": request.client_request_id,
                 "feishu_message_id": request.interaction_context_id,
+                **(
+                    {
+                        "native_thread_id": next(
+                            (
+                                native_thread_id
+                                for native_thread_id in (
+                                    str(record.effective_native_thread_id or "").strip()
+                                    for record in superseded
+                                )
+                                if native_thread_id
+                            ),
+                            "",
+                        )
+                    }
+                    if any(
+                        str(record.effective_native_thread_id or "").strip()
+                        for record in superseded
+                    )
+                    else {}
+                ),
             },
             occurred_at=request.occurred_at,
             payload={
@@ -470,6 +539,7 @@ class FeishuControlService:
                 "interaction_context_id": request.interaction_context_id,
                 "interaction_family_id": request.interaction_family_id,
                 "actor_id": request.actor_id,
+                "native_thread_id": str(approval.effective_native_thread_id or "").strip(),
             },
             occurred_at=request.occurred_at,
             payload={
@@ -502,6 +572,7 @@ class FeishuControlService:
                 "interaction_context_id": request.interaction_context_id,
                 "interaction_family_id": request.interaction_family_id,
                 "actor_id": request.actor_id,
+                "native_thread_id": str(approval.effective_native_thread_id or "").strip(),
             },
             occurred_at=request.occurred_at,
             payload={
@@ -533,6 +604,7 @@ class FeishuControlService:
                 "interaction_context_id": request.interaction_context_id,
                 "interaction_family_id": request.interaction_family_id,
                 "actor_id": request.actor_id,
+                "native_thread_id": str(approval.effective_native_thread_id or "").strip(),
             },
             occurred_at=request.occurred_at,
             payload={

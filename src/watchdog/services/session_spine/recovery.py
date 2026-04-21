@@ -14,10 +14,25 @@ from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
+from watchdog.services.session_spine.continuation_packet import (
+    build_recovery_continuation_packet,
+)
 from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.session_spine.projection import (
+    stable_thread_id_for_project,
+    task_native_thread_id,
+)
 from watchdog.services.session_spine.service import (
     CONTROL_LINK_ERROR,
     SessionSpineUpstreamError,
+    _load_approvals_or_raise,
+    _task_with_authoritative_project_execution_state,
+)
+from watchdog.services.session_spine.store import SessionSpineStore
+from watchdog.services.session_spine.task_state import normalize_task_status
+from watchdog.services.session_spine.task_state import (
+    is_non_active_project_execution_state,
+    normalize_project_execution_state,
 )
 from watchdog.settings import Settings
 
@@ -25,17 +40,292 @@ _SAME_THREAD_RESUME = "same_thread_resume"
 _NEW_CHILD_SESSION = "new_child_session"
 
 
+def _load_persisted_session_record(
+    *,
+    project_id: str,
+    settings: Settings,
+):
+    store_path = Path(settings.data_dir) / "session_spine.json"
+    if not store_path.exists():
+        return None
+    try:
+        return SessionSpineStore(store_path).get(project_id)
+    except Exception:
+        return None
+
+
+def _recovery_audit_context(
+    *,
+    project_id: str,
+    task: dict[str, Any],
+    settings: Settings,
+) -> dict[str, str | None]:
+    persisted = _load_persisted_session_record(project_id=project_id, settings=settings)
+    continuation_identity = (
+        f"{project_id}:{stable_thread_id_for_project(project_id)}:"
+        f"{task_native_thread_id(task) or 'none'}:recover_current_branch"
+    )
+    authoritative_snapshot_version = (
+        str(getattr(persisted, "fact_snapshot_version", "") or "").strip() or None
+    )
+    snapshot_epoch = None
+    if persisted is not None:
+        snapshot_epoch = f"session-seq:{persisted.session_seq}"
+    route_key = (
+        f"{continuation_identity}:{authoritative_snapshot_version}"
+        if authoritative_snapshot_version is not None
+        else None
+    )
+    return {
+        "continuation_identity": continuation_identity,
+        "route_key": route_key,
+        "authoritative_snapshot_version": authoritative_snapshot_version,
+        "snapshot_epoch": snapshot_epoch,
+    }
+
+
+def _build_recovery_packet(
+    *,
+    project_id: str,
+    task: dict[str, Any],
+    settings: Settings,
+    session_service: SessionService | None,
+    audit_context: dict[str, str | None],
+) -> dict[str, Any]:
+    service = session_service or SessionService.from_data_dir(settings.data_dir)
+    goal_contracts = GoalContractService(service)
+    contract = goal_contracts.get_current_contract(
+        project_id=project_id,
+        session_id=stable_thread_id_for_project(project_id),
+    )
+    goal_contract_version = str(
+        task.get("goal_contract_version")
+        or getattr(contract, "version", "")
+        or "goal-contract:unknown"
+    ).strip() or "goal-contract:unknown"
+    project_total_goal = (
+        str(getattr(contract, "original_goal", "") or "").strip()
+        or str(task.get("task_prompt") or "").strip()
+        or project_id
+    )
+    branch_goal = (
+        str(getattr(contract, "current_phase_goal", "") or "").strip()
+        or str(getattr(contract, "active_goal", "") or "").strip()
+        or str(task.get("current_phase_goal") or "").strip()
+        or str(task.get("task_title") or "").strip()
+        or project_total_goal
+    )
+    remaining_tasks = [
+        str(item or "").strip()
+        for item in getattr(contract, "completion_signals", []) or []
+        if str(item or "").strip()
+    ]
+    packet = build_recovery_continuation_packet(
+        project_id=project_id,
+        task=task,
+        continuation_identity=str(audit_context["continuation_identity"] or ""),
+        route_key=str(audit_context["route_key"] or "") or None,
+        project_total_goal=project_total_goal,
+        branch_goal=branch_goal,
+        remaining_tasks=remaining_tasks,
+        goal_contract_version=goal_contract_version,
+        decision_source="recovery_guard",
+        authoritative_snapshot_version=str(audit_context["authoritative_snapshot_version"] or "") or None,
+        snapshot_epoch=str(audit_context["snapshot_epoch"] or "") or None,
+        target_session_id=stable_thread_id_for_project(project_id),
+        target_thread_id=task_native_thread_id(task) or stable_thread_id_for_project(project_id),
+    )
+    return packet.model_dump(mode="json", exclude_none=True)
+
+
+def _resume_native_thread_id(resume: dict[str, Any] | None) -> str | None:
+    if resume is None:
+        return None
+    native_thread_id = str(resume.get("native_thread_id") or "").strip()
+    if native_thread_id:
+        return native_thread_id
+    thread_id = str(resume.get("thread_id") or "").strip()
+    if thread_id.startswith("session:"):
+        return None
+    return thread_id or None
+
+
+def _resume_session_id(resume: dict[str, Any] | None) -> str | None:
+    if resume is None:
+        return None
+    for key in ("session_id", "child_session_id"):
+        value = str(resume.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _resume_session_thread_id(resume: dict[str, Any] | None) -> str | None:
+    if resume is None:
+        return None
+    thread_id = str(resume.get("thread_id") or "").strip()
+    if thread_id.startswith("session:"):
+        return thread_id
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class RecoveryExecutionOutcome:
     project_id: str
     context_pressure: str
     action: str
+    noop_reason: str | None = None
     facts: list[FactRecord] = field(default_factory=list)
     handoff: dict[str, Any] | None = None
     resume: dict[str, Any] | None = None
     resume_outcome: str | None = None
     resume_error: str | None = None
     memory_advisory_context: dict[str, Any] | None = None
+
+
+def _record_recovery_suppressed(
+    *,
+    project_id: str,
+    task: dict[str, Any],
+    task_status: str,
+    context_pressure: str,
+    suppression_reason: str,
+    project_execution_state: str | None,
+    session_service: SessionService | None,
+    settings: Settings,
+) -> None:
+    service = session_service or SessionService.from_data_dir(settings.data_dir)
+    audit_context = _recovery_audit_context(
+        project_id=project_id,
+        task=task,
+        settings=settings,
+    )
+    occurred_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    correlation_id = (
+        f"corr:recovery-suppressed:{project_id}:{task_status or 'unknown'}:{occurred_at}"
+    )
+    related_ids = {
+        "native_thread_id": task_native_thread_id(task) or "",
+    }
+    service.record_event(
+        event_type="recovery_execution_suppressed",
+        project_id=project_id,
+        session_id=stable_thread_id_for_project(project_id),
+        correlation_id=correlation_id,
+        related_ids=related_ids,
+        occurred_at=occurred_at,
+        payload={
+            "suppression_reason": suppression_reason,
+            "task_status": task_status,
+            "context_pressure": context_pressure,
+            **(
+                {"project_execution_state": project_execution_state}
+                if project_execution_state not in (None, "", "unknown")
+                else {}
+            ),
+        },
+    )
+    service.record_continuation_gate_verdict(
+        project_id=project_id,
+        session_id=stable_thread_id_for_project(project_id),
+        gate_kind="recovery_execution",
+        gate_status="suppressed",
+        decision_source="recovery_guard",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version=audit_context["authoritative_snapshot_version"],
+        snapshot_epoch=audit_context["snapshot_epoch"],
+        suppression_reason=suppression_reason,
+        continuation_identity=audit_context["continuation_identity"],
+        route_key=audit_context["route_key"],
+        causation_id=None,
+        correlation_id=correlation_id,
+        occurred_at=occurred_at,
+    )
+    if suppression_reason in {
+        "project_not_active",
+        "project_state_unavailable",
+        "pending_approval",
+        "task_terminal",
+    }:
+        service.record_continuation_identity_state(
+            project_id=project_id,
+            session_id=stable_thread_id_for_project(project_id),
+            continuation_identity=str(audit_context["continuation_identity"] or ""),
+            state="invalidated",
+            decision_source="recovery_guard",
+            decision_class="recover_current_branch",
+            action_ref="execute_recovery",
+            authoritative_snapshot_version=audit_context["authoritative_snapshot_version"],
+            snapshot_epoch=audit_context["snapshot_epoch"],
+            route_key=audit_context["route_key"],
+            suppression_reason=suppression_reason,
+            causation_id=None,
+            correlation_id=correlation_id,
+            occurred_at=occurred_at,
+        )
+        service.record_continuation_replay_invalidated(
+            project_id=project_id,
+            session_id=stable_thread_id_for_project(project_id),
+            decision_source="recovery_guard",
+            decision_class="recover_current_branch",
+            authoritative_snapshot_version=audit_context["authoritative_snapshot_version"],
+            snapshot_epoch=audit_context["snapshot_epoch"],
+            continuation_identity=audit_context["continuation_identity"],
+            route_key=audit_context["route_key"],
+            invalidation_reason=suppression_reason,
+            causation_id=None,
+            correlation_id=correlation_id,
+            occurred_at=occurred_at,
+        )
+
+
+def _record_recovery_dispatch_started(
+    *,
+    project_id: str,
+    task: dict[str, Any],
+    context_pressure: str,
+    settings: Settings,
+    session_service: SessionService | None,
+) -> None:
+    service = session_service or SessionService.from_data_dir(settings.data_dir)
+    audit_context = _recovery_audit_context(
+        project_id=project_id,
+        task=task,
+        settings=settings,
+    )
+    occurred_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    correlation_id = (
+        "corr:recovery-dispatch:"
+        f"{project_id}:{audit_context['continuation_identity'] or 'none'}:"
+        f"{audit_context['authoritative_snapshot_version'] or 'unknown'}:"
+        f"{str(task.get('last_progress_at') or '')}"
+    )
+    related_ids = {
+        "native_thread_id": task_native_thread_id(task) or "",
+    }
+    if audit_context["continuation_identity"]:
+        related_ids["continuation_identity"] = str(audit_context["continuation_identity"])
+    if audit_context["route_key"]:
+        related_ids["route_key"] = str(audit_context["route_key"])
+    service.record_event_once(
+        event_type="recovery_dispatch_started",
+        project_id=project_id,
+        session_id=stable_thread_id_for_project(project_id),
+        correlation_id=correlation_id,
+        related_ids=related_ids,
+        occurred_at=occurred_at,
+        payload={
+            "decision_source": "recovery_guard",
+            "decision_class": "recover_current_branch",
+            "context_pressure": context_pressure,
+            "authoritative_snapshot_version": audit_context["authoritative_snapshot_version"],
+            "snapshot_epoch": audit_context["snapshot_epoch"],
+            "recovery_reason": "context_critical",
+            "failure_signature": context_pressure,
+            "last_progress_at": str(task.get("last_progress_at") or ""),
+        },
+    )
 
 
 def _control_link_error(message: str) -> SessionSpineUpstreamError:
@@ -120,10 +410,19 @@ def _resolve_resume_outcome(
     explicit = str(resume.get("resume_outcome") or "").strip()
     if explicit in {_SAME_THREAD_RESUME, _NEW_CHILD_SESSION}:
         return explicit
-    if any(str(resume.get(key) or "").strip() for key in ("session_id", "child_session_id")):
+    resumed_session_id = _resume_session_id(resume)
+    parent_session_id = stable_thread_id_for_project(str(task.get("project_id") or ""))
+    if resumed_session_id and parent_session_id and resumed_session_id != parent_session_id:
         return _NEW_CHILD_SESSION
-    resumed_thread_id = str(resume.get("thread_id") or resume.get("native_thread_id") or "").strip()
-    parent_thread_id = str(task.get("thread_id") or "").strip()
+    resumed_session_thread_id = _resume_session_thread_id(resume)
+    if (
+        resumed_session_thread_id
+        and parent_session_id
+        and resumed_session_thread_id != parent_session_id
+    ):
+        return _NEW_CHILD_SESSION
+    resumed_thread_id = str(_resume_native_thread_id(resume) or "").strip()
+    parent_thread_id = str(task_native_thread_id(task) or "").strip()
     if resumed_thread_id and parent_thread_id and resumed_thread_id != parent_thread_id:
         return _NEW_CHILD_SESSION
     return _SAME_THREAD_RESUME
@@ -159,7 +458,7 @@ def _build_memory_advisory_context(
     session_service: SessionService | None,
     memory_hub_service: MemoryHubService | None,
 ) -> dict[str, Any] | None:
-    session_id = f"session:{project_id}"
+    session_id = stable_thread_id_for_project(project_id)
     service = memory_hub_service or MemoryHubService()
     try:
         payload = service.build_runtime_advisory_context(
@@ -210,27 +509,159 @@ def perform_recovery_execution(
     session_service: SessionService | None = None,
     memory_hub_service: MemoryHubService | None = None,
 ) -> RecoveryExecutionOutcome:
-    task = _load_task_or_raise(client, project_id)
-    facts = build_fact_records(project_id=project_id, task=task, approvals=[])
+    task = _task_with_authoritative_project_execution_state(
+        _load_task_or_raise(client, project_id)
+    )
+    approvals = _load_approvals_or_raise(client, project_id)
+    facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
+    fact_codes = {fact.fact_code for fact in facts}
     context_pressure = str(task.get("context_pressure") or "unknown")
+    task_status = normalize_task_status(task)
+    project_execution_state = normalize_project_execution_state(task)
     memory_advisory_context = _build_memory_advisory_context(
         project_id=project_id,
         task=task,
         session_service=session_service,
         memory_hub_service=memory_hub_service,
     )
+    if "project_state_unavailable" in fact_codes:
+        _record_recovery_suppressed(
+            project_id=project_id,
+            task=task,
+            task_status=task_status,
+            context_pressure=context_pressure,
+            suppression_reason="project_state_unavailable",
+            project_execution_state=project_execution_state,
+            session_service=session_service,
+            settings=settings,
+        )
+        return RecoveryExecutionOutcome(
+            project_id=project_id,
+            context_pressure=context_pressure,
+            action="noop",
+            noop_reason="project_state_unavailable",
+            facts=facts,
+            memory_advisory_context=memory_advisory_context,
+        )
+    if is_non_active_project_execution_state(project_execution_state):
+        _record_recovery_suppressed(
+            project_id=project_id,
+            task=task,
+            task_status=task_status,
+            context_pressure=context_pressure,
+            suppression_reason="project_not_active",
+            project_execution_state=project_execution_state,
+            session_service=session_service,
+            settings=settings,
+        )
+        return RecoveryExecutionOutcome(
+            project_id=project_id,
+            context_pressure=context_pressure,
+            action="noop",
+            noop_reason="project_not_active",
+            facts=facts,
+            memory_advisory_context=memory_advisory_context,
+        )
+    if approvals or bool(task.get("pending_approval")):
+        _record_recovery_suppressed(
+            project_id=project_id,
+            task=task,
+            task_status=task_status,
+            context_pressure=context_pressure,
+            suppression_reason="pending_approval",
+            project_execution_state=project_execution_state,
+            session_service=session_service,
+            settings=settings,
+        )
+        return RecoveryExecutionOutcome(
+            project_id=project_id,
+            context_pressure=context_pressure,
+            action="noop",
+            noop_reason="pending_approval",
+            facts=facts,
+            memory_advisory_context=memory_advisory_context,
+        )
+    if task_status in {"handoff_in_progress", "resuming"}:
+        _record_recovery_suppressed(
+            project_id=project_id,
+            task=task,
+            task_status=task_status,
+            context_pressure=context_pressure,
+            suppression_reason="recovery_in_flight",
+            project_execution_state=project_execution_state,
+            session_service=session_service,
+            settings=settings,
+        )
+        return RecoveryExecutionOutcome(
+            project_id=project_id,
+            context_pressure=context_pressure,
+            action="noop",
+            noop_reason="recovery_in_flight",
+            facts=facts,
+            memory_advisory_context=memory_advisory_context,
+        )
+    task_suppression_reasons = {
+        "paused": "paused",
+        "waiting_for_direction": "waiting_for_direction",
+        "waiting_for_approval": "pending_approval",
+        "completed": "task_terminal",
+        "failed": "task_terminal",
+    }
+    if task_status in task_suppression_reasons:
+        _record_recovery_suppressed(
+            project_id=project_id,
+            task=task,
+            task_status=task_status,
+            context_pressure=context_pressure,
+            suppression_reason=task_suppression_reasons[task_status],
+            project_execution_state=project_execution_state,
+            session_service=session_service,
+            settings=settings,
+        )
+        return RecoveryExecutionOutcome(
+            project_id=project_id,
+            context_pressure=context_pressure,
+            action="noop",
+            noop_reason=task_suppression_reasons[task_status],
+            facts=facts,
+            memory_advisory_context=memory_advisory_context,
+        )
     if context_pressure != "critical":
         return RecoveryExecutionOutcome(
             project_id=project_id,
             context_pressure=context_pressure,
             action="noop",
+            noop_reason="context_not_critical",
             facts=facts,
             memory_advisory_context=memory_advisory_context,
         )
 
+    _record_recovery_dispatch_started(
+        project_id=project_id,
+        task=task,
+        context_pressure=context_pressure,
+        settings=settings,
+        session_service=session_service,
+    )
+    audit_context = _recovery_audit_context(
+        project_id=project_id,
+        task=task,
+        settings=settings,
+    )
+    continuation_packet = _build_recovery_packet(
+        project_id=project_id,
+        task=task,
+        settings=settings,
+        session_service=session_service,
+        audit_context=audit_context,
+    )
     try:
         handoff = _extract_success_data(
-            client.trigger_handoff(project_id, reason="context_critical"),
+            client.trigger_handoff(
+                project_id,
+                reason="context_critical",
+                continuation_packet=continuation_packet,
+            ),
             default_message="handoff 调用失败",
         )
     except (httpx.RequestError, RuntimeError, OSError) as exc:
@@ -254,12 +685,12 @@ def perform_recovery_execution(
         )
         return outcome
 
-    handoff_summary = str(handoff.get("summary") or "").strip()
     try:
         resume_body = client.trigger_resume(
             project_id,
             mode="resume_or_new_thread",
-            handoff_summary=handoff_summary,
+            handoff_summary="",
+            continuation_packet=continuation_packet,
         )
     except (httpx.RequestError, RuntimeError, OSError):
         outcome = RecoveryExecutionOutcome(
@@ -350,6 +781,11 @@ def _record_recovery_truth(
     if outcome.handoff is None:
         return
     service = session_service or SessionService.from_data_dir(settings.data_dir)
+    audit_context = _recovery_audit_context(
+        project_id=project_id,
+        task=task,
+        settings=settings,
+    )
     goal_contract_version = str(
         outcome.handoff.get("goal_contract_version")
         or (outcome.resume or {}).get("goal_contract_version")
@@ -362,8 +798,8 @@ def _record_recovery_truth(
     ).strip() or None
     recorded = service.record_recovery_execution(
         project_id=project_id,
-        parent_session_id=f"session:{project_id}",
-        parent_native_thread_id=str(task.get("thread_id") or "").strip() or None,
+        parent_session_id=stable_thread_id_for_project(project_id),
+        parent_native_thread_id=task_native_thread_id(task),
         recovery_reason="context_critical",
         failure_family="context_pressure",
         failure_signature=outcome.context_pressure,
@@ -373,6 +809,10 @@ def _record_recovery_truth(
         resume_error=outcome.resume_error,
         goal_contract_version=goal_contract_version,
         source_packet_id=source_packet_id,
+        continuation_identity=audit_context["continuation_identity"],
+        route_key=audit_context["route_key"],
+        authoritative_snapshot_version=audit_context["authoritative_snapshot_version"],
+        snapshot_epoch=audit_context["snapshot_epoch"],
     )
     _supersede_stale_interactions_for_recovery(
         project_id=project_id,
@@ -401,6 +841,7 @@ def _record_recovery_truth(
         project_id=project_id,
         parent_session_id=recorded.parent_session_id,
         child_session_id=recorded.child_session_id,
+        child_native_thread_id=_resume_native_thread_id(outcome.resume),
         expected_version=goal_contract_version,
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
@@ -447,6 +888,11 @@ def _supersede_stale_interactions_for_recovery(
                 "interaction_family_id": family_id,
                 "recovery_transaction_id": recovery_transaction_id,
                 "source_packet_id": source_packet_id,
+                **(
+                    {"native_thread_id": record.effective_native_thread_id}
+                    if record.effective_native_thread_id
+                    else {}
+                ),
             },
             occurred_at=now,
             payload={

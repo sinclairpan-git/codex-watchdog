@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -123,20 +124,35 @@ def test_resume_replays_handoff_summary_into_live_thread(tmp_path: Path) -> None
     with _make_client(tmp_path, bridge) as client:
         created = client.post(
             "/api/v1/tasks",
-            json={"project_id": "ai-demo", "cwd": "/tmp/w1", "task_title": "t1"},
+            json={
+                "project_id": "ai-demo",
+                "cwd": "/tmp/w1",
+                "task_title": "t1",
+                "phase": "editing_source",
+            },
             headers=headers,
         )
         thread_id = created.json()["data"]["thread_id"]
+
+        handoff = client.post(
+            "/api/v1/tasks/ai-demo/handoff",
+            json={"reason": "context_critical"},
+            headers=headers,
+        )
+        assert handoff.status_code == 200
 
         response = client.post(
             "/api/v1/tasks/ai-demo/resume",
             json={"handoff_summary": "resume from saved handoff"},
             headers=headers,
         )
+        task = client.get("/api/v1/tasks/ai-demo", headers=headers).json()["data"]
 
     assert response.status_code == 200
     assert bridge.resume_calls == [thread_id]
     assert bridge.start_calls == [(thread_id, "resume from saved handoff")]
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
 
 
 def test_handoff_event_is_exposed_in_task_events(tmp_path: Path) -> None:
@@ -162,6 +178,110 @@ def test_handoff_event_is_exposed_in_task_events(tmp_path: Path) -> None:
     assert events.status_code == 200
     assert "event: handoff" in events.text
     assert '"reason":"operator_takeover"' in events.text
+
+
+def test_handoff_summary_emits_executable_continuation_instruction(tmp_path: Path) -> None:
+    bridge = FakeBridge()
+    headers = {"Authorization": "Bearer test-token"}
+
+    with _make_client(tmp_path, bridge) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={
+                "project_id": "ai-demo",
+                "cwd": "/tmp/w1",
+                "task_title": "收口 watchdog recovery 重复触发",
+                "task_prompt": "禁止 recovery 在 handoff/resume 期间重复触发，并把 handoff 改成明确继续指令。",
+                "last_user_instruction": "继续收口 recovery 自动重入，并补最小回归测试。",
+                "current_phase_goal": "让 handoff 明确告诉 Codex App 继续什么任务",
+                "last_summary": "已定位到 context_critical 会自动重入 execute_recovery。",
+                "phase": "editing_tests",
+                "files_touched": [
+                    "src/watchdog/services/session_spine/facts.py",
+                    "src/a_control_agent/storage/handoff_manager.py",
+                ],
+                "goal_contract_version": "goal-v9",
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+
+        response = client.post(
+            "/api/v1/tasks/ai-demo/handoff",
+            json={"reason": "context_critical"},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    summary = response.json()["data"]["summary"]
+    assert "## Continue instruction" in summary
+    assert "禁止 recovery 在 handoff/resume 期间重复触发，并把 handoff 改成明确继续指令。" in summary
+    assert "让 handoff 明确告诉 Codex App 继续什么任务" in summary
+    assert "已定位到 context_critical 会自动重入 execute_recovery。" in summary
+    assert "恢复阶段：editing_tests" in summary
+    assert "第一步动作" in summary
+    assert "## 已完成" in summary
+    assert "## 剩余任务" in summary
+    assert "## 当前阻塞点" in summary
+    assert "## 下一步建议" in summary
+    assert "## Stop conditions" in summary
+    assert "需要人工介入" in summary
+    assert "goal_contract_version=goal-v9" in summary
+    assert "由接收线程基于本摘要继续执行。" not in summary
+
+
+def test_handoff_and_resume_audit_trail_preserves_resume_target_phase(tmp_path: Path) -> None:
+    bridge = FakeBridge()
+    headers = {"Authorization": "Bearer test-token"}
+
+    with _make_client(tmp_path, bridge) as client:
+        created = client.post(
+            "/api/v1/tasks",
+            json={
+                "project_id": "ai-demo",
+                "cwd": "/tmp/w1",
+                "task_title": "t1",
+                "phase": "editing_tests",
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200
+
+        handoff = client.post(
+            "/api/v1/tasks/ai-demo/handoff",
+            json={"reason": "context_critical"},
+            headers=headers,
+        )
+        assert handoff.status_code == 200
+
+        resume = client.post(
+            "/api/v1/tasks/ai-demo/resume",
+            json={"handoff_summary": "resume from saved handoff"},
+            headers=headers,
+        )
+        assert resume.status_code == 200
+
+        events = client.app.state.task_store.list_events("ai-demo")
+
+    assert handoff.json()["data"]["resume_target_phase"] == "editing_tests"
+    assert resume.json()["data"]["resume_target_phase"] == "editing_tests"
+    handoff_events = [event for event in events if event["event_type"] == "handoff"]
+    resume_events = [event for event in events if event["event_type"] == "resume"]
+    assert handoff_events[-1]["payload_json"]["resume_target_phase"] == "editing_tests"
+    assert resume_events[-1]["payload_json"]["resume_target_phase"] == "editing_tests"
+
+    audit_path = tmp_path / "agent-data" / "audit.jsonl"
+    audit_rows = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    handoff_rows = [row for row in audit_rows if row.get("action") == "handoff"]
+    requested_rows = [row for row in audit_rows if row.get("action") == "resume_requested"]
+    resume_rows = [row for row in audit_rows if row.get("action") == "resume"]
+    assert handoff_rows[-1]["payload"]["resume_target_phase"] == "editing_tests"
+    assert requested_rows[-1]["payload"]["resume_target_phase"] == "editing_tests"
+    assert resume_rows[-1]["payload"]["resume_target_phase"] == "editing_tests"
 
 
 def test_resume_event_is_exposed_in_task_events(tmp_path: Path) -> None:

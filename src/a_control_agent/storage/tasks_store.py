@@ -78,6 +78,15 @@ def _coerce_bool(value: Any, *, default: bool = False) -> bool:
     return default
 
 
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized or normalized.lower() in {"none", "null"}:
+        return None
+    return normalized
+
+
 def _canonicalize_task_record(
     rec: dict[str, Any],
     *,
@@ -99,7 +108,11 @@ def _canonicalize_task_record(
     rec["approval_risk"] = rec.get("approval_risk")
     rec["last_error_signature"] = rec.get("last_error_signature")
     rec["task_title"] = str(rec.get("task_title", ""))
+    rec["task_prompt"] = str(rec.get("task_prompt", ""))
+    rec["last_user_instruction"] = str(rec.get("last_user_instruction", ""))
+    rec["current_phase_goal"] = str(rec.get("current_phase_goal", ""))
     rec["last_summary"] = str(rec.get("last_summary", ""))
+    rec["goal_contract_version"] = _normalize_optional_text(rec.get("goal_contract_version"))
     return rec
 
 
@@ -264,6 +277,8 @@ class TaskStore:
             "cwd": str(body.get("cwd", "")),
             "task_title": str(body.get("task_title", "")),
             "task_prompt": str(body.get("task_prompt", "")),
+            "last_user_instruction": str(body.get("last_user_instruction", "")),
+            "current_phase_goal": str(body.get("current_phase_goal", "")),
             "model": str(body.get("model", "")),
             "sandbox": str(body.get("sandbox", "")),
             "approval_policy": str(body.get("approval_policy", "")),
@@ -470,6 +485,8 @@ class TaskStore:
                 "cwd",
                 "task_title",
                 "task_prompt",
+                "last_user_instruction",
+                "current_phase_goal",
                 "model",
                 "sandbox",
                 "approval_policy",

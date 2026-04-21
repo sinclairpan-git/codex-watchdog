@@ -20,6 +20,7 @@ from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutbo
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service.service import SessionService
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -61,6 +62,52 @@ _FUTURE_WORKER_STATUS_BY_EVENT_TYPE = {
     "future_worker_result_consumed": "consumed",
     "future_worker_result_rejected": "rejected",
 }
+
+
+def _session_event_sort_key(event) -> tuple[str, int, str, str]:
+    return (
+        "0" if getattr(event, "log_seq", None) is not None else "1",
+        getattr(event, "log_seq", None) or 0,
+        str(getattr(event, "occurred_at", "")),
+        str(getattr(event, "event_id", "")),
+    )
+
+
+def _active_recovery_suppression_reason_counts(*, data_dir: Path) -> dict[str, int]:
+    session_service = SessionService.from_data_dir(data_dir)
+    session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
+    latest_by_session: dict[str, Any] = {}
+    for event in session_service.list_events(event_type="recovery_execution_suppressed"):
+        current = latest_by_session.get(event.session_id)
+        if current is None or _session_event_sort_key(event) > _session_event_sort_key(current):
+            latest_by_session[event.session_id] = event
+
+    counts: dict[str, int] = {}
+    for session_id, event in latest_by_session.items():
+        record = session_spine_store.get(event.project_id)
+        if record is None or record.thread_id != session_id:
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        event_last_progress_at = str(payload.get("last_progress_at") or "").strip() or None
+        current_last_progress_at = str(record.progress.last_progress_at or "").strip() or None
+        if event_last_progress_at != current_last_progress_at:
+            continue
+        if str(record.progress.context_pressure or "").strip() != "critical":
+            continue
+        reason = str(payload.get("suppression_reason") or "").strip() or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _recovery_suppression_alert_summary(reason: str) -> str:
+    normalized = str(reason or "").strip()
+    if normalized == "reentry_without_newer_progress":
+        return "recovery suppression active: waiting for newer progress"
+    if normalized == "recovery_in_flight":
+        return "recovery suppression active: recovery in flight"
+    if normalized == "cooldown_window_active":
+        return "recovery suppression active: cooldown window active"
+    return f"recovery suppression active: {normalized or 'unknown'}"
 
 
 def _fact_snapshot_order(value: str) -> tuple[int, str]:
@@ -490,6 +537,12 @@ def _record_notification_requeued(
         related_ids={
             "envelope_id": record.envelope_id,
             **(
+                {"native_thread_id": record.effective_native_thread_id}
+                if isinstance(record.effective_native_thread_id, str)
+                and record.effective_native_thread_id
+                else {}
+            ),
+            **(
                 {"notification_event_id": payload["event_id"]}
                 if isinstance(payload.get("event_id"), str) and payload.get("event_id")
                 else {}
@@ -625,6 +678,9 @@ def build_ops_summary(
     runtime_gate_reason_counts = _runtime_gate_reason_counts(decisions)
     provider_degrade_reason_counts = _provider_degrade_reason_counts(decisions)
     release_gate_blockers = _release_gate_blockers(decisions)
+    recovery_suppression_reason_counts = _active_recovery_suppression_reason_counts(
+        data_dir=data_dir
+    )
     future_workers = _future_worker_statuses(data_dir=data_dir)
     resident_expert_views = ResidentExpertRuntimeService.from_data_dir(
         data_dir,
@@ -691,6 +747,15 @@ def build_ops_summary(
                 severity="warning",
                 count=count,
                 summary=f"brain provider degradation: {reason}",
+            )
+        )
+    for reason, count in sorted(recovery_suppression_reason_counts.items()):
+        alerts.append(
+            OpsAlert(
+                alert_code=f"recovery_suppressed_{reason}",
+                severity="warning",
+                count=count,
+                summary=_recovery_suppression_alert_summary(reason),
             )
         )
     if recovery_failed:

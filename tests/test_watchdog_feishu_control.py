@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -8,15 +9,19 @@ from watchdog.main import create_app
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.delivery.store import DeliveryOutboxRecord
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import receipt_key
 
 
 class FakeAClient:
     def __init__(self) -> None:
+        self._pending_approval = True
+        self._phase = "approval"
         self.decision_calls: list[tuple[str, str, str, str]] = []
         self.handoff_calls: list[tuple[str, str]] = []
         self.pause_calls: list[str] = []
+        self.register_thread_calls: list[dict[str, object]] = []
 
     def get_envelope(self, project_id: str) -> dict[str, object]:
         return {
@@ -25,8 +30,8 @@ class FakeAClient:
                 "project_id": project_id,
                 "thread_id": "thr_native_1",
                 "status": "running",
-                "phase": "approval",
-                "pending_approval": True,
+                "phase": self._phase,
+                "pending_approval": self._pending_approval,
                 "last_summary": "waiting for approval",
                 "files_touched": ["src/example.py"],
                 "context_pressure": "low",
@@ -74,6 +79,8 @@ class FakeAClient:
         note: str = "",
     ) -> dict[str, object]:
         self.decision_calls.append((approval_id, decision, operator, note))
+        self._pending_approval = False
+        self._phase = "editing_source"
         return {
             "success": True,
             "data": {
@@ -89,7 +96,9 @@ class FakeAClient:
         project_id: str,
         *,
         reason: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.handoff_calls.append((project_id, reason))
         return {
             "success": True,
@@ -109,10 +118,24 @@ class FakeAClient:
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         return {
             "success": True,
             "data": {"project_id": project_id, "status": "running", "mode": mode},
+        }
+
+    def register_native_thread(self, payload: dict[str, object]) -> dict[str, object]:
+        self.register_thread_calls.append(dict(payload))
+        return {
+            "success": True,
+            "data": {
+                "project_id": str(payload.get("project_id") or ""),
+                "thread_id": str(payload.get("thread_id") or ""),
+                "status": "running",
+                "phase": "approval",
+            },
         }
 
 
@@ -279,9 +302,43 @@ def test_feishu_control_records_receipt_before_approval_side_effects(tmp_path: P
         "approval_approved",
         "human_override_recorded",
     ]
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[1].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[2].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[3].related_ids["native_thread_id"] == "thr_native_1"
     assert events[1].related_ids["interaction_context_id"] == "ctx-approval-1"
     assert events[1].related_ids["interaction_family_id"] == "family-approval-1"
     assert events[1].payload["channel_kind"] == "dm"
+
+
+def test_feishu_control_approval_response_uses_effective_native_thread_from_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient())
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json=_control_body(approval),
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    events = app.state.session_service.list_events(session_id=approval.session_id)
+    assert events[1].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[2].related_ids["native_thread_id"] == "thr_native_1"
+    assert events[3].related_ids["native_thread_id"] == "thr_native_1"
 
 
 def test_feishu_control_records_interaction_window_expired_and_rejects(tmp_path: Path) -> None:
@@ -314,6 +371,7 @@ def test_feishu_control_records_interaction_window_expired_and_rejects(tmp_path:
     )
     assert len(events) == 1
     assert events[0].related_ids["interaction_context_id"] == "ctx-approval-1"
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
     assert app.state.session_service.list_events(
         session_id=approval.session_id,
         event_type="human_override_recorded",
@@ -366,6 +424,7 @@ def test_feishu_control_rejects_superseded_context_and_audits_it(tmp_path: Path)
     )
     assert len(events) == 1
     assert events[0].related_ids["interaction_context_id"] == "ctx-old"
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
     assert events[0].payload["active_interaction_context_id"] == "ctx-new"
     assert app.state.session_service.list_events(
         session_id=approval.session_id,
@@ -520,3 +579,377 @@ def test_feishu_control_command_request_can_route_by_native_thread(
     assert response.json()["data"]["reply_code"] == "session_projection"
     assert response.json()["data"]["session"]["project_id"] == "repo-a"
     assert response.json()["data"]["session"]["native_thread_id"] == "thr_native_1"
+    assert response.json()["data"]["progress"]["project_id"] == "repo-a"
+    assert response.json()["data"]["progress"]["native_thread_id"] == "thr_native_1"
+    assert response.json()["data"]["progress"]["summary"] == "waiting for approval"
+
+
+def test_feishu_control_command_request_surfaces_active_recovery_suppression(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:feishu-control",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:10:00Z",
+        },
+        occurred_at="2026-04-07T00:11:00Z",
+    )
+    app = create_app(settings=settings, a_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-4",
+                "interaction_family_id": "family-command-4",
+                "actor_id": "user:dora",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-4",
+                "native_thread_id": "thr_native_1",
+                "command_text": "任务状态",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["intent_code"] == "get_session"
+    assert response.json()["data"]["reply_code"] == "session_projection"
+    assert response.json()["data"]["message"] == "waiting for approval | 恢复抑制=等待新进展"
+    assert response.json()["data"]["progress"]["recovery_suppression_reason"] == (
+        "reentry_without_newer_progress"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_source"] == (
+        "resident_orchestrator"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_observed_at"] == (
+        "2026-04-07T00:11:00Z"
+    )
+
+
+def test_feishu_control_command_request_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, a_client=FakeAClient())
+    goal_contracts = GoalContractService(app.state.session_service)
+    goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-goal",
+                "interaction_family_id": "family-command-goal",
+                "actor_id": "user:dora",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-goal",
+                "native_thread_id": "thr_native_1",
+                "command_text": "任务状态",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert (
+        response.json()["data"]["message"]
+        == "waiting for approval | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    )
+    assert response.json()["data"]["progress"]["goal_contract_version"] == "goal-v1"
+    assert response.json()["data"]["progress"]["current_phase_goal"] == (
+        "继续把 recovery 自动重入收口到 child continuation"
+    )
+    assert response.json()["data"]["progress"]["last_user_instruction"] == (
+        "继续把 recovery 自动重入收口到 child continuation"
+    )
+
+
+def test_feishu_control_command_request_surfaces_goal_context_for_why_stuck(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    settings = _settings(tmp_path)
+    class StuckAClient(FakeAClient):
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            return {
+                "success": True,
+                "data": {
+                    "project_id": project_id,
+                    "thread_id": "thr_native_1",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "repeated failures",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "critical",
+                    "stuck_level": 2,
+                    "failure_count": 3,
+                    "last_progress_at": "2026-04-07T00:10:00Z",
+                },
+            }
+
+    app = create_app(settings=settings, a_client=StuckAClient())
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="repeated failures",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-why-stuck-goal",
+                "interaction_family_id": "family-command-why-stuck-goal",
+                "actor_id": "user:dora",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-why-stuck-goal",
+                "project_id": "repo-a",
+                "command_text": "为什么卡住",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["intent_code"] == "why_stuck"
+    assert (
+        response.json()["data"]["message"]
+        == "session appears stuck; repeated failures detected; context pressure is critical"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation | 下一步=卡在哪里"
+    )
+
+
+def test_feishu_control_goal_bootstrap_syncs_goal_metadata_to_a_task(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "goal_contract_bootstrap",
+                "interaction_context_id": "ctx-goal-1",
+                "interaction_family_id": "family-goal-1",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-goal-1",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "goal_message": "继续收口 recovery 自动重入",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["goal_contract_version"] == "goal-v1"
+    assert a_client.register_thread_calls == [
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "goal_contract_version": "goal-v1",
+            "current_phase_goal": "继续收口 recovery 自动重入",
+            "last_user_instruction": "继续收口 recovery 自动重入",
+            "last_summary": "继续收口 recovery 自动重入",
+        }
+    ]
+    latest = app.state.session_service.list_events(session_id="session:repo-a")[-1]
+    contract = latest.payload.get("contract")
+    assert isinstance(contract, dict)
+    assert contract["metadata"]["last_summary"] == "继续收口 recovery 自动重入"
+
+
+def test_feishu_control_command_request_renders_recovery_cooldown_suppression(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:feishu-control:cooldown",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "cooldown_window_active",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:10:00Z",
+            "cooldown_seconds": "300",
+        },
+        occurred_at="2026-04-07T00:11:00Z",
+    )
+    app = create_app(settings=settings, a_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-cooldown",
+                "interaction_family_id": "family-command-cooldown",
+                "actor_id": "user:dora",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-cooldown",
+                "native_thread_id": "thr_native_1",
+                "command_text": "任务状态",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["message"] == "waiting for approval | 恢复抑制=恢复冷却中"
+    assert response.json()["data"]["progress"]["recovery_suppression_reason"] == (
+        "cooldown_window_active"
+    )
+
+
+def test_feishu_control_command_request_renders_recovery_in_flight_suppression(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:feishu-control:in-flight",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:10:00Z",
+        },
+        occurred_at="2026-04-07T00:11:00Z",
+    )
+    app = create_app(settings=settings, a_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-in-flight",
+                "interaction_family_id": "family-command-in-flight",
+                "actor_id": "user:dora",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-in-flight",
+                "native_thread_id": "thr_native_1",
+                "command_text": "任务状态",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["message"] == "waiting for approval | 恢复抑制=恢复进行中"
+    assert response.json()["data"]["progress"]["recovery_suppression_reason"] == (
+        "recovery_in_flight"
+    )
+
+
+def test_feishu_control_goal_bootstrap_revise_syncs_latest_goal_metadata_to_a_task(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+    service = GoalContractService(app.state.session_service)
+    created = service.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="旧目标",
+        task_prompt="旧目标",
+        last_user_instruction="旧目标",
+        phase="bootstrap",
+        last_summary="旧摘要",
+        explicit_deliverables=["旧目标"],
+        completion_signals=["旧完成信号"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "goal_contract_bootstrap",
+                "interaction_context_id": "ctx-goal-2",
+                "interaction_family_id": "family-goal-2",
+                "actor_id": "user:dora",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:15:00Z",
+                "action_window_expires_at": "2026-04-07T00:35:00Z",
+                "client_request_id": "req-goal-2",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "goal_message": "继续把 handoff 指令改成可执行任务",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["goal_contract_version"] == "goal-v2"
+    assert created.version == "goal-v1"
+    assert a_client.register_thread_calls == [
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "goal_contract_version": "goal-v2",
+            "current_phase_goal": "继续把 handoff 指令改成可执行任务",
+            "last_user_instruction": "继续把 handoff 指令改成可执行任务",
+            "last_summary": "继续把 handoff 指令改成可执行任务",
+        }
+    ]
+    latest = service.get_current_contract(project_id="repo-a", session_id="session:repo-a")
+    assert latest is not None
+    assert latest.version == "goal-v2"
+    assert latest.metadata["last_user_instruction"] == "继续把 handoff 指令改成可执行任务"
+    assert latest.metadata["last_summary"] == "继续把 handoff 指令改成可执行任务"

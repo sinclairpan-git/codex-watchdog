@@ -7,13 +7,14 @@ import json
 import threading
 import time
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from _polling import wait_until, wait_until_async
 from watchdog.main import _run_delivery_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
@@ -99,7 +100,14 @@ class CyclingResidentAClient(FakeResidentAClient):
         assert project_id == task["project_id"]
         return {"success": True, "data": dict(task)}
 
-    def trigger_handoff(self, project_id: str, *, reason: str) -> dict[str, object]:
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
         raise AssertionError("trigger_handoff should not be called in this fixture")
 
     def trigger_resume(
@@ -108,7 +116,9 @@ class CyclingResidentAClient(FakeResidentAClient):
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         raise AssertionError("trigger_resume should not be called in this fixture")
 
 
@@ -118,7 +128,14 @@ class RecoveringResidentAClient(FakeResidentAClient):
         self.handoff_calls: list[tuple[str, str]] = []
         self.resume_calls: list[tuple[str, str, str]] = []
 
-    def trigger_handoff(self, project_id: str, *, reason: str) -> dict[str, object]:
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
         self.handoff_calls.append((project_id, reason))
         return {
             "success": True,
@@ -131,12 +148,82 @@ class RecoveringResidentAClient(FakeResidentAClient):
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.resume_calls.append((project_id, mode, handoff_summary))
         return {
             "success": True,
             "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
+
+
+class UniqueRecoveryResidentAClient(RecoveringResidentAClient):
+    def __init__(self, *, task: dict[str, object]) -> None:
+        super().__init__(task=task)
+        self._handoff_seq = 0
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
+        self._handoff_seq += 1
+        self.handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {
+                "handoff_file": f"/tmp/{project_id}.{self._handoff_seq}.handoff.md",
+                "summary": "handoff",
+            },
+        }
+
+
+class HandoffLoopResidentAClient(FakeResidentAClient):
+    def __init__(self, *, task: dict[str, object]) -> None:
+        super().__init__(task=task)
+        self.handoff_calls: list[tuple[str, str]] = []
+
+    def trigger_handoff(
+        self,
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
+        self.handoff_calls.append((project_id, reason))
+        self._task.update(
+            {
+                "status": "handoff_in_progress",
+                "phase": "handoff",
+                "last_summary": "handoff drafted",
+                "context_pressure": "critical",
+                "stuck_level": 4,
+                "failure_count": 3,
+            }
+        )
+        return {
+            "success": True,
+            "data": {
+                "handoff_file": f"/tmp/{project_id}.handoff.md",
+                "summary": "handoff",
+            },
+        }
+
+    def trigger_resume(
+        self,
+        project_id: str,
+        *,
+        mode: str,
+        handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
+        raise AssertionError("trigger_resume should not be called when auto resume is disabled")
 
 
 class MultiProjectResidentAClient:
@@ -745,12 +832,16 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
         first_seq = int(first_snapshot["sessions"]["repo-a"]["session_seq"])
         assert first_seq >= 1
 
-        refreshed_snapshot = first_snapshot
-        for _ in range(5):
-            time.sleep(0.01)
-            refreshed_snapshot = _read_store(tmp_path)
-            if int(refreshed_snapshot["sessions"]["repo-a"]["session_seq"]) > first_seq:
-                break
+        refreshed_snapshot_holder = {"value": first_snapshot}
+        wait_until(
+            lambda: (
+                refreshed_snapshot_holder.__setitem__("value", _read_store(tmp_path)) is None
+                and int(refreshed_snapshot_holder["value"]["sessions"]["repo-a"]["session_seq"])
+                > first_seq
+            ),
+            timeout_s=0.5,
+        )
+        refreshed_snapshot = refreshed_snapshot_holder["value"]
 
     if first_snapshot["sessions"]["repo-a"]["session"]["session_state"] != "awaiting_approval":
         assert int(refreshed_snapshot["sessions"]["repo-a"]["session_seq"]) > first_seq
@@ -1564,6 +1655,78 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
     assert [approval.approval_id for approval in records["repo-b"].approval_queue] == ["appr_002"]
 
 
+def test_background_runtime_approval_queue_uses_effective_native_thread_from_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_root_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        },
+        approvals=[],
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    approval = materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:runtime-legacy-approval-queue",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|continue_session|appr_legacy"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_child_1",
+            approval_id="appr_legacy",
+            action_ref="continue_session",
+            trigger="resident_supervision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="explicit human confirmation required",
+            matched_policy_rules=["human_gate"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|continue_session|appr_legacy"
+            ),
+            created_at="2099-01-01T00:00:10Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    app.state.session_spine_runtime.refresh_all()
+
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    snapshot = app.state.resident_orchestrator._approval_read_snapshot_for_session(record)
+    assert snapshot is not None
+    assert snapshot.approval_id == approval.approval_id
+    assert snapshot.effective_native_thread_id == "thr_child_1"
+
+
 def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
     tmp_path: Path,
 ) -> None:
@@ -1880,6 +2043,309 @@ def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
     assert steer_mock.call_count == 0
 
 
+def test_resident_orchestrator_auto_executes_branch_complete_switch_as_operator_guidance(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "completed continuation governance on current branch",
+            "files_touched": ["src/watchdog/services/session_spine/orchestrator.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="Model-first continuation governance",
+        task_prompt="Build model-first continuation governance for the watchdog.",
+        last_user_instruction="Continue landing the next branch routing path.",
+        phase="editing_source",
+        last_summary="completed continuation governance on current branch",
+        current_phase_goal="Land branch-complete routing for the current work item",
+        explicit_deliverables=["branch switch governance", "runtime coverage"],
+        completion_signals=["branch switch guidance emitted", "targeted tests green"],
+        active_goal="Land branch-complete routing for the current work item",
+    )
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="branch_complete_switch",
+                rationale="current branch goal is complete",
+                continuation_decision="branch_complete_switch",
+                routing_preference="next_branch_session",
+                next_branch_hypothesis="086-next-branch-routing",
+                target_work_item_seq=86,
+                branch_switch_token="branch-switch:repo-a:86:fact-v1",
+                goal_coverage="complete",
+                remaining_work_hypothesis=[],
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["post_operator_guidance"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    steer_mock.assert_called_once()
+    message = steer_mock.call_args.kwargs["message"]
+    assert "项目总目标" in message
+    assert "Build model-first continuation governance for the watchdog." in message
+    assert "当前分支目标" in message
+    assert "Land branch-complete routing for the current work item" in message
+    assert "当前进度" in message
+    assert "completed continuation governance on current branch" in message
+    assert "后续任务" in message
+    assert "086" in message
+    assert "086-next-branch-routing" in message
+    assert steer_mock.call_args.kwargs["reason"] == "branch_complete_switch"
+
+    approvals = app.state.canonical_approval_store.list_records()
+    assert approvals == []
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "branch_complete_switch"
+    assert decisions[0].action_ref == "post_operator_guidance"
+
+    token_issued_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="branch_switch_token_issued",
+    )
+    token_consumed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="branch_switch_token_consumed",
+    )
+    assert len(token_issued_events) == 1
+    assert len(token_consumed_events) == 1
+    assert token_consumed_events[0].related_ids == {
+        "branch_switch_token": "branch-switch:repo-a:86:fact-v1",
+        "continuation_identity": (
+            "repo-a:session:repo-a:thr_native_1:branch_complete_switch"
+        ),
+        "route_key": (
+            "repo-a:session:repo-a:thr_native_1:branch_complete_switch:fact-v1"
+        ),
+    }
+    checkpoint = app.state.resident_orchestration_state_store.get_auto_dispatch_checkpoint(
+        project_id="repo-a",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:branch_complete_switch",
+        route_key="repo-a:session:repo-a:thr_native_1:branch_complete_switch:fact-v1",
+    )
+    assert checkpoint is not None
+    assert checkpoint.status == "completed"
+
+
+def test_resident_orchestrator_blocks_branch_complete_switch_without_authoritative_target(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "completed continuation governance on current branch",
+            "files_touched": ["src/watchdog/services/session_spine/orchestrator.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="Model-first continuation governance",
+        task_prompt="Build model-first continuation governance for the watchdog.",
+        last_user_instruction="Continue landing the next branch routing path.",
+        phase="editing_source",
+        last_summary="completed continuation governance on current branch",
+        current_phase_goal="Land branch-complete routing for the current work item",
+        explicit_deliverables=["branch switch governance", "runtime coverage"],
+        completion_signals=["branch switch guidance emitted", "targeted tests green"],
+        active_goal="Land branch-complete routing for the current work item",
+    )
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="branch_complete_switch",
+                rationale="current branch goal is complete",
+                continuation_decision="branch_complete_switch",
+                routing_preference="next_branch_session",
+                next_branch_hypothesis="",
+                goal_coverage="complete",
+                remaining_work_hypothesis=[],
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["post_operator_guidance"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    steer_mock.assert_not_called()
+    decision = app.state.policy_decision_store.list_records()[0]
+    assert "validator_gate_degraded" in decision.matched_policy_rules
+    assert decision.uncertainty_reasons == ["action_args_invalid"]
+
+
+def test_resident_orchestrator_applies_shared_dispatch_cooldown_to_branch_guidance(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=300.0,
+    )
+    a_client = CyclingResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "completed current branch milestone",
+                "files_touched": ["src/watchdog/services/session_spine/orchestrator.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "completed current branch milestone and refreshed notes",
+                "files_touched": ["src/watchdog/services/session_spine/orchestrator.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "completed current branch milestone and refreshed notes again",
+                "files_touched": ["src/watchdog/services/session_spine/orchestrator.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:22:00Z",
+            },
+        ]
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="Model-first continuation governance",
+        task_prompt="Build model-first continuation governance for the watchdog.",
+        last_user_instruction="Continue landing the next branch routing path.",
+        phase="editing_source",
+        last_summary="completed current branch milestone",
+        current_phase_goal="Land branch-complete routing for the current work item",
+        explicit_deliverables=["branch switch governance", "runtime coverage"],
+        completion_signals=["branch switch guidance emitted", "targeted tests green"],
+        active_goal="Land branch-complete routing for the current work item",
+    )
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="branch_complete_switch",
+                rationale="current branch goal is complete",
+                continuation_decision="branch_complete_switch",
+                routing_preference="next_branch_session",
+                next_branch_hypothesis="086-next-branch-routing",
+                target_work_item_seq=86,
+                branch_switch_token="branch-switch:repo-a:86:fact-v1",
+                goal_coverage="complete",
+                remaining_work_hypothesis=[],
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+
+        first = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+        app.state.session_spine_runtime.refresh_all()
+        second = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 2, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in first] == ["post_operator_guidance"]
+    assert [outcome.decision_result for outcome in first] == ["auto_execute_and_notify"]
+    assert [outcome.action_ref for outcome in second] == [None]
+    assert [outcome.decision_result for outcome in second] == [None]
+    assert steer_mock.call_count == 1
+
+
 def test_background_runtime_persists_last_local_manual_activity_from_a_side_task(
     tmp_path: Path,
 ) -> None:
@@ -1931,7 +2397,7 @@ def test_background_runtime_auto_executes_context_critical_recovery(
         resident_orchestrator_interval_seconds=0.01,
         progress_summary_interval_seconds=0.0,
     )
-    a_client = RecoveringResidentAClient(
+    a_client = UniqueRecoveryResidentAClient(
         task={
             "project_id": "repo-a",
             "thread_id": "thr_native_1",
@@ -1952,10 +2418,19 @@ def test_background_runtime_auto_executes_context_critical_recovery(
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
-        time.sleep(0.05)
+        assert wait_until(
+            lambda: any(
+                record.get("envelope_type") == "notification"
+                and record.get("notification_kind") == "decision_result"
+                and record.get("action_name") == "execute_recovery"
+                and record.get("decision_result") == "auto_execute_and_notify"
+                for record in delivery_client.records
+            ),
+            timeout_s=0.5,
+        )
 
     assert a_client.handoff_calls == [("repo-a", "context_critical")]
-    assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "handoff")]
+    assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
     assert any(
         record.get("envelope_type") == "notification"
         and record.get("notification_kind") == "decision_result"
@@ -1968,6 +2443,511 @@ def test_background_runtime_auto_executes_context_critical_recovery(
         and record.get("requested_action") == "execute_recovery"
         for record in delivery_client.records
     )
+
+
+def test_background_runtime_does_not_repeat_recovery_while_handoff_is_in_progress(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+    )
+    a_client = HandoffLoopResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+
+    with TestClient(app):
+        assert wait_until(
+            lambda: a_client.handoff_calls == [("repo-a", "context_critical")],
+            timeout_s=0.5,
+        )
+
+    assert a_client.handoff_calls == [("repo-a", "context_critical")]
+
+
+def test_resident_orchestrator_does_not_rearm_recovery_without_newer_progress_after_completed_recovery(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted again",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    first = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+    second = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 5, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.decision_result for outcome in first] == [None]
+    assert [outcome.decision_result for outcome in second] == [None]
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    assert len(suppressed_events) == 1
+    assert suppressed_events[0].payload["suppression_reason"] == "reentry_without_newer_progress"
+    assert suppressed_events[0].payload["suppression_source"] == "resident_orchestrator"
+    assert suppressed_events[0].related_ids["recovery_transaction_id"].startswith("recovery-tx:")
+
+
+def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last_recovery(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted again",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == [("repo-a", "context_critical")]
+
+
+def test_resident_orchestrator_treats_preflight_recovery_dispatch_as_in_flight(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted again",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_service.record_event_once(
+        event_type="recovery_dispatch_started",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-dispatch:repo-a:fact-v1",
+        occurred_at="2026-04-07T00:00:00Z",
+        related_ids={"native_thread_id": "thr_native_1"},
+        payload={
+            "decision_source": "recovery_guard",
+            "decision_class": "recover_current_branch",
+            "context_pressure": "critical",
+            "authoritative_snapshot_version": "fact-v1",
+            "snapshot_epoch": "session-seq:1",
+            "recovery_reason": "context_critical",
+            "failure_signature": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 5, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    assert len(suppressed_events) == 1
+    assert suppressed_events[0].payload["suppression_reason"] == "recovery_in_flight"
+
+
+def test_resident_orchestrator_applies_cooldown_to_repeated_auto_recovery(
+    tmp_path: Path,
+) -> None:
+    base_now = datetime.now(UTC).replace(microsecond=0)
+    first_progress_at = base_now.isoformat().replace("+00:00", "Z")
+    second_progress_at = (base_now + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=300.0,
+    )
+    a_client = CyclingResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "context exhausted",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": first_progress_at,
+            },
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "context exhausted again shortly after resume",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": second_progress_at,
+            },
+        ]
+    )
+    handoff_calls: list[tuple[str, str]] = []
+
+    def _trigger_handoff(
+        project_id: str,
+        *,
+        reason: str,
+        continuation_packet: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        _ = continuation_packet
+        handoff_calls.append((project_id, reason))
+        return {
+            "success": True,
+            "data": {"handoff_file": f"/tmp/{project_id}.handoff.md", "summary": "handoff"},
+        }
+
+    a_client.trigger_handoff = _trigger_handoff  # type: ignore[attr-defined]
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+
+    app.state.session_spine_runtime.refresh_all()
+    first = app.state.resident_orchestrator.orchestrate_all(
+        now=base_now
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    second = app.state.resident_orchestrator.orchestrate_all(
+        now=base_now + timedelta(minutes=2)
+    )
+
+    assert handoff_calls == [("repo-a", "context_critical")]
+    assert [outcome.action_ref for outcome in first] == ["execute_recovery"]
+    assert [outcome.action_ref for outcome in second] == [None]
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    assert len(suppressed_events) == 1
+    assert suppressed_events[0].payload["suppression_reason"] == "cooldown_window_active"
+    assert suppressed_events[0].payload["suppression_source"] == "resident_orchestrator"
+    assert suppressed_events[0].payload["cooldown_seconds"] == "300"
+    gate_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    suppressed_gate_events = [
+        event
+        for event in gate_events
+        if event.payload.get("suppression_reason") == "cooldown_window_active"
+    ]
+    assert len(suppressed_gate_events) == 1
+    assert suppressed_gate_events[0].payload["gate_status"] == "suppressed"
+    assert app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_replay_invalidated",
+    ) == []
+
+
+def test_resident_orchestrator_does_not_auto_recover_stale_unrefreshed_session_record(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+        session_spine_freshness_window_seconds=60.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=record.session,
+        progress=record.progress,
+        facts=record.facts,
+        approval_queue=record.approval_queue,
+        last_refreshed_at="2026-04-07T00:00:00Z",
+        last_local_manual_activity_at=record.last_local_manual_activity_at,
+    )
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 2, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+
+
+def test_resident_orchestrator_does_not_auto_recover_paused_session_without_new_human_resume(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "paused",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "paused by operator",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+
+    app.state.session_spine_runtime.refresh_all()
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+
+
+def test_resident_orchestrator_does_not_auto_recover_non_active_project_execution_state(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "project_execution_state": "completed",
+            "pending_approval": False,
+            "last_summary": "branch already delivered",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+
+    app.state.session_spine_runtime.refresh_all()
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+
+
+def test_resident_orchestrator_does_not_auto_continue_non_active_project_execution_state(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "project_execution_state": "completed",
+            "pending_approval": False,
+            "last_summary": "branch already delivered",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
+
+    app.state.session_spine_runtime.refresh_all()
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
 
 
 def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_auto_continue(
@@ -3024,6 +4004,92 @@ def test_resident_orchestrator_materializes_future_worker_requests_once_per_deci
     assert request_events[0].related_ids["decision_trace_ref"] == trace.trace_id
     assert request_events[0].payload["allowed_hands"] == ["codex"]
     assert request_events[0].payload["execution_budget_ref"] == "budget:request-contract"
+
+
+def test_resident_orchestrator_materializes_future_worker_requests_with_effective_parent_native_thread(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    app = create_app(
+        settings,
+        a_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "still stuck",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 2,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        start_background_workers=False,
+    )
+    trace = _release_gate_trace().model_copy(update={"trace_id": "trace:legacy-parent-native"})
+    request = FutureWorkerExecutionRequest(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        worker_task_ref="worker:legacy-parent-native",
+        decision_trace_ref=trace.trace_id,
+        goal_contract_version=trace.goal_contract_version,
+        scope="read_only",
+        allowed_hands=["codex"],
+        input_packet_refs=["packet:legacy-parent-native"],
+        retrieval_handles=["handle:legacy-parent-native"],
+        distilled_summary_ref="summary:legacy-parent-native",
+        execution_budget_ref="budget:legacy-parent-native",
+    )
+    decision = _runtime_gate_decision(
+        release_gate_verdict={
+            "status": "pass",
+            "decision_trace_ref": trace.trace_id,
+            "approval_read_ref": "approval:none",
+            "report_id": "report:legacy-parent-native",
+            "report_hash": "sha256:legacy-parent-native",
+            "input_hash": "sha256:legacy-parent-native-input",
+        }
+    ).model_copy(
+        update={
+            "native_thread_id": None,
+            "evidence": {
+                "target": {
+                    "session_id": "session:repo-a",
+                    "project_id": "repo-a",
+                    "thread_id": "session:repo-a",
+                    "native_thread_id": "thr_native_legacy",
+                    "approval_id": None,
+                },
+                "decision_trace": trace.model_dump(mode="json"),
+                "future_worker_requests": [request.model_dump(mode="json")],
+            },
+        }
+    )
+
+    materialized = app.state.resident_orchestrator._materialize_future_worker_requests(
+        decision,
+        occurred_at="2026-04-14T06:20:00Z",
+    )
+
+    assert materialized == ["worker:legacy-parent-native"]
+    request_events = [
+        event
+        for event in app.state.session_service.list_events(session_id="session:repo-a")
+        if event.event_type == "future_worker_requested"
+        and event.related_ids.get("worker_task_ref") == "worker:legacy-parent-native"
+    ]
+    assert len(request_events) == 1
+    assert request_events[0].related_ids["parent_native_thread_id"] == "thr_native_legacy"
+    assert request_events[0].payload["parent_native_thread_id"] == "thr_native_legacy"
 
 
 def test_resident_orchestrator_rejects_partial_future_worker_request_materialization(
@@ -4536,6 +5602,237 @@ def test_resident_orchestrator_persists_brain_requested_action_args_for_continue
     steer_mock.assert_called_once()
 
 
+def test_resident_orchestrator_records_continuation_gate_verdict_for_provider_continue(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "ship provider integration",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="propose_execute",
+                rationale="provider decided continue",
+                continuation_decision="continue_current_branch",
+                routing_preference="same_thread",
+                continuation_identity="repo-a:session:repo-a:thr_native_1:continue_current_branch",
+                route_key=(
+                    "repo-a:session:repo-a:thr_native_1:continue_current_branch:fact-v1"
+                ),
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+                action_arguments={
+                    "message": "下一步建议：补齐飞书控制链路；回写验证结果。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 1,
+                },
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    gate_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    assert len(gate_events) == 1
+    assert gate_events[0].payload == {
+        "gate_kind": "continuation_governance",
+        "gate_status": "eligible",
+        "decision_source": "external_model",
+        "decision_class": "continue_current_branch",
+        "action_ref": "continue_session",
+        "authoritative_snapshot_version": "fact-v1",
+        "snapshot_epoch": "session-seq:1",
+        "goal_contract_version": "goal-contract:unknown",
+        "suppression_reason": None,
+        "lineage_refs": [gate_events[0].payload["lineage_refs"][0]],
+    }
+    assert gate_events[0].payload["lineage_refs"][0].startswith("trace:")
+    assert gate_events[0].related_ids == {
+        "continuation_identity": (
+            "repo-a:session:repo-a:thr_native_1:continue_current_branch"
+        ),
+        "route_key": (
+            "repo-a:session:repo-a:thr_native_1:continue_current_branch:fact-v1"
+        ),
+    }
+
+
+def test_resident_orchestrator_records_branch_switch_token_lifecycle_from_governance(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "branch wrap-up",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+
+    issued_decision = CanonicalDecisionRecord(
+        decision_id="decision:branch-switch-issued",
+        decision_key="decision-key:branch-switch-issued",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="propose_execute",
+        runtime_disposition="auto_execute_and_notify",
+        decision_result="auto_execute_and_notify",
+        risk_class="medium",
+        decision_reason="branch is complete; prepare switch",
+        matched_policy_rules=["brain.continuation"],
+        uncertainty_reasons=[],
+        policy_version="resident-policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="idem:branch-switch-issued",
+        created_at="2026-04-07T00:00:00Z",
+        evidence={
+            "continuation_governance": {
+                "gate_kind": "continuation_governance",
+                "gate_status": "eligible",
+                "decision_source": "external_model",
+                "decision_class": "branch_complete_switch",
+                "action_ref": "continue_session",
+                "authoritative_snapshot_version": "fact-v1",
+                "snapshot_epoch": "session-seq:1",
+                "goal_contract_version": "goal-v7",
+                "suppression_reason": None,
+                "continuation_identity": (
+                    "repo-a:session:repo-a:thr_native_1:branch_complete_switch"
+                ),
+                "route_key": (
+                    "repo-a:session:repo-a:thr_native_1:branch_complete_switch:fact-v1"
+                ),
+                "branch_switch_token": "branch-switch:repo-a:86:fact-v1",
+                "lineage_refs": ["trace:branch-switch-issued"],
+            }
+        },
+    )
+    invalidated_decision = issued_decision.model_copy(
+        update={
+            "decision_id": "decision:branch-switch-invalidated",
+            "decision_key": "decision-key:branch-switch-invalidated",
+            "idempotency_key": "idem:branch-switch-invalidated",
+            "created_at": "2026-04-07T00:01:00Z",
+            "evidence": {
+                "continuation_governance": {
+                    "gate_kind": "continuation_governance",
+                    "gate_status": "suppressed",
+                    "decision_source": "rules_fallback",
+                    "decision_class": "branch_complete_switch",
+                    "action_ref": "continue_session",
+                    "authoritative_snapshot_version": "fact-v2",
+                    "snapshot_epoch": "session-seq:2",
+                    "goal_contract_version": "goal-v7",
+                    "suppression_reason": "project_not_active",
+                    "continuation_identity": (
+                        "repo-a:session:repo-a:thr_native_1:branch_complete_switch"
+                    ),
+                    "route_key": (
+                        "repo-a:session:repo-a:thr_native_1:branch_complete_switch:fact-v1"
+                    ),
+                    "branch_switch_token": "branch-switch:repo-a:86:fact-v1",
+                    "lineage_refs": ["trace:branch-switch-invalidated"],
+                }
+            },
+        }
+    )
+
+    app.state.resident_orchestrator._record_decision_lifecycle(issued_decision)
+    app.state.resident_orchestrator._record_decision_lifecycle(invalidated_decision)
+
+    issued_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="branch_switch_token_issued",
+    )
+    invalidated_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="branch_switch_token_invalidated",
+    )
+
+    assert len(issued_events) == 1
+    assert issued_events[0].payload == {
+        "state": "issued",
+        "decision_source": "external_model",
+        "decision_class": "branch_complete_switch",
+        "authoritative_snapshot_version": "fact-v1",
+        "snapshot_epoch": "session-seq:1",
+        "goal_contract_version": "goal-v7",
+        "suppression_reason": None,
+        "lineage_refs": ["trace:branch-switch-issued"],
+    }
+    assert issued_events[0].related_ids == {
+        "branch_switch_token": "branch-switch:repo-a:86:fact-v1",
+        "continuation_identity": (
+            "repo-a:session:repo-a:thr_native_1:branch_complete_switch"
+        ),
+        "route_key": (
+            "repo-a:session:repo-a:thr_native_1:branch_complete_switch:fact-v1"
+        ),
+    }
+    assert len(invalidated_events) == 1
+    assert invalidated_events[0].payload == {
+        "state": "invalidated",
+        "decision_source": "rules_fallback",
+        "decision_class": "branch_complete_switch",
+        "authoritative_snapshot_version": "fact-v2",
+        "snapshot_epoch": "session-seq:2",
+        "goal_contract_version": "goal-v7",
+        "suppression_reason": "project_not_active",
+        "lineage_refs": ["trace:branch-switch-invalidated"],
+    }
+
+
 def test_resident_orchestrator_blocks_brain_continue_when_action_args_violate_contract(
     tmp_path: Path,
 ) -> None:
@@ -4738,6 +6035,12 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_control_link
     assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
     assert steer_mock.call_count == 2
     assert app.state.resident_orchestration_state_store.get_auto_continue_checkpoint("repo-a") is None
+    checkpoint = app.state.resident_orchestration_state_store.get_latest_auto_dispatch_checkpoint(
+        project_id="repo-a",
+        continuation_identity="repo-a:session:repo-a:thr_native_1:continue_current_branch",
+    )
+    assert checkpoint is not None
+    assert checkpoint.status == "failed"
 
 
 def test_resident_orchestrator_does_not_start_cooldown_after_cached_error_receipt(
@@ -4847,7 +6150,14 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
-        time.sleep(0.08)
+        assert wait_until(
+            lambda: any(
+                record.get("notification_kind") == "progress_summary"
+                and record.get("summary") == "tests are running"
+                for record in delivery_client.records
+            ),
+            timeout_s=0.5,
+        )
 
     progress_notifications = [
         record
@@ -4908,7 +6218,15 @@ def test_background_runtime_pushes_progress_summary_for_multiple_projects(
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
-        time.sleep(0.08)
+        assert wait_until(
+            lambda: {
+                record.get("project_id")
+                for record in delivery_client.records
+                if record.get("notification_kind") == "progress_summary"
+            }
+            >= {"repo-a", "repo-b"},
+            timeout_s=0.5,
+        )
 
     progress_notifications = [
         record
@@ -4968,7 +6286,11 @@ def test_background_runtime_skips_stale_progress_summary_even_when_project_progr
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
-        time.sleep(0.08)
+        assert wait_until(
+            lambda: _store_path(tmp_path).exists()
+            and "repo-a" in _read_store(tmp_path).get("sessions", {}),
+            timeout_s=0.5,
+        )
 
     progress_notifications = [
         record
@@ -5021,7 +6343,17 @@ def test_background_workers_survive_transient_startup_and_loop_failures(
     app.state.delivery_worker = FlakyDeliveryWorker(app.state.delivery_worker)
 
     with TestClient(app):
-        time.sleep(0.08)
+        assert wait_until(
+            lambda: _store_path(tmp_path).exists()
+            and app.state.session_spine_runtime.calls >= 2
+            and app.state.resident_orchestrator.calls >= 2
+            and app.state.delivery_worker.calls >= 2
+            and any(
+                record.get("notification_kind") == "progress_summary"
+                for record in app.state.delivery_worker._delegate._delivery_client.records
+            ),
+            timeout_s=0.5,
+        )
 
     snapshot = _read_store(tmp_path)
     progress_notifications = [
@@ -5234,6 +6566,15 @@ async def test_startup_does_not_wait_for_initial_orchestrator(
         blocking_orchestrate,
     )
 
+    async def immediate_background_step(step_name: str, fn, /, *args, **kwargs):
+        _ = step_name
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "watchdog.main._run_background_step_async",
+        immediate_background_step,
+    )
+
     lifespan = app.router.lifespan_context(app)
     startup_task = asyncio.create_task(lifespan.__aenter__())
 
@@ -5312,7 +6653,7 @@ async def test_startup_and_periodic_orchestrator_runs_do_not_overlap(
     await lifespan.__aenter__()
 
     try:
-        await asyncio.sleep(0.09)
+        assert await wait_until_async(lambda: total_calls >= 2, timeout_s=0.5)
     finally:
         await lifespan.__aexit__(None, None, None)
 

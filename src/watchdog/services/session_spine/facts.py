@@ -5,7 +5,12 @@ from typing import Any
 
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.services.session_spine.approval_visibility import is_actionable_approval
-from watchdog.services.session_spine.task_state import is_terminal_task
+from watchdog.services.session_spine.task_state import (
+    is_non_active_project_execution_state,
+    is_terminal_task,
+    normalize_project_execution_state,
+    normalize_task_status,
+)
 
 
 def _now_iso() -> str:
@@ -44,6 +49,15 @@ def _build_fact(
         observed_at=observed_at,
         related_ids=related_ids or {},
     )
+
+
+def _auto_recovery_suppressed(task: dict[str, Any] | None) -> bool:
+    return normalize_task_status(task) in {
+        "handoff_in_progress",
+        "resuming",
+        "paused",
+        "waiting_for_direction",
+    }
 
 
 def build_fact_records(
@@ -118,6 +132,46 @@ def build_fact_records(
                 observed_at=observed_at,
             )
         )
+
+    project_execution_state = normalize_project_execution_state(task)
+    if bool(_task_value(task, "authoritative_project_execution_state_missing", False)):
+        facts.append(
+            _build_fact(
+                project_id,
+                fact_code="project_state_unavailable",
+                fact_kind="blocker",
+                severity="warning",
+                summary="authoritative project state unavailable",
+                detail=(
+                    "autonomous continuation is blocked because authoritative "
+                    "project execution state could not be resolved"
+                ),
+                source="watchdog_projection",
+                observed_at=observed_at,
+            )
+        )
+        return facts
+    if is_non_active_project_execution_state(project_execution_state):
+        facts.append(
+            _build_fact(
+                project_id,
+                fact_code="project_not_active",
+                fact_kind="blocker",
+                severity="info",
+                summary="project is not active",
+                detail=(
+                    "autonomous continuation is blocked because "
+                    f"project_execution_state={project_execution_state}"
+                ),
+                source="watchdog_projection",
+                observed_at=observed_at,
+                related_ids={"project_execution_state": project_execution_state},
+            )
+        )
+        return facts
+
+    if _auto_recovery_suppressed(task):
+        return facts
 
     if int(_task_value(task, "stuck_level", 0)) >= 2:
         facts.append(

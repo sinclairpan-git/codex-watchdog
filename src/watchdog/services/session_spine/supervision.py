@@ -22,6 +22,10 @@ from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_ste
 from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.audit import append_watchdog_audit
 from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.session_spine.projection import (
+    stable_thread_id_for_project,
+    task_native_thread_id,
+)
 from watchdog.services.session_spine.service import (
     CONTROL_LINK_ERROR,
     SessionSpineUpstreamError,
@@ -73,8 +77,8 @@ def build_supervision_evaluation(
     next_stuck_level = int(evaluation.get("next_stuck_level", current_stuck_level) or current_stuck_level)
     return SupervisionEvaluation(
         project_id=project_id,
-        thread_id=thread_id or f"session:{project_id}",
-        native_thread_id=native_thread_id or str(task.get("thread_id") or "") or None,
+        thread_id=thread_id or stable_thread_id_for_project(project_id),
+        native_thread_id=native_thread_id or task_native_thread_id(task),
         evaluated_at=now.isoformat(),
         reason_code=_map_reason_code(evaluation.get("reason")),
         detail=str(evaluation.get("detail") or ""),

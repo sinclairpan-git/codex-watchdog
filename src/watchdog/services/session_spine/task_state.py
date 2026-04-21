@@ -20,6 +20,26 @@ CANONICAL_TASK_STATUSES = {
     "failed",
 }
 
+CANONICAL_PROJECT_EXECUTION_STATES = {
+    "active",
+    "paused",
+    "stopped",
+    "branch_transition_in_progress",
+    "completed",
+    "archived",
+    "closed",
+    "unknown",
+}
+
+_NON_ACTIVE_PROJECT_EXECUTION_STATES = {
+    "paused",
+    "stopped",
+    "branch_transition_in_progress",
+    "completed",
+    "archived",
+    "closed",
+}
+
 CANONICAL_TASK_PHASES = {
     "planning",
     "code_reading",
@@ -78,6 +98,30 @@ def is_canonical_task_status(value: Any) -> bool:
 
 def is_canonical_task_phase(value: Any) -> bool:
     return _normalized(value) in CANONICAL_TASK_PHASES
+
+
+def normalize_project_execution_state(task: dict[str, Any] | None) -> str:
+    if not isinstance(task, dict):
+        return "unknown"
+    for key in ("project_execution_state", "execution_state", "project_status"):
+        value = _normalized(task.get(key))
+        if not value:
+            continue
+        if value in {"execute", "decompose", "design", "refine", "init", "initialized", "running"}:
+            return "active"
+        if value in {"complete", "completed"}:
+            return "completed"
+        if value in {"close", "closed"}:
+            return "closed"
+        if value in {"stop", "stopped"}:
+            return "stopped"
+        if value in CANONICAL_PROJECT_EXECUTION_STATES:
+            return value
+    return "unknown"
+
+
+def is_non_active_project_execution_state(value: Any) -> bool:
+    return _normalized(value) in _NON_ACTIVE_PROJECT_EXECUTION_STATES
 
 
 def validate_action_transition(

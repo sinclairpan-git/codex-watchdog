@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from watchdog.contracts.session_spine.enums import (
     ReplyCode,
 )
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
+from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
@@ -92,7 +94,9 @@ class FakeAClient:
         project_id: str,
         *,
         reason: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.handoff_calls.append((project_id, reason))
         return {
             "success": True,
@@ -112,7 +116,9 @@ class FakeAClient:
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        _ = continuation_packet
         self.resume_calls.append((project_id, mode, handoff_summary))
         return {
             "success": True,
@@ -280,6 +286,10 @@ def test_adapter_get_session_returns_stable_session_projection(tmp_path: Path) -
     assert reply.session is not None
     assert reply.session.thread_id == "session:repo-a"
     assert reply.session.native_thread_id == "thr_native_1"
+    assert reply.progress is not None
+    assert reply.progress.project_id == "repo-a"
+    assert reply.progress.native_thread_id == "thr_native_1"
+    assert reply.progress.summary == "editing files"
 
 
 def test_adapter_get_session_surfaces_operator_next_steps_for_pending_approval(
@@ -321,6 +331,189 @@ def test_adapter_get_session_surfaces_operator_next_steps_for_pending_approval(
     assert reply.message == "waiting for approval | 下一步=审批列表、回复同意/拒绝、卡在哪里"
 
 
+def test_adapter_get_session_surfaces_active_recovery_suppression(tmp_path: Path) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing recovery path",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent("get_session", project_id="repo-a")
+
+    assert reply.reply_code == "session_projection"
+    assert reply.message == "editing recovery path | 恢复抑制=等待新进展 | 下一步=卡在哪里"
+
+
+def test_adapter_get_session_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    goal_contracts = GoalContractService(adapter._session_service)
+    goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    reply = adapter.handle_intent("get_session", project_id="repo-a")
+
+    assert reply.reply_code == "session_projection"
+    assert (
+        reply.message
+        == "editing files | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    )
+    assert reply.progress is not None
+    assert reply.progress.goal_contract_version == "goal-v1"
+    assert reply.progress.current_phase_goal == "继续把 recovery 自动重入收口到 child continuation"
+    assert reply.progress.last_user_instruction == "继续把 recovery 自动重入收口到 child continuation"
+
+
+def test_adapter_list_sessions_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ],
+    )
+    GoalContractService(adapter._session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert reply.progresses is not None
+    assert reply.progresses[0].goal_contract_version == "goal-v1"
+    assert reply.progresses[0].current_phase_goal == "继续把 recovery 自动重入收口到 child continuation"
+    assert reply.message == (
+        "多项目进展（1） | 状态=进行中1\n"
+        "- repo-a | editing_source | editing files | 上下文=low"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    )
+
+
+def test_adapter_get_session_renders_recovery_in_flight_suppression(tmp_path: Path) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:in-flight",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "handoff_in_progress",
+            "phase": "handoff",
+            "pending_approval": False,
+            "last_summary": "handoff drafted",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent("get_session", project_id="repo-a")
+
+    assert reply.reply_code == "session_projection"
+    assert reply.message == "handoff drafted | 恢复抑制=恢复进行中"
+
+
 def test_adapter_get_session_by_native_thread_returns_stable_session_projection(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -350,6 +543,213 @@ def test_adapter_get_session_by_native_thread_returns_stable_session_projection(
     assert reply.session.project_id == "repo-a"
     assert reply.session.thread_id == "session:repo-a"
     assert reply.session.native_thread_id == "thr_native_1"
+
+
+def test_adapter_get_session_by_native_thread_surfaces_active_recovery_suppression(
+    tmp_path: Path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:native-thread",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing recovery path",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "get_session_by_native_thread",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+
+    assert reply.reply_code == "session_projection"
+    assert reply.intent_code == "get_session_by_native_thread"
+    assert reply.message == "editing recovery path | 恢复抑制=等待新进展 | 下一步=卡在哪里"
+
+
+def test_adapter_get_session_by_native_thread_renders_recovery_cooldown_suppression(
+    tmp_path: Path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:native-thread:cooldown",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "cooldown_window_active",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "cooldown_seconds": "300",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing recovery path",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "get_session_by_native_thread",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+
+    assert reply.reply_code == "session_projection"
+    assert reply.intent_code == "get_session_by_native_thread"
+    assert reply.message == "editing recovery path | 恢复抑制=恢复冷却中 | 下一步=卡在哪里"
+
+
+def test_adapter_get_session_by_native_thread_renders_recovery_in_flight_suppression(
+    tmp_path: Path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:native-thread:in-flight",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "handoff_in_progress",
+            "phase": "handoff",
+            "pending_approval": False,
+            "last_summary": "handoff drafted",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "get_session_by_native_thread",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+
+    assert reply.reply_code == "session_projection"
+    assert reply.intent_code == "get_session_by_native_thread"
+    assert reply.message == "handoff drafted | 恢复抑制=恢复进行中"
+
+
+def test_adapter_get_session_by_native_thread_projects_goal_contract_adoption_from_session_events_without_live_control(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    session_service = SessionService.from_data_dir(tmp_path)
+    contracts = GoalContractService(session_service)
+    created = contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+    contracts.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:child-v1",
+        child_native_thread_id="thr_child_v1",
+        expected_version=created.version,
+        recovery_transaction_id="recovery-tx:repo-a",
+    )
+
+    class BrokenThreadAClient(FakeAClient):
+        def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+            raise RuntimeError(f"a-side temporarily unavailable for {thread_id}")
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=BrokenThreadAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+
+    reply = adapter.handle_intent(
+        "get_session_by_native_thread",
+        arguments={"native_thread_id": "thr_child_v1"},
+    )
+
+    assert reply.reply_code == "session_projection"
+    assert reply.intent_code == "get_session_by_native_thread"
+    assert reply.message == "editing files | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    assert reply.session is not None
+    assert reply.session.thread_id == "session:repo-a"
+    assert reply.session.native_thread_id == "thr_child_v1"
+    assert reply.progress is not None
+    assert reply.progress.goal_contract_version == created.version
+    assert reply.progress.native_thread_id == "thr_child_v1"
 
 
 def test_adapter_get_workspace_activity_returns_stable_workspace_activity_view(tmp_path: Path) -> None:
@@ -386,6 +786,37 @@ def test_adapter_get_workspace_activity_returns_stable_workspace_activity_view(t
     assert adapter._client.workspace_activity_calls == [("repo-a", 30)]
 
 
+def test_adapter_get_workspace_activity_prefers_explicit_native_thread_id(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_intent(
+        "get_workspace_activity",
+        project_id="repo-a",
+        arguments={"recent_minutes": 30},
+    )
+
+    assert reply.reply_code == "workspace_activity_view"
+    assert reply.workspace_activity is not None
+    assert reply.workspace_activity.thread_id == "session:repo-a"
+    assert reply.workspace_activity.native_thread_id == "thr_native_1"
+
+
 def test_adapter_why_stuck_is_built_from_fact_records(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -420,6 +851,48 @@ def test_adapter_why_stuck_is_built_from_fact_records(tmp_path: Path) -> None:
     )
 
 
+def test_adapter_why_stuck_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    GoalContractService(adapter._session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="repeated failures",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    reply = adapter.handle_intent("why_stuck", project_id="repo-a")
+
+    assert reply.reply_code == "stuck_explanation"
+    assert (
+        reply.message
+        == "session appears stuck; repeated failures detected; context pressure is critical"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation | 下一步=卡在哪里"
+    )
+
+
 def test_adapter_progress_surfaces_decision_degradation_annotations(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -448,6 +921,100 @@ def test_adapter_progress_surfaces_decision_degradation_annotations(tmp_path: Pa
     assert reply.message == "waiting for approval | 决策=provider降级(schema:provider-decision-v2)"
     assert reply.progress is not None
     assert reply.progress.decision_trace_ref == "trace:repo-a-provider-invalid"
+
+
+def test_adapter_progress_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/recovery.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    GoalContractService(adapter._session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    reply = adapter.handle_intent("get_progress", project_id="repo-a")
+
+    assert reply.reply_code == "task_progress_view"
+    assert (
+        reply.message
+        == "editing files | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    )
+    assert reply.progress is not None
+    assert reply.progress.goal_contract_version == "goal-v1"
+    assert reply.progress.current_phase_goal == "继续把 recovery 自动重入收口到 child continuation"
+
+
+def test_adapter_progress_surfaces_revised_latest_user_instruction(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    contracts = GoalContractService(adapter._session_service)
+    created = contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="旧指令",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="旧阶段目标",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+    contracts.revise_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        expected_version=created.version,
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+    )
+
+    reply = adapter.handle_intent("get_progress", project_id="repo-a")
+
+    assert reply.reply_code == "task_progress_view"
+    assert reply.message == "editing files | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    assert reply.progress is not None
+    assert reply.progress.goal_contract_version == "goal-v2"
+    assert reply.progress.current_phase_goal == "继续把 recovery 自动重入收口到 child continuation"
+    assert reply.progress.last_user_instruction == "继续把 recovery 自动重入收口到 child continuation"
 
 
 def test_adapter_explain_blocker_uses_fact_records_and_stable_read_model(tmp_path: Path) -> None:
@@ -490,6 +1057,63 @@ def test_adapter_explain_blocker_uses_fact_records_and_stable_read_model(tmp_pat
         "awaiting_human_direction",
     ]
     assert "approval required" in reply.message
+
+
+def test_adapter_explain_blocker_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
+    )
+    GoalContractService(adapter._session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="approval",
+        last_summary="waiting for approval",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    reply = adapter.handle_intent("explain_blocker", project_id="repo-a")
+
+    assert reply.reply_code == "blocker_explanation"
+    assert (
+        reply.message
+        == "approval required; awaiting operator direction"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+        " | 下一步=审批列表、回复同意/拒绝、为什么卡住"
+    )
 
 
 def test_adapter_list_session_facts_returns_stable_truth_source(tmp_path: Path) -> None:
@@ -709,6 +1333,71 @@ def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) 
     )
 
 
+def test_adapter_list_sessions_renders_current_child_session_id_resume_shape(tmp_path: Path) -> None:
+    session_service = SessionService.from_data_dir(tmp_path)
+    session_service.record_recovery_execution(
+        project_id="repo-b",
+        parent_session_id="session:repo-b",
+        parent_native_thread_id="thr_native_2",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-b.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-b",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "child_session_id": "session:repo-b:thr_child_v1",
+            "thread_id": "thr_child_v1",
+            "native_thread_id": "thr_child_v1",
+        },
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-b",
+            "thread_id": "thr_native_2",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.progresses[0].recovery_outcome == "new_child_session"
+    assert reply.progresses[0].recovery_child_session_id == "session:repo-b:thr_child_v1"
+    assert reply.message == (
+        "多项目进展（1） | 状态=进行中1\n"
+        "- repo-b | editing_source | editing files | 上下文=low | 恢复=新子会话 repo-b:thr_child_v1"
+    )
+
+
 def test_adapter_list_sessions_prioritizes_recovery_failures_before_approval_and_provider_degrade(
     tmp_path: Path,
 ) -> None:
@@ -841,6 +1530,223 @@ def test_adapter_list_sessions_prioritizes_recovery_failures_before_approval_and
     ) in reply.message
 
 
+def test_adapter_list_sessions_prioritizes_active_recovery_suppression_before_approval_and_provider_degrade(
+    tmp_path: Path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-c",
+        session_id="session:repo-c",
+        correlation_id="corr:recovery-suppressed:repo-c",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-c"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:22:00Z",
+        },
+        occurred_at="2026-04-05T05:23:00Z",
+    )
+    PolicyDecisionStore(tmp_path / "policy_decisions.json").put(
+        _provider_invalid_decision_record(
+            project_id="repo-a",
+            session_id="session:repo-a",
+            native_thread_id="thr_native_1",
+        )
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "project_id": "repo-c",
+                "thread_id": "thr_native_3",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing recovery path",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:22:00Z",
+            },
+            {
+                "project_id": "repo-d",
+                "thread_id": "thr_native_4",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:23:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.message.startswith(
+        "多项目进展（4） | 状态=进行中2、待审批1、受阻1"
+        " | 先处理=repo-c:恢复抑制、repo-b:待审批、repo-a:provider降级\n"
+    )
+    assert reply.message.index("- repo-c ") < reply.message.index("- repo-b ")
+    assert reply.message.index("- repo-b ") < reply.message.index("- repo-a ")
+    assert reply.message.index("- repo-a ") < reply.message.index("- repo-d ")
+    assert (
+        "- repo-c | editing_source | editing recovery path | 上下文=critical"
+        " | 恢复抑制=等待新进展 | 关注=恢复抑制"
+    ) in reply.message
+
+
+def test_adapter_list_sessions_renders_recovery_cooldown_suppression(tmp_path: Path) -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing recovery path",
+        "files_touched": ["src/recovery.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    adapter = _adapter(
+        tmp_path,
+        task=task,
+        tasks=[task],
+    )
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:list:cooldown",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "cooldown_window_active",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "running",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "cooldown_seconds": "300",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.message.startswith(
+        "多项目进展（1） | 状态=受阻1 | 先处理=repo-a:恢复抑制\n"
+    )
+    assert (
+        "- repo-a | editing_source | editing recovery path | 上下文=critical"
+        " | 恢复抑制=恢复冷却中 | 关注=恢复抑制"
+    ) in reply.message
+
+
+def test_adapter_list_sessions_renders_recovery_in_flight_suppression(tmp_path: Path) -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "handoff_in_progress",
+        "phase": "handoff",
+        "pending_approval": False,
+        "last_summary": "handoff drafted",
+        "files_touched": ["src/recovery.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    adapter = _adapter(
+        tmp_path,
+        task=task,
+        tasks=[task],
+    )
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:list:in-flight",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.message.startswith(
+        "多项目进展（1） | 状态=进行中1 | 先处理=repo-a:恢复抑制\n"
+    )
+    assert (
+        "- repo-a | handoff | handoff drafted | 上下文=critical"
+        " | 恢复抑制=恢复进行中 | 关注=恢复抑制"
+    ) in reply.message
+
+
 def test_adapter_list_sessions_surfaces_relative_freshness_buckets(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -920,6 +1826,587 @@ def test_adapter_list_sessions_surfaces_relative_freshness_buckets(tmp_path: Pat
     assert "- repo-b | planning | waiting | 上下文=low | 更新=较早" in reply.message
     assert "- repo-c | planning | waiting | 上下文=low | 更新=静默" in reply.message
     assert "- repo-d | planning | waiting | 上下文=low | 更新=未知" in reply.message
+
+
+def test_adapter_list_sessions_merges_live_tasks_with_event_only_child_interaction_event(
+    tmp_path: Path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="interaction_window_expired",
+        project_id="repo-c",
+        session_id="session:repo-c:thr_child_1",
+        correlation_id="corr:interaction:repo-c:adapter-live-merge",
+        related_ids={
+            "interaction_context_id": "ctx-child-1",
+            "interaction_family_id": "family-child-1",
+            "actor_id": "user:alice",
+            "native_thread_id": "thr_child_1",
+        },
+        payload={
+            "channel_kind": "dm",
+            "expired_at": "2026-04-07T00:30:00Z",
+            "received_at": "2026-04-07T00:40:00Z",
+        },
+        occurred_at="2026-04-07T00:40:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+            {
+                "project_id": "repo-c",
+                "thread_id": "thr_native_3",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing recovery path",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-05T05:22:00Z",
+            },
+            {
+                "project_id": "repo-d",
+                "thread_id": "thr_native_4",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:23:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:22:00Z",
+            },
+        ],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.message.startswith("多项目进展（4）")
+    assert "- repo-a | editing_source | editing files | 上下文=low" in reply.message
+    assert (
+        "- repo-b | approval | waiting for approval | 上下文=low"
+        " | 关注=待审批 | 下一步=审批列表、回复同意/拒绝、卡在哪里"
+    ) in reply.message
+    assert (
+        "- repo-c | editing_source | editing recovery path | 上下文=critical"
+    ) in reply.message
+    assert "- repo-d | planning | waiting | 上下文=low" in reply.message
+
+
+def test_adapter_list_sessions_falls_back_to_canonical_approvals_when_live_approval_read_fails(
+    tmp_path: Path,
+) -> None:
+    class ApprovalFailureAClient(FakeAClient):
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            raise RuntimeError("approval list unavailable")
+
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    adapter = OpenClawAdapter(
+        settings=settings,
+        client=ApprovalFailureAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "editing files",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:20:00Z",
+                },
+                {
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "status": "waiting_human",
+                    "phase": "approval",
+                    "pending_approval": True,
+                    "approval_risk": "L2",
+                    "last_summary": "waiting for approval",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:21:00Z",
+                },
+            ],
+        ),
+        receipt_store=receipt_store,
+    )
+    materialize_canonical_approval(
+        _provider_invalid_decision_record(
+            project_id="repo-b",
+            session_id="session:repo-b",
+            native_thread_id="thr_native_2",
+        ).model_copy(
+            update={
+                "approval_id": "appr_001",
+                "action_ref": "continue_session",
+                "decision_key": (
+                    "session:repo-b|fact-v7|policy-v1|require_user_decision|continue_session|appr_001"
+                ),
+                "idempotency_key": (
+                    "session:repo-b|fact-v7|policy-v1|require_user_decision|continue_session|appr_001"
+                ),
+            }
+        ),
+        approval_store=adapter._approval_store,
+        session_service=adapter._session_service,
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b"]
+    sessions_by_project = {session.project_id: session for session in reply.sessions}
+    assert sessions_by_project["repo-b"].pending_approval_count == 1
+    assert "repo-b:待审批" in reply.message
+
+
+def test_adapter_list_sessions_keeps_live_tasks_when_live_approval_read_fails_without_canonical_fallback(
+    tmp_path: Path,
+) -> None:
+    class ApprovalFailureAClient(FakeAClient):
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            raise RuntimeError("approval list unavailable")
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=ApprovalFailureAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "editing files",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:20:00Z",
+                },
+                {
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "waiting",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-05T05:21:00Z",
+                },
+            ],
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b"]
+    sessions_by_project = {session.project_id: session for session in reply.sessions}
+    assert sessions_by_project["repo-a"].pending_approval_count == 0
+    assert sessions_by_project["repo-b"].pending_approval_count == 0
+
+
+def test_adapter_list_sessions_appends_supplemental_event_only_project_not_present_in_live_tasks(
+    tmp_path: Path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-c",
+        session_id="session:repo-c",
+        correlation_id="corr:recovery-suppressed:repo-c:adapter-supplemental",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-c"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "running",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-05T05:22:00Z",
+        },
+        occurred_at="2026-04-05T05:23:00Z",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "planning",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+        ],
+        approvals=[],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b", "repo-c"]
+    progress_by_project = {progress.project_id: progress for progress in reply.progresses}
+    assert progress_by_project["repo-c"].recovery_suppression_reason == (
+        "reentry_without_newer_progress"
+    )
+
+
+def test_adapter_list_sessions_appends_supplemental_goal_contract_project_not_present_in_live_tasks(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "planning",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+        ],
+        approvals=[],
+    )
+    GoalContractService(adapter._session_service).bootstrap_contract(
+        project_id="repo-c",
+        session_id="session:repo-c",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b", "repo-c"]
+    progress_by_project = {progress.project_id: progress for progress in reply.progresses}
+    assert progress_by_project["repo-c"].goal_contract_version == "goal-v1"
+    assert progress_by_project["repo-c"].summary == "editing files"
+    assert progress_by_project["repo-c"].current_phase_goal == (
+        "继续把 recovery 自动重入收口到 child continuation"
+    )
+    assert (
+        "- repo-c | editing_source | editing files | 上下文=low"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    ) in reply.message
+
+
+def test_adapter_list_sessions_appends_supplemental_persisted_project_not_present_in_live_tasks(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "sessions": {
+            "repo-c": {
+                "project_id": "repo-c",
+                "thread_id": "session:repo-c",
+                "native_thread_id": "thr_native_1",
+                "session_seq": 3,
+                "fact_snapshot_version": "fact-v1",
+                "last_refreshed_at": "2026-04-05T05:25:00Z",
+                    "session": {
+                        "project_id": "repo-c",
+                        "thread_id": "session:repo-c",
+                        "native_thread_id": "thr_native_1",
+                        "session_state": "awaiting_approval",
+                        "activity_phase": "approval",
+                        "attention_state": "needs_human",
+                        "headline": "waiting for approval",
+                        "pending_approval_count": 1,
+                        "available_intents": ["get_progress", "list_pending_approvals"],
+                    },
+                "progress": {
+                    "project_id": "repo-c",
+                    "thread_id": "session:repo-c",
+                    "native_thread_id": "thr_native_1",
+                    "summary": "waiting for approval",
+                    "activity_phase": "approval",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "decision_trace_ref": None,
+                    "decision_degrade_reason": None,
+                    "provider_output_schema_ref": None,
+                    "recovery_status": None,
+                    "recovery_outcome": None,
+                    "recovery_child_session_id": None,
+                    "recovery_suppression_reason": None,
+                    "recovery_suppression_source": None,
+                    "recovery_suppression_observed_at": None,
+                    "last_progress_at": "2026-04-05T05:20:00Z",
+                },
+                "facts": [
+                    {
+                        "fact_id": "fact-1",
+                        "fact_code": "approval_pending",
+                        "fact_kind": "blocker",
+                        "severity": "warning",
+                        "summary": "approval pending",
+                        "detail": "approval pending",
+                        "source": "watchdog",
+                        "observed_at": "2026-04-05T05:20:00Z",
+                        "related_ids": {},
+                    }
+                ],
+                "approval_queue": [
+                        {
+                            "approval_id": "appr_001",
+                            "project_id": "repo-c",
+                            "thread_id": "session:repo-c",
+                            "native_thread_id": "thr_native_1",
+                            "command": "uv run pytest",
+                            "reason": "verify tests",
+                        "alternative": "",
+                        "status": "pending",
+                        "requested_at": "2026-04-05T05:21:00Z",
+                        "decided_at": None,
+                        "decided_by": None,
+                        "risk_level": "L2",
+                    }
+                ],
+            }
+        }
+    }
+    (tmp_path / "session_spine.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "planning",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "waiting",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:21:00Z",
+            },
+        ],
+        approvals=[],
+    )
+
+    reply = adapter.handle_intent("list_sessions")
+
+    assert reply.reply_code == "session_directory"
+    assert [session.project_id for session in reply.sessions] == ["repo-a", "repo-b", "repo-c"]
+    sessions_by_project = {session.project_id: session for session in reply.sessions}
+    assert sessions_by_project["repo-c"].thread_id == "session:repo-c"
 
 
 def test_adapter_list_sessions_surfaces_resident_expert_coverage_summary(tmp_path: Path) -> None:
@@ -1042,6 +2529,380 @@ def test_adapter_list_session_events_returns_stable_reply_model(tmp_path: Path) 
     assert len(reply.events) == 1
     assert reply.events[0].event_code == "session_created"
     assert reply.events[0].thread_id == "session:repo-a"
+
+
+def test_adapter_list_session_events_prefers_explicit_native_thread_id(tmp_path: Path) -> None:
+    class EventsClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            assert project_id == "repo-a"
+            _ = poll_interval
+            return (
+                'id: evt_001\n'
+                "event: resume\n"
+                'data: {"event_id":"evt_001","project_id":"repo-a","thread_id":"session:repo-a","native_thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:00:00Z"}\n\n',
+                "text/event-stream",
+            )
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=EventsClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "session:repo-a",
+                "native_thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+
+    reply = adapter.handle_intent("list_session_events", project_id="repo-a")
+
+    assert reply.reply_code == "session_event_snapshot"
+    assert len(reply.events) == 1
+    assert reply.events[0].event_code == "session_resumed"
+    assert reply.events[0].thread_id == "session:repo-a"
+    assert reply.events[0].native_thread_id == "thr_native_1"
+
+
+def test_adapter_list_session_events_falls_back_to_session_service_child_adoption_event(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    class BrokenEventsClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            _ = (project_id, poll_interval)
+            raise RuntimeError("a-side temporarily unavailable")
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=BrokenEventsClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+    goal_contracts = GoalContractService(adapter._session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续 recovery",
+        task_prompt="把 child session adoption 暴露到 stable events",
+        last_user_instruction="继续补 stable events child adoption",
+        phase="implementation",
+        last_summary="正在补 stable event fallback",
+        explicit_deliverables=["stable events 暴露 child adoption"],
+        completion_signals=["相关 pytest 通过"],
+    )
+    goal_contracts.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:thr_child_1",
+        child_native_thread_id="thr_child_1",
+        expected_version=created.version,
+        recovery_transaction_id="recovery-tx:1",
+        source_packet_id="packet:handoff-1",
+    )
+
+    events = adapter.list_session_events("repo-a")
+
+    assert len(events) == 2
+    assert events[-1].event_code == "session_resumed"
+    assert events[-1].thread_id == "session:repo-a:thr_child_1"
+    assert events[-1].native_thread_id == "thr_child_1"
+    assert events[-1].related_ids["child_session_id"] == "session:repo-a:thr_child_1"
+    assert events[-1].related_ids["recovery_transaction_id"] == "recovery-tx:1"
+
+
+def test_adapter_handle_intent_list_session_events_falls_back_to_session_service_child_adoption_event(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    class BrokenEventsClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            _ = (project_id, poll_interval)
+            raise RuntimeError("a-side temporarily unavailable")
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=BrokenEventsClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+    goal_contracts = GoalContractService(adapter._session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续 recovery",
+        task_prompt="把 child session adoption 暴露到 stable events",
+        last_user_instruction="继续补 stable events child adoption",
+        phase="implementation",
+        last_summary="正在补 stable event fallback",
+        explicit_deliverables=["stable events 暴露 child adoption"],
+        completion_signals=["相关 pytest 通过"],
+    )
+    goal_contracts.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:thr_child_1",
+        child_native_thread_id="thr_child_1",
+        expected_version=created.version,
+        recovery_transaction_id="recovery-tx:1",
+        source_packet_id="packet:handoff-1",
+    )
+
+    reply = adapter.handle_intent("list_session_events", project_id="repo-a")
+
+    assert reply.reply_code == "session_event_snapshot"
+    assert reply.events is not None
+    assert len(reply.events) == 2
+    assert reply.events[-1].event_code == "session_resumed"
+    assert reply.events[-1].thread_id == "session:repo-a:thr_child_1"
+    assert reply.events[-1].native_thread_id == "thr_child_1"
+
+
+def test_adapter_handle_intent_list_session_events_merges_raw_and_session_service_events(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    goal_contracts = GoalContractService(adapter._session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续 recovery",
+        task_prompt="把 child session adoption 暴露到 stable events",
+        last_user_instruction="继续补 stable events child adoption",
+        phase="implementation",
+        last_summary="正在补 stable event merge",
+        explicit_deliverables=["stable events 合并 child adoption"],
+        completion_signals=["相关 pytest 通过"],
+    )
+    goal_contracts.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:thr_child_1",
+        child_native_thread_id="thr_child_1",
+        expected_version=created.version,
+        recovery_transaction_id="recovery-tx:1",
+        source_packet_id="packet:handoff-1",
+    )
+
+    reply = adapter.handle_intent("list_session_events", project_id="repo-a")
+
+    assert reply.reply_code == "session_event_snapshot"
+    assert reply.events is not None
+    assert len(reply.events) == 3
+    assert reply.events[0].event_code == "session_created"
+    assert reply.events[1].event_code == "session_updated"
+    assert reply.events[2].event_code == "session_resumed"
+    assert reply.events[2].thread_id == "session:repo-a:thr_child_1"
+
+
+def test_adapter_iter_session_events_prepends_session_service_child_adoption_event(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    goal_contracts = GoalContractService(adapter._session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续 recovery",
+        task_prompt="adapter follow 流预置 canonical child adoption",
+        last_user_instruction="继续补 adapter follow stream canonical bootstrap",
+        phase="implementation",
+        last_summary="正在补 adapter follow stream canonical bootstrap",
+        explicit_deliverables=["adapter follow 流预置 canonical child adoption"],
+        completion_signals=["相关 pytest 通过"],
+    )
+    goal_contracts.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:thr_child_1",
+        child_native_thread_id="thr_child_1",
+        expected_version=created.version,
+        recovery_transaction_id="recovery-tx:1",
+        source_packet_id="packet:handoff-1",
+    )
+
+    events = list(adapter.iter_session_events("repo-a"))
+
+    assert len(events) == 3
+    assert events[0].event_code == "session_created"
+    assert events[1].thread_id == "session:repo-a:thr_child_1"
+    assert events[1].related_ids["recovery_transaction_id"] == "recovery-tx:1"
+    assert events[2].event_code == "session_resumed"
+
+
+def test_adapter_iter_session_events_falls_back_when_first_stream_pull_fails(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    class DeferredBrokenEventsClient(FakeAClient):
+        def iter_events(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ):
+            _ = (project_id, poll_interval)
+
+            def _iter():
+                raise RuntimeError("a-side stream broke before first event")
+                yield ""
+
+            return _iter()
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=DeferredBrokenEventsClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+    goal_contracts = GoalContractService(adapter._session_service)
+    created = goal_contracts.bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="继续 recovery",
+        task_prompt="adapter deferred follow 流 fallback 到 canonical child adoption",
+        last_user_instruction="继续补 adapter deferred follow stream fallback",
+        phase="implementation",
+        last_summary="正在补 adapter deferred follow stream fallback",
+        explicit_deliverables=["adapter deferred follow 流 fallback 到 canonical child adoption"],
+        completion_signals=["相关 pytest 通过"],
+    )
+    goal_contracts.adopt_contract_for_child_session(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        child_session_id="session:repo-a:thr_child_1",
+        child_native_thread_id="thr_child_1",
+        expected_version=created.version,
+        recovery_transaction_id="recovery-tx:1",
+        source_packet_id="packet:handoff-1",
+    )
+
+    events = list(adapter.iter_session_events("repo-a"))
+
+    assert len(events) == 2
+    assert events[0].event_code == "session_created"
+    assert events[1].thread_id == "session:repo-a:thr_child_1"
+    assert events[1].related_ids["recovery_transaction_id"] == "recovery-tx:1"
 
 
 def test_adapter_request_recovery_maps_advisory_action_result_to_reply_model(tmp_path: Path) -> None:
@@ -1374,6 +3235,71 @@ def test_adapter_routes_natural_language_message_by_native_thread(
     assert reply.session.native_thread_id == "thr_native_1"
 
 
+def test_adapter_routes_natural_language_event_stream_message_to_session_events(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_message(
+        "事件流",
+        project_id="repo-a",
+    )
+
+    assert reply.intent_code == "list_session_events"
+    assert reply.reply_code == "session_event_snapshot"
+    assert reply.events is not None
+    assert len(reply.events) == 1
+    assert reply.events[0].event_code == "session_created"
+
+
+def test_adapter_routes_natural_language_session_events_message_by_native_thread(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+
+    reply = adapter.handle_message(
+        "会话事件",
+        arguments={"native_thread_id": "thr_native_1"},
+    )
+
+    assert reply.intent_code == "list_session_events"
+    assert reply.reply_code == "session_event_snapshot"
+    assert reply.events is not None
+    assert len(reply.events) == 1
+    assert reply.events[0].project_id == "repo-a"
+    assert reply.events[0].thread_id == "session:repo-a"
+
+
 def test_adapter_lists_stable_session_events(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -1400,6 +3326,109 @@ def test_adapter_lists_stable_session_events(tmp_path: Path) -> None:
     assert "payload_json" not in events[0].model_dump(mode="json")
 
 
+def test_adapter_list_session_events_dedupes_duplicate_raw_snapshot_event_ids(tmp_path: Path) -> None:
+    class DuplicateSnapshotClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            assert project_id == self._task["project_id"]
+            _ = poll_interval
+            return (
+                'id: evt_001\n'
+                "event: task_created\n"
+                'data: {"event_id":"evt_001","project_id":"repo-a","thread_id":"thr_native_1","event_type":"task_created","event_source":"a_control_agent","payload_json":{"status":"running","phase":"planning"},"created_at":"2026-04-05T10:00:00Z"}\n\n'
+                'id: evt_001\n'
+                "event: task_created\n"
+                'data: {"event_id":"evt_001","project_id":"repo-a","thread_id":"thr_native_1","event_type":"task_created","event_source":"a_control_agent","payload_json":{"status":"running","phase":"planning"},"created_at":"2026-04-05T10:00:00Z"}\n\n',
+                "text/event-stream",
+            )
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=DuplicateSnapshotClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+
+    events = adapter.list_session_events("repo-a")
+
+    assert len(events) == 1
+    assert events[0].event_code == "session_created"
+
+
+def test_adapter_list_session_events_dedupes_duplicate_raw_snapshot_events_without_event_id(
+    tmp_path: Path,
+) -> None:
+    class MissingEventIdSnapshotClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            assert project_id == self._task["project_id"]
+            _ = poll_interval
+            return (
+                "event: resume\n"
+                'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:00:00Z"}\n\n'
+                "event: resume\n"
+                'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:00:00Z"}\n\n',
+                "text/event-stream",
+            )
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=MissingEventIdSnapshotClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+
+    events = adapter.list_session_events("repo-a")
+
+    assert len(events) == 1
+    assert events[0].event_code == "session_resumed"
+    assert events[0].event_id.startswith("synthetic:")
+
+
 def test_adapter_iterates_stable_session_events(tmp_path: Path) -> None:
     adapter = _adapter(
         tmp_path,
@@ -1420,6 +3449,75 @@ def test_adapter_iterates_stable_session_events(tmp_path: Path) -> None:
 
     events = list(adapter.iter_session_events("repo-a"))
 
-    assert len(events) == 1
+    assert len(events) == 2
+    assert events[0].event_code == "session_created"
+    assert events[1].event_code == "session_resumed"
+    assert events[1].attributes["mode"] == "resume_or_new_thread"
+
+
+def test_adapter_iter_session_events_dedupes_replayed_snapshot_events_without_event_id(
+    tmp_path: Path,
+) -> None:
+    class MissingEventIdFollowClient(FakeAClient):
+        def get_events_snapshot(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ) -> tuple[str, str]:
+            assert project_id == self._task["project_id"]
+            _ = poll_interval
+            return (
+                "event: resume\n"
+                'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:00:00Z"}\n\n',
+                "text/event-stream",
+            )
+
+        def iter_events(
+            self,
+            project_id: str,
+            *,
+            poll_interval: float = 0.5,
+        ):
+            assert project_id == self._task["project_id"]
+            _ = poll_interval
+            yield (
+                "event: resume\n"
+                'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:00:00Z"}\n\n'
+            )
+            yield (
+                "event: steer\n"
+                'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"steer","event_source":"watchdog","payload_json":{"message":"stay focused","reason":"policy"},"created_at":"2026-04-05T10:01:00Z"}\n\n'
+            )
+
+    adapter = OpenClawAdapter(
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=MissingEventIdFollowClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+        receipt_store=ActionReceiptStore(tmp_path / "action_receipts.json"),
+    )
+
+    events = list(adapter.iter_session_events("repo-a"))
+
+    assert len(events) == 2
     assert events[0].event_code == "session_resumed"
-    assert events[0].attributes["mode"] == "resume_or_new_thread"
+    assert events[0].event_id.startswith("synthetic:")
+    assert events[1].event_code == "guidance_posted"

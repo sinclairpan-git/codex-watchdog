@@ -76,6 +76,7 @@ class FutureWorkerExecutionService:
         *,
         project_id: str,
         parent_session_id: str,
+        parent_native_thread_id: str | None = None,
         worker_task_ref: str,
         decision_trace_ref: str,
         goal_contract_version: str,
@@ -97,6 +98,7 @@ class FutureWorkerExecutionService:
         request = FutureWorkerExecutionRequest(
             project_id=project_id,
             parent_session_id=parent_session_id,
+            parent_native_thread_id=parent_native_thread_id,
             worker_task_ref=worker_task_ref,
             decision_trace_ref=decision_trace_ref,
             goal_contract_version=goal_contract_version,
@@ -113,10 +115,34 @@ class FutureWorkerExecutionService:
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
             occurred_at=occurred_at,
-            related_ids={"decision_trace_ref": decision_trace_ref},
+            related_ids={
+                "decision_trace_ref": decision_trace_ref,
+                **(
+                    {"parent_native_thread_id": parent_native_thread_id}
+                    if parent_native_thread_id
+                    else {}
+                ),
+            },
             payload=request.model_dump(mode="json"),
         )
         return request
+
+    def _parent_native_thread_id_for_worker(
+        self,
+        *,
+        parent_session_id: str,
+        worker_task_ref: str,
+    ) -> str | None:
+        request_event = self._require_request_event(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+        )
+        parent_native_thread_id = str(
+            request_event.related_ids.get("parent_native_thread_id")
+            or request_event.payload.get("parent_native_thread_id")
+            or ""
+        ).strip()
+        return parent_native_thread_id or None
 
     def record_started(
         self,
@@ -461,6 +487,10 @@ class FutureWorkerExecutionService:
             parent_session_id=parent_session_id,
             worker_task_ref=worker_task_ref,
         )
+        parent_native_thread_id = self._parent_native_thread_id_for_worker(
+            parent_session_id=parent_session_id,
+            worker_task_ref=worker_task_ref,
+        )
         self._session_service.record_event(
             event_type="future_worker_transition_rejected",
             project_id=project_id,
@@ -480,6 +510,11 @@ class FutureWorkerExecutionService:
                 "worker_task_ref": worker_task_ref,
                 "attempted_event_type": attempted_event_type,
                 "decision_trace_ref": decision_trace_ref,
+                **(
+                    {"parent_native_thread_id": parent_native_thread_id}
+                    if parent_native_thread_id
+                    else {}
+                ),
             },
         )
 
@@ -539,6 +574,20 @@ class FutureWorkerExecutionService:
             )
             lifecycle_related_ids["decision_trace_ref"] = decision_trace_ref
             lifecycle_payload.setdefault("decision_trace_ref", decision_trace_ref)
+        if event_type != "future_worker_requested":
+            parent_native_thread_id = self._parent_native_thread_id_for_worker(
+                parent_session_id=parent_session_id,
+                worker_task_ref=worker_task_ref,
+            )
+            if parent_native_thread_id:
+                lifecycle_related_ids.setdefault(
+                    "parent_native_thread_id",
+                    parent_native_thread_id,
+                )
+                lifecycle_payload.setdefault(
+                    "parent_native_thread_id",
+                    parent_native_thread_id,
+                )
         self._session_service.record_event(
             event_type=event_type,
             project_id=project_id,

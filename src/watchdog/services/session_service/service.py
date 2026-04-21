@@ -13,6 +13,11 @@ from watchdog.services.session_service.models import (
     SessionLineageRecord,
 )
 from watchdog.services.session_service.store import SessionServiceStore
+from watchdog.services.session_spine.continuation_packet import (
+    continuation_packet_hash,
+    model_validate_continuation_packet,
+    rendered_markdown_hash,
+)
 
 _TERMINAL_RECOVERY_TRANSACTION_STATUSES = {
     "completed",
@@ -70,8 +75,54 @@ def _normalize_resume_outcome(value: object) -> str | None:
     return None
 
 
+def _normalize_optional_text(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _normalize_lineage_refs(value: list[object] | None) -> list[str]:
+    refs: list[str] = []
+    for item in value or []:
+        normalized = _normalize_optional_text(item)
+        if normalized is not None:
+            refs.append(normalized)
+    return refs
+
+
+def _resume_native_thread_id(resume: dict[str, Any] | None) -> str | None:
+    if resume is None:
+        return None
+    native_thread_id = str(resume.get("native_thread_id") or "").strip()
+    if native_thread_id:
+        return native_thread_id
+    thread_id = str(resume.get("thread_id") or "").strip()
+    if thread_id.startswith("session:"):
+        return None
+    return thread_id or None
+
+
+def _resume_session_id(resume: dict[str, Any] | None) -> str | None:
+    if resume is None:
+        return None
+    for key in ("session_id", "child_session_id"):
+        value = str(resume.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _resume_session_thread_id(resume: dict[str, Any] | None) -> str | None:
+    if resume is None:
+        return None
+    thread_id = str(resume.get("thread_id") or "").strip()
+    if thread_id.startswith("session:"):
+        return thread_id
+    return None
+
+
 def _resolve_resume_outcome(
     *,
+    parent_session_id: str | None,
     parent_native_thread_id: str | None,
     resume: dict[str, Any] | None,
     explicit_resume_outcome: str | None = None,
@@ -84,11 +135,23 @@ def _resolve_resume_outcome(
     normalized = _normalize_resume_outcome(resume.get("resume_outcome"))
     if normalized is not None:
         return normalized
-    for key in ("session_id", "child_session_id"):
-        if str(resume.get(key) or "").strip():
-            return _NEW_CHILD_SESSION
+    resumed_session_id = _resume_session_id(resume)
+    normalized_parent_session_id = str(parent_session_id or "").strip()
+    if (
+        resumed_session_id
+        and normalized_parent_session_id
+        and resumed_session_id != normalized_parent_session_id
+    ):
+        return _NEW_CHILD_SESSION
+    resumed_session_thread_id = _resume_session_thread_id(resume)
+    if (
+        resumed_session_thread_id
+        and normalized_parent_session_id
+        and resumed_session_thread_id != normalized_parent_session_id
+    ):
+        return _NEW_CHILD_SESSION
     parent_thread_id = str(parent_native_thread_id or "").strip()
-    resumed_thread_id = str(resume.get("thread_id") or resume.get("native_thread_id") or "").strip()
+    resumed_thread_id = str(_resume_native_thread_id(resume) or "").strip()
     if parent_thread_id and resumed_thread_id and resumed_thread_id != parent_thread_id:
         return _NEW_CHILD_SESSION
     return _SAME_THREAD_RESUME
@@ -321,6 +384,7 @@ class SessionService:
         approval_id: str,
         decision_id: str,
         envelope_id: str,
+        native_thread_id: str | None = None,
         requested_action: str,
         expiration_reason: str,
         causation_id: str | None = None,
@@ -336,12 +400,303 @@ class SessionService:
                 "approval_id": approval_id,
                 "decision_id": decision_id,
                 "envelope_id": envelope_id,
+                **({"native_thread_id": native_thread_id} if native_thread_id else {}),
             },
             occurred_at=occurred_at,
             payload={
                 "approval_status": "expired",
                 "requested_action": requested_action,
                 "expiration_reason": expiration_reason,
+            },
+        )
+
+    def record_continuation_gate_verdict(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        gate_kind: str,
+        gate_status: str,
+        decision_source: str,
+        decision_class: str,
+        action_ref: str | None = None,
+        authoritative_snapshot_version: str | None = None,
+        snapshot_epoch: str | None = None,
+        goal_contract_version: str | None = None,
+        suppression_reason: str | None = None,
+        continuation_identity: str | None = None,
+        route_key: str | None = None,
+        branch_switch_token: str | None = None,
+        source_packet_id: str | None = None,
+        lineage_refs: list[object] | None = None,
+        causation_id: str | None = None,
+        correlation_id: str | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        normalized_identity = _normalize_optional_text(continuation_identity)
+        normalized_route_key = _normalize_optional_text(route_key)
+        normalized_branch_switch_token = _normalize_optional_text(branch_switch_token)
+        normalized_source_packet_id = _normalize_optional_text(source_packet_id)
+        normalized_snapshot_version = _normalize_optional_text(authoritative_snapshot_version)
+        normalized_snapshot_epoch = _normalize_optional_text(snapshot_epoch)
+        normalized_goal_contract_version = _normalize_optional_text(goal_contract_version)
+        normalized_suppression_reason = _normalize_optional_text(suppression_reason)
+        normalized_lineage_refs = _normalize_lineage_refs(lineage_refs)
+        resolved_correlation_id = correlation_id or _stable_id(
+            "corr:continuation-gate",
+            session_id,
+            gate_kind,
+            gate_status,
+            decision_source,
+            decision_class,
+            action_ref or "",
+            normalized_snapshot_version or "",
+            normalized_suppression_reason or "",
+            causation_id or "",
+        )
+        related_ids: dict[str, str] = {}
+        if normalized_identity is not None:
+            related_ids["continuation_identity"] = normalized_identity
+        if normalized_route_key is not None:
+            related_ids["route_key"] = normalized_route_key
+        if normalized_branch_switch_token is not None:
+            related_ids["branch_switch_token"] = normalized_branch_switch_token
+        if normalized_source_packet_id is not None:
+            related_ids["source_packet_id"] = normalized_source_packet_id
+        return self.record_event_once(
+            event_type="continuation_gate_evaluated",
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=resolved_correlation_id,
+            causation_id=causation_id,
+            related_ids=related_ids,
+            occurred_at=occurred_at,
+            payload={
+                "gate_kind": gate_kind,
+                "gate_status": gate_status,
+                "decision_source": decision_source,
+                "decision_class": decision_class,
+                "action_ref": action_ref,
+                "authoritative_snapshot_version": normalized_snapshot_version,
+                "snapshot_epoch": normalized_snapshot_epoch,
+                "goal_contract_version": normalized_goal_contract_version,
+                "suppression_reason": normalized_suppression_reason,
+                "lineage_refs": normalized_lineage_refs,
+            },
+        )
+
+    def record_continuation_identity_state(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        continuation_identity: str,
+        state: str,
+        decision_source: str,
+        decision_class: str,
+        action_ref: str | None = None,
+        authoritative_snapshot_version: str | None = None,
+        snapshot_epoch: str | None = None,
+        goal_contract_version: str | None = None,
+        route_key: str | None = None,
+        source_packet_id: str | None = None,
+        suppression_reason: str | None = None,
+        lineage_refs: list[object] | None = None,
+        consumed_at: str | None = None,
+        causation_id: str | None = None,
+        correlation_id: str | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        event_type_by_state = {
+            "issued": "continuation_identity_issued",
+            "consumed": "continuation_identity_consumed",
+            "invalidated": "continuation_identity_invalidated",
+        }
+        event_type = event_type_by_state.get(state)
+        if event_type is None:
+            raise ValueError(f"unsupported continuation identity state: {state}")
+        normalized_route_key = _normalize_optional_text(route_key)
+        normalized_source_packet_id = _normalize_optional_text(source_packet_id)
+        normalized_snapshot_version = _normalize_optional_text(authoritative_snapshot_version)
+        normalized_snapshot_epoch = _normalize_optional_text(snapshot_epoch)
+        normalized_goal_contract_version = _normalize_optional_text(goal_contract_version)
+        normalized_suppression_reason = _normalize_optional_text(suppression_reason)
+        normalized_consumed_at = _normalize_optional_text(consumed_at)
+        normalized_lineage_refs = _normalize_lineage_refs(lineage_refs)
+        resolved_correlation_id = correlation_id or _stable_id(
+            "corr:continuation-identity",
+            session_id,
+            continuation_identity,
+            state,
+            decision_class,
+            normalized_snapshot_version or "",
+            normalized_source_packet_id or "",
+            normalized_suppression_reason or "",
+            causation_id or "",
+        )
+        related_ids = {"continuation_identity": continuation_identity}
+        if normalized_route_key is not None:
+            related_ids["route_key"] = normalized_route_key
+        if normalized_source_packet_id is not None:
+            related_ids["source_packet_id"] = normalized_source_packet_id
+        payload: dict[str, Any] = {
+            "state": state,
+            "decision_source": decision_source,
+            "decision_class": decision_class,
+            "action_ref": action_ref,
+            "authoritative_snapshot_version": normalized_snapshot_version,
+            "snapshot_epoch": normalized_snapshot_epoch,
+            "goal_contract_version": normalized_goal_contract_version,
+            "suppression_reason": normalized_suppression_reason,
+            "lineage_refs": normalized_lineage_refs,
+        }
+        if normalized_consumed_at is not None:
+            payload["consumed_at"] = normalized_consumed_at
+        return self.record_event_once(
+            event_type=event_type,
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=resolved_correlation_id,
+            causation_id=causation_id,
+            related_ids=related_ids,
+            occurred_at=occurred_at,
+            payload=payload,
+        )
+
+    def record_branch_switch_token_state(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        branch_switch_token: str,
+        state: str,
+        decision_source: str,
+        decision_class: str,
+        authoritative_snapshot_version: str | None = None,
+        snapshot_epoch: str | None = None,
+        goal_contract_version: str | None = None,
+        continuation_identity: str | None = None,
+        route_key: str | None = None,
+        suppression_reason: str | None = None,
+        lineage_refs: list[object] | None = None,
+        consumed_at: str | None = None,
+        causation_id: str | None = None,
+        correlation_id: str | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        event_type_by_state = {
+            "issued": "branch_switch_token_issued",
+            "consumed": "branch_switch_token_consumed",
+            "invalidated": "branch_switch_token_invalidated",
+        }
+        event_type = event_type_by_state.get(state)
+        if event_type is None:
+            raise ValueError(f"unsupported branch switch token state: {state}")
+        normalized_snapshot_version = _normalize_optional_text(authoritative_snapshot_version)
+        normalized_snapshot_epoch = _normalize_optional_text(snapshot_epoch)
+        normalized_goal_contract_version = _normalize_optional_text(goal_contract_version)
+        normalized_continuation_identity = _normalize_optional_text(continuation_identity)
+        normalized_route_key = _normalize_optional_text(route_key)
+        normalized_suppression_reason = _normalize_optional_text(suppression_reason)
+        normalized_consumed_at = _normalize_optional_text(consumed_at)
+        normalized_lineage_refs = _normalize_lineage_refs(lineage_refs)
+        resolved_correlation_id = correlation_id or _stable_id(
+            "corr:branch-switch-token",
+            session_id,
+            branch_switch_token,
+            state,
+            decision_class,
+            normalized_snapshot_version or "",
+            normalized_suppression_reason or "",
+            causation_id or "",
+        )
+        payload: dict[str, Any] = {
+            "state": state,
+            "decision_source": decision_source,
+            "decision_class": decision_class,
+            "authoritative_snapshot_version": normalized_snapshot_version,
+            "snapshot_epoch": normalized_snapshot_epoch,
+            "goal_contract_version": normalized_goal_contract_version,
+            "suppression_reason": normalized_suppression_reason,
+            "lineage_refs": normalized_lineage_refs,
+        }
+        if normalized_consumed_at is not None:
+            payload["consumed_at"] = normalized_consumed_at
+        related_ids = {"branch_switch_token": branch_switch_token}
+        if normalized_continuation_identity is not None:
+            related_ids["continuation_identity"] = normalized_continuation_identity
+        if normalized_route_key is not None:
+            related_ids["route_key"] = normalized_route_key
+        return self.record_event_once(
+            event_type=event_type,
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=resolved_correlation_id,
+            causation_id=causation_id,
+            related_ids=related_ids,
+            occurred_at=occurred_at,
+            payload=payload,
+        )
+
+    def record_continuation_replay_invalidated(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        decision_source: str,
+        decision_class: str,
+        authoritative_snapshot_version: str | None = None,
+        snapshot_epoch: str | None = None,
+        goal_contract_version: str | None = None,
+        continuation_identity: str | None = None,
+        route_key: str | None = None,
+        source_packet_id: str | None = None,
+        invalidation_reason: str,
+        lineage_refs: list[object] | None = None,
+        causation_id: str | None = None,
+        correlation_id: str | None = None,
+        occurred_at: str | None = None,
+    ) -> SessionEventRecord:
+        normalized_identity = _normalize_optional_text(continuation_identity)
+        normalized_route_key = _normalize_optional_text(route_key)
+        normalized_source_packet_id = _normalize_optional_text(source_packet_id)
+        normalized_snapshot_version = _normalize_optional_text(authoritative_snapshot_version)
+        normalized_snapshot_epoch = _normalize_optional_text(snapshot_epoch)
+        normalized_goal_contract_version = _normalize_optional_text(goal_contract_version)
+        normalized_lineage_refs = _normalize_lineage_refs(lineage_refs)
+        resolved_correlation_id = correlation_id or _stable_id(
+            "corr:continuation-replay-invalidated",
+            session_id,
+            decision_source,
+            decision_class,
+            invalidation_reason,
+            normalized_snapshot_version or "",
+            normalized_source_packet_id or "",
+            causation_id or "",
+        )
+        related_ids: dict[str, str] = {}
+        if normalized_identity is not None:
+            related_ids["continuation_identity"] = normalized_identity
+        if normalized_route_key is not None:
+            related_ids["route_key"] = normalized_route_key
+        if normalized_source_packet_id is not None:
+            related_ids["source_packet_id"] = normalized_source_packet_id
+        return self.record_event_once(
+            event_type="continuation_replay_invalidated",
+            project_id=project_id,
+            session_id=session_id,
+            correlation_id=resolved_correlation_id,
+            causation_id=causation_id,
+            related_ids=related_ids,
+            occurred_at=occurred_at,
+            payload={
+                "decision_source": decision_source,
+                "decision_class": decision_class,
+                "authoritative_snapshot_version": normalized_snapshot_version,
+                "snapshot_epoch": normalized_snapshot_epoch,
+                "goal_contract_version": normalized_goal_contract_version,
+                "invalidation_reason": invalidation_reason,
+                "lineage_refs": normalized_lineage_refs,
             },
         )
     def record_recovery_execution(
@@ -359,9 +714,23 @@ class SessionService:
         resume_error: str | None = None,
         goal_contract_version: str = "goal-contract:unknown",
         source_packet_id: str | None = None,
+        continuation_identity: str | None = None,
+        route_key: str | None = None,
+        authoritative_snapshot_version: str | None = None,
+        snapshot_epoch: str | None = None,
     ) -> RecordedRecoveryExecution:
         handoff_file = str(handoff.get("handoff_file") or "").strip()
         handoff_summary = str(handoff.get("summary") or "").strip()
+        continuation_packet_raw = handoff.get("continuation_packet")
+        continuation_packet = None
+        packet_hash = None
+        rendered_hash = None
+        rendered_from_packet_id = None
+        if isinstance(continuation_packet_raw, dict):
+            continuation_packet = model_validate_continuation_packet(continuation_packet_raw)
+            packet_hash = continuation_packet_hash(continuation_packet)
+            rendered_hash = rendered_markdown_hash(handoff_summary)
+            rendered_from_packet_id = continuation_packet.packet_id
         if not handoff_file:
             raise ValueError("handoff.handoff_file is required")
         identity = (
@@ -372,15 +741,40 @@ class SessionService:
             failure_family,
             failure_signature,
             handoff_file,
-            handoff_summary,
         )
         recovery_transaction_id = _stable_id("recovery-tx", *identity)
         correlation_id = _stable_id("corr:recovery", recovery_transaction_id)
         source_packet_id = (
-            str(source_packet_id or "").strip()
+            str(
+                getattr(continuation_packet, "packet_id", "")
+                or source_packet_id
+                or ""
+            ).strip()
             or _stable_id("packet:handoff", recovery_transaction_id, handoff_file)
         )
+        normalized_snapshot_version = _normalize_optional_text(authoritative_snapshot_version)
+        normalized_snapshot_epoch = _normalize_optional_text(snapshot_epoch)
+        normalized_goal_contract_version = (
+            _normalize_optional_text(
+                getattr(getattr(continuation_packet, "source_refs", None), "goal_contract_version", None)
+                or goal_contract_version
+            )
+            or "goal-contract:unknown"
+        )
+        normalized_continuation_identity = (
+            _normalize_optional_text(continuation_identity)
+            or (
+                f"{project_id}:{parent_session_id}:{parent_native_thread_id or 'none'}:"
+                "recover_current_branch"
+            )
+        )
+        normalized_route_key = _normalize_optional_text(route_key)
+        if normalized_route_key is None and normalized_continuation_identity and normalized_snapshot_version:
+            normalized_route_key = (
+                f"{normalized_continuation_identity}:{normalized_snapshot_version}"
+            )
         resolved_resume_outcome = _resolve_resume_outcome(
+            parent_session_id=parent_session_id,
             parent_native_thread_id=parent_native_thread_id,
             resume=resume,
             explicit_resume_outcome=resume_outcome,
@@ -403,6 +797,11 @@ class SessionService:
             recovery_transaction_id=recovery_transaction_id,
         )
         started_at = _utcnow()
+        parent_native_related_ids = (
+            {"native_thread_id": parent_native_thread_id}
+            if parent_native_thread_id
+            else {}
+        )
 
         self._append_event(
             event_type="recovery_tx_started",
@@ -413,6 +812,7 @@ class SessionService:
             correlation_id=correlation_id,
             related_ids={
                 "recovery_transaction_id": recovery_transaction_id,
+                **parent_native_related_ids,
             },
             payload={
                 "recovery_reason": recovery_reason,
@@ -452,10 +852,35 @@ class SessionService:
             related_ids={
                 "recovery_transaction_id": recovery_transaction_id,
                 "source_packet_id": source_packet_id,
+                **parent_native_related_ids,
+                **(
+                    {"continuation_identity": normalized_continuation_identity}
+                    if normalized_continuation_identity
+                    else {}
+                ),
+                **({"route_key": normalized_route_key} if normalized_route_key else {}),
             },
             payload={
                 "handoff_file": handoff_file,
                 "summary": handoff_summary,
+                "decision_source": "recovery_guard",
+                "decision_class": "recover_current_branch",
+                "authoritative_snapshot_version": normalized_snapshot_version,
+                "snapshot_epoch": normalized_snapshot_epoch,
+                "goal_contract_version": normalized_goal_contract_version,
+                "lineage_refs": [recovery_transaction_id, source_packet_id],
+                **(
+                    {"continuation_packet": continuation_packet.model_dump(mode="json", exclude_none=True)}
+                    if continuation_packet is not None
+                    else {}
+                ),
+                **({"packet_hash": packet_hash} if packet_hash is not None else {}),
+                **({"rendered_markdown_hash": rendered_hash} if rendered_hash is not None else {}),
+                **(
+                    {"rendered_from_packet_id": rendered_from_packet_id}
+                    if rendered_from_packet_id is not None
+                    else {}
+                ),
             },
         )
         self._append_recovery_status(
@@ -477,11 +902,36 @@ class SessionService:
                 "handoff_file": handoff_file,
             },
         )
+        if normalized_continuation_identity:
+            self.record_continuation_identity_state(
+                project_id=project_id,
+                session_id=parent_session_id,
+                continuation_identity=normalized_continuation_identity,
+                state="issued",
+                decision_source="recovery_guard",
+                decision_class="recover_current_branch",
+                action_ref="execute_recovery",
+                authoritative_snapshot_version=normalized_snapshot_version,
+                snapshot_epoch=normalized_snapshot_epoch,
+                goal_contract_version=normalized_goal_contract_version,
+                route_key=normalized_route_key,
+                source_packet_id=source_packet_id,
+                lineage_refs=[recovery_transaction_id, source_packet_id],
+                causation_id=recovery_transaction_id,
+                correlation_id=correlation_id,
+                occurred_at=packet_frozen_at,
+            )
 
         if child_session_id is not None and lineage_id is not None and resume is not None:
             child_payload = dict(resume)
             if resolved_resume_outcome is not None:
                 child_payload.setdefault("resume_outcome", resolved_resume_outcome)
+            child_native_thread_id = str(_resume_native_thread_id(resume) or "").strip()
+            child_native_related_ids = (
+                {"native_thread_id": child_native_thread_id}
+                if child_native_thread_id
+                else {}
+            )
             child_created_at = _utcnow()
             self._append_event(
                 event_type="child_session_created",
@@ -494,6 +944,7 @@ class SessionService:
                     "recovery_transaction_id": recovery_transaction_id,
                     "parent_session_id": parent_session_id,
                     "source_packet_id": source_packet_id,
+                    **child_native_related_ids,
                 },
                 payload=child_payload,
             )
@@ -566,6 +1017,7 @@ class SessionService:
                     "recovery_transaction_id": recovery_transaction_id,
                     "lineage_id": lineage_id,
                     "parent_session_id": parent_session_id,
+                    **child_native_related_ids,
                 },
                 payload={
                     "goal_contract_version": goal_contract_version,
@@ -603,6 +1055,7 @@ class SessionService:
                     "recovery_transaction_id": recovery_transaction_id,
                     "child_session_id": child_session_id,
                     "lineage_id": lineage_id,
+                    **parent_native_related_ids,
                 },
                 payload={
                     "status": "cooled",
@@ -640,12 +1093,37 @@ class SessionService:
                     "child_session_id": child_session_id,
                     "lineage_id": lineage_id,
                     "source_packet_id": source_packet_id,
+                    **parent_native_related_ids,
                 },
                 payload={
                     "status": "completed",
                     "resume_outcome": resolved_resume_outcome,
                 },
             )
+            if normalized_continuation_identity:
+                self.record_continuation_identity_state(
+                    project_id=project_id,
+                    session_id=parent_session_id,
+                    continuation_identity=normalized_continuation_identity,
+                    state="consumed",
+                    decision_source="recovery_guard",
+                    decision_class="recover_current_branch",
+                    action_ref="execute_recovery",
+                    authoritative_snapshot_version=normalized_snapshot_version,
+                    snapshot_epoch=normalized_snapshot_epoch,
+                    goal_contract_version=normalized_goal_contract_version,
+                    route_key=normalized_route_key,
+                    source_packet_id=source_packet_id,
+                    lineage_refs=[
+                        recovery_transaction_id,
+                        source_packet_id,
+                        *( [lineage_id] if lineage_id is not None else [] ),
+                    ],
+                    consumed_at=completed_at,
+                    causation_id=recovery_transaction_id,
+                    correlation_id=correlation_id,
+                    occurred_at=completed_at,
+                )
             self._append_recovery_status(
                 recovery_transaction_id=recovery_transaction_id,
                 recovery_key=recovery_key,
@@ -678,6 +1156,46 @@ class SessionService:
 
         terminal_status = "failed_retryable" if resume_error else "completed"
         completed_at = _utcnow()
+        if normalized_continuation_identity:
+            identity_state = "consumed" if terminal_status == "completed" else "invalidated"
+            self.record_continuation_identity_state(
+                project_id=project_id,
+                session_id=parent_session_id,
+                continuation_identity=normalized_continuation_identity,
+                state=identity_state,
+                decision_source="recovery_guard",
+                decision_class="recover_current_branch",
+                action_ref="execute_recovery",
+                authoritative_snapshot_version=normalized_snapshot_version,
+                snapshot_epoch=normalized_snapshot_epoch,
+                goal_contract_version=normalized_goal_contract_version,
+                route_key=normalized_route_key,
+                source_packet_id=source_packet_id,
+                lineage_refs=[recovery_transaction_id, source_packet_id],
+                consumed_at=completed_at if identity_state == "consumed" else None,
+                suppression_reason=resume_error if identity_state == "invalidated" else None,
+                causation_id=recovery_transaction_id,
+                correlation_id=correlation_id,
+                occurred_at=completed_at,
+            )
+        if normalized_continuation_identity and terminal_status != "completed":
+            self.record_continuation_replay_invalidated(
+                project_id=project_id,
+                session_id=parent_session_id,
+                decision_source="recovery_guard",
+                decision_class="recover_current_branch",
+                authoritative_snapshot_version=normalized_snapshot_version,
+                snapshot_epoch=normalized_snapshot_epoch,
+                goal_contract_version=normalized_goal_contract_version,
+                continuation_identity=normalized_continuation_identity,
+                route_key=normalized_route_key,
+                source_packet_id=source_packet_id,
+                invalidation_reason=resume_error or terminal_status,
+                lineage_refs=[recovery_transaction_id, source_packet_id],
+                causation_id=recovery_transaction_id,
+                correlation_id=correlation_id,
+                occurred_at=completed_at,
+            )
         self._append_event(
             event_type="recovery_tx_completed",
             project_id=project_id,
@@ -688,6 +1206,7 @@ class SessionService:
             related_ids={
                 "recovery_transaction_id": recovery_transaction_id,
                 "source_packet_id": source_packet_id,
+                **parent_native_related_ids,
             },
             payload={
                 "status": terminal_status,
@@ -735,13 +1254,15 @@ class SessionService:
     ) -> str | None:
         if resume is None or resume_outcome != _NEW_CHILD_SESSION:
             return None
-        for key in ("session_id", "child_session_id"):
-            value = str(resume.get(key) or "").strip()
-            if value:
-                return value
-        native_thread_id = str(resume.get("thread_id") or resume.get("native_thread_id") or "").strip()
+        session_id = _resume_session_id(resume)
+        if session_id:
+            return session_id
+        native_thread_id = str(_resume_native_thread_id(resume) or "").strip()
         if native_thread_id:
             return f"session:{project_id}:{native_thread_id}"
+        session_thread_id = _resume_session_thread_id(resume)
+        if session_thread_id:
+            return session_thread_id
         return _stable_id("session", project_id, recovery_transaction_id, "child")
 
     def _append_event(

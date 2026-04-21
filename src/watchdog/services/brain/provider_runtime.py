@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from watchdog.services.brain.models import DecisionIntent
+from watchdog.services.brain.models import DecisionIntent, ProjectContinuationDecisionInput
 from watchdog.services.policy.rules import (
     MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS,
     MANAGED_AGENT_ACTION_BOUNDARY,
@@ -41,8 +41,35 @@ class _StructuredProviderDecision(_ProviderRuntimeModel):
     evidence_codes: list[str] = Field(default_factory=list)
 
 
+class _StructuredProviderContinuationDecision(_ProviderRuntimeModel):
+    continuation_decision: str = Field(min_length=1)
+    routing_preference: str | None = Field(default=None, min_length=1)
+    goal_coverage: str | None = Field(default=None, min_length=1)
+    remaining_work_hypothesis: list[str] = Field(default_factory=list)
+    completion_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    next_branch_hypothesis: str | None = None
+    decision_reason: str | None = None
+    evidence_codes: list[str] = Field(default_factory=list)
+
+
 PROVIDER_DECISION_OUTPUT_SCHEMA_REF = "schema:provider-decision-v2"
+PROVIDER_CONTINUATION_DECISION_OUTPUT_SCHEMA_REF = "schema:provider-continuation-decision-v3"
 PROVIDER_OUTPUT_INVALID_DEGRADE_REASON = "provider_output_invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedProviderDecision:
+    continuation_decision: str
+    routing_preference: str | None
+    goal_coverage: str | None
+    remaining_work_hypothesis: list[str]
+    completion_confidence: float | None
+    next_branch_hypothesis: str | None
+    decision_reason: str | None
+    evidence_codes: list[str]
+    prompt_schema_ref: str
+    output_schema_ref: str
+
 
 
 class ProviderOutputSchemaError(ValueError):
@@ -126,6 +153,7 @@ class OpenAICompatibleBrainProvider:
         record: Any,
         session_truth: dict[str, object],
         memory_advisory_context: dict[str, object] | None,
+        decision_context: ProjectContinuationDecisionInput | dict[str, object] | None = None,
     ) -> DecisionIntent:
         profile = self._active_profile()
         if profile is None or not self.configured():
@@ -134,6 +162,11 @@ class OpenAICompatibleBrainProvider:
         base_url = str(profile.base_url).rstrip("/")
         url = f"{base_url}/chat/completions"
         managed_agent_contract = self._managed_agent_contract_surface()
+        validated_decision_context = (
+            self._validate_decision_context(decision_context)
+            if decision_context is not None
+            else None
+        )
         body = {
             "model": profile.model,
             "temperature": 0,
@@ -142,9 +175,10 @@ class OpenAICompatibleBrainProvider:
                     "role": "system",
                     "content": (
                         "Return JSON only. "
-                        "Keys: session_decision, execution_advice, approval_advice, "
-                        "risk_band, goal_coverage, remaining_work_hypothesis, confidence, "
-                        "reason_short, evidence_codes. "
+                        "Preferred keys: continuation_decision, routing_preference, goal_coverage, "
+                        "remaining_work_hypothesis, completion_confidence, next_branch_hypothesis, "
+                        "decision_reason, evidence_codes. "
+                        "Legacy v2 keys are accepted during migration. "
                         "Do not emit action_ref, action_arguments, approval_id, mode, or resume payloads. "
                         "Watchdog derives requested action arguments locally from the managed action contract."
                     ),
@@ -161,6 +195,11 @@ class OpenAICompatibleBrainProvider:
                                 for fact in getattr(record, "facts", [])
                             ],
                             "session_truth": session_truth,
+                            "decision_context": (
+                                validated_decision_context.model_dump(mode="json")
+                                if validated_decision_context is not None
+                                else None
+                            ),
                             "memory_advisory_context": memory_advisory_context,
                             "managed_agent_contract": managed_agent_contract,
                         },
@@ -190,31 +229,103 @@ class OpenAICompatibleBrainProvider:
         content = self._extract_content(payload)
         structured = self._validate_provider_decision(content)
         remaining_work = self._coerce_string_list(structured.remaining_work_hypothesis)
+        project_id = str(getattr(record, "project_id", "")).strip()
+        session_id = str(getattr(record, "thread_id", "")).strip()
+        native_thread_id = str(getattr(record, "effective_native_thread_id", "") or "").strip() or "none"
+        target_work_item_seq = (
+            validated_decision_context.branch_ref.target_work_item_seq
+            if validated_decision_context is not None
+            else None
+        )
+        continuation_identity = (
+            f"{project_id}:{session_id}:{native_thread_id}:{structured.continuation_decision}"
+            if project_id and session_id
+            else None
+        )
+        route_key = (
+            f"{continuation_identity}:{validated_decision_context.freshness_ref.snapshot_version}"
+            if continuation_identity is not None and validated_decision_context is not None
+            else None
+        )
+        branch_switch_token = (
+            f"branch-switch:{project_id}:{target_work_item_seq}:{validated_decision_context.freshness_ref.snapshot_version}"
+            if structured.continuation_decision == "branch_complete_switch"
+            and project_id
+            and target_work_item_seq is not None
+            and validated_decision_context is not None
+            else None
+        )
         return DecisionIntent(
             intent=self._map_intent(structured),
-            rationale=str(structured.reason_short or "").strip() or None,
+            rationale=str(structured.decision_reason or "").strip() or None,
             action_arguments=self._build_action_arguments(
                 structured,
                 remaining_work_hypothesis=remaining_work,
             ),
-            confidence=self._coerce_confidence(structured.confidence),
+            confidence=self._coerce_confidence(structured.completion_confidence),
+            continuation_decision=str(structured.continuation_decision or "").strip() or None,
+            routing_preference=str(structured.routing_preference or "").strip() or None,
+            completion_confidence=self._coerce_confidence(structured.completion_confidence),
+            next_branch_hypothesis=str(structured.next_branch_hypothesis or "").strip() or None,
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+            branch_switch_token=branch_switch_token,
+            target_work_item_seq=target_work_item_seq,
             goal_coverage=str(structured.goal_coverage or "").strip() or None,
             remaining_work_hypothesis=remaining_work,
             evidence_codes=self._coerce_string_list(structured.evidence_codes),
             provider=profile.name,
             model=str(profile.model or "openai-compatible-model"),
-            prompt_schema_ref="prompt:brain-decision-v2",
-            output_schema_ref=PROVIDER_DECISION_OUTPUT_SCHEMA_REF,
-            provider_output_schema_ref=PROVIDER_DECISION_OUTPUT_SCHEMA_REF,
+            prompt_schema_ref=structured.prompt_schema_ref,
+            output_schema_ref=structured.output_schema_ref,
+            provider_output_schema_ref=structured.output_schema_ref,
             provider_request_id=request_id,
         )
 
     @staticmethod
-    def _validate_provider_decision(content: str) -> _StructuredProviderDecision:
+    def _validate_decision_context(
+        value: ProjectContinuationDecisionInput | dict[str, object],
+    ) -> ProjectContinuationDecisionInput:
+        if isinstance(value, ProjectContinuationDecisionInput):
+            return value
+        return ProjectContinuationDecisionInput.model_validate(value)
+
+    @staticmethod
+    def _validate_provider_decision(content: str) -> _NormalizedProviderDecision:
         try:
-            return _StructuredProviderDecision.model_validate_json(content)
-        except Exception as exc:
-            raise ProviderOutputSchemaError() from exc
+            structured = _StructuredProviderContinuationDecision.model_validate_json(content)
+            return _NormalizedProviderDecision(
+                continuation_decision=str(structured.continuation_decision or "").strip(),
+                routing_preference=str(structured.routing_preference or "").strip() or None,
+                goal_coverage=str(structured.goal_coverage or "").strip() or None,
+                remaining_work_hypothesis=list(structured.remaining_work_hypothesis),
+                completion_confidence=structured.completion_confidence,
+                next_branch_hypothesis=str(structured.next_branch_hypothesis or "").strip() or None,
+                decision_reason=str(structured.decision_reason or "").strip() or None,
+                evidence_codes=list(structured.evidence_codes),
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref=PROVIDER_CONTINUATION_DECISION_OUTPUT_SCHEMA_REF,
+            )
+        except Exception:
+            try:
+                structured = _StructuredProviderDecision.model_validate_json(content)
+            except Exception as exc:
+                raise ProviderOutputSchemaError() from exc
+            return _NormalizedProviderDecision(
+                continuation_decision=OpenAICompatibleBrainProvider._legacy_continuation_decision(
+                    session_decision=structured.session_decision,
+                    execution_advice=structured.execution_advice,
+                ),
+                routing_preference=None,
+                goal_coverage=str(structured.goal_coverage or "").strip() or None,
+                remaining_work_hypothesis=list(structured.remaining_work_hypothesis),
+                completion_confidence=structured.confidence,
+                next_branch_hypothesis=None,
+                decision_reason=str(structured.reason_short or "").strip() or None,
+                evidence_codes=list(structured.evidence_codes),
+                prompt_schema_ref="prompt:brain-decision-v2",
+                output_schema_ref=PROVIDER_DECISION_OUTPUT_SCHEMA_REF,
+            )
 
     @staticmethod
     def _extract_content(payload: dict[str, object]) -> str:
@@ -253,21 +364,38 @@ class OpenAICompatibleBrainProvider:
         raise ValueError("provider response missing JSON object")
 
     @staticmethod
-    def _map_intent(structured: _StructuredProviderDecision) -> str:
-        session_decision = str(structured.session_decision or "").strip().lower()
-        execution_advice = str(structured.execution_advice or "").strip().lower()
-        if session_decision in {"complete", "candidate_complete"}:
+    def _legacy_continuation_decision(
+        *,
+        session_decision: object,
+        execution_advice: object,
+    ) -> str:
+        normalized_session_decision = str(session_decision or "").strip().lower()
+        normalized_execution_advice = str(execution_advice or "").strip().lower()
+        if normalized_session_decision in {"complete", "candidate_complete"}:
+            return "project_complete"
+        if normalized_session_decision in {"need_recovery", "handoff_to_new_session"}:
+            return "recover_current_branch"
+        if normalized_session_decision == "await_human":
+            return "await_human"
+        if normalized_session_decision == "blocked":
+            return "blocked"
+        if normalized_execution_advice in {"auto_execute", "notify_then_execute"}:
+            return "continue_current_branch"
+        return "blocked"
+
+    @staticmethod
+    def _map_intent(structured: _NormalizedProviderDecision) -> str:
+        continuation_decision = str(structured.continuation_decision or "").strip().lower()
+        if continuation_decision == "project_complete":
             return "candidate_closure"
-        if session_decision in {"need_recovery", "handoff_to_new_session"}:
+        if continuation_decision == "recover_current_branch":
             return "propose_recovery"
-        if session_decision == "await_human":
+        if continuation_decision == "branch_complete_switch":
+            return "branch_complete_switch"
+        if continuation_decision == "await_human":
             return "require_approval"
-        if session_decision == "blocked":
-            return "observe_only"
-        if execution_advice in {"auto_execute", "notify_then_execute"}:
+        if continuation_decision == "continue_current_branch":
             return "propose_execute"
-        if execution_advice == "notify_only":
-            return "suggest_only"
         return "observe_only"
 
     @staticmethod
@@ -296,17 +424,17 @@ class OpenAICompatibleBrainProvider:
     @classmethod
     def _build_action_arguments(
         cls,
-        structured: _StructuredProviderDecision,
+        structured: _NormalizedProviderDecision,
         *,
         remaining_work_hypothesis: list[str],
     ) -> dict[str, object]:
-        execution_advice = str(structured.execution_advice or "").strip().lower()
-        if execution_advice not in {"auto_execute", "notify_then_execute"}:
+        continuation_decision = str(structured.continuation_decision or "").strip().lower()
+        if continuation_decision not in {"continue_current_branch", "recover_current_branch"}:
             return {}
         if remaining_work_hypothesis:
             message = f"下一步建议：{'；'.join(remaining_work_hypothesis)}。"
         else:
-            message = str(structured.reason_short or "").strip()
+            message = str(structured.decision_reason or "").strip()
         if not message:
             return {}
         return {

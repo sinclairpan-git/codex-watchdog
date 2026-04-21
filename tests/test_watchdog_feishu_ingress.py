@@ -9,6 +9,12 @@ from watchdog.main import create_app
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
+from watchdog.services.session_service import SessionService
+from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.session_spine.projection import (
+    build_session_projection,
+    build_task_progress_view,
+)
 from watchdog.settings import Settings
 
 
@@ -38,7 +44,11 @@ class _IngressAClient:
         return {"success": True, "data": dict(task)}
 
     def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
-        task = next(task for task in self._tasks if task["thread_id"] == thread_id)
+        task = next(
+            task
+            for task in self._tasks
+            if task["thread_id"] == thread_id or task.get("native_thread_id") == thread_id
+        )
         return {"success": True, "data": dict(task)}
 
     def list_approvals(
@@ -313,9 +323,93 @@ def test_feishu_ingress_can_auto_bind_single_active_task_for_goal_bootstrap(
     assert response.json()["accepted"] is True
     events = app.state.session_service.list_events(session_id="session:repo-a")
     assert events[0].event_type == "goal_contract_created"
+    assert events[0].related_ids["native_thread_id"] == "thr:repo-a"
     assert events[0].related_ids["interaction_family_id"] == "om_message_1"
     assert events[0].related_ids["feishu_chat_id"] == "oc_dm_chat_1"
     assert events[0].related_ids["feishu_receive_id_type"] == "chat_id"
+
+
+def test_feishu_ingress_auto_bind_prefers_native_thread_lookup_for_single_active_task(
+    tmp_path: Path,
+) -> None:
+    class NativeLookupClient(_IngressAClient):
+        def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+            assert thread_id == "thr:repo-a"
+            return {
+                "success": True,
+                "data": dict(
+                    _task(
+                        "repo-a",
+                        thread_id="session:repo-a",
+                        native_thread_id="thr:repo-a",
+                    )
+                ),
+            }
+
+    app = create_app(
+        settings=_settings(tmp_path),
+        a_client=NativeLookupClient(
+            tasks=[_task("repo-a", thread_id="session:repo-a", native_thread_id="thr:repo-a")]
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("/goal 继续把主链路打通到 release gate"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+
+
+def test_feishu_ingress_goal_bootstrap_falls_back_to_stable_session_id_when_envelope_omits_thread_id(
+    tmp_path: Path,
+) -> None:
+    class MissingSessionThreadClient(_IngressAClient):
+        def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
+            assert thread_id == "thr:repo-a"
+            return {
+                "success": True,
+                "data": {
+                    "project_id": "repo-a",
+                    "native_thread_id": "thr:repo-a",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "waiting",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-16T13:00:00Z",
+                },
+            }
+
+    app = create_app(
+        settings=_settings(tmp_path),
+        a_client=MissingSessionThreadClient(
+            tasks=[_task("repo-a", thread_id="session:repo-a", native_thread_id="thr:repo-a")]
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("/goal 继续把主链路打通到 release gate"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    contracts = GoalContractService(app.state.session_service)
+    assert contracts.get_current_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+    ) is not None
+    assert contracts.get_current_contract(
+        project_id="repo-a",
+        session_id="thr:repo-a",
+    ) is None
 
 
 def test_feishu_ingress_default_bound_plain_text_bootstraps_goal_without_command_syntax(
@@ -340,6 +434,50 @@ def test_feishu_ingress_default_bound_plain_text_bootstraps_goal_without_command
     )
     assert contract is not None
     assert contract.current_phase_goal == "飞书联调"
+
+
+def test_feishu_ingress_default_bound_goal_bootstrap_uses_effective_native_thread_from_legacy_persisted_store(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(tasks=[])
+    app = create_app(settings=settings, a_client=a_client)
+    task = _task("repo-a", thread_id="session:repo-a", native_thread_id="thr:repo-a")
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-16T13:01:00Z",
+    )
+    path = tmp_path / "session_spine.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["sessions"]["repo-a"]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("飞书联调"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "goal_contract_bootstrap"
+    events = app.state.session_service.list_events(session_id="session:repo-a")
+    assert events[0].event_type == "goal_contract_created"
+    assert events[0].related_ids["native_thread_id"] == "thr:repo-a"
 
 
 def test_feishu_ingress_default_bound_status_stays_command_request(tmp_path: Path) -> None:
@@ -427,6 +565,205 @@ def test_feishu_ingress_progress_surfaces_decision_degradation_annotations(tmp_p
     )
 
 
+def test_feishu_ingress_progress_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=settings, a_client=a_client)
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="planning",
+        last_summary="waiting",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("进展"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "get_progress"
+    assert response.json()["data"]["message"] == (
+        "waiting | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    )
+    assert response.json()["data"]["progress"]["goal_contract_version"] == "goal-v1"
+    assert response.json()["data"]["progress"]["current_phase_goal"] == (
+        "继续把 recovery 自动重入收口到 child continuation"
+    )
+
+
+def test_feishu_ingress_session_directory_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    settings = _settings(tmp_path)
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "phase": "editing_source",
+                "last_summary": "editing files",
+                "last_progress_at": "2026-04-16T13:00:00Z",
+            }
+        ]
+    )
+    app = create_app(settings=settings, a_client=a_client)
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="editing_source",
+        last_summary="editing files",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("项目列表"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["data"]["intent_code"] == "list_sessions"
+    assert response.json()["data"]["reply_code"] == "session_directory"
+    assert response.json()["data"]["message"] == (
+        "多项目进展（1） | 状态=进行中1\n"
+        "- repo-a | editing_source | editing files | 上下文=low"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+    )
+
+
+def test_feishu_ingress_session_directory_surfaces_current_child_session_id_resume_shape(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "phase": "editing_source",
+                "last_summary": "editing files",
+                "last_progress_at": "2026-04-16T13:00:00Z",
+            }
+        ]
+    )
+    app = create_app(settings=settings, a_client=a_client)
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr:repo-a",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "resume_outcome": "new_child_session",
+            "child_session_id": "session:repo-a:thr_child_v1",
+            "thread_id": "thr_child_v1",
+            "native_thread_id": "thr_child_v1",
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("项目列表"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["data"]["intent_code"] == "list_sessions"
+    assert response.json()["data"]["reply_code"] == "session_directory"
+    assert response.json()["data"]["progresses"][0]["recovery_outcome"] == "new_child_session"
+    assert response.json()["data"]["progresses"][0]["recovery_child_session_id"] == (
+        "session:repo-a:thr_child_v1"
+    )
+    assert response.json()["data"]["message"] == (
+        "多项目进展（1） | 状态=进行中1\n"
+        "- repo-a | editing_source | editing files | 上下文=low | 恢复=新子会话 repo-a:thr_child_v1"
+    )
+
+
+def test_feishu_ingress_blocker_explanation_surfaces_goal_contract_context(tmp_path: Path) -> None:
+    from watchdog.services.goal_contract.service import GoalContractService
+
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "last_summary": "waiting for approval",
+            }
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr:repo-a",
+                "risk_level": "L2",
+                "command": "uv run pytest",
+                "reason": "verify tests",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-16T13:00:00Z",
+            }
+        ],
+    )
+    app = create_app(settings=settings, a_client=a_client)
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="收口 recovery 自动重入",
+        task_prompt="收口 recovery 自动重入",
+        last_user_instruction="继续把 recovery 自动重入收口到 child continuation",
+        phase="approval",
+        last_summary="waiting for approval",
+        current_phase_goal="继续把 recovery 自动重入收口到 child continuation",
+        explicit_deliverables=["避免重复 handoff"],
+        completion_signals=["child continuation 稳定"],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("卡在哪里"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "explain_blocker"
+    assert response.json()["data"]["message"] == (
+        "approval required; awaiting operator direction"
+        " | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+        " | 下一步=审批列表、回复同意/拒绝、为什么卡住"
+    )
+
+
 def test_feishu_ingress_session_surfaces_operator_next_steps_for_pending_approval(
     tmp_path: Path,
 ) -> None:
@@ -469,6 +806,184 @@ def test_feishu_ingress_session_surfaces_operator_next_steps_for_pending_approva
     assert response.json()["data"]["intent_code"] == "get_session"
     assert response.json()["data"]["message"] == (
         "waiting for approval | 下一步=审批列表、回复同意/拒绝、卡在哪里"
+    )
+    assert response.json()["data"]["session"]["native_thread_id"] == "thr:repo-a"
+    assert response.json()["data"]["progress"]["project_id"] == "repo-a"
+    assert response.json()["data"]["progress"]["native_thread_id"] == "thr:repo-a"
+    assert response.json()["data"]["progress"]["summary"] == "waiting for approval"
+
+
+def test_feishu_ingress_session_surfaces_active_recovery_suppression(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:feishu-ingress",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-16T13:00:00Z",
+        },
+        occurred_at="2026-04-16T13:01:00Z",
+    )
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "phase": "editing_source",
+                "last_summary": "editing recovery path",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+            }
+        ]
+    )
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("状态"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "get_session"
+    assert response.json()["data"]["message"] == (
+        "editing recovery path | 恢复抑制=等待新进展 | 下一步=卡在哪里"
+    )
+    assert response.json()["data"]["session"]["native_thread_id"] == "thr:repo-a"
+    assert (
+        response.json()["data"]["progress"]["recovery_suppression_reason"]
+        == "reentry_without_newer_progress"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_source"] == (
+        "resident_orchestrator"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_observed_at"] == (
+        "2026-04-16T13:01:00Z"
+    )
+
+
+def test_feishu_ingress_session_surfaces_recovery_cooldown_suppression(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:feishu-ingress:cooldown",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "cooldown_window_active",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-16T13:00:00Z",
+            "cooldown_seconds": "300",
+        },
+        occurred_at="2026-04-16T13:01:00Z",
+    )
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "phase": "editing_source",
+                "last_summary": "editing recovery path",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+            }
+        ]
+    )
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("状态"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "get_session"
+    assert response.json()["data"]["message"] == (
+        "editing recovery path | 恢复抑制=恢复冷却中 | 下一步=卡在哪里"
+    )
+    assert response.json()["data"]["session"]["native_thread_id"] == "thr:repo-a"
+    assert (
+        response.json()["data"]["progress"]["recovery_suppression_reason"]
+        == "cooldown_window_active"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_source"] == (
+        "resident_orchestrator"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_observed_at"] == (
+        "2026-04-16T13:01:00Z"
+    )
+
+
+def test_feishu_ingress_session_surfaces_recovery_in_flight_suppression(tmp_path: Path) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:feishu-ingress:in-flight",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-16T13:00:00Z",
+        },
+        occurred_at="2026-04-16T13:01:00Z",
+    )
+    a_client = _IngressAClient(
+        tasks=[
+            {
+                **_task("repo-a"),
+                "status": "handoff_in_progress",
+                "phase": "handoff",
+                "last_summary": "handoff drafted",
+                "files_touched": ["src/recovery.py"],
+                "context_pressure": "critical",
+                "stuck_level": 2,
+                "failure_count": 3,
+            }
+        ]
+    )
+    app = create_app(settings=settings, a_client=a_client)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("状态"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["event_type"] == "command_request"
+    assert response.json()["data"]["intent_code"] == "get_session"
+    assert response.json()["data"]["message"] == (
+        "handoff drafted | 恢复抑制=恢复进行中"
+    )
+    assert response.json()["data"]["session"]["native_thread_id"] == "thr:repo-a"
+    assert (
+        response.json()["data"]["progress"]["recovery_suppression_reason"]
+        == "recovery_in_flight"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_source"] == (
+        "resident_orchestrator"
+    )
+    assert response.json()["data"]["progress"]["recovery_suppression_observed_at"] == (
+        "2026-04-16T13:01:00Z"
     )
 
 
@@ -790,7 +1305,49 @@ def test_feishu_goal_bootstrap_supersedes_pending_approval_and_outbox(tmp_path: 
         event_type="approval_superseded_by_goal_contract_bootstrap",
     )
     assert len(events) == 1
+    assert events[0].related_ids["native_thread_id"] == approval.native_thread_id
     assert approval.approval_id in events[0].payload["approval_ids"]
+
+
+def test_feishu_goal_bootstrap_supersede_event_uses_effective_native_thread_from_deep_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
+    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    approval = materialize_canonical_approval(
+        _approval_decision(),
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+        session_service=app.state.session_service,
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    payload[approval.envelope_id]["decision"]["native_thread_id"] = None
+    payload[approval.envelope_id]["decision"].setdefault("evidence", {})
+    payload[approval.envelope_id]["decision"]["evidence"]["target"] = {
+        "session_id": "session:repo-a",
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "native_thread_id": "thr_native_1",
+        "approval_id": approval.approval_id,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/events",
+            json=_message_event("repo:repo-a /goal 飞书联调"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="approval_superseded_by_goal_contract_bootstrap",
+    )
+    assert len(events) == 1
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
 
 
 def test_feishu_goal_bootstrap_only_supersedes_stale_goal_contract_approvals(

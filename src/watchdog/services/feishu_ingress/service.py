@@ -9,6 +9,7 @@ from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.adapters.openclaw.intents import GLOBAL_READ_INTENTS
 from watchdog.services.entrypoints.command_routing import resolve_entry_message
 from watchdog.services.feishu_control import FeishuControlRequest
+from watchdog.services.session_spine.projection import stable_thread_id_for_project
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
@@ -274,7 +275,11 @@ class FeishuIngressNormalizationService:
             if len(tasks) == 1:
                 task = tasks[0]
                 project_id = str(task.get("project_id") or "").strip() or None
-                lookup_thread_id = str(task.get("thread_id") or "").strip() or None
+                lookup_thread_id = (
+                    str(task.get("native_thread_id") or "").strip()
+                    or str(task.get("thread_id") or "").strip()
+                    or None
+                )
             else:
                 raise FeishuIngressError("project binding is required for Feishu ingress")
 
@@ -310,12 +315,15 @@ class FeishuIngressNormalizationService:
                 raise FeishuIngressError("goal bootstrap message is empty")
             if not session_id:
                 raise FeishuIngressError("session_id is required for goal bootstrap")
-            return {
+            payload = {
                 "event_type": "goal_contract_bootstrap",
                 "project_id": resolved_project_id,
                 "session_id": session_id,
                 "goal_message": goal_message,
             }
+            if resolved_thread_id:
+                payload["native_thread_id"] = resolved_thread_id
+            return payload
         if not command_text:
             raise FeishuIngressError("command text is empty")
         payload = {
@@ -337,7 +345,7 @@ class FeishuIngressNormalizationService:
             return None
         return {
             "project_id": record.project_id,
-            "native_thread_id": str(record.native_thread_id or "").strip(),
+            "native_thread_id": str(record.effective_native_thread_id or "").strip(),
             "session_id": record.thread_id,
         }
 
@@ -353,5 +361,11 @@ class FeishuIngressNormalizationService:
             raise FeishuIngressError("bound task envelope is invalid")
         resolved_project_id = str(data.get("project_id") or project_id or "").strip()
         resolved_thread_id = str(data.get("native_thread_id") or "").strip()
-        session_id = str(data.get("thread_id") or lookup_thread_id or "").strip()
+        session_id = str(data.get("thread_id") or "").strip()
+        if not session_id and resolved_project_id:
+            fallback_thread_id = str(lookup_thread_id or "").strip()
+            if fallback_thread_id.startswith("session:"):
+                session_id = fallback_thread_id
+            else:
+                session_id = stable_thread_id_for_project(resolved_project_id)
         return resolved_project_id, resolved_thread_id, session_id

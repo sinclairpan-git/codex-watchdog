@@ -44,6 +44,18 @@ class PersistedSessionRecord(BaseModel):
     snapshot_fingerprint: str | None = None
     facts_fingerprint: str | None = None
 
+    @property
+    def effective_native_thread_id(self) -> str | None:
+        for candidate in (
+            self.native_thread_id,
+            self.session.native_thread_id,
+            self.progress.native_thread_id,
+        ):
+            normalized = str(candidate or "").strip()
+            if normalized:
+                return normalized
+        return None
+
 
 class PersistedSessionSpineFile(BaseModel):
     sessions: dict[str, PersistedSessionRecord] = Field(default_factory=dict)
@@ -113,7 +125,7 @@ class SessionSpineStore:
         with self._guard_io():
             data = self._read()
             for record in data.sessions.values():
-                if record.native_thread_id == native_thread_id:
+                if record.effective_native_thread_id == native_thread_id:
                     return record
         return None
 

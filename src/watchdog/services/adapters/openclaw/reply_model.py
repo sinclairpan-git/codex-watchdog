@@ -91,6 +91,7 @@ def _directory_priority_reason(
     attention_state = str(session.attention_state or "").strip()
     recovery_outcome = str(progress.recovery_outcome or "").strip()
     recovery_status = str(progress.recovery_status or "").strip()
+    recovery_suppression_reason = str(progress.recovery_suppression_reason or "").strip()
     decision_degrade_reason = str(progress.decision_degrade_reason or "").strip()
 
     if attention_state == "unreachable":
@@ -100,14 +101,16 @@ def _directory_priority_reason(
         "failed_manual",
     }:
         return (1, "恢复失败")
+    if recovery_suppression_reason:
+        return (2, "恢复抑制")
     if attention_state == "critical":
-        return (2, "卡住")
+        return (3, "卡住")
     if session.pending_approval_count > 0 or attention_state == "needs_human":
-        return (3, "待审批")
+        return (4, "待审批")
     if decision_degrade_reason == "provider_output_invalid":
-        return (4, "provider降级")
+        return (5, "provider降级")
     if decision_degrade_reason:
-        return (4, "决策降级")
+        return (5, "决策降级")
     return None
 
 

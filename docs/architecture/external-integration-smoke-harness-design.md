@@ -209,6 +209,7 @@ DM synthetic smoke 超过默认公共 HTTP 窗口，只放宽
 - `data.intent_code == "list_sessions"`
 - `data.reply_code == "session_directory"`
 - `sessions[].project_id` 覆盖 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS`
+- 若 `progresses[]` 中存在 `recovery_outcome == "new_child_session"`，则 `message` 中展示的子会话标识必须与对应的 `recovery_child_session_id` 归一后保持一致，不能出现结构化字段与文本摘要引用不同 child session 的情况
 
 #### 4.3 Provider wiring smoke
 

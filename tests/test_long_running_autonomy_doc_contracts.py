@@ -41,6 +41,7 @@ def test_long_running_autonomy_doc_contract_checks_cover_release_and_conflict_gu
     assert "external_integration_live_acceptance_truth_boundary" in names
     assert "external_integration_live_acceptance_covers_mutating_feishu_control_guardrail" in names
     assert "external_integration_live_acceptance_covers_feishu_discovery_contract" in names
+    assert "arch_goal_contract_child_adoption_records_lineage_fields" in names
 
 
 def test_long_running_autonomy_doc_validator_reports_missing_files(tmp_path) -> None:

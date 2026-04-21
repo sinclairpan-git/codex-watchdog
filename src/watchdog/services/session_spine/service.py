@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import yaml
 
 from watchdog.contracts.session_spine.models import (
     ApprovalProjection,
+    ContinuationControlPlaneView,
+    ContinuationDispatchCooldownView,
+    ContinuationDispatchResultView,
     FactRecord,
     ResidentExpertCoverageView,
     SessionProjection,
@@ -25,6 +30,8 @@ from watchdog.services.a_client.client import AControlAgentClient
 from watchdog.services.session_service.models import SessionEventRecord
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.goal_contract.models import GoalContractSnapshot
+from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.projection import (
     build_approval_inbox_projections,
     build_approval_projections,
@@ -33,12 +40,18 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     build_workspace_activity_view,
     stable_thread_id_for_project,
+    task_native_thread_id,
 )
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 from watchdog.services.session_spine.approval_visibility import (
     is_actionable_approval,
     is_deferred_policy_auto_approval,
 )
+from watchdog.services.session_spine.task_state import (
+    is_non_active_project_execution_state,
+    normalize_project_execution_state,
+)
+from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 
 if TYPE_CHECKING:
     from watchdog.services.approvals.service import CanonicalApprovalStore
@@ -56,6 +69,52 @@ PERSISTED_SPINE_READ_SOURCE = "persisted_spine"
 SESSION_EVENTS_PROJECTION_READ_SOURCE = "session_events_projection"
 LIVE_QUERY_FALLBACK_READ_SOURCE = "live_query_fallback"
 DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS = 60.0
+
+
+def _read_yaml_mapping(relative_path: str, *, repo_root: Path | None = None) -> dict[str, object]:
+    root = repo_root or Path(__file__).resolve().parents[4]
+    path = root / relative_path
+    if not path.is_file():
+        return {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _authoritative_project_execution_state() -> str:
+    from watchdog.services.brain.service import BrainDecisionService
+
+    return BrainDecisionService._normalize_project_execution_state(
+        project_state=_read_yaml_mapping(".ai-sdlc/project/config/project-state.yaml"),
+        checkpoint=_read_yaml_mapping(".ai-sdlc/state/checkpoint.yml"),
+        state_resume=_read_yaml_mapping(".ai-sdlc/state/resume-pack.yaml"),
+    )
+
+
+def _task_with_authoritative_project_execution_state(
+    task: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(task, dict):
+        return task
+    authoritative_state = _authoritative_project_execution_state()
+    explicit_state = normalize_project_execution_state(task)
+    updated = dict(task)
+    if authoritative_state == "unknown":
+        updated["project_execution_state"] = "unknown"
+        updated["authoritative_project_execution_state_missing"] = True
+        return updated
+    updated.pop("authoritative_project_execution_state_missing", None)
+    if explicit_state == "unknown":
+        updated["project_execution_state"] = authoritative_state
+        return updated
+    if (
+        is_non_active_project_execution_state(authoritative_state)
+        and not is_non_active_project_execution_state(explicit_state)
+    ):
+        updated["project_execution_state"] = authoritative_state
+    return updated
 SESSION_EVENT_APPROVAL_TYPES = frozenset(
     {
         "approval_requested",
@@ -76,6 +135,21 @@ SESSION_EVENT_FACT_TYPES = frozenset(
         "notification_receipt_recorded",
     }
 )
+SESSION_EVENT_GOAL_CONTRACT_TYPES = frozenset(
+    {
+        "goal_contract_created",
+        "goal_contract_revised",
+        "goal_contract_adopted_by_child_session",
+    }
+)
+SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES = frozenset(
+    {
+        "recovery_execution_suppressed",
+        "interaction_context_superseded",
+        "interaction_window_expired",
+    }
+)
+SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES |= SESSION_EVENT_GOAL_CONTRACT_TYPES
 SESSION_EVENT_PROJECTION_TYPES = SESSION_EVENT_APPROVAL_TYPES | SESSION_EVENT_FACT_TYPES
 
 
@@ -148,7 +222,7 @@ def _build_decision_trace_projection(
             normalized_session_id
             and record.session_id == normalized_session_id
             or normalized_native_thread_id
-            and record.native_thread_id == normalized_native_thread_id
+            and record.effective_native_thread_id == normalized_native_thread_id
         )
     ]
     candidate_records = matched_records or project_records
@@ -243,6 +317,364 @@ def _parse_iso8601(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _event_payload_text(event: SessionEventRecord | None, key: str) -> str | None:
+    if event is None:
+        return None
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    value = str(payload.get(key) or "").strip()
+    return value or None
+
+
+def _event_related_text(event: SessionEventRecord | None, key: str) -> str | None:
+    if event is None:
+        return None
+    related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
+    value = str(related_ids.get(key) or "").strip()
+    return value or None
+
+
+def _latest_session_event(
+    events: list[SessionEventRecord],
+    *,
+    event_types: set[str] | frozenset[str],
+) -> SessionEventRecord | None:
+    for event in sorted(events, key=_session_event_sort_key, reverse=True):
+        if event.event_type in event_types:
+            return event
+    return None
+
+
+def _build_dispatch_cooldown_projection(
+    *,
+    state_store: ResidentOrchestrationStateStore | None,
+    project_id: str,
+    continuation_identity: str | None,
+    route_key: str | None,
+    cooldown_seconds: float,
+) -> ContinuationDispatchCooldownView | None:
+    normalized_identity = str(continuation_identity or "").strip()
+    normalized_route_key = str(route_key or "").strip()
+    if state_store is None or not normalized_identity or not normalized_route_key:
+        return None
+    checkpoint = state_store.get_auto_dispatch_checkpoint(
+        project_id=project_id,
+        continuation_identity=normalized_identity,
+        route_key=normalized_route_key,
+    )
+    if checkpoint is None:
+        checkpoint = state_store.get_latest_auto_dispatch_checkpoint(
+            project_id=project_id,
+            continuation_identity=normalized_identity,
+        )
+    if checkpoint is None:
+        return None
+    normalized_cooldown = max(float(cooldown_seconds or 0.0), 0.0)
+    remaining_seconds: float | None = None
+    active = False
+    dispatched_at = _parse_iso8601(checkpoint.last_auto_dispatch_at)
+    if dispatched_at is not None and normalized_cooldown > 0.0:
+        elapsed = (datetime.now(timezone.utc) - dispatched_at).total_seconds()
+        remaining_seconds = max(normalized_cooldown - elapsed, 0.0)
+        active = checkpoint.status in {"claimed", "completed"} and remaining_seconds > 0.0
+    return ContinuationDispatchCooldownView(
+        action_ref=checkpoint.action_ref,
+        checkpoint_state=checkpoint.status,
+        last_dispatched_at=checkpoint.last_auto_dispatch_at,
+        cooldown_seconds=normalized_cooldown if normalized_cooldown > 0.0 else None,
+        remaining_seconds=remaining_seconds,
+        active=active,
+    )
+
+
+def _build_last_dispatch_result_projection(
+    events: list[SessionEventRecord],
+    *,
+    project_id: str,
+    continuation_identity: str | None,
+    route_key: str | None,
+    decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+) -> ContinuationDispatchResultView | None:
+    command_created_by_id: dict[str, SessionEventRecord] = {}
+    gate_by_decision_id: dict[str, SessionEventRecord] = {}
+    for event in sorted(events, key=_session_event_sort_key):
+        if event.event_type == "command_created":
+            command_id = _event_related_text(event, "command_id") or _event_payload_text(
+                event, "command_id"
+            )
+            if command_id:
+                command_created_by_id[command_id] = event
+        elif event.event_type == "continuation_gate_evaluated":
+            decision_id = str(event.causation_id or "").strip()
+            if decision_id:
+                gate_by_decision_id[decision_id] = event
+
+    normalized_identity = str(continuation_identity or "").strip() or None
+    normalized_route_key = str(route_key or "").strip() or None
+    event_projection: ContinuationDispatchResultView | None = None
+    event_projection_decision_id: str | None = None
+    for event in sorted(events, key=_session_event_sort_key, reverse=True):
+        if event.event_type not in {"command_executed", "command_failed"}:
+            continue
+        command_id = _event_related_text(event, "command_id")
+        if command_id is None:
+            continue
+        created_event = command_created_by_id.get(command_id)
+        if created_event is None:
+            continue
+        action_ref = _event_payload_text(created_event, "action_ref")
+        if action_ref not in {"continue_session", "post_operator_guidance", "execute_recovery"}:
+            continue
+        decision_id = _event_related_text(created_event, "decision_id") or str(
+            created_event.causation_id or ""
+        ).strip()
+        gate_event = gate_by_decision_id.get(decision_id)
+        if normalized_identity is not None and gate_event is not None:
+            gate_identity = _event_related_text(gate_event, "continuation_identity")
+            if gate_identity not in {None, normalized_identity}:
+                continue
+        if normalized_route_key is not None and gate_event is not None:
+            gate_route_key = _event_related_text(gate_event, "route_key")
+            if gate_route_key not in {None, normalized_route_key}:
+                continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        completion = (
+            payload.get("completion_judgment")
+            if isinstance(payload.get("completion_judgment"), dict)
+            else {}
+        )
+        metrics = (
+            payload.get("metrics_summary")
+            if isinstance(payload.get("metrics_summary"), dict)
+            else {}
+        )
+        event_projection = ContinuationDispatchResultView(
+            command_id=command_id,
+            decision_id=decision_id or None,
+            action_ref=action_ref,
+            status=str(completion.get("status") or "").strip()
+            or ("completed" if event.event_type == "command_executed" else "failed"),
+            action_status=str(completion.get("action_status") or "").strip() or None,
+            reply_code=str(completion.get("reply_code") or "").strip() or None,
+            decision_result=str(
+                metrics.get("decision_result")
+                or (created_event.payload if isinstance(created_event.payload, dict) else {}).get(
+                    "decision_result"
+                )
+                or ""
+            ).strip()
+            or None,
+            observed_at=event.occurred_at,
+            receipt_ref=str(completion.get("receipt_ref") or "").strip() or None,
+        )
+        event_projection_decision_id = decision_id or None
+        break
+
+    if decision_store is None or receipt_store is None:
+        return event_projection
+
+    candidate_records = [
+        record
+        for record in decision_store.list_records()
+        if record.project_id == project_id
+        and record.action_ref in {"continue_session", "post_operator_guidance", "execute_recovery"}
+    ]
+    if not candidate_records:
+        return event_projection
+
+    def _governance(record: CanonicalDecisionRecord) -> dict[str, Any]:
+        evidence = record.evidence if isinstance(record.evidence, dict) else {}
+        governance = evidence.get("continuation_governance")
+        return governance if isinstance(governance, dict) else {}
+
+    def _matches(record: CanonicalDecisionRecord, *, exact_route: bool) -> bool:
+        governance = _governance(record)
+        record_identity = str(governance.get("continuation_identity") or "").strip() or None
+        record_route_key = str(governance.get("route_key") or "").strip() or None
+        if normalized_identity is not None and record_identity != normalized_identity:
+            return False
+        if exact_route and normalized_route_key is not None and record_route_key != normalized_route_key:
+            return False
+        return normalized_identity is not None or normalized_route_key is not None
+
+    matched_records = [
+        record for record in candidate_records if _matches(record, exact_route=True)
+    ] or [record for record in candidate_records if _matches(record, exact_route=False)]
+    if event_projection_decision_id is not None:
+        matched_records = [
+            record for record in matched_records if record.decision_id == event_projection_decision_id
+        ] or matched_records
+    if not matched_records:
+        return event_projection
+    latest = max(matched_records, key=_canonical_decision_sort_key)
+    authoritative_receipt = receipt_store.get(
+        receipt_key(
+            action_code=latest.action_ref,
+            project_id=latest.project_id,
+            approval_id=latest.approval_id or None,
+            idempotency_key=latest.idempotency_key,
+        )
+    )
+    if authoritative_receipt is None:
+        return event_projection
+    return ContinuationDispatchResultView(
+        command_id=event_projection.command_id if event_projection is not None else None,
+        decision_id=latest.decision_id,
+        action_ref=latest.action_ref,
+        status=str(authoritative_receipt.action_status or "").strip().lower() or None,
+        action_status=str(authoritative_receipt.action_status or "").strip() or None,
+        reply_code=str(authoritative_receipt.reply_code or "").strip() or None,
+        decision_result=latest.decision_result,
+        observed_at=event_projection.observed_at if event_projection is not None else latest.created_at,
+        receipt_ref=event_projection.receipt_ref if event_projection is not None else None,
+    )
+
+
+def _build_continuation_control_plane_projection(
+    *,
+    project_id: str,
+    events: list[SessionEventRecord],
+    decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
+) -> ContinuationControlPlaneView | None:
+    gate_event = _latest_session_event(
+        events,
+        event_types=frozenset({"continuation_gate_evaluated"}),
+    )
+    identity_event = _latest_session_event(
+        events,
+        event_types=frozenset(
+            {
+                "continuation_identity_issued",
+                "continuation_identity_consumed",
+                "continuation_identity_invalidated",
+            }
+        ),
+    )
+    token_event = _latest_session_event(
+        events,
+        event_types=frozenset(
+            {
+                "branch_switch_token_issued",
+                "branch_switch_token_consumed",
+                "branch_switch_token_invalidated",
+            }
+        ),
+    )
+    replay_event = _latest_session_event(
+        events,
+        event_types=frozenset({"continuation_replay_invalidated"}),
+    )
+    packet_event = _latest_session_event(
+        events,
+        event_types=frozenset({"handoff_packet_frozen"}),
+    )
+    continuation_identity = (
+        _event_related_text(identity_event, "continuation_identity")
+        or _event_related_text(gate_event, "continuation_identity")
+        or _event_related_text(token_event, "continuation_identity")
+        or _event_related_text(packet_event, "continuation_identity")
+    )
+    route_key = (
+        _event_related_text(identity_event, "route_key")
+        or _event_related_text(gate_event, "route_key")
+        or _event_related_text(token_event, "route_key")
+        or _event_related_text(packet_event, "route_key")
+    )
+    branch_switch_token = _event_related_text(token_event, "branch_switch_token") or _event_related_text(
+        gate_event, "branch_switch_token"
+    )
+    packet_id = (
+        _event_related_text(identity_event, "source_packet_id")
+        or _event_related_text(gate_event, "source_packet_id")
+        or _event_related_text(replay_event, "source_packet_id")
+        or _event_related_text(packet_event, "source_packet_id")
+    )
+    packet_hash = _event_payload_text(packet_event, "packet_hash")
+    rendered_from_packet_id = _event_payload_text(packet_event, "rendered_from_packet_id")
+    rendered_from_packet_hash = _event_payload_text(packet_event, "rendered_markdown_hash")
+    decision_source = (
+        _event_payload_text(gate_event, "decision_source")
+        or _event_payload_text(identity_event, "decision_source")
+        or _event_payload_text(token_event, "decision_source")
+        or _event_payload_text(replay_event, "decision_source")
+        or _event_payload_text(packet_event, "decision_source")
+    )
+    suppression_reason = (
+        _event_payload_text(gate_event, "suppression_reason")
+        or _event_payload_text(identity_event, "suppression_reason")
+        or _event_payload_text(token_event, "suppression_reason")
+        or _event_payload_text(replay_event, "invalidation_reason")
+    )
+    snapshot_version = (
+        _event_payload_text(gate_event, "authoritative_snapshot_version")
+        or _event_payload_text(identity_event, "authoritative_snapshot_version")
+        or _event_payload_text(token_event, "authoritative_snapshot_version")
+        or _event_payload_text(replay_event, "authoritative_snapshot_version")
+        or _event_payload_text(packet_event, "authoritative_snapshot_version")
+    )
+    snapshot_epoch = (
+        _event_payload_text(gate_event, "snapshot_epoch")
+        or _event_payload_text(identity_event, "snapshot_epoch")
+        or _event_payload_text(token_event, "snapshot_epoch")
+        or _event_payload_text(replay_event, "snapshot_epoch")
+        or _event_payload_text(packet_event, "snapshot_epoch")
+    )
+    last_dispatch_result = _build_last_dispatch_result_projection(
+        events,
+        project_id=project_id,
+        continuation_identity=continuation_identity,
+        route_key=route_key,
+        decision_store=decision_store,
+        receipt_store=receipt_store,
+    )
+    dispatch_cooldown = _build_dispatch_cooldown_projection(
+        state_store=state_store,
+        project_id=project_id,
+        continuation_identity=continuation_identity,
+        route_key=route_key,
+        cooldown_seconds=dispatch_cooldown_seconds,
+    )
+    if not any(
+        (
+            continuation_identity,
+            branch_switch_token,
+            packet_id,
+            packet_hash,
+            rendered_from_packet_id,
+            rendered_from_packet_hash,
+            decision_source,
+            suppression_reason,
+            snapshot_version,
+            snapshot_epoch,
+            last_dispatch_result,
+            dispatch_cooldown,
+        )
+    ):
+        return None
+    return ContinuationControlPlaneView(
+        continuation_identity=continuation_identity,
+        identity_state=_event_payload_text(identity_event, "state"),
+        branch_switch_token=branch_switch_token,
+        token_state=_event_payload_text(token_event, "state"),
+        consumed_at=_event_payload_text(identity_event, "consumed_at")
+        or _event_payload_text(token_event, "consumed_at"),
+        route_key=route_key,
+        packet_id=packet_id,
+        packet_hash=packet_hash,
+        rendered_from_packet_id=rendered_from_packet_id,
+        rendered_from_packet_hash=rendered_from_packet_hash,
+        last_dispatch_result=last_dispatch_result,
+        suppression_reason=suppression_reason,
+        decision_source=decision_source,
+        snapshot_version=snapshot_version,
+        snapshot_epoch=snapshot_epoch,
+        dispatch_cooldown=dispatch_cooldown,
+    )
+
+
 def _build_snapshot_read_semantics_from_persisted_record(
     record: PersistedSessionRecord,
     *,
@@ -301,12 +733,46 @@ def _session_event_sort_key(event: SessionEventRecord) -> tuple[str, int, str, s
     )
 
 
+def _latest_goal_contract_snapshot_from_events(
+    events: list[SessionEventRecord],
+) -> GoalContractSnapshot | None:
+    for event in sorted(events, key=_session_event_sort_key, reverse=True):
+        if event.event_type not in SESSION_EVENT_GOAL_CONTRACT_TYPES:
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        contract_payload = payload.get("contract")
+        if not isinstance(contract_payload, dict):
+            continue
+        return GoalContractSnapshot.model_validate(contract_payload)
+    return None
+
+
 def _list_project_session_events(
     session_service: SessionService,
     project_id: str,
+    *,
+    include_child_event_only_fallbacks: bool = False,
+    native_thread_id: str | None = None,
 ) -> list[SessionEventRecord]:
+    stable_session_id = stable_thread_id_for_project(project_id)
+    normalized_native_thread_id = str(native_thread_id or "").strip()
     return sorted(
-        session_service.list_events(session_id=stable_thread_id_for_project(project_id)),
+        [
+            event
+            for event in session_service.list_events()
+            if event.project_id == project_id
+            and (
+                event.session_id == stable_session_id
+                or (
+                    include_child_event_only_fallbacks
+                    and event.event_type in SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES
+                    and (
+                        not normalized_native_thread_id
+                        or _session_event_native_thread_id(event) == normalized_native_thread_id
+                    )
+                )
+            )
+        ],
         key=_session_event_sort_key,
     )
 
@@ -315,12 +781,19 @@ def _group_project_session_events(
     session_service: SessionService,
     *,
     relevant_types: set[str] | frozenset[str],
+    include_child_event_only_fallbacks: bool = False,
 ) -> dict[str, list[SessionEventRecord]]:
     grouped: dict[str, list[SessionEventRecord]] = {}
     for event in sorted(session_service.list_events(), key=_session_event_sort_key):
         if event.event_type not in relevant_types:
             continue
         if event.session_id != stable_thread_id_for_project(event.project_id):
+            if not (
+                include_child_event_only_fallbacks
+                and event.event_type in SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES
+            ):
+                continue
+        if not event.project_id:
             continue
         grouped.setdefault(event.project_id, []).append(event)
     return grouped
@@ -330,8 +803,62 @@ def _has_relevant_session_projection_events(events: list[SessionEventRecord]) ->
     return any(event.event_type in SESSION_EVENT_PROJECTION_TYPES for event in events)
 
 
+def _has_event_only_fallback_events(events: list[SessionEventRecord]) -> bool:
+    return any(event.event_type in SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES for event in events)
+
+
 def _has_relevant_approval_projection_events(events: list[SessionEventRecord]) -> bool:
     return any(event.event_type in SESSION_EVENT_APPROVAL_TYPES for event in events)
+
+
+def _session_event_native_thread_id(event: SessionEventRecord) -> str:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
+    return str(
+        payload.get("native_thread_id")
+        or payload.get("parent_native_thread_id")
+        or related_ids.get("native_thread_id")
+        or related_ids.get("parent_native_thread_id")
+        or ""
+    ).strip()
+
+
+def _latest_session_event_native_thread_id(events: list[SessionEventRecord]) -> str | None:
+    for event in sorted(events, key=_session_event_sort_key, reverse=True):
+        native_thread_id = _session_event_native_thread_id(event)
+        if native_thread_id:
+            return native_thread_id
+    return None
+
+
+def _project_session_events_for_native_thread(
+    session_service: SessionService,
+    native_thread_id: str,
+) -> tuple[str | None, list[SessionEventRecord]]:
+    normalized_native_thread_id = str(native_thread_id or "").strip()
+    if not normalized_native_thread_id:
+        return None, []
+    ordered_events = sorted(session_service.list_events(), key=_session_event_sort_key)
+    matched_event = next(
+        (
+            event
+            for event in reversed(ordered_events)
+            if _session_event_native_thread_id(event) == normalized_native_thread_id
+        ),
+        None,
+    )
+    if matched_event is None:
+        return None, []
+    project_id = matched_event.project_id
+    return (
+        project_id,
+        _list_project_session_events(
+            session_service,
+            project_id,
+            include_child_event_only_fallbacks=True,
+            native_thread_id=normalized_native_thread_id,
+        ),
+    )
 
 
 def _build_approval_rows_from_session_events(
@@ -388,6 +915,38 @@ def _latest_event_timestamp(events: list[SessionEventRecord]) -> str | None:
     return sorted(events, key=_session_event_sort_key)[-1].occurred_at
 
 
+def _build_goal_context_projection(
+    *,
+    session_service: SessionService | None,
+    project_id: str,
+) -> dict[str, Any] | None:
+    if session_service is None:
+        return None
+    relevant_events = [
+        event
+        for event in session_service.list_events()
+        if event.project_id == project_id
+        and event.event_type
+        in {
+            "goal_contract_created",
+            "goal_contract_revised",
+            "goal_contract_adopted_by_child_session",
+        }
+    ]
+    if not relevant_events:
+        return None
+    latest_event = sorted(relevant_events, key=_session_event_sort_key)[-1]
+    contract_payload = latest_event.payload.get("contract")
+    if not isinstance(contract_payload, dict):
+        return None
+    contract = GoalContractSnapshot.model_validate(contract_payload)
+    return {
+        "goal_contract_version": contract.version,
+        "current_phase_goal": contract.current_phase_goal,
+        "last_user_instruction": str(contract.metadata.get("last_user_instruction") or "") or None,
+    }
+
+
 def _recovery_sort_key(record: Any) -> tuple[str, int, str, str]:
     return (
         "0" if getattr(record, "log_seq", None) is not None else "1",
@@ -401,28 +960,57 @@ def _build_recovery_projection(
     *,
     session_service: SessionService | None,
     project_id: str,
+    last_progress_at: str | None = None,
 ) -> dict[str, Any] | None:
+    projection: dict[str, Any] = {}
     if session_service is None:
         return None
     records = session_service.list_recovery_transactions(
         parent_session_id=stable_thread_id_for_project(project_id),
     )
-    if not records:
-        return None
-    latest = sorted(records, key=_recovery_sort_key)[-1]
-    resume_outcome = str(latest.metadata.get("resume_outcome") or "").strip() or None
-    if resume_outcome not in {"same_thread_resume", "new_child_session"}:
-        resume_outcome = None
-    if resume_outcome is None and latest.status in {"failed_retryable", "failed_manual"}:
-        resume_outcome = "resume_failed"
-    if resume_outcome is None and str(latest.metadata.get("resume_error") or "").strip():
-        resume_outcome = "resume_failed"
-    return {
-        "recovery_outcome": resume_outcome,
-        "recovery_status": latest.status,
-        "recovery_updated_at": latest.updated_at,
-        "recovery_child_session_id": latest.child_session_id,
-    }
+    if records:
+        latest = sorted(records, key=_recovery_sort_key)[-1]
+        resume_outcome = str(latest.metadata.get("resume_outcome") or "").strip() or None
+        if resume_outcome not in {"same_thread_resume", "new_child_session"}:
+            resume_outcome = None
+        if resume_outcome is None and latest.status in {"failed_retryable", "failed_manual"}:
+            resume_outcome = "resume_failed"
+        if resume_outcome is None and str(latest.metadata.get("resume_error") or "").strip():
+            resume_outcome = "resume_failed"
+        projection.update(
+            {
+                "recovery_outcome": resume_outcome,
+                "recovery_status": latest.status,
+                "recovery_updated_at": latest.updated_at,
+                "recovery_child_session_id": latest.child_session_id,
+            }
+        )
+
+    suppression_events = session_service.list_events(
+        session_id=stable_thread_id_for_project(project_id),
+        event_type="recovery_execution_suppressed",
+    )
+    if suppression_events:
+        latest_suppression = sorted(suppression_events, key=_session_event_sort_key)[-1]
+        payload = latest_suppression.payload if isinstance(latest_suppression.payload, dict) else {}
+        suppression_last_progress_at = str(payload.get("last_progress_at") or "").strip() or None
+        normalized_last_progress_at = str(last_progress_at or "").strip() or None
+        if suppression_last_progress_at == normalized_last_progress_at:
+            projection.update(
+                {
+                    "recovery_suppression_reason": str(
+                        payload.get("suppression_reason") or ""
+                    ).strip()
+                    or None,
+                    "recovery_suppression_source": str(
+                        payload.get("suppression_source") or ""
+                    ).strip()
+                    or None,
+                    "recovery_suppression_observed_at": latest_suppression.occurred_at,
+                }
+            )
+
+    return projection or None
 
 
 def _merge_fact_records(
@@ -447,17 +1035,47 @@ def _build_event_projection_task(
     persisted_record: PersistedSessionRecord | None = None,
     task: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    goal_contract = _latest_goal_contract_snapshot_from_events(events)
+    goal_contract_summary = (
+        str((goal_contract.metadata if goal_contract is not None else {}).get("last_summary") or "").strip()
+        or (goal_contract.current_phase_goal if goal_contract is not None else None)
+    )
     native_thread_id = str(
-        (task or {}).get("thread_id")
-        or (persisted_record.native_thread_id if persisted_record is not None else "")
+        task_native_thread_id(task)
+        or (persisted_record.effective_native_thread_id if persisted_record is not None else "")
         or ""
     ).strip()
+    if not native_thread_id:
+        native_thread_id = str(
+            next(
+                (
+                    str(approval.get("native_thread_id") or "").strip()
+                    for approval in approvals
+                    if str(approval.get("native_thread_id") or "").strip()
+                ),
+                "",
+            )
+            or ""
+        ).strip()
+    if not native_thread_id:
+        for event in sorted(events, key=_session_event_sort_key, reverse=True):
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
+            native_thread_id = str(
+                payload.get("native_thread_id")
+                or payload.get("parent_native_thread_id")
+                or related_ids.get("native_thread_id")
+                or related_ids.get("parent_native_thread_id")
+                or ""
+            ).strip()
+            if native_thread_id:
+                break
     activity_phase = str(
         (task or {}).get("phase")
         or (
             persisted_record.progress.activity_phase
             if persisted_record is not None
-            else "unknown"
+            else (goal_contract.phase if goal_contract is not None else "unknown")
         )
         or "unknown"
     )
@@ -469,8 +1087,17 @@ def _build_event_projection_task(
             else []
         )
     )
+    event_last_progress_at = _latest_event_timestamp(events)
+    for event in sorted(events, key=_session_event_sort_key, reverse=True):
+        if event.event_type != "recovery_execution_suppressed":
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        suppression_last_progress_at = str(payload.get("last_progress_at") or "").strip()
+        if suppression_last_progress_at:
+            event_last_progress_at = suppression_last_progress_at
+            break
     last_progress_at = (
-        _latest_event_timestamp(events)
+        event_last_progress_at
         or str((task or {}).get("last_progress_at") or "").strip()
         or (
             persisted_record.progress.last_progress_at
@@ -478,20 +1105,72 @@ def _build_event_projection_task(
             else None
         )
     )
-    summary = "waiting for approval" if approvals else "session active"
-    return {
+    preserve_source_state = _has_event_only_fallback_events(events) and not _has_relevant_session_projection_events(events)
+    pending_approval = bool(approvals)
+    summary = "waiting for approval" if pending_approval else "session active"
+    status = "waiting_human" if pending_approval else "running"
+    context_pressure = "low"
+    stuck_level = 0
+    failure_count = 0
+    if preserve_source_state:
+        pending_approval = bool((task or {}).get("pending_approval")) or bool(approvals)
+        summary = str(
+            (task or {}).get("last_summary")
+            or (
+                persisted_record.progress.summary or persisted_record.session.headline
+                if persisted_record is not None
+                else ""
+            )
+            or goal_contract_summary
+            or ("waiting for approval" if pending_approval else "session active")
+        ).strip()
+        status = str((task or {}).get("status") or "").strip()
+        if not status:
+            status = "waiting_human" if pending_approval else "running"
+        context_pressure = str(
+            (task or {}).get("context_pressure")
+            or (
+                persisted_record.progress.context_pressure
+                if persisted_record is not None
+                else "low"
+            )
+            or "low"
+        ).strip()
+        stuck_level = int(
+            (task or {}).get("stuck_level")
+            if (task or {}).get("stuck_level") is not None
+            else (
+                persisted_record.progress.stuck_level
+                if persisted_record is not None
+                else 0
+            )
+        )
+        failure_count = int(
+            (task or {}).get("failure_count")
+            if (task or {}).get("failure_count") is not None
+            else (
+                3
+                if persisted_record is not None
+                and any(fact.fact_code == "repeat_failure" for fact in persisted_record.facts)
+                else 0
+            )
+        )
+    return _task_with_authoritative_project_execution_state(
+        {
         "project_id": project_id,
-        "thread_id": native_thread_id,
-        "status": "waiting_human" if approvals else "running",
+        "thread_id": stable_thread_id_for_project(project_id),
+        "native_thread_id": native_thread_id or None,
+        "status": status,
         "phase": activity_phase,
-        "pending_approval": bool(approvals),
+        "pending_approval": pending_approval,
         "last_summary": summary,
         "files_touched": files_touched,
-        "context_pressure": "low",
-        "stuck_level": 0,
-        "failure_count": 0,
+        "context_pressure": context_pressure,
+        "stuck_level": stuck_level,
+        "failure_count": failure_count,
         "last_progress_at": last_progress_at,
-    }
+        }
+    ) or {}
 
 
 def _build_session_read_bundle_from_session_events(
@@ -502,6 +1181,9 @@ def _build_session_read_bundle_from_session_events(
     task: dict[str, Any] | None = None,
     session_service: SessionService | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    orchestration_state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
 ) -> SessionReadBundle:
     approvals = _build_approval_rows_from_session_events(events)
     projected_task = _build_event_projection_task(
@@ -521,13 +1203,29 @@ def _build_session_read_bundle_from_session_events(
         events=events,
     )
     facts = _merge_fact_records(approval_facts, event_facts)
-    native_thread_id = str(projected_task.get("thread_id") or "") or None
-    recovery = _build_recovery_projection(session_service=session_service, project_id=project_id)
+    native_thread_id = task_native_thread_id(projected_task)
+    recovery = _build_recovery_projection(
+        session_service=session_service,
+        project_id=project_id,
+        last_progress_at=str(projected_task.get("last_progress_at") or "") or None,
+    )
+    goal_context = _build_goal_context_projection(
+        session_service=session_service,
+        project_id=project_id,
+    )
     decision_trace = _build_decision_trace_projection(
         decision_store,
         project_id=project_id,
         session_id=stable_thread_id_for_project(project_id),
         native_thread_id=native_thread_id,
+    )
+    continuation_control_plane = _build_continuation_control_plane_projection(
+        project_id=project_id,
+        events=events,
+        decision_store=decision_store,
+        receipt_store=receipt_store,
+        state_store=orchestration_state_store,
+        dispatch_cooldown_seconds=dispatch_cooldown_seconds,
     )
     return SessionReadBundle(
         project_id=project_id,
@@ -546,6 +1244,8 @@ def _build_session_read_bundle_from_session_events(
             facts=facts,
             recovery=recovery,
             decision_trace=decision_trace,
+            goal_context=goal_context,
+            continuation_control_plane=continuation_control_plane,
         ),
         approval_queue=build_approval_projections(
             project_id=project_id,
@@ -700,15 +1400,50 @@ def _build_session_read_bundle(
     approvals: list[dict[str, Any]],
     session_service: SessionService | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    orchestration_state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
 ) -> SessionReadBundle:
-    facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
-    native_thread_id = str(task.get("thread_id") or "") or None
-    recovery = _build_recovery_projection(session_service=session_service, project_id=project_id)
+    task = _task_with_authoritative_project_execution_state(task)
+    task_facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
+    session_events = (
+        _list_project_session_events(
+            session_service,
+            project_id,
+            include_child_event_only_fallbacks=True,
+        )
+        if session_service is not None
+        else []
+    )
+    event_facts = (
+        build_session_service_fact_records(project_id=project_id, events=session_events)
+        if session_events
+        else []
+    )
+    facts = _merge_fact_records(task_facts, event_facts)
+    native_thread_id = task_native_thread_id(task)
+    recovery = _build_recovery_projection(
+        session_service=session_service,
+        project_id=project_id,
+        last_progress_at=str(task.get("last_progress_at") or "") or None,
+    )
+    goal_context = _build_goal_context_projection(
+        session_service=session_service,
+        project_id=project_id,
+    )
     decision_trace = _build_decision_trace_projection(
         decision_store,
         project_id=project_id,
         session_id=stable_thread_id_for_project(project_id),
         native_thread_id=native_thread_id,
+    )
+    continuation_control_plane = _build_continuation_control_plane_projection(
+        project_id=project_id,
+        events=session_events,
+        decision_store=decision_store,
+        receipt_store=receipt_store,
+        state_store=orchestration_state_store,
+        dispatch_cooldown_seconds=dispatch_cooldown_seconds,
     )
     return SessionReadBundle(
         project_id=project_id,
@@ -727,6 +1462,8 @@ def _build_session_read_bundle(
             facts=facts,
             recovery=recovery,
             decision_trace=decision_trace,
+            goal_context=goal_context,
+            continuation_control_plane=continuation_control_plane,
         ),
         approval_queue=build_approval_projections(
             project_id=project_id,
@@ -758,7 +1495,7 @@ def _canonical_approval_to_row(approval: Any) -> dict[str, Any]:
         "approval_id": approval.approval_id,
         "project_id": approval.project_id,
         "thread_id": approval.thread_id,
-        "native_thread_id": approval.native_thread_id,
+        "native_thread_id": approval.effective_native_thread_id,
         "command": approval.requested_action,
         "requested_action": approval.requested_action,
         "status": approval.status,
@@ -821,6 +1558,7 @@ def _task_from_persisted_record(
     record: PersistedSessionRecord,
     *,
     approvals: list[dict[str, Any]],
+    native_thread_id: str | None = None,
 ) -> dict[str, Any]:
     fact_codes = {fact.fact_code for fact in record.facts}
     status = "completed"
@@ -830,7 +1568,8 @@ def _task_from_persisted_record(
         status = "running"
     return {
         "project_id": record.project_id,
-        "thread_id": record.native_thread_id,
+        "thread_id": record.thread_id,
+        "native_thread_id": native_thread_id or record.effective_native_thread_id,
         "status": status,
         "phase": record.progress.activity_phase,
         "pending_approval": bool(approvals),
@@ -850,20 +1589,46 @@ def _build_session_read_bundle_from_persisted_record(
     freshness_window_seconds: float,
     session_service: SessionService | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    orchestration_state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
 ) -> SessionReadBundle:
+    session_events = (
+        _list_project_session_events(
+            session_service,
+            record.project_id,
+            include_child_event_only_fallbacks=True,
+        )
+        if session_service is not None
+        else []
+    )
     canonical_approvals = _list_actionable_canonical_approval_rows(
         approval_store,
         project_id=record.project_id,
     )
-    if canonical_approvals:
-        approvals = _merge_approval_rows(record.approval_queue, canonical_approvals)
-        synthesized_task = _task_from_persisted_record(record, approvals=approvals)
+    persisted_approval_rows = [
+        _approval_projection_to_row(approval) for approval in record.approval_queue
+    ]
+    approvals = (
+        _merge_approval_rows(record.approval_queue, canonical_approvals)
+        if canonical_approvals
+        else persisted_approval_rows
+    )
+    if canonical_approvals or _has_event_only_fallback_events(session_events):
+        synthesized_task = _task_from_persisted_record(
+            record,
+            approvals=approvals,
+            native_thread_id=_latest_session_event_native_thread_id(session_events),
+        )
         bundle = _build_session_read_bundle(
             project_id=record.project_id,
             task=synthesized_task,
             approvals=approvals,
             session_service=session_service,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=dispatch_cooldown_seconds,
         )
         return SessionReadBundle(
             project_id=bundle.project_id,
@@ -881,12 +1646,25 @@ def _build_session_read_bundle_from_persisted_record(
     recovery = _build_recovery_projection(
         session_service=session_service,
         project_id=record.project_id,
+        last_progress_at=record.progress.last_progress_at,
+    )
+    goal_context = _build_goal_context_projection(
+        session_service=session_service,
+        project_id=record.project_id,
     )
     decision_trace = _build_decision_trace_projection(
         decision_store,
         project_id=record.project_id,
         session_id=record.thread_id,
-        native_thread_id=record.native_thread_id,
+        native_thread_id=record.effective_native_thread_id,
+    )
+    continuation_control_plane = _build_continuation_control_plane_projection(
+        project_id=record.project_id,
+        events=session_events,
+        decision_store=decision_store,
+        receipt_store=receipt_store,
+        state_store=orchestration_state_store,
+        dispatch_cooldown_seconds=dispatch_cooldown_seconds,
     )
     return SessionReadBundle(
         project_id=record.project_id,
@@ -900,11 +1678,24 @@ def _build_session_read_bundle_from_persisted_record(
                 "recovery_status": (recovery or {}).get("recovery_status"),
                 "recovery_updated_at": (recovery or {}).get("recovery_updated_at"),
                 "recovery_child_session_id": (recovery or {}).get("recovery_child_session_id"),
+                "recovery_suppression_reason": (recovery or {}).get(
+                    "recovery_suppression_reason"
+                ),
+                "recovery_suppression_source": (recovery or {}).get(
+                    "recovery_suppression_source"
+                ),
+                "recovery_suppression_observed_at": (recovery or {}).get(
+                    "recovery_suppression_observed_at"
+                ),
+                "goal_contract_version": (goal_context or {}).get("goal_contract_version"),
+                "current_phase_goal": (goal_context or {}).get("current_phase_goal"),
+                "last_user_instruction": (goal_context or {}).get("last_user_instruction"),
                 "decision_trace_ref": (decision_trace or {}).get("decision_trace_ref"),
                 "decision_degrade_reason": (decision_trace or {}).get("decision_degrade_reason"),
                 "provider_output_schema_ref": (decision_trace or {}).get(
                     "provider_output_schema_ref"
                 ),
+                "continuation_control_plane": continuation_control_plane,
             }
         ),
         approval_queue=list(record.approval_queue),
@@ -957,11 +1748,19 @@ def build_session_read_bundle(
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    orchestration_state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
     freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
+    session_events: list[SessionEventRecord] = []
     persisted_record = store.get(project_id) if store is not None else None
     if session_service is not None:
-        session_events = _list_project_session_events(session_service, project_id)
+        session_events = _list_project_session_events(
+            session_service,
+            project_id,
+            include_child_event_only_fallbacks=True,
+        )
         if _has_relevant_session_projection_events(session_events):
             return _build_session_read_bundle_from_session_events(
                 project_id=project_id,
@@ -969,6 +1768,9 @@ def build_session_read_bundle(
                 persisted_record=persisted_record,
                 session_service=session_service,
                 decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
     if store is not None:
         if persisted_record is not None:
@@ -978,15 +1780,35 @@ def build_session_read_bundle(
                 freshness_window_seconds=freshness_window_seconds,
                 session_service=session_service,
                 decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
-    task = _load_task_or_raise(client, project_id)
-    approvals = _load_approvals_or_raise(client, project_id)
+    try:
+        task = _load_task_or_raise(client, project_id)
+        approvals = _load_approvals_or_raise(client, project_id)
+    except SessionSpineUpstreamError:
+        if session_service is not None and _has_event_only_fallback_events(session_events):
+            return _build_session_read_bundle_from_session_events(
+                project_id=project_id,
+                events=session_events,
+                persisted_record=persisted_record,
+                session_service=session_service,
+                decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+            )
+        raise
     bundle = _build_session_read_bundle(
         project_id=project_id,
         task=task,
         approvals=approvals,
         session_service=session_service,
         decision_store=decision_store,
+        receipt_store=receipt_store,
+        orchestration_state_store=orchestration_state_store,
+        dispatch_cooldown_seconds=dispatch_cooldown_seconds,
     )
     return SessionReadBundle(
         project_id=bundle.project_id,
@@ -1008,19 +1830,41 @@ def build_session_read_bundle_by_native_thread(
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    orchestration_state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
     freshness_window_seconds: float = DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
 ) -> SessionReadBundle:
+    session_events: list[SessionEventRecord] = []
+    fallback_project_id: str | None = None
+    fallback_session_events: list[SessionEventRecord] = []
     persisted_record = store.get_by_native_thread(native_thread_id) if store is not None else None
     if session_service is not None and persisted_record is not None:
-        session_events = _list_project_session_events(session_service, persisted_record.project_id)
-        if _has_relevant_session_projection_events(session_events):
+        session_events = _list_project_session_events(
+            session_service,
+            persisted_record.project_id,
+            include_child_event_only_fallbacks=True,
+            native_thread_id=native_thread_id,
+        )
+        if (
+            _has_relevant_session_projection_events(session_events)
+            or _has_event_only_fallback_events(session_events)
+        ):
             return _build_session_read_bundle_from_session_events(
                 project_id=persisted_record.project_id,
                 events=session_events,
                 persisted_record=persisted_record,
                 session_service=session_service,
                 decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
+    if session_service is not None and persisted_record is None:
+        fallback_project_id, fallback_session_events = _project_session_events_for_native_thread(
+            session_service,
+            native_thread_id,
+        )
     if store is not None:
         if persisted_record is not None:
             return _build_session_read_bundle_from_persisted_record(
@@ -1029,22 +1873,61 @@ def build_session_read_bundle_by_native_thread(
                 freshness_window_seconds=freshness_window_seconds,
                 session_service=session_service,
                 decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
-    task = _load_task_by_native_thread_or_raise(client, native_thread_id)
+    try:
+        task = _load_task_by_native_thread_or_raise(client, native_thread_id)
+    except SessionSpineUpstreamError:
+        if session_service is not None and fallback_project_id is not None:
+            session_events = fallback_session_events or _list_project_session_events(
+                session_service,
+                fallback_project_id,
+            )
+            if (
+                _has_relevant_session_projection_events(session_events)
+                or _has_event_only_fallback_events(session_events)
+            ):
+                return _build_session_read_bundle_from_session_events(
+                    project_id=fallback_project_id,
+                    events=session_events,
+                    persisted_record=persisted_record,
+                    session_service=session_service,
+                    decision_store=decision_store,
+                    receipt_store=receipt_store,
+                    orchestration_state_store=orchestration_state_store,
+                    dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                )
+        raise
+    if not task_native_thread_id(task):
+        task = dict(task)
+        task["native_thread_id"] = native_thread_id
     project_id = str(task.get("project_id") or "")
     if not project_id:
         raise SessionSpineUpstreamError(
             {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
         )
     if session_service is not None:
-        session_events = _list_project_session_events(session_service, project_id)
-        if _has_relevant_session_projection_events(session_events):
+        session_events = _list_project_session_events(
+            session_service,
+            project_id,
+            include_child_event_only_fallbacks=True,
+            native_thread_id=native_thread_id,
+        )
+        if (
+            _has_relevant_session_projection_events(session_events)
+            or _has_event_only_fallback_events(session_events)
+        ):
             return _build_session_read_bundle_from_session_events(
                 project_id=project_id,
                 events=session_events,
                 task=task,
                 session_service=session_service,
                 decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
     approvals = _load_approvals_or_raise(client, project_id)
     bundle = _build_session_read_bundle(
@@ -1053,6 +1936,9 @@ def build_session_read_bundle_by_native_thread(
         approvals=approvals,
         session_service=session_service,
         decision_store=decision_store,
+        receipt_store=receipt_store,
+        orchestration_state_store=orchestration_state_store,
+        dispatch_cooldown_seconds=dispatch_cooldown_seconds,
     )
     return SessionReadBundle(
         project_id=bundle.project_id,
@@ -1072,7 +1958,9 @@ def build_workspace_activity_bundle(
     *,
     recent_minutes: int = 15,
 ) -> WorkspaceActivityReadBundle:
-    task = _load_task_or_raise(client, project_id)
+    task = _task_with_authoritative_project_execution_state(
+        _load_task_or_raise(client, project_id)
+    )
     approvals = _load_approvals_or_raise(client, project_id)
     facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     return WorkspaceActivityReadBundle(
@@ -1200,6 +2088,9 @@ def build_session_directory_bundle(
     store: SessionSpineStore | None = None,
     approval_store: CanonicalApprovalStore | None = None,
     decision_store: PolicyDecisionStore | None = None,
+    receipt_store: ActionReceiptStore | None = None,
+    orchestration_state_store: ResidentOrchestrationStateStore | None = None,
+    dispatch_cooldown_seconds: float = 0.0,
     resident_expert_runtime_service: ResidentExpertRuntimeService | None = None,
 ) -> SessionDirectoryReadBundle:
     persisted_records = store.list_records() if store is not None else []
@@ -1207,23 +2098,48 @@ def build_session_directory_bundle(
     resident_expert_coverage = _build_resident_expert_coverage_view(
         resident_expert_runtime_service
     )
+    merged_grouped_events: dict[str, list[SessionEventRecord]] = {}
+    fallback_only_grouped_events: dict[str, list[SessionEventRecord]] = {}
     if session_service is not None:
         grouped_events = _group_project_session_events(
             session_service,
             relevant_types=SESSION_EVENT_PROJECTION_TYPES,
         )
-        if grouped_events:
+        fallback_grouped_events = _group_project_session_events(
+            session_service,
+            relevant_types=SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES,
+            include_child_event_only_fallbacks=True,
+        )
+        merged_grouped_events = dict(grouped_events)
+        for project_id, events in fallback_grouped_events.items():
+            if project_id in persisted_by_project:
+                continue
+            merged_grouped_events.setdefault(project_id, events)
+        fallback_only_grouped_events = (
+            fallback_grouped_events
+            if fallback_grouped_events and not grouped_events and not persisted_by_project
+            else {}
+        )
+    try:
+        tasks = _load_tasks_or_raise(client)
+    except SessionSpineUpstreamError:
+        if persisted_by_project and merged_grouped_events and session_service is not None:
             sessions: list[SessionProjection] = []
             progresses: list[TaskProgressView] = []
-            ordered_project_ids = list(dict.fromkeys([*grouped_events.keys(), *persisted_by_project.keys()]))
+            ordered_project_ids = list(
+                dict.fromkeys([*merged_grouped_events.keys(), *persisted_by_project.keys()])
+            )
             for current_project_id in ordered_project_ids:
-                if current_project_id in grouped_events:
+                if current_project_id in merged_grouped_events:
                     bundle = _build_session_read_bundle_from_session_events(
                         project_id=current_project_id,
-                        events=grouped_events[current_project_id],
+                        events=merged_grouped_events[current_project_id],
                         persisted_record=persisted_by_project.get(current_project_id),
                         session_service=session_service,
                         decision_store=decision_store,
+                        receipt_store=receipt_store,
+                        orchestration_state_store=orchestration_state_store,
+                        dispatch_cooldown_seconds=dispatch_cooldown_seconds,
                     )
                     sessions.append(bundle.session)
                     progresses.append(bundle.progress)
@@ -1237,6 +2153,9 @@ def build_session_directory_bundle(
                     freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
                     session_service=session_service,
                     decision_store=decision_store,
+                    receipt_store=receipt_store,
+                    orchestration_state_store=orchestration_state_store,
+                    dispatch_cooldown_seconds=dispatch_cooldown_seconds,
                 )
                 sessions.append(bundle.session)
                 progresses.append(bundle.progress)
@@ -1248,7 +2167,26 @@ def build_session_directory_bundle(
                     progresses=progresses,
                     resident_expert_coverage=resident_expert_coverage,
                 )
-    if store is not None:
+        if fallback_only_grouped_events and session_service is not None:
+            bundles = [
+                _build_session_read_bundle_from_session_events(
+                    project_id=project_id,
+                    events=events,
+                    session_service=session_service,
+                    decision_store=decision_store,
+                    receipt_store=receipt_store,
+                    orchestration_state_store=orchestration_state_store,
+                    dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                )
+                for project_id, events in fallback_only_grouped_events.items()
+            ]
+            return SessionDirectoryReadBundle(
+                tasks=[],
+                approvals=[],
+                sessions=[bundle.session for bundle in bundles],
+                progresses=[bundle.progress for bundle in bundles],
+                resident_expert_coverage=resident_expert_coverage,
+            )
         if persisted_records:
             bundles = [
                 _build_session_read_bundle_from_persisted_record(
@@ -1257,6 +2195,9 @@ def build_session_directory_bundle(
                     freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
                     session_service=session_service,
                     decision_store=decision_store,
+                    receipt_store=receipt_store,
+                    orchestration_state_store=orchestration_state_store,
+                    dispatch_cooldown_seconds=dispatch_cooldown_seconds,
                 )
                 for record in persisted_records
             ]
@@ -1267,8 +2208,11 @@ def build_session_directory_bundle(
                 progresses=[bundle.progress for bundle in bundles],
                 resident_expert_coverage=resident_expert_coverage,
             )
-    tasks = _load_tasks_or_raise(client)
-    approvals = _load_approvals_or_raise(client)
+        raise
+    try:
+        approvals = _load_approvals_or_raise(client)
+    except SessionSpineUpstreamError:
+        approvals = _list_actionable_canonical_approval_rows(approval_store)
     tasks_by_project: dict[str, dict[str, Any]] = {}
     for task in tasks:
         project_id = str(task.get("project_id") or "")
@@ -1290,6 +2234,41 @@ def build_session_directory_bundle(
             approvals=project_approvals,
             session_service=session_service,
             decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+        )
+        sessions.append(bundle.session)
+        progresses.append(bundle.progress)
+    covered_project_ids = set(tasks_by_project)
+    supplemental_project_ids = [
+        project_id
+        for project_id in dict.fromkeys([*merged_grouped_events.keys(), *persisted_by_project.keys()])
+        if project_id not in covered_project_ids
+    ]
+    for project_id in supplemental_project_ids:
+        if project_id in merged_grouped_events and session_service is not None:
+            bundle = _build_session_read_bundle_from_session_events(
+                project_id=project_id,
+                events=merged_grouped_events[project_id],
+                persisted_record=persisted_by_project.get(project_id),
+                session_service=session_service,
+                decision_store=decision_store,
+                receipt_store=receipt_store,
+            )
+            sessions.append(bundle.session)
+            progresses.append(bundle.progress)
+            continue
+        record = persisted_by_project.get(project_id)
+        if record is None:
+            continue
+        bundle = _build_session_read_bundle_from_persisted_record(
+            record,
+            approval_store=approval_store,
+            freshness_window_seconds=DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
+            session_service=session_service,
+            decision_store=decision_store,
+            receipt_store=receipt_store,
         )
         sessions.append(bundle.session)
         progresses.append(bundle.progress)

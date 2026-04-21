@@ -185,6 +185,7 @@ uv run python scripts/watchdog_external_integration_smoke.py --target feishu-dis
 
 - 结果不是 `skipped` 时，必须落成 `command_request`，且 `data.intent_code=list_sessions`、`data.reply_code=session_directory`；
 - 返回的 `sessions[].project_id` 必须覆盖 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS` 中声明的项目集合；
+- 若 `progresses[]` 里存在 `recovery_outcome=new_child_session`，则 `message` 中展示的子会话标识必须与对应 `recovery_child_session_id` 归一后一致；
 - 若真实数据量下超过默认公共 HTTP 窗口，可仅调整 `WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S`，不要顺手放大全局 `WATCHDOG_HTTP_TIMEOUT_S`；
 - 如果变量未配置而出现 `skipped`，这只能说明多项目目录 smoke 尚未执行，不能当作 Feishu 项目发现链路已验收完成；
 - 若 synthetic smoke 通过、但真实 Feishu 仍只看到单项目，归因应继续收敛到投递目标、receive id 绑定或飞书侧会话可见性，而不是 session directory contract 缺失。

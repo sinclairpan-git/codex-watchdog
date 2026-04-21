@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,11 +11,31 @@ from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Eff
 from watchdog.contracts.session_spine.models import WatchdogActionResult
 from watchdog.api.ops import build_ops_summary
 from watchdog.main import create_app
-from watchdog.services.approvals.service import CanonicalApprovalRecord, CanonicalApprovalStore
+from watchdog.services.approvals.service import (
+    CanonicalApprovalRecord,
+    CanonicalApprovalResponseRecord,
+    CanonicalApprovalStore,
+    materialize_canonical_approval,
+)
+from watchdog.services.delivery.envelopes import (
+    build_approval_envelope_for_record,
+    build_envelopes_for_approval_response,
+    build_progress_summary_envelope,
+)
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
-from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
+from watchdog.services.policy.decisions import (
+    CanonicalDecisionRecord,
+    PolicyDecisionStore,
+    build_canonical_decision_record,
+)
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
+from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.session_spine.projection import (
+    build_session_projection,
+    build_task_progress_view,
+)
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 from a_control_agent.storage.tasks_store import TaskStore
@@ -225,6 +246,7 @@ def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) 
         related_id_value="notification-envelope:historical-failed",
     )
     assert [event.event_type for event in events] == ["notification_requeued"]
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
 
     summary = build_ops_summary(
         data_dir=tmp_path,
@@ -838,6 +860,502 @@ def test_build_ops_summary_ignores_delivery_skips_and_recovery_noops(tmp_path: P
     assert summary.status == "ok"
     assert summary.active_alerts == 0
     assert summary.alerts == []
+
+
+def test_watchdog_ops_requeue_transport_failures_uses_effective_native_thread_from_legacy_delivery_record(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:historical-failed-legacy",
+            envelope_type="notification",
+            correlation_id="corr:historical-failed-legacy",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id=None,
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:historical-failed-legacy",
+            audit_ref="audit:historical-failed-legacy",
+            created_at="2099-01-01T00:20:00Z",
+            updated_at="2099-01-01T00:21:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            failure_code="transport_error",
+            operator_notes=["delivery_failed failure_code=transport_error attempts=3"],
+            envelope_payload={
+                "envelope_type": "notification",
+                "event_id": "event:historical-failed-legacy",
+                "notification_kind": "decision_result",
+                "severity": "warning",
+                "title": "decision update",
+                "summary": "historical failed notification",
+                "occurred_at": "2099-01-01T00:20:00Z",
+                "native_thread_id": "thr_native_1",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value="notification-envelope:historical-failed-legacy",
+    )
+    assert [event.event_type for event in events] == ["notification_requeued"]
+    assert events[0].related_ids["native_thread_id"] == "thr_native_1"
+
+
+def test_build_ops_summary_surfaces_only_current_recovery_suppression_alerts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_dir=str(tmp_path))
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+
+    active_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-07T00:00:00Z",
+    }
+    active_facts = build_fact_records(project_id="repo-a", task=active_task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=active_task,
+            approvals=[],
+            facts=active_facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=active_task,
+            facts=active_facts,
+        ),
+        facts=active_facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:01:00Z",
+    )
+    session_service.record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:00:00Z",
+        },
+        occurred_at="2026-04-07T00:02:00Z",
+    )
+
+    stale_task = {
+        "project_id": "repo-b",
+        "thread_id": "thr_native_2",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-07T01:00:00Z",
+    }
+    stale_facts = build_fact_records(project_id="repo-b", task=stale_task, approvals=[])
+    spine_store.put(
+        project_id="repo-b",
+        session=build_session_projection(
+            project_id="repo-b",
+            task=stale_task,
+            approvals=[],
+            facts=stale_facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-b",
+            task=stale_task,
+            facts=stale_facts,
+        ),
+        facts=stale_facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T01:01:00Z",
+    )
+    session_service.record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-b",
+        session_id="session:repo-b",
+        correlation_id="corr:recovery-suppressed:repo-b",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-b"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:30:00Z",
+        },
+        occurred_at="2026-04-07T00:31:00Z",
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert [alert.alert_code for alert in summary.alerts] == [
+        "recovery_suppressed_reentry_without_newer_progress"
+    ]
+    assert summary.alerts[0].severity == "warning"
+    assert summary.alerts[0].count == 1
+
+
+def test_build_ops_summary_renders_recovery_cooldown_suppression_alert(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_dir=str(tmp_path))
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-07T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:01:00Z",
+    )
+    session_service.record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:cooldown",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "cooldown_window_active",
+            "suppression_source": "resident_orchestrator",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:00:00Z",
+            "cooldown_seconds": "300",
+        },
+        occurred_at="2026-04-07T00:02:00Z",
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert [alert.alert_code for alert in summary.alerts] == [
+        "recovery_suppressed_cooldown_window_active"
+    ]
+    assert summary.alerts[0].summary == "recovery suppression active: cooldown window active"
+
+
+def test_build_ops_summary_renders_recovery_in_flight_suppression_alert(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_dir=str(tmp_path))
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "handoff_in_progress",
+        "phase": "handoff",
+        "pending_approval": False,
+        "last_summary": "handoff drafted",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-07T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:01:00Z",
+    )
+    session_service.record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:in-flight",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:00:00Z",
+        },
+        occurred_at="2026-04-07T00:02:00Z",
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert [alert.alert_code for alert in summary.alerts] == [
+        "recovery_suppressed_recovery_in_flight"
+    ]
+    assert summary.alerts[0].summary == "recovery suppression active: recovery in flight"
+
+
+def test_progress_summary_envelope_uses_effective_native_thread_id_from_legacy_persisted_record(
+    tmp_path: Path,
+) -> None:
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-07T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:01:00Z",
+    )
+    path = tmp_path / "session_spine.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["sessions"]["repo-a"]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    record = spine_store.get("repo-a")
+    assert record is not None
+
+    envelope = build_progress_summary_envelope(record, created_at="2026-04-07T00:02:00Z")
+
+    assert envelope.native_thread_id == "thr_native_1"
+
+
+def test_canonical_decision_record_uses_effective_native_thread_id_from_legacy_persisted_record(
+    tmp_path: Path,
+) -> None:
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "editing files",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-07T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:01:00Z",
+    )
+    path = tmp_path / "session_spine.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["sessions"]["repo-a"]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    record = spine_store.get("repo-a")
+    assert record is not None
+
+    decision = build_canonical_decision_record(
+        persisted_record=record,
+        decision_result="auto_execute_and_notify",
+        brain_intent="propose_execute",
+        risk_class="none",
+        action_ref="continue_session",
+        matched_policy_rules=["registered_action"],
+        decision_reason="registered action and complete evidence",
+        why_not_escalated="policy_allows_auto_execution",
+        why_escalated=None,
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+    )
+
+    assert decision.native_thread_id == "thr_native_1"
+    assert decision.evidence["target"]["native_thread_id"] == "thr_native_1"
+
+
+def test_approval_envelope_uses_effective_native_thread_id_from_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    approval = materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:legacy-approval-envelope",
+            decision_key="session:repo-a|fact-v7|policy-v1|require_user_decision|continue_session|appr_001",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_001",
+            action_ref="continue_session",
+            trigger="resident_supervision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="explicit human confirmation required",
+            matched_policy_rules=["human_gate"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|require_user_decision|continue_session|appr_001",
+            created_at="2026-04-07T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    legacy_approval = app.state.canonical_approval_store.get(approval.envelope_id)
+    assert legacy_approval is not None
+
+    envelope = build_approval_envelope_for_record(legacy_approval)
+
+    assert envelope.native_thread_id == "thr_native_1"
+
+
+def test_approval_response_envelope_uses_effective_native_thread_id_from_legacy_approval_record(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    approval = materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:legacy-approval-response-envelope",
+            decision_key="session:repo-a|fact-v7|policy-v1|require_user_decision|continue_session|appr_002",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_002",
+            action_ref="continue_session",
+            trigger="resident_supervision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="explicit human confirmation required",
+            matched_policy_rules=["human_gate"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|require_user_decision|continue_session|appr_002",
+            created_at="2026-04-07T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    path = tmp_path / "canonical_approvals.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload[approval.envelope_id]["native_thread_id"] = None
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    legacy_approval = app.state.canonical_approval_store.get(approval.envelope_id)
+    assert legacy_approval is not None
+
+    response = CanonicalApprovalResponseRecord(
+        response_id="approval-response:legacy",
+        envelope_id=legacy_approval.envelope_id,
+        approval_id=legacy_approval.approval_id,
+        response_action="approve",
+        client_request_id="req-legacy",
+        idempotency_key="legacy-approval-response-envelope",
+        project_id=legacy_approval.project_id,
+        approval_status="approved",
+        operator="operator-1",
+        note="",
+        created_at="2026-04-07T00:02:00Z",
+        operator_notes=[],
+    )
+
+    envelopes = build_envelopes_for_approval_response(legacy_approval, response)
+
+    assert envelopes[0].native_thread_id == "thr_native_1"
 
 
 def test_build_ops_summary_ignores_stale_delivery_failures(tmp_path: Path) -> None:

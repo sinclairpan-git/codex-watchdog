@@ -125,6 +125,17 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
         must_contain=("Release Gate",),
     ),
     DocContractCheck(
+        name="arch_goal_contract_child_adoption_records_lineage_fields",
+        path=ARCHITECTURE_DOC,
+        must_contain=(
+            "`goal_contract_adopted_by_child_session`",
+            "`parent_session_id`",
+            "`child_session_id`",
+            "`source_packet_id`",
+            "`recovery_transaction_id`",
+        ),
+    ),
+    DocContractCheck(
         name="env_example_covers_feishu_ingress_and_delivery",
         path=WATCHDOG_ENV_EXAMPLE,
         must_contain=(
@@ -196,6 +207,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "`项目列表`",
             "`data.reply_code == \"session_directory\"`",
             "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+            "`recovery_child_session_id`",
         ),
     ),
     DocContractCheck(
@@ -271,6 +283,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "项目列表",
             "list_sessions/session_directory",
             "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+            "recovery_child_session_id",
         ),
     ),
     DocContractCheck(
@@ -314,6 +327,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "项目列表",
             "list_sessions/session_directory",
             "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+            "recovery_child_session_id",
         ),
     ),
     DocContractCheck(
@@ -394,6 +408,7 @@ DOC_CONTRACT_CHECKS: tuple[DocContractCheck, ...] = (
             "list_sessions",
             "session_directory",
             "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS",
+            "recovery_child_session_id",
         ),
     ),
 )

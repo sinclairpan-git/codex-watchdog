@@ -147,9 +147,65 @@ def test_bootstrap_openclaw_webhook_records_notification_requeue_event(tmp_path:
     assert events[0].payload["failure_code"] == "transport_error"
     assert events[0].payload["delivery_status"] == "pending"
     assert events[0].payload["delivery_attempt"] == 3
+    assert events[0].related_ids["native_thread_id"] == "native:repo-a"
     assert events[0].related_ids["interaction_context_id"] == "ctx-bootstrap-1"
     assert events[0].related_ids["interaction_family_id"] == "family-bootstrap-1"
     assert events[0].related_ids["actor_id"] == "user:bootstrap"
     assert events[0].payload["interaction_context_id"] == "ctx-bootstrap-1"
     assert events[0].payload["interaction_family_id"] == "family-bootstrap-1"
     assert events[0].payload["actor_id"] == "user:bootstrap"
+
+
+def test_bootstrap_openclaw_webhook_requeue_event_uses_effective_native_thread_from_legacy_delivery_record(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=_ClientStub(),
+    )
+    delivery_store: DeliveryOutboxStore = app.state.delivery_outbox_store
+    client = TestClient(app)
+
+    (notification_record,) = delivery_store.enqueue_envelopes(
+        [build_envelopes_for_decision(_decision_record(decision_result="block_and_alert"))[0]]
+    )
+    delivery_store.update_delivery_record(
+        notification_record.model_copy(
+            update={
+                "native_thread_id": None,
+                "delivery_status": "delivery_failed",
+                "delivery_attempt": 3,
+                "failure_code": "transport_error",
+                "next_retry_at": None,
+                "operator_notes": ["delivery_dead_letter failure_code=transport_error attempts=3"],
+                "envelope_payload": {
+                    **notification_record.envelope_payload,
+                    "interaction_context_id": "ctx-bootstrap-1",
+                    "interaction_family_id": "family-bootstrap-1",
+                    "actor_id": "user:bootstrap",
+                    "channel_kind": "dm",
+                    "action_window_expires_at": "2026-04-07T00:30:00Z",
+                },
+            }
+        )
+    )
+
+    response = client.post(
+        "/api/v1/watchdog/bootstrap/openclaw-webhook",
+        headers={"Authorization": "Bearer wt"},
+        json={
+            "event_type": "openclaw_webhook_base_url_changed",
+            "openclaw_webhook_base_url": "https://updated-openclaw.trycloudflare.com",
+            "changed_at": "2026-04-07T19:00:00+08:00",
+            "source": "b-host-openclaw",
+        },
+    )
+
+    assert response.status_code == 200
+    events = app.state.session_service.list_events(
+        session_id=notification_record.session_id,
+        related_id_key="envelope_id",
+        related_id_value=notification_record.envelope_id,
+    )
+    assert [event.event_type for event in events] == ["notification_requeued"]
+    assert events[0].related_ids["native_thread_id"] == "native:repo-a"

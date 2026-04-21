@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     resident_orchestrator_interval_seconds: float = 5.0
     resident_expert_stale_after_seconds: float = 900.0
     auto_continue_cooldown_seconds: float = 300.0
+    auto_recovery_cooldown_seconds: float = 300.0
     progress_summary_interval_seconds: float = 300.0
     progress_summary_max_age_seconds: float = 600.0
     auto_execute_notification_max_age_seconds: float = 600.0

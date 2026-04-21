@@ -361,7 +361,7 @@ def _runtime_gate_override(
     release_gate_verdict: Mapping[str, Any] | None,
     extra_evidence: dict[str, Any] | None,
 ) -> CanonicalDecisionRecord | None:
-    if brain_intent != "propose_execute":
+    if brain_intent not in {"propose_execute", "branch_complete_switch"}:
         return None
     validator = read_validator_decision_evidence(validator_verdict)
     if not _validator_snapshot_is_pass(validator):
@@ -387,6 +387,36 @@ def _runtime_gate_override(
             extra_evidence=extra_evidence,
         )
     release_gate = read_release_gate_decision_evidence(release_gate_verdict)
+    if brain_intent == "branch_complete_switch":
+        if (
+            release_gate.verdict is None
+            or release_gate.verdict.status not in {"pass", "not_applicable"}
+        ):
+            matched_rule = (
+                "runtime_gate_missing"
+                if not _release_gate_snapshot_has_gate_evidence(release_gate)
+                else "release_gate_degraded"
+            )
+            degrade_reason = _release_gate_snapshot_reason(
+                release_gate,
+                fallback="release_gate_missing",
+            )
+            return build_canonical_decision_record(
+                persisted_record=persisted_record,
+                decision_result=DECISION_BLOCK_AND_ALERT,
+                brain_intent=brain_intent,
+                risk_class=RISK_CLASS_HARD_BLOCK,
+                action_ref=action_ref,
+                matched_policy_rules=[matched_rule],
+                decision_reason="branch switch closeout lacks authoritative runtime gate evidence",
+                why_not_escalated=None,
+                why_escalated=f"release gate verdict is not executable: {degrade_reason}",
+                uncertainty_reasons=[degrade_reason],
+                policy_version=policy_version,
+                trigger=trigger,
+                extra_evidence=extra_evidence,
+            )
+        return None
     if not _release_gate_snapshot_is_pass(release_gate):
         matched_rule = (
             "runtime_gate_missing"

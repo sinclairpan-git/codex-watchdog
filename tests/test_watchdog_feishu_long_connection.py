@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -35,7 +37,11 @@ class _IngressAClient:
         return {"success": True, "data": dict(task)}
 
     def get_envelope_by_thread(self, thread_id: str) -> dict[str, object]:
-        task = next(task for task in self._tasks if task["thread_id"] == thread_id)
+        task = next(
+            task
+            for task in self._tasks
+            if task["thread_id"] == thread_id or task.get("native_thread_id") == thread_id
+        )
         return {"success": True, "data": dict(task)}
 
     def list_approvals(self, **_: object) -> list[dict[str, object]]:
@@ -160,6 +166,23 @@ def test_feishu_long_connection_gateway_routes_message_event(tmp_path: Path) -> 
     assert result["chat_id"] == "oc_dm_chat_1"
     assert result["sender_open_id"] == "ou_actor_1"
     assert app.state.a_client.pause_calls == ["repo-a"]
+
+
+def test_feishu_long_connection_gateway_import_boundary_suppresses_sdk_deprecation_warnings(
+    tmp_path: Path,
+) -> None:
+    for module_name in list(sys.modules):
+        if module_name == "lark_oapi" or module_name.startswith("lark_oapi.") or module_name == "websockets" or module_name.startswith("websockets."):
+            sys.modules.pop(module_name, None)
+
+    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[_task("repo-a")]))
+    gateway = FeishuLongConnectionGateway.from_app(app)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        result = gateway.handle_message_event(_message_event("repo:repo-a pause"))
+
+    assert result["accepted"] is True
 
 
 def test_feishu_long_connection_gateway_can_bootstrap_goal_contract(tmp_path: Path) -> None:

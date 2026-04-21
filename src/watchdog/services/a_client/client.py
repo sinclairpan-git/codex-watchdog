@@ -77,6 +77,24 @@ class AControlAgentClient:
                 raise RuntimeError("invalid_envelope_shape")
             return [dict(task) for task in tasks if isinstance(task, dict)]
 
+    def register_native_thread(self, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/native-threads"
+        with httpx.Client(**self._client_kwargs()) as client:
+            try:
+                resp = client.post(url, headers=self._auth_headers(), json=payload)
+                resp.raise_for_status()
+            except httpx.RequestError as exc:
+                raise exc
+            except httpx.HTTPError as exc:
+                raise RuntimeError("register_native_thread_http_error") from exc
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise RuntimeError("invalid_json_from_a_agent") from exc
+            if isinstance(body, dict):
+                return body
+            raise RuntimeError("invalid_envelope_shape")
+
     def list_approvals(
         self,
         *,
@@ -149,14 +167,18 @@ class AControlAgentClient:
         project_id: str,
         *,
         reason: str,
+        continuation_packet: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/handoff"
+        payload: dict[str, Any] = {"reason": reason}
+        if continuation_packet is not None:
+            payload["continuation_packet"] = continuation_packet
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(
                     url,
                     headers=self._auth_headers(),
-                    json={"reason": reason},
+                    json=payload,
                 )
                 resp.raise_for_status()
             except httpx.RequestError as exc:
@@ -199,12 +221,15 @@ class AControlAgentClient:
         *,
         mode: str,
         handoff_summary: str,
+        continuation_packet: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/resume"
-        payload = {
+        payload: dict[str, Any] = {
             "mode": mode,
             "handoff_summary": handoff_summary,
         }
+        if continuation_packet is not None:
+            payload["continuation_packet"] = continuation_packet
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(url, headers=self._auth_headers(), json=payload)

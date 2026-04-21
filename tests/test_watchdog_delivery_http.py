@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
 
+from _polling import wait_until
 from watchdog.main import create_app
 from watchdog.services.delivery.envelopes import build_envelopes_for_decision
 from watchdog.services.delivery.http_client import (
@@ -352,7 +352,10 @@ def test_background_delivery_worker_drains_pending_outbox_records(
     app.state.delivery_worker._delivery_client = _DeliveredClient()
 
     with TestClient(app):
-        time.sleep(0.05)
+        assert wait_until(
+            lambda: calls == [record.envelope_id for record in records],
+            timeout_s=0.5,
+        )
 
     delivered = [
         app.state.delivery_outbox_store.get_delivery_record(record.envelope_id) for record in records

@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import warnings
+from contextlib import contextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -17,6 +19,22 @@ from watchdog.services.feishu_ingress.service import (
 from watchdog.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _suppress_lark_oapi_import_warnings():
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"websockets\.InvalidStatusCode is deprecated",
+            category=DeprecationWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r"websockets\.legacy is deprecated;.*",
+            category=DeprecationWarning,
+        )
+        yield
 
 
 class FeishuLongConnectionConfigError(RuntimeError):
@@ -152,7 +170,8 @@ class FeishuLongConnectionGateway:
     @staticmethod
     def _sdk_payload_to_mapping(payload: object) -> dict[str, Any]:
         try:
-            from lark_oapi.core.json import JSON
+            with _suppress_lark_oapi_import_warnings():
+                from lark_oapi.core.json import JSON
         except ImportError as exc:
             raise FeishuLongConnectionConfigError(
                 "lark-oapi is required for Feishu long-connection mode"
@@ -211,7 +230,8 @@ class FeishuLongConnectionRuntime:
         self.validate_configuration()
         dispatcher = self._build_dispatcher()
         try:
-            import lark_oapi as lark
+            with _suppress_lark_oapi_import_warnings():
+                import lark_oapi as lark
         except ImportError as exc:
             raise FeishuLongConnectionConfigError(
                 "lark-oapi is required for Feishu long-connection mode"
@@ -232,7 +252,8 @@ class FeishuLongConnectionRuntime:
 
     def _build_dispatcher(self):
         try:
-            import lark_oapi as lark
+            with _suppress_lark_oapi_import_warnings():
+                import lark_oapi as lark
         except ImportError as exc:
             raise FeishuLongConnectionConfigError(
                 "lark-oapi is required for Feishu long-connection mode"
@@ -279,9 +300,10 @@ class FeishuLongConnectionRuntime:
 
     def _handle_card_action_callback(self, payload: object):
         try:
-            from lark_oapi.event.callback.model.p2_card_action_trigger import (
-                P2CardActionTriggerResponse,
-            )
+            with _suppress_lark_oapi_import_warnings():
+                from lark_oapi.event.callback.model.p2_card_action_trigger import (
+                    P2CardActionTriggerResponse,
+                )
         except ImportError as exc:
             raise FeishuLongConnectionConfigError(
                 "lark-oapi is required for Feishu long-connection mode"
@@ -290,9 +312,10 @@ class FeishuLongConnectionRuntime:
 
     def _handle_url_preview_callback(self, payload: object):
         try:
-            from lark_oapi.event.callback.model.p2_url_preview_get import (
-                P2URLPreviewGetResponse,
-            )
+            with _suppress_lark_oapi_import_warnings():
+                from lark_oapi.event.callback.model.p2_url_preview_get import (
+                    P2URLPreviewGetResponse,
+                )
         except ImportError as exc:
             raise FeishuLongConnectionConfigError(
                 "lark-oapi is required for Feishu long-connection mode"

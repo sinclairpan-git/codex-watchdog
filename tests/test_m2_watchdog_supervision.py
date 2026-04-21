@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -146,3 +147,37 @@ def test_background_supervision_scans_running_and_waiting_threads(tmp_path) -> N
             pass
     called_threads = [call.args[2] for call in steer_mock.call_args_list]
     assert called_threads == ["thr_run", "thr_wait"]
+
+
+def test_background_supervision_prefers_explicit_native_thread_id(tmp_path: Path) -> None:
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        a_client=FakeAClient(
+            tasks=[
+                {
+                    "project_id": "proj-a",
+                    "thread_id": "session:proj-a",
+                    "native_thread_id": "thr_run",
+                    "status": "running",
+                    "phase": "coding",
+                    "cwd": "",
+                    "last_progress_at": old,
+                    "stuck_level": 0,
+                }
+            ]
+        ),
+        start_background_workers=True,
+    )
+    with patch("watchdog.api.supervision.post_steer_thread") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"status": "running"}}
+        with TestClient(app):
+            pass
+
+    called_threads = [call.args[2] for call in steer_mock.call_args_list]
+    assert called_threads == ["thr_run"]

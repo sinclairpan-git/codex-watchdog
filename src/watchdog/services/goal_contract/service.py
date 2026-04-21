@@ -122,6 +122,8 @@ class GoalContractService:
         expected_version: str,
         current: GoalContractSnapshot | None = None,
         current_phase_goal: str | None = None,
+        last_user_instruction: str | None = None,
+        last_summary: str | None = None,
         explicit_deliverables: list[str] | None = None,
         completion_signals: list[str] | None = None,
         non_goals: list[str] | None = None,
@@ -141,6 +143,12 @@ class GoalContractService:
             )
         next_non_goals = self._replace_if_provided(non_goals, fallback=current.non_goals)
         next_inference_boundary = _normalize_text(inference_boundary) or current.inference_boundary
+        next_last_user_instruction = _normalize_text(last_user_instruction) or str(
+            current.metadata.get("last_user_instruction") or ""
+        )
+        next_last_summary = _normalize_text(last_summary) or str(
+            current.metadata.get("last_summary") or ""
+        )
         revised = current.model_copy(
             update={
                 "version": _next_goal_contract_version(current.version),
@@ -166,6 +174,11 @@ class GoalContractService:
                 "active_goal": _normalize_text(active_goal) or current.active_goal,
                 "phase": _normalize_text(phase) or current.phase,
                 "stage": _normalize_text(stage) or current.stage,
+                "metadata": {
+                    **current.metadata,
+                    "last_user_instruction": next_last_user_instruction,
+                    "last_summary": next_last_summary,
+                },
                 "provenance": self._merge_revision_provenance(
                     current.provenance,
                     explicit_deliverables=explicit_deliverables,
@@ -195,6 +208,7 @@ class GoalContractService:
         project_id: str,
         parent_session_id: str,
         child_session_id: str,
+        child_native_thread_id: str | None = None,
         expected_version: str | None = None,
         recovery_transaction_id: str | None = None,
         source_packet_id: str | None = None,
@@ -225,6 +239,12 @@ class GoalContractService:
             related_ids={
                 "goal_contract_version": adopted.version,
                 "parent_session_id": parent_session_id,
+                "child_session_id": child_session_id,
+                **(
+                    {"native_thread_id": child_native_thread_id}
+                    if child_native_thread_id is not None
+                    else {}
+                ),
                 **(
                     {"recovery_transaction_id": recovery_transaction_id}
                     if recovery_transaction_id is not None
@@ -238,6 +258,8 @@ class GoalContractService:
             },
             payload_extra={
                 "parent_session_id": parent_session_id,
+                "child_session_id": child_session_id,
+                "native_thread_id": child_native_thread_id,
                 "recovery_transaction_id": recovery_transaction_id,
                 "source_packet_id": source_packet_id,
             },

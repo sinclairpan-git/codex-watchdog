@@ -343,6 +343,54 @@ def test_session_directory_contract_extension_is_stable() -> None:
     assert payload["progresses"][0]["recovery_outcome"] == "same_thread_resume"
 
 
+def test_session_directory_contract_extension_accepts_current_child_session_shape() -> None:
+    session = SessionProjection(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        session_state=SessionState.ACTIVE,
+        activity_phase="editing_source",
+        attention_state=AttentionState.NORMAL,
+        headline="editing files",
+        pending_approval_count=0,
+        available_intents=["get_session", "continue_session"],
+    )
+    progress = TaskProgressView(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        activity_phase="editing_source",
+        summary="editing files",
+        files_touched=["src/example.py"],
+        context_pressure="low",
+        stuck_level=0,
+        primary_fact_codes=[],
+        blocker_fact_codes=[],
+        last_progress_at="2026-04-05T05:20:00Z",
+        recovery_outcome="new_child_session",
+        recovery_status="completed",
+        recovery_updated_at="2026-04-05T05:21:00Z",
+        recovery_child_session_id="session:repo-a:thr_child_v1",
+    )
+    reply = ReplyModel(
+        reply_kind=ReplyKind.SESSION,
+        reply_code=ReplyCode.SESSION_DIRECTORY,
+        intent_code="list_sessions",
+        message=(
+            "多项目进展（1）\n"
+            "- repo-a | editing_source | editing files | 上下文=low | 恢复=新子会话 repo-a:thr_child_v1"
+        ),
+        sessions=[session],
+        progresses=[progress],
+    )
+
+    payload = reply.model_dump(mode="json")
+
+    assert payload["progresses"][0]["recovery_outcome"] == "new_child_session"
+    assert payload["progresses"][0]["recovery_child_session_id"] == "session:repo-a:thr_child_v1"
+    assert "repo-a:thr_child_v1" in payload["message"]
+
+
 def test_native_thread_resolution_reuses_session_projection_reply_contract() -> None:
     session = SessionProjection(
         project_id="repo-a",
@@ -355,12 +403,26 @@ def test_native_thread_resolution_reuses_session_projection_reply_contract() -> 
         pending_approval_count=0,
         available_intents=["get_session", "continue_session"],
     )
+    progress = TaskProgressView(
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        activity_phase="editing_source",
+        summary="editing files",
+        files_touched=["src/example.py"],
+        context_pressure="low",
+        stuck_level=0,
+        primary_fact_codes=[],
+        blocker_fact_codes=[],
+        last_progress_at="2026-04-05T05:20:00Z",
+    )
     reply = ReplyModel(
         reply_kind=ReplyKind.SESSION,
         reply_code=ReplyCode.SESSION_PROJECTION,
         intent_code="get_session_by_native_thread",
         message="editing files",
         session=session,
+        progress=progress,
     )
 
     payload = reply.model_dump(mode="json")
@@ -369,6 +431,8 @@ def test_native_thread_resolution_reuses_session_projection_reply_contract() -> 
     assert payload["reply_code"] == "session_projection"
     assert payload["intent_code"] == "get_session_by_native_thread"
     assert payload["session"]["native_thread_id"] == "thr_native_1"
+    assert payload["progress"]["project_id"] == "repo-a"
+    assert payload["progress"]["native_thread_id"] == "thr_native_1"
 
 
 def test_workspace_activity_contract_extension_is_stable() -> None:

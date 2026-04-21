@@ -10,6 +10,7 @@ class _FutureWorkerModel(BaseModel):
 class FutureWorkerExecutionRequest(_FutureWorkerModel):
     project_id: str = Field(min_length=1)
     parent_session_id: str = Field(min_length=1)
+    parent_native_thread_id: str | None = None
     worker_task_ref: str = Field(min_length=1)
     decision_trace_ref: str = Field(min_length=1)
     goal_contract_version: str = Field(min_length=1)

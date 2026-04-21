@@ -38,7 +38,11 @@ def _memory_body(*, active_goal: str = "补齐 release gate") -> dict[str, objec
     }
 
 
-def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
+def _remote_transport(
+    *,
+    memory_enabled: bool = False,
+    use_current_child_session_shape: bool = False,
+) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
@@ -75,7 +79,12 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
                         "message": (
                             "多项目进展（2）\n"
                             "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
-                            "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+                            "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 "
+                            + (
+                                "repo-b:thr_child_v1"
+                                if use_current_child_session_shape
+                                else "repo-b:child-v1"
+                            )
                         ),
                         "sessions": [
                             {"project_id": "repo-a"},
@@ -95,7 +104,11 @@ def _remote_transport(*, memory_enabled: bool = False) -> httpx.MockTransport:
                                 "summary": "waiting for approval",
                                 "context_pressure": "low",
                                 "recovery_outcome": "new_child_session",
-                                "recovery_child_session_id": "session:repo-b:child-v1",
+                                "recovery_child_session_id": (
+                                    "session:repo-b:thr_child_v1"
+                                    if use_current_child_session_shape
+                                    else "session:repo-b:child-v1"
+                                ),
                             },
                         ],
                     },
@@ -326,6 +339,93 @@ def test_feishu_discovery_check_uses_documented_default_command_text(tmp_path: P
     assert results[0].check_name == "feishu-discovery"
     assert results[0].status == "passed"
     assert results[0].evidence["command_text"] == "项目列表"
+
+
+def test_feishu_discovery_check_accepts_current_child_session_id_shape(tmp_path: Path) -> None:
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+        feishu_discovery_expected_project_ids=("repo-a", "repo-b"),
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-discovery",),
+        remote_transport=_remote_transport(use_current_child_session_shape=True),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-discovery"
+    assert results[0].status == "passed"
+    assert results[0].evidence["progress_project_ids"] == ["repo-a", "repo-b"]
+    assert "repo-b:thr_child_v1" in results[0].evidence["message"]
+
+
+def test_feishu_discovery_check_fails_when_message_and_progress_child_session_disagree(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        content = json.loads(payload["event"]["message"]["content"])
+        assert content["text"] == "项目列表"
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "event_type": "command_request",
+                "data": {
+                    "intent_code": "list_sessions",
+                    "reply_code": "session_directory",
+                    "message": (
+                        "多项目进展（2）\n"
+                        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
+                        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=新子会话 repo-b:child-v1"
+                    ),
+                    "sessions": [
+                        {"project_id": "repo-a"},
+                        {"project_id": "repo-b"},
+                    ],
+                    "progresses": [
+                        {
+                            "project_id": "repo-a",
+                            "activity_phase": "editing_source",
+                            "summary": "editing files",
+                            "context_pressure": "low",
+                            "recovery_outcome": "same_thread_resume",
+                        },
+                        {
+                            "project_id": "repo-b",
+                            "activity_phase": "approval",
+                            "summary": "waiting for approval",
+                            "context_pressure": "low",
+                            "recovery_outcome": "new_child_session",
+                            "recovery_child_session_id": "session:repo-b:thr_child_v1",
+                        },
+                    ],
+                },
+            },
+        )
+
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+        feishu_discovery_expected_project_ids=("repo-a", "repo-b"),
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-discovery",),
+        remote_transport=httpx.MockTransport(handler),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-discovery"
+    assert results[0].status == "failed"
+    assert results[0].reason == "contract_mismatch"
 
 
 def test_feishu_discovery_check_skips_when_expected_projects_not_configured(tmp_path: Path) -> None:

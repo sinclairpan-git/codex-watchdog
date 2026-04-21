@@ -46,6 +46,7 @@ from watchdog.services.session_spine.events import (
     iter_session_events as iter_projected_session_events,
     list_session_events as list_projected_session_events,
 )
+from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.receipts import lookup_action_receipt
 from watchdog.services.session_spine.service import (
     SessionSpineUpstreamError,
@@ -76,6 +77,9 @@ class OpenClawAdapter:
         data_dir = Path(self._settings.data_dir)
         self._session_service = SessionService.from_data_dir(data_dir)
         self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
+        self._resident_orchestration_state_store = ResidentOrchestrationStateStore(
+            data_dir / "resident_orchestration_state.json"
+        )
         self._approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
         self._decision_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
         self._resident_expert_runtime_service = ResidentExpertRuntimeService.from_data_dir(
@@ -122,6 +126,9 @@ class OpenClawAdapter:
                         store=self._session_spine_store,
                         approval_store=self._approval_store,
                         decision_store=self._decision_store,
+                        receipt_store=self._receipt_store,
+                        orchestration_state_store=self._resident_orchestration_state_store,
+                        dispatch_cooldown_seconds=self._settings.auto_continue_cooldown_seconds,
                         resident_expert_runtime_service=self._resident_expert_runtime_service,
                     )
                     return build_session_directory_reply(bundle)
@@ -148,12 +155,19 @@ class OpenClawAdapter:
                         store=self._session_spine_store,
                         approval_store=self._approval_store,
                         decision_store=self._decision_store,
+                        receipt_store=self._receipt_store,
+                        orchestration_state_store=self._resident_orchestration_state_store,
+                        dispatch_cooldown_seconds=self._settings.auto_continue_cooldown_seconds,
                     )
                     return build_session_reply(bundle, intent_code=intent_code)
                 if not project_id:
                     return build_action_not_available_reply(intent_code, "project_id is required")
                 if intent_code == "list_session_events":
-                    events = list_projected_session_events(self._client, project_id)
+                    events = list_projected_session_events(
+                        self._client,
+                        project_id,
+                        session_service=self._session_service,
+                    )
                     return build_session_event_snapshot_reply(events)
                 if intent_code == "get_workspace_activity":
                     try:
@@ -176,6 +190,9 @@ class OpenClawAdapter:
                     store=self._session_spine_store,
                     approval_store=self._approval_store,
                     decision_store=self._decision_store,
+                    receipt_store=self._receipt_store,
+                    orchestration_state_store=self._resident_orchestration_state_store,
+                    dispatch_cooldown_seconds=self._settings.auto_continue_cooldown_seconds,
                 )
                 if intent_code == "get_session":
                     return build_session_reply(bundle)
@@ -212,6 +229,10 @@ class OpenClawAdapter:
                 settings=self._settings,
                 client=self._client,
                 receipt_store=self._receipt_store,
+                session_service=self._session_service,
+                store=self._session_spine_store,
+                approval_store=self._approval_store,
+                decision_store=self._decision_store,
             )
             return build_action_reply(intent_code, result)
         except SessionSpineUpstreamError as exc:
@@ -270,7 +291,15 @@ class OpenClawAdapter:
         return reply
 
     def list_session_events(self, project_id: str) -> list[SessionEvent]:
-        return list_projected_session_events(self._client, project_id)
+        return list_projected_session_events(
+            self._client,
+            project_id,
+            session_service=self._session_service,
+        )
 
     def iter_session_events(self, project_id: str) -> Iterator[SessionEvent]:
-        yield from iter_projected_session_events(self._client, project_id)
+        yield from iter_projected_session_events(
+            self._client,
+            project_id,
+            session_service=self._session_service,
+        )

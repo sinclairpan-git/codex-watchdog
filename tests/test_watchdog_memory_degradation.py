@@ -179,7 +179,14 @@ def test_recovery_execution_records_memory_unavailable_degraded_and_continues(
                 },
             }
 
-        def trigger_handoff(self, project_id: str, *, reason: str) -> dict[str, object]:
+        def trigger_handoff(
+            self,
+            project_id: str,
+            *,
+            reason: str,
+            continuation_packet: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            _ = continuation_packet
             return {
                 "success": True,
                 "data": {
@@ -188,13 +195,26 @@ def test_recovery_execution_records_memory_unavailable_degraded_and_continues(
                 },
             }
 
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
         def trigger_resume(
             self,
             project_id: str,
             *,
             mode: str,
             handoff_summary: str,
+            continuation_packet: dict[str, object] | None = None,
         ) -> dict[str, object]:
+            _ = continuation_packet
             return {
                 "success": True,
                 "data": {"project_id": project_id, "status": "running", "mode": mode},

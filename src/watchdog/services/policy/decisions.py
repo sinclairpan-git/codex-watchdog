@@ -44,6 +44,7 @@ def brain_intent_to_runtime_disposition(brain_intent: str) -> str:
         "propose_execute": "auto_execute_and_notify",
         "require_approval": "require_user_decision",
         "propose_recovery": "auto_execute_and_notify",
+        "branch_complete_switch": "auto_execute_and_notify",
         "candidate_closure": "require_user_decision",
         "suggest_only": "block_and_alert",
         "observe_only": "block_and_alert",
@@ -129,6 +130,16 @@ class CanonicalDecisionRecord(BaseModel):
     operator_notes: list[str] = Field(default_factory=list)
     evidence: dict[str, Any] = Field(default_factory=dict)
 
+    @property
+    def effective_native_thread_id(self) -> str | None:
+        evidence = self.evidence if isinstance(self.evidence, dict) else {}
+        target = evidence.get("target") if isinstance(evidence.get("target"), dict) else {}
+        for candidate in (self.native_thread_id, target.get("native_thread_id")):
+            normalized = str(candidate or "").strip()
+            if normalized:
+                return normalized
+        return None
+
 
 def build_canonical_decision_record(
     *,
@@ -194,7 +205,7 @@ def build_canonical_decision_record(
             "session_id": session_id,
             "project_id": persisted_record.project_id,
             "thread_id": persisted_record.thread_id,
-            "native_thread_id": persisted_record.native_thread_id,
+            "native_thread_id": persisted_record.effective_native_thread_id,
             "approval_id": approval_id,
         },
         "policy_version": policy_version,
@@ -211,7 +222,7 @@ def build_canonical_decision_record(
         session_id=session_id,
         project_id=persisted_record.project_id,
         thread_id=persisted_record.thread_id,
-        native_thread_id=persisted_record.native_thread_id,
+        native_thread_id=persisted_record.effective_native_thread_id,
         approval_id=approval_id,
         action_ref=action_ref,
         trigger=trigger,

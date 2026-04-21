@@ -53,8 +53,8 @@ MANAGED_AGENT_ACTION_BOUNDARY = {
     },
     "post_operator_guidance": {
         "capability": "operator_guidance",
-        "allowed_brain_intents": ("candidate_closure",),
-        "auto_execute_allowed_intents": (),
+        "allowed_brain_intents": ("candidate_closure", "branch_complete_switch"),
+        "auto_execute_allowed_intents": ("branch_complete_switch",),
     },
 }
 
