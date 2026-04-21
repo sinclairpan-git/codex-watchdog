@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from _polling import wait_until, wait_until_async
-from watchdog.main import _run_delivery_loop, create_app
+from watchdog.main import _run_delivery_loop, _run_session_spine_refresh_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
 from watchdog.services.brain.models import DecisionIntent, DecisionTrace
@@ -6586,6 +6586,60 @@ async def test_delivery_loop_runs_drain_outside_event_loop(
             await delivery_loop_task
 
     assert time.perf_counter() - started < 0.03
+
+
+@pytest.mark.asyncio
+async def test_session_spine_refresh_loop_reconciles_approvals_before_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    calls: list[str] = []
+
+    async def immediate_sleep(_seconds: float) -> None:
+        return None
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        calls.append(step_name)
+        if step_name == "session_spine_runtime.refresh_all":
+            raise asyncio.CancelledError
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    monkeypatch.setattr("watchdog.main.asyncio.sleep", immediate_sleep)
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _run_session_spine_refresh_loop(app)
+
+    assert calls == [
+        "canonical_approval_store.reconcile_pending_records_against_decisions",
+        "session_spine_runtime.refresh_all",
+    ]
 
 
 @pytest.mark.asyncio
