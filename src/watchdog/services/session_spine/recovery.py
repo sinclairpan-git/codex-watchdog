@@ -789,11 +789,10 @@ def _record_recovery_truth(
         task=task,
         settings=settings,
     )
-    goal_contract_version = str(
-        outcome.handoff.get("goal_contract_version")
-        or (outcome.resume or {}).get("goal_contract_version")
-        or "goal-contract:unknown"
-    ).strip() or "goal-contract:unknown"
+    goal_contract_version = _resolve_recovery_goal_contract_version(
+        handoff=outcome.handoff,
+        resume=outcome.resume,
+    )
     source_packet_id = str(
         outcome.handoff.get("source_packet_id")
         or (outcome.resume or {}).get("source_packet_id")
@@ -850,6 +849,29 @@ def _record_recovery_truth(
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
     )
+
+
+def _resolve_recovery_goal_contract_version(
+    *,
+    handoff: dict[str, Any],
+    resume: dict[str, Any] | None,
+) -> str:
+    for payload in (handoff, resume or {}):
+        if not isinstance(payload, dict):
+            continue
+        top_level = str(payload.get("goal_contract_version") or "").strip()
+        if top_level:
+            return top_level
+        continuation_packet = payload.get("continuation_packet")
+        if not isinstance(continuation_packet, dict):
+            continue
+        source_refs = continuation_packet.get("source_refs")
+        if not isinstance(source_refs, dict):
+            continue
+        packet_goal_contract_version = str(source_refs.get("goal_contract_version") or "").strip()
+        if packet_goal_contract_version:
+            return packet_goal_contract_version
+    return "goal-contract:unknown"
 
 
 def _supersede_stale_interactions_for_recovery(
