@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import httpx
+from pydantic import ValidationError
 
 from watchdog.services.delivery.envelopes import (
     ApprovalEnvelope,
@@ -60,7 +61,15 @@ class FeishuAppDeliveryClient:
                 accepted=False,
                 failure_code="unsupported_envelope_type",
             )
-        envelope = model.model_validate(payload)
+        try:
+            envelope = model.model_validate(payload)
+        except ValidationError:
+            return DeliveryAttemptResult(
+                envelope_id=record.envelope_id,
+                delivery_status="delivery_failed",
+                accepted=False,
+                failure_code="invalid_envelope_payload",
+            )
         return self.deliver_envelope(envelope)
 
     def deliver_envelope(
