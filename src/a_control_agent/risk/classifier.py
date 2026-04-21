@@ -106,8 +106,6 @@ def classify_risk(command: str) -> str:
     permission_risk = _classify_permissions_request(c)
     if permission_risk is not None:
         return permission_risk
-    if _is_safe_local_pytest_command(c):
-        return "L0"
     parts = c.split()
     first_token = parts[0] if parts else ""
     executable = first_token.rsplit("/", 1)[-1]
@@ -226,6 +224,8 @@ def classify_risk(command: str) -> str:
         or "`" in c
     ):
         return "L2"
+    if _is_safe_local_pytest_command(c):
+        return "L0"
     # L1：工作区内可逆 git 操作
     if executable == "git" and len(parts) >= 3 and parts[1] == "checkout" and parts[2] == "-b":
         return "L1"
