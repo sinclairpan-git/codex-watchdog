@@ -297,13 +297,12 @@ class FeishuControlService:
         session_id = str(request.session_id or "").strip() or None
         approval_response_action = self._approval_response_action_from_text(command_text)
         if approval_response_action is not None:
-            approval = self._find_latest_pending_approval(
+            approval = self._resolve_pending_approval_for_text_reply(
+                request=request,
                 project_id=project_id,
                 session_id=session_id,
                 native_thread_id=native_thread_id,
             )
-            if approval is None:
-                raise FeishuControlError("no pending approval matches this reply")
             return self.handle_approval_response(
                 request.model_copy(
                     update={
@@ -353,7 +352,7 @@ class FeishuControlService:
         created_at = _parse_timestamp(record.created_at)
         return (_fact_snapshot_order(record.fact_snapshot_version), created_at, record.approval_id)
 
-    def _find_latest_pending_approval(
+    def _pending_approval_candidates(
         self,
         *,
         project_id: str | None,
@@ -380,9 +379,111 @@ class FeishuControlService:
             ):
                 continue
             candidates.append(record)
+        return sorted(candidates, key=self._approval_recency_key, reverse=True)
+
+    @staticmethod
+    def _approval_reply_binding_error() -> FeishuControlError:
+        return FeishuControlError("approval reply is ambiguous; reply to a specific pending approval")
+
+    def _resolve_pending_approval_for_text_reply(
+        self,
+        *,
+        request: FeishuControlRequest,
+        project_id: str | None,
+        session_id: str | None,
+        native_thread_id: str | None,
+    ) -> CanonicalApprovalRecord:
+        candidates = self._pending_approval_candidates(
+            project_id=project_id,
+            session_id=session_id,
+            native_thread_id=native_thread_id,
+        )
+        if not candidates:
+            raise FeishuControlError("no pending approval matches this reply")
+
+        bound_matches: list[CanonicalApprovalRecord] = []
+        unbound_candidates: list[CanonicalApprovalRecord] = []
+        has_delivery_bound_candidates = False
+        for approval in candidates:
+            binding = self._latest_delivery_binding_for_envelope(approval.envelope_id)
+            if binding is None:
+                unbound_candidates.append(approval)
+                continue
+            has_delivery_bound_candidates = True
+            if self._delivery_binding_matches_request(binding=binding, request=request):
+                bound_matches.append(approval)
+
+        if len(bound_matches) == 1:
+            return bound_matches[0]
+        if len(bound_matches) > 1:
+            raise self._approval_reply_binding_error()
+        if has_delivery_bound_candidates:
+            raise FeishuControlError("no pending approval matches this reply")
+        if len(unbound_candidates) == 1:
+            return unbound_candidates[0]
+        raise self._approval_reply_binding_error()
+
+    def _latest_delivery_binding_for_envelope(
+        self,
+        envelope_id: str,
+    ) -> dict[str, str] | None:
+        candidates: list[DeliveryOutboxRecord] = []
+        for record in self._delivery_outbox_store.list_records():
+            if record.envelope_id != envelope_id:
+                continue
+            if record.delivery_status in {"superseded", "delivery_failed"}:
+                continue
+            payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+            actor_id = str(payload.get("actor_id") or "").strip()
+            receive_id = str(payload.get("receive_id") or "").strip()
+            receive_id_type = str(payload.get("receive_id_type") or "").strip()
+            if not actor_id and not (receive_id and receive_id_type):
+                continue
+            candidates.append(record)
         if not candidates:
             return None
-        return max(candidates, key=self._approval_recency_key)
+        latest = max(
+            candidates,
+            key=lambda record: (
+                record.updated_at or record.created_at,
+                record.outbox_seq,
+            ),
+        )
+        payload = latest.envelope_payload if isinstance(latest.envelope_payload, dict) else {}
+        binding = {
+            "actor_id": str(payload.get("actor_id") or "").strip(),
+            "receive_id": str(payload.get("receive_id") or "").strip(),
+            "receive_id_type": str(payload.get("receive_id_type") or "").strip(),
+        }
+        if not binding["actor_id"] and not (
+            binding["receive_id"] and binding["receive_id_type"]
+        ):
+            return None
+        return binding
+
+    @staticmethod
+    def _delivery_binding_matches_request(
+        *,
+        binding: dict[str, str],
+        request: FeishuControlRequest,
+    ) -> bool:
+        request_actor_id = str(request.actor_id or "").strip()
+        if binding.get("actor_id") and binding["actor_id"] != request_actor_id:
+            return False
+        request_receive_id = str(request.receive_id or "").strip()
+        request_receive_id_type = str(request.receive_id_type or "").strip()
+        if (
+            binding.get("receive_id")
+            and binding.get("receive_id_type")
+            and request_receive_id
+            and request_receive_id_type
+            and (
+                binding["receive_id"] != request_receive_id
+                or binding["receive_id_type"] != request_receive_id_type
+            )
+        ):
+            return False
+        return True
 
     @staticmethod
     def _goal_bootstrap_related_ids(request: FeishuControlRequest) -> dict[str, str]:
