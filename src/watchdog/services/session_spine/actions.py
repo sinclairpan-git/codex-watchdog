@@ -749,6 +749,10 @@ def _execute_resume_session(
     )
     handoff_summary = str(action.arguments.get("handoff_summary") or "")
     continuation_packet = action.arguments.get("continuation_packet")
+    if continuation_packet is not None and not isinstance(continuation_packet, dict):
+        raise SessionSpineUpstreamError(
+            {"code": "INVALID_ARGUMENT", "message": "continuation_packet must be an object"}
+        )
     hard_block = _continuation_hard_block_result(action, bundle=bundle)
     if hard_block is not None:
         _record_continuation_gate_for_action(
@@ -789,7 +793,7 @@ def _execute_resume_session(
             action.project_id,
             mode=mode,
             handoff_summary=handoff_summary,
-            continuation_packet=continuation_packet if isinstance(continuation_packet, dict) else None,
+            continuation_packet=continuation_packet,
         )
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         _invalidate_continuation_identity_for_action(
