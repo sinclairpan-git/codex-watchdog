@@ -262,7 +262,10 @@ class BrainDecisionService:
                 "completed",
                 "archived",
                 "close",
+                "closed",
             }:
+                if normalized == "close":
+                    return "closed"
                 return normalized
         for candidate in all_candidates:
             normalized = str(candidate or "").strip().lower()
