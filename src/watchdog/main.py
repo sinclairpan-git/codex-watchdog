@@ -309,6 +309,7 @@ def create_app(
                 _run_startup_orchestrator_once(app)
             )
             resident_orchestrator_task = asyncio.create_task(_run_resident_orchestrator_loop(app))
+            await startup_reconcile_task
             delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
             _run_background_step(
                 "supervision.run_background_supervision",
