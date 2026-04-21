@@ -372,8 +372,6 @@ class FeishuControlService:
         normalized_project_id = str(project_id or "").strip() or None
         normalized_session_id = str(session_id or "").strip() or None
         normalized_native_thread_id = str(native_thread_id or "").strip() or None
-        if normalized_project_id is None:
-            normalized_project_id = str(self._settings.default_project_id or "").strip() or None
         candidates: list[CanonicalApprovalRecord] = []
         for record in self._approval_store.list_records():
             if record.status != "pending":
