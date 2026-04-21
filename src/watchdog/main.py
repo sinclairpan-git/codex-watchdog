@@ -303,9 +303,9 @@ def create_app(
                 _drain_memory_ingest_queue,
                 app,
             )
+            await startup_reconcile_task
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
             memory_ingest_loop_task = asyncio.create_task(_run_memory_ingest_loop(app))
-            await startup_reconcile_task
             startup_orchestrator_task = asyncio.create_task(
                 _run_startup_orchestrator_once(app)
             )
