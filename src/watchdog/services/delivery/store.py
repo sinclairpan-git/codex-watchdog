@@ -242,6 +242,7 @@ class DeliveryOutboxStore:
                 updated = record.model_copy(
                     update={
                         "delivery_status": "pending",
+                        "delivery_attempt": 0,
                         "failure_code": None,
                         "next_retry_at": None,
                         "operator_notes": notes,

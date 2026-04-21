@@ -215,6 +215,47 @@ def test_execute_canonical_decision_is_idempotent_for_same_decision_record(
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
+def test_execute_registered_action_for_continue_preserves_injected_session_service(
+    tmp_path: Path,
+) -> None:
+    from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
+    from watchdog.contracts.session_spine.models import WatchdogActionResult
+    from watchdog.services.actions.executor import execute_registered_action_for_decision
+
+    session_service = object()
+    store = object()
+    approval_store = object()
+    decision_store = object()
+    with patch("watchdog.services.actions.executor.execute_watchdog_action") as execute_mock:
+        execute_mock.return_value = WatchdogActionResult(
+            action_code=ActionCode.CONTINUE_SESSION,
+            project_id="repo-a",
+            approval_id=None,
+            idempotency_key="idemp:test",
+            action_status=ActionStatus.COMPLETED,
+            effect=Effect.NOOP,
+            reply_code=ReplyCode.ACTION_RESULT,
+            message="ok",
+            facts=[],
+        )
+        execute_registered_action_for_decision(
+            _decision(action_ref="continue_session"),
+            settings=_settings(tmp_path),
+            client=FakeAClient(context_pressure="low"),
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+            store=store,
+            approval_store=approval_store,
+            decision_store=decision_store,
+        )
+
+    _, kwargs = execute_mock.call_args
+    assert kwargs["session_service"] is session_service
+    assert kwargs["store"] is store
+    assert kwargs["approval_store"] is approval_store
+    assert kwargs["decision_store"] is decision_store
+
+
 def test_execute_canonical_decision_is_atomic_under_concurrent_retries(
     tmp_path: Path,
 ) -> None:

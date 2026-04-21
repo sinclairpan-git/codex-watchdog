@@ -127,3 +127,30 @@ def test_delivery_outbox_store_returns_defensive_copies_from_cached_reads(tmp_pa
     assert reparsed is not None
     assert reparsed.delivery_status == "pending"
     assert reparsed.operator_notes == ["seed"]
+
+
+def test_delivery_outbox_store_requeue_transport_failures_resets_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    store.update_delivery_record(
+        _record(note="delivery_failed failure_code=transport_error attempts=3", attempt=3).model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "transport_error",
+                "next_retry_at": "2026-04-10T00:05:00Z",
+            }
+        )
+    )
+
+    requeued = store.requeue_transport_failures(
+        reason="manual_transport_recovered",
+        updated_at="2026-04-10T00:06:00Z",
+    )
+
+    assert len(requeued) == 1
+    assert requeued[0].delivery_status == "pending"
+    assert requeued[0].delivery_attempt == 0
+    reparsed = store.get_delivery_record("decision-envelope:test")
+    assert reparsed is not None
+    assert reparsed.delivery_attempt == 0

@@ -130,7 +130,7 @@ def test_bootstrap_openclaw_webhook_records_notification_requeue_event(tmp_path:
     retried = delivery_store.get_delivery_record(notification_record.envelope_id)
     assert retried is not None
     assert retried.delivery_status == "pending"
-    assert retried.delivery_attempt == 3
+    assert retried.delivery_attempt == 0
     assert retried.failure_code is None
     assert retried.operator_notes[-1] == (
         "delivery_requeued reason=openclaw_webhook_base_url_changed "
@@ -146,7 +146,7 @@ def test_bootstrap_openclaw_webhook_records_notification_requeue_event(tmp_path:
     assert events[0].payload["reason"] == "openclaw_webhook_base_url_changed"
     assert events[0].payload["failure_code"] == "transport_error"
     assert events[0].payload["delivery_status"] == "pending"
-    assert events[0].payload["delivery_attempt"] == 3
+    assert events[0].payload["delivery_attempt"] == 0
     assert events[0].related_ids["native_thread_id"] == "native:repo-a"
     assert events[0].related_ids["interaction_context_id"] == "ctx-bootstrap-1"
     assert events[0].related_ids["interaction_family_id"] == "family-bootstrap-1"
@@ -250,6 +250,7 @@ def test_bootstrap_openclaw_webhook_allows_repeated_notification_requeue_events(
 
     retried = delivery_store.get_delivery_record(notification_record.envelope_id)
     assert retried is not None
+    assert retried.delivery_attempt == 0
     delivery_store.update_delivery_record(
         retried.model_copy(
             update={
@@ -285,5 +286,5 @@ def test_bootstrap_openclaw_webhook_allows_repeated_notification_requeue_events(
         "notification_requeued",
         "notification_requeued",
     ]
-    assert [event.payload["delivery_attempt"] for event in events] == [3, 4]
+    assert [event.payload["delivery_attempt"] for event in events] == [0, 0]
     assert events[0].event_id != events[1].event_id

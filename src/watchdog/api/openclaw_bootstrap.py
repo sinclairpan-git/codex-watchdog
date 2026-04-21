@@ -62,7 +62,11 @@ def _record_notification_requeued(
     next_retry_at = record.next_retry_at
     if next_retry_at is not None:
         mirrored["next_retry_at"] = next_retry_at
-    retry_point = next_retry_at or f"attempt:{record.delivery_attempt}"
+    retry_point = next_retry_at or (
+        f"{record.updated_at or 'updated_at:unknown'}:"
+        f"{len(record.operator_notes)}:"
+        f"{record.delivery_attempt}"
+    )
     for field in (
         "event_id",
         "notification_kind",

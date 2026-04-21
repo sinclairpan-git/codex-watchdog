@@ -627,6 +627,89 @@ def test_perform_recovery_execution_superseded_interaction_event_uses_effective_
     assert superseded_events[0].related_ids["native_thread_id"] == "thr_native_legacy"
 
 
+def test_perform_recovery_execution_repeated_recovery_uses_unique_supersede_correlation_ids(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:ctx-recovery-repeat",
+            envelope_type="notification",
+            correlation_id="corr:family-recovery-repeat:ctx-recovery-repeat",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:ctx-recovery-repeat",
+            audit_ref="audit:ctx-recovery-repeat",
+            created_at="2026-04-14T03:10:00Z",
+            updated_at="2026-04-14T03:10:00Z",
+            outbox_seq=1,
+            delivery_status="delivered",
+            envelope_payload={
+                "interaction_context_id": "ctx-recovery-repeat",
+                "interaction_family_id": "family-recovery-repeat",
+                "actor_id": "user:alice",
+                "channel_kind": "dm",
+            },
+        )
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"goal_contract_version": "goal-v9"},
+        resume_data={"resume_outcome": "same_thread_resume"},
+    )
+
+    first = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+    second = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert first.action == "handoff_and_resume"
+    assert second.action == "handoff_and_resume"
+    superseded_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="interaction_context_superseded",
+    )
+    assert len(superseded_events) == 2
+    assert superseded_events[0].correlation_id != superseded_events[1].correlation_id
+
+
 def test_perform_recovery_execution_treats_stable_session_thread_resume_as_same_thread(
     tmp_path,
 ) -> None:

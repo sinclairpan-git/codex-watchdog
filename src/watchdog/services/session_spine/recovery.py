@@ -909,7 +909,9 @@ def _supersede_stale_interactions_for_recovery(
             event_type="interaction_context_superseded",
             project_id=record.project_id,
             session_id=record.session_id,
-            correlation_id=f"corr:recovery-interaction:{family_id}",
+            correlation_id=(
+                f"corr:recovery-interaction:{family_id}:{recovery_transaction_id}:{new_context_id}"
+            ),
             causation_id=recovery_transaction_id,
             related_ids={
                 "interaction_context_id": old_context_id,

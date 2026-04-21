@@ -235,6 +235,7 @@ def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) 
     )
     assert updated is not None
     assert updated.delivery_status == "pending"
+    assert updated.delivery_attempt == 0
     assert updated.failure_code is None
     assert updated.operator_notes[-1].startswith(
         "delivery_requeued reason=manual_transport_recovered"
@@ -331,7 +332,7 @@ def test_watchdog_ops_can_record_repeated_notification_requeue_events(tmp_path: 
         "notification_requeued",
         "notification_requeued",
     ]
-    assert [event.payload["delivery_attempt"] for event in events] == [3, 4]
+    assert [event.payload["delivery_attempt"] for event in events] == [0, 0]
     assert events[0].event_id != events[1].event_id
 
 
@@ -785,6 +786,69 @@ def test_watchdog_healthz_ignores_not_applicable_release_gate_verdict(tmp_path: 
     assert response.json()["status"] == "ok"
     assert response.json()["active_alerts"] == 0
     assert response.json()["release_gate_blockers"] == 0
+
+
+def test_watchdog_healthz_ignores_historical_release_gate_blocker_after_newer_pass(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    for decision_id, created_at, status in (
+        ("decision:healthz-release-gate-old", "2099-01-01T00:00:00Z", "degraded"),
+        ("decision:healthz-release-gate-new", "2099-01-01T00:10:00Z", "pass"),
+    ):
+        decision_store.put(
+            CanonicalDecisionRecord(
+                decision_id=decision_id,
+                decision_key=(
+                    f"session:repo-a|fact-v7|policy-v1|observe_only|"
+                    f"propose_execute|continue_session|{decision_id}"
+                ),
+                session_id="session:repo-a",
+                project_id="repo-a",
+                thread_id="session:repo-a",
+                native_thread_id="thr_native_1",
+                approval_id=None,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                runtime_disposition="observe_only",
+                decision_result="observe_only",
+                risk_class="runtime_gate",
+                decision_reason="release gate evaluated",
+                matched_policy_rules=[],
+                why_not_escalated=None,
+                why_escalated=None,
+                uncertainty_reasons=[],
+                policy_version="policy-v1",
+                fact_snapshot_version="fact-v7",
+                idempotency_key=f"idem:{decision_id}",
+                created_at=created_at,
+                operator_notes=[],
+                evidence={
+                    "release_gate_verdict": {
+                        "status": status,
+                        "degrade_reason": "report_expired" if status != "pass" else None,
+                        "report_id": f"report:{decision_id}",
+                        "report_hash": "sha256:report",
+                        "input_hash": "sha256:input",
+                        "decision_trace_ref": f"trace:{decision_id}",
+                        "approval_read_ref": "approval:none",
+                    }
+                },
+            )
+        )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["release_gate_blockers"] == 0
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=Settings(api_token="wt", data_dir=str(tmp_path)))
+    assert summary.release_gate_blockers == []
 
 
 def test_watchdog_metrics_exports_task_approval_and_recovery_totals(tmp_path: Path) -> None:

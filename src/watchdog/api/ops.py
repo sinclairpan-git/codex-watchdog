@@ -413,11 +413,22 @@ def _resident_expert_decision_audit_rows(
 
 
 def _release_gate_blockers(decisions) -> list[OpsReleaseGateBlocker]:
-    blockers: list[OpsReleaseGateBlocker] = []
+    latest_by_session: dict[tuple[str, str], tuple[datetime, Any, Any]] = {}
     for record in decisions:
         release_gate = read_release_gate_decision_evidence(
             record.evidence if isinstance(record.evidence, dict) else None
         )
+        verdict = release_gate.verdict
+        if verdict is None:
+            continue
+        key = (record.project_id, record.session_id)
+        created_at = _parse_iso8601(record.created_at) or datetime.min.replace(tzinfo=UTC)
+        current = latest_by_session.get(key)
+        if current is None or created_at >= current[0]:
+            latest_by_session[key] = (created_at, record, release_gate)
+
+    blockers: list[OpsReleaseGateBlocker] = []
+    for _, record, release_gate in latest_by_session.values():
         verdict = release_gate.verdict
         if verdict is None or verdict.status in {"pass", "not_applicable"}:
             continue
@@ -509,7 +520,11 @@ def _record_notification_requeued(
     next_retry_at = record.next_retry_at
     if next_retry_at is not None:
         mirrored["next_retry_at"] = next_retry_at
-    retry_point = next_retry_at or f"attempt:{record.delivery_attempt}"
+    retry_point = next_retry_at or (
+        f"{record.updated_at or 'updated_at:unknown'}:"
+        f"{len(record.operator_notes)}:"
+        f"{record.delivery_attempt}"
+    )
     for field in (
         "event_id",
         "notification_kind",
@@ -849,7 +864,7 @@ def build_ops_health_summary(
         if "mapping_incomplete" in list(row.get("uncertainty_reasons") or [])
     )
     runtime_gate_reason_counts: dict[str, int] = {}
-    release_gate_blockers = 0
+    latest_release_gate_by_session: dict[tuple[str, str], tuple[datetime, dict[str, Any], Any]] = {}
     resident_expert_stale = sum(
         1
         for view in ResidentExpertRuntimeService.from_data_dir(
@@ -872,8 +887,20 @@ def build_ops_health_summary(
             row.get("evidence") if isinstance(row.get("evidence"), dict) else None
         )
         verdict = release_gate.verdict
-        if verdict is not None and verdict.status not in {"pass", "not_applicable"}:
-            release_gate_blockers += 1
+        if verdict is not None:
+            key = (str(row.get("project_id") or ""), str(row.get("session_id") or ""))
+            created_at = _parse_iso8601(str(row.get("created_at") or "")) or datetime.min.replace(
+                tzinfo=UTC
+            )
+            current = latest_release_gate_by_session.get(key)
+            if current is None or created_at >= current[0]:
+                latest_release_gate_by_session[key] = (created_at, row, release_gate)
+    release_gate_blockers = sum(
+        1
+        for _, _, release_gate in latest_release_gate_by_session.values()
+        if release_gate.verdict is not None
+        and release_gate.verdict.status not in {"pass", "not_applicable"}
+    )
     recovery_failed = sum(
         1
         for _, row in receipt_rows
