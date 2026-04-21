@@ -7,6 +7,10 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.services.approvals.service import materialize_canonical_approval
+from watchdog.services.feishu_ingress.service import (
+    FeishuIngressNormalizationService,
+    FeishuMessageCallback,
+)
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.session_service import SessionService
@@ -1126,6 +1130,26 @@ def test_feishu_ingress_rejects_ambiguous_project_binding(tmp_path: Path) -> Non
 
     assert response.status_code == 400
     assert "project" in response.json()["detail"].lower()
+
+
+def test_feishu_ingress_allows_approval_reply_without_project_binding(tmp_path: Path) -> None:
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    ingress = FeishuIngressNormalizationService(
+        settings=_settings(tmp_path),
+        client=a_client,
+        session_spine_store=app.state.session_spine_store,
+    )
+
+    normalized = ingress.normalize_message_event(
+        FeishuMessageCallback.model_validate(_message_event("同意"))
+    )
+
+    assert normalized.event_type == "command_request"
+    assert normalized.command_text == "同意"
+    assert normalized.project_id is None
+    assert normalized.native_thread_id is None
+    assert normalized.session_id is None
 
 
 def test_feishu_ingress_does_not_auto_bind_only_completed_task(tmp_path: Path) -> None:
