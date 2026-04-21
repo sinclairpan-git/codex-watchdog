@@ -249,25 +249,20 @@ def test_feishu_long_connection_gateway_accepts_p2p_chat_entered_event(tmp_path:
     }
 
 
-def test_feishu_long_connection_gateway_rewrites_websocket_header_token(tmp_path: Path) -> None:
+def test_feishu_long_connection_gateway_rejects_unexpected_websocket_header_token(tmp_path: Path) -> None:
     app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[]))
     gateway = FeishuLongConnectionGateway.from_app(app)
 
-    result = gateway.handle_bot_p2p_chat_entered_event(
-        _p2p_entered_event()
-        | {
-            "header": {
-                **_p2p_entered_event()["header"],
-                "token": "unexpected-ws-token",
+    with pytest.raises(ValueError, match="invalid feishu verification token"):
+        gateway.handle_bot_p2p_chat_entered_event(
+            _p2p_entered_event()
+            | {
+                "header": {
+                    **_p2p_entered_event()["header"],
+                    "token": "unexpected-ws-token",
+                }
             }
-        }
-    )
-
-    assert result == {
-        "accepted": "true",
-        "chat_id": "oc_dm_chat_1",
-        "operator_open_id": "ou_actor_1",
-    }
+        )
 
 
 def test_feishu_long_connection_runtime_requires_credentials(tmp_path: Path) -> None:
