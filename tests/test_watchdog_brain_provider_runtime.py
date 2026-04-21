@@ -637,6 +637,42 @@ def test_brain_service_prefers_authoritative_project_state_over_resume_pack_stag
     assert intent.rationale == "project is not active for autonomous continuation"
 
 
+def test_brain_service_treats_closed_project_execution_state_as_non_active(
+    tmp_path: Path,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("provider should not be called for closed projects")
+
+    session_service = _session_service(tmp_path)
+    _bootstrap_goal_contract(session_service)
+    _seed_active_state(tmp_path)
+    (tmp_path / ".ai-sdlc" / "project" / "config" / "project-state.yaml").write_text(
+        "status: initialized\nproject_execution_state: closed\nnext_work_item_seq: 86\n",
+        encoding="utf-8",
+    )
+    resume_dir = tmp_path / ".ai-sdlc" / "state"
+    resume_dir.mkdir(parents=True, exist_ok=True)
+    (resume_dir / "resume-pack.yaml").write_text("current_stage: execute\n", encoding="utf-8")
+
+    service = BrainDecisionService(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        session_service=session_service,
+        repo_root=tmp_path,
+        provider_transport=httpx.MockTransport(handler),
+    )
+
+    intent = service.evaluate_session(record=_record())
+
+    assert intent.intent == "observe_only"
+    assert intent.rationale == "project is not active for autonomous continuation"
+
+
 def test_brain_service_blocks_provider_when_pending_approval_exists(tmp_path: Path) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         raise AssertionError("provider should not be called while approval is pending")
