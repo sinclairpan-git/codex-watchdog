@@ -268,6 +268,7 @@ def _seed_approval_delivery_binding(
         "interaction_family_id": interaction_family_id,
         "actor_id": actor_id,
         "channel_kind": "dm",
+        "action_window_expires_at": "2026-04-07T00:30:00Z",
     }
     if receive_id and receive_id_type:
         payload["receive_id"] = receive_id
@@ -698,6 +699,72 @@ def test_feishu_control_command_request_binds_plain_approval_reply_to_matching_d
     assert response.json()["success"] is True
     assert response.json()["data"]["approval_id"] == approval_b.approval_id
     assert a_client.decision_calls == [(approval_b.approval_id, "approve", "user:carol", "")]
+
+
+def test_feishu_control_command_request_uses_bound_approval_interaction_metadata(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, a_client=a_client)
+    approval = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-bound-meta",
+                "decision_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_bound_meta"
+                ),
+                "approval_id": "appr_bound_meta",
+                "idempotency_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_bound_meta"
+                ),
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval,
+        actor_id="user:carol",
+        interaction_context_id="ctx-approval-bound-meta",
+        interaction_family_id="family-approval-bound-meta",
+    )
+    _seed_delivery_context(
+        app,
+        envelope_id="other-envelope",
+        interaction_context_id="ctx-approval-newer",
+        interaction_family_id="family-approval-bound-meta",
+        delivery_status="delivered",
+        updated_at="2026-04-07T00:20:00Z",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-bound-meta",
+                "interaction_family_id": "family-command-approval-bound-meta",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:25:00Z",
+                "action_window_expires_at": "2026-04-07T01:30:00Z",
+                "client_request_id": "req-feishu-command-approval-bound-meta",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert "superseded" in response.json()["error"]["message"]
+    assert a_client.decision_calls == []
 
 
 def test_feishu_control_command_request_rejects_ambiguous_plain_approval_reply(
