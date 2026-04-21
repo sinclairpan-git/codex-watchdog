@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogActionResult
-from watchdog.api.ops import build_ops_summary
+from watchdog.api.ops import build_ops_health_summary, build_ops_summary
 from watchdog.main import create_app
 from watchdog.services.approvals.service import (
     CanonicalApprovalRecord,
@@ -1926,6 +1926,69 @@ def test_build_ops_summary_surfaces_provider_output_schema_degradation(
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["provider_output_invalid"]
     assert summary.alerts[0].count == 1
+
+
+def test_build_ops_health_summary_counts_provider_output_schema_degradation(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-output-invalid-health",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="allow",
+            risk_class="low",
+            decision_reason="provider output degraded to local rule-based decision",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:provider-output-invalid-health",
+                    "goal_contract_version": "goal-contract:v1",
+                    "policy_ruleset_hash": "sha256:policy",
+                    "memory_packet_input_ids": [],
+                    "memory_packet_input_hashes": [],
+                    "provider": "resident_orchestrator",
+                    "model": "rule-based-brain",
+                    "prompt_schema_ref": "prompt:none",
+                    "output_schema_ref": "schema:decision-trace-v1",
+                    "provider_output_schema_ref": "schema:provider-decision-v2",
+                    "degrade_reason": "provider_output_invalid",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_health_summary(
+        data_dir=tmp_path,
+        settings=settings,
+        decision_store=decision_store,
+    )
+
+    assert summary["status"] == "degraded"
+    assert summary["active_alerts"] == 1
 
 
 def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path) -> None:
