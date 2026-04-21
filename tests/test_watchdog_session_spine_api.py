@@ -2981,6 +2981,89 @@ def test_session_directory_route_appends_supplemental_event_only_project_not_pre
     )
 
 
+def test_session_directory_route_preserves_dispatch_cooldown_for_supplemental_persisted_project(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path, project_id="repo-c")
+    SessionService.from_data_dir(tmp_path).record_continuation_gate_verdict(
+        project_id="repo-c",
+        session_id="session:repo-c",
+        gate_kind="continuation_governance",
+        gate_status="eligible",
+        decision_source="external_model",
+        decision_class="branch_complete_switch",
+        action_ref="post_operator_guidance",
+        authoritative_snapshot_version="fact-v9",
+        snapshot_epoch="session-seq:3",
+        goal_contract_version="goal-v7",
+        continuation_identity="repo-c:session:repo-c:thr_native_3:branch_complete_switch",
+        route_key="repo-c:session:repo-c:thr_native_3:branch_complete_switch:fact-v9",
+        branch_switch_token="branch-switch:repo-c:87:fact-v9",
+        source_packet_id="packet:handoff-v9",
+        causation_id="decision:repo-c",
+        correlation_id="corr:continuation-gate:repo-c",
+        occurred_at="2026-04-07T00:03:00Z",
+    )
+    observed_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    app = create_app(
+        Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        a_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing files",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-07T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "pending_approval": False,
+                    "last_summary": "editing files",
+                    "files_touched": ["src/example.py"],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-07T00:00:00Z",
+                }
+            ],
+            approvals=[],
+        ),
+    )
+    app.state.resident_orchestration_state_store.put_auto_dispatch_checkpoint(
+        project_id="repo-c",
+        continuation_identity="repo-c:session:repo-c:thr_native_3:branch_complete_switch",
+        route_key="repo-c:session:repo-c:thr_native_3:branch_complete_switch:fact-v9",
+        action_ref="post_operator_guidance",
+        last_auto_dispatch_at=observed_at,
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    progress_by_project = {item["project_id"]: item for item in response.json()["data"]["progresses"]}
+    control_plane = progress_by_project["repo-c"]["continuation_control_plane"]
+    assert control_plane["dispatch_cooldown"]["active"] is True
+    assert control_plane["dispatch_cooldown"]["action_ref"] == "post_operator_guidance"
+    assert control_plane["dispatch_cooldown"]["last_dispatched_at"] == observed_at
+    assert control_plane["dispatch_cooldown"]["remaining_seconds"] > 0
+
+
 def test_session_directory_route_appends_supplemental_goal_contract_project_not_present_in_live_tasks(
     tmp_path,
 ) -> None:
@@ -6127,6 +6210,64 @@ def test_session_spine_resume_canonical_and_alias_share_the_same_result(tmp_path
     assert client.resume_calls == [("repo-a", "resume_or_new_thread", "resume from saved handoff")]
     assert canonical.json()["data"] == alias.json()["data"]
     assert canonical.json()["data"]["effect"] == "session_resumed"
+
+
+@pytest.mark.parametrize("raw_packet", ["broken-packet", ["broken-packet"]])
+def test_session_spine_resume_rejects_non_object_continuation_packet_for_canonical_and_alias(
+    tmp_path,
+    raw_packet,
+) -> None:
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "handoff_in_progress",
+            "phase": "handoff",
+            "pending_approval": False,
+            "last_summary": "handoff drafted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=client,
+    )
+    c = TestClient(app)
+
+    canonical = c.post(
+        "/api/v1/watchdog/actions",
+        json={
+            "action_code": "resume_session",
+            "project_id": "repo-a",
+            "operator": "openclaw",
+            "idempotency_key": f"idem-resume-invalid-{type(raw_packet).__name__}",
+            "arguments": {"continuation_packet": raw_packet},
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+    alias = c.post(
+        "/api/v1/watchdog/sessions/repo-a/actions/resume",
+        json={
+            "operator": "openclaw",
+            "idempotency_key": f"idem-resume-invalid-alias-{type(raw_packet).__name__}",
+            "continuation_packet": raw_packet,
+        },
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert canonical.status_code == 200
+    assert canonical.json()["success"] is False
+    assert canonical.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert canonical.json()["error"]["message"] == "continuation_packet must be an object"
+    assert alias.status_code == 200
+    assert alias.json()["success"] is False
+    assert alias.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert alias.json()["error"]["message"] == "continuation_packet must be an object"
+    assert client.resume_calls == []
 
 
 def test_session_spine_summarize_canonical_and_alias_share_the_same_result(tmp_path) -> None:
