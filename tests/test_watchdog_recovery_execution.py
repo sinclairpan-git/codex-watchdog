@@ -176,6 +176,7 @@ def test_perform_recovery_execution_records_suppression_reason_when_recovery_is_
     assert len(suppressed_events) == 1
     assert suppressed_events[0].payload["suppression_reason"] == "recovery_in_flight"
     assert suppressed_events[0].payload["task_status"] == "handoff_in_progress"
+    assert suppressed_events[0].payload["last_progress_at"] == "2026-04-05T05:20:00Z"
     gate_events = session_service.list_events(
         session_id="session:repo-a",
         event_type="continuation_gate_evaluated",
