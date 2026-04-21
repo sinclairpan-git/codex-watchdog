@@ -29,6 +29,7 @@ def test_local_pytest_commands_are_auto_approved() -> None:
         auto_approve_allowed(classify_risk("uv run pytest tests/test_watchdog_release_gate.py -q"))
         is True
     )
+    assert auto_approve_allowed(classify_risk("uv run pytest https://example.com -q")) is False
 
 
 def test_local_paths_with_sensitive_substrings_do_not_escalate_to_l3() -> None:
