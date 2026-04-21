@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from a_control_agent.main import create_app
+from a_control_agent.main import _sync_codex_threads, create_app
 from a_control_agent.settings import Settings
 
 
@@ -37,6 +38,16 @@ class FakeBridge:
 
     async def stop(self) -> None:
         self.stopped = True
+
+
+class PauseBridge(FakeBridge):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pause_calls: list[str] = []
+
+    async def pause_thread(self, thread_id: str) -> dict[str, str]:
+        self.pause_calls.append(thread_id)
+        return {"thread_id": thread_id, "status": "paused"}
 
 
 class FailingSteerBridge(FakeBridge):
@@ -527,9 +538,11 @@ def test_metrics_export_projects_distinct_from_threads(tmp_path: Path) -> None:
 def test_pause_task_marks_runtime_paused(tmp_path: Path) -> None:
     repo = tmp_path / "repo-a"
     repo.mkdir()
+    bridge = PauseBridge()
     c = TestClient(
         create_app(
             Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+            codex_bridge=bridge,
             start_background_workers=False,
         )
     )
@@ -548,6 +561,57 @@ def test_pause_task_marks_runtime_paused(tmp_path: Path) -> None:
 
     task = c.get("/api/v1/tasks/repo-a", headers=h).json()["data"]
     assert task["status"] == "paused"
+    assert bridge.pause_calls == [task["thread_id"]]
+
+
+def test_sync_does_not_overwrite_operator_paused_status(tmp_path: Path) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    thread_id = "thr_native_1"
+    app = create_app(
+        Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+        codex_client=FakeCodexClient(
+            [
+                {
+                    "project_id": "repo-a",
+                    "thread_id": thread_id,
+                    "cwd": str(repo),
+                    "task_title": "Native Session",
+                    "status": "running",
+                    "phase": "planning",
+                    "last_summary": "still executing",
+                }
+            ]
+        ),
+        start_background_workers=False,
+    )
+    c = TestClient(app)
+    h = {"Authorization": "Bearer test-token"}
+
+    app.state.task_store.upsert_native_thread(
+        {
+            "project_id": "repo-a",
+            "thread_id": thread_id,
+            "cwd": str(repo),
+            "task_title": "Native Session",
+            "status": "running",
+            "phase": "planning",
+        }
+    )
+    app.state.task_store.merge_update(
+        "repo-a",
+        {
+            "status": "paused",
+            "phase": "planning",
+        },
+    )
+
+    asyncio.run(_sync_codex_threads(app))
+
+    task = c.get(f"/api/v1/tasks/by-thread/{thread_id}", headers=h).json()["data"]
+    assert task["thread_id"] == thread_id
+    assert task["status"] == "paused"
+    assert task["last_summary"] == "still executing"
 
 
 def test_risk_classifier_fails_closed_for_workspace_boundary_and_network_like_commands() -> None:
