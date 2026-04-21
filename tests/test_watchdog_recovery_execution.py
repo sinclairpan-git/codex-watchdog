@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from watchdog.services.memory_hub.service import MemoryHubService
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
@@ -131,6 +132,47 @@ def test_perform_recovery_execution_returns_noop_without_side_effects(tmp_path) 
     assert outcome.handoff is None
     assert outcome.resume is None
     assert outcome.resume_error is None
+
+
+def test_perform_recovery_execution_loads_persisted_memory_hub_when_not_injected(tmp_path) -> None:
+    MemoryHubService.from_data_dir(tmp_path).upsert_resident_memory(
+        project_id="repo-a",
+        memory_key="goal.current",
+        summary="persisted memory capsule",
+        source_ref="memory:test",
+        source_scope="project-local",
+        source_runtime="watchdog",
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "steady progress",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "medium",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+            }
+        ),
+    )
+
+    assert outcome.memory_advisory_context is not None
+    resident_capsule = outcome.memory_advisory_context["resident_capsule"]
+    assert len(resident_capsule) == 1
+    assert resident_capsule[0]["summary"] == "persisted memory capsule"
 
 
 def test_perform_recovery_execution_records_suppression_reason_when_recovery_is_in_flight(
