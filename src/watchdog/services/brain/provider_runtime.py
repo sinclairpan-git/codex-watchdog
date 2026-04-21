@@ -429,7 +429,7 @@ class OpenAICompatibleBrainProvider:
         remaining_work_hypothesis: list[str],
     ) -> dict[str, object]:
         continuation_decision = str(structured.continuation_decision or "").strip().lower()
-        if continuation_decision not in {"continue_current_branch", "recover_current_branch"}:
+        if continuation_decision != "continue_current_branch":
             return {}
         if remaining_work_hypothesis:
             message = f"下一步建议：{'；'.join(remaining_work_hypothesis)}。"
