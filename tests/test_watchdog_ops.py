@@ -2260,6 +2260,52 @@ def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path
     assert blocker.get("report_approved_by") == "operator-a"
 
 
+def test_build_approval_envelope_for_record_uses_approval_timestamps(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    approval = materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:approval-envelope-timestamps",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                "continue_session|appr_003"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_003",
+            action_ref="continue_session",
+            trigger="resident_supervision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="explicit human confirmation required",
+            matched_policy_rules=["human_gate"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                "continue_session|appr_003"
+            ),
+            created_at="2026-04-07T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    updated = approval.model_copy(update={"created_at": "2026-04-07T00:05:00Z"})
+    app.state.canonical_approval_store.update(updated)
+
+    envelope = build_approval_envelope_for_record(updated)
+
+    assert envelope.created_at == "2026-04-07T00:05:00Z"
+    assert envelope.requested_at == "2026-04-07T00:05:00Z"
+
+
 def test_build_ops_summary_drops_partial_release_gate_bundle_metadata(tmp_path: Path) -> None:
     decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
     settings = Settings(data_dir=str(tmp_path))
