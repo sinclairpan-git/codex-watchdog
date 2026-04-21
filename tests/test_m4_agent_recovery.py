@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from a_control_agent.main import create_app
@@ -326,6 +327,39 @@ def test_handoff_rejects_malformed_continuation_packet_without_state_changes(tmp
     assert not (root / "handoffs").exists()
 
 
+@pytest.mark.parametrize("raw_packet", ["broken-packet", ["broken-packet"]])
+def test_handoff_rejects_non_object_continuation_packet_without_state_changes(
+    tmp_path: Path,
+    raw_packet: object,
+) -> None:
+    root = tmp_path / "d"
+    s = Settings(api_token="t", data_dir=str(root))
+    c = TestClient(create_app(s))
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/handoff",
+        json={"reason": "ctx", "continuation_packet": raw_packet},
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet must be an object" in body["error"]["message"]
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
+    assert not (root / "handoffs").exists()
+
+
 def test_resume_prefers_continuation_packet_render_over_raw_handoff_summary(
     tmp_path: Path,
 ) -> None:
@@ -394,6 +428,49 @@ def test_resume_rejects_malformed_continuation_packet_without_side_effects(tmp_p
     assert body["success"] is False
     assert body["error"]["code"] == "INVALID_ARGUMENT"
     assert "continuation_packet" in body["error"]["message"]
+    assert bridge.resume_calls == []
+    assert bridge.started_turns == []
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
+
+
+@pytest.mark.parametrize("raw_packet", ["broken-packet", ["broken-packet"]])
+def test_resume_rejects_non_object_continuation_packet_without_side_effects(
+    tmp_path: Path,
+    raw_packet: object,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge()
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={
+            "mode": "resume_or_new_thread",
+            "handoff_summary": "resume",
+            "continuation_packet": raw_packet,
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet must be an object" in body["error"]["message"]
     assert bridge.resume_calls == []
     assert bridge.started_turns == []
     task = c.app.state.task_store.get("p1")
