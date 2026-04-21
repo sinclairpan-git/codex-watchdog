@@ -86,10 +86,14 @@ def run_background_supervision(settings: Settings, client: AControlAgentClient) 
         status = task.get("status")
         project_id = task.get("project_id")
         thread_id = task_native_thread_id(task)
-        if status not in {"running", "waiting_human"}:
+        if status not in {"running", "waiting_human", "waiting_for_direction"}:
             continue
         if not isinstance(project_id, str) or not project_id:
             continue
+        if not isinstance(thread_id, str) or not thread_id:
+            fallback_thread_id = task.get("thread_id")
+            if isinstance(fallback_thread_id, str) and fallback_thread_id:
+                thread_id = fallback_thread_id
         if not isinstance(thread_id, str) or not thread_id:
             continue
         ev = evaluate_stuck(task, repo_recent_change_count=_repo_recent_change_count(task))
