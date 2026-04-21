@@ -10,6 +10,14 @@ _SAFE_FILE_PERMISSIONS = {"fs.read", "fs.write"}
 _PYTEST_PATH_FLAGS = {"--rootdir", "--basetemp", "--confcutdir", "-c"}
 
 
+def _normalized_command_tokens(command: str) -> list[str]:
+    normalized: list[str] = []
+    for token in _split_command(command):
+        head = token.split("=", 1)[0]
+        normalized.append(head.lstrip("-").lower())
+    return normalized
+
+
 def _contains_command_word(command: str, marker: str) -> bool:
     return (
         re.search(
@@ -86,7 +94,8 @@ def _is_safe_local_pytest_command(command: str) -> bool:
         if _is_path_boundary_escape(arg):
             return False
         if not arg.startswith("-"):
-            return False
+            if re.fullmatch(r"[A-Za-z0-9_./:\-\[\]]+", arg) is None:
+                return False
     return not expect_flag_value
 
 
@@ -97,13 +106,24 @@ def classify_risk(command: str) -> str:
     permission_risk = _classify_permissions_request(c)
     if permission_risk is not None:
         return permission_risk
+    if _is_safe_local_pytest_command(c):
+        return "L0"
     parts = c.split()
     first_token = parts[0] if parts else ""
     executable = first_token.rsplit("/", 1)[-1]
     # L3：高敏感 / 发布 / 破坏性 / 凭证
-    l3_markers = (
+    l3_phrase_markers = (
         "rm -rf",
         "git push",
+        "绕过",
+        "绕过审批",
+        "sandbox off",
+        "sudo ",
+        "chmod 777",
+        "/etc/",
+        "launchctl",
+    )
+    l3_token_markers = (
         "publish",
         "deploy",
         "release",
@@ -114,13 +134,6 @@ def classify_risk(command: str) -> str:
         "api_key",
         "openai_api_key",
         "password",
-        "绕过",
-        "绕过审批",
-        "sandbox off",
-        "sudo ",
-        "chmod 777",
-        "/etc/",
-        "launchctl",
     )
     sensitive_path_markers = (
         "~/.ssh",
@@ -134,7 +147,10 @@ def classify_risk(command: str) -> str:
         ".pypirc",
         ".npmrc",
     )
-    if any(m in c for m in l3_markers):
+    if any(m in c for m in l3_phrase_markers):
+        return "L3"
+    command_tokens = _normalized_command_tokens(c)
+    if any(marker in command_tokens for marker in l3_token_markers):
         return "L3"
     if any(m in c for m in sensitive_path_markers):
         return "L3"
@@ -217,8 +233,6 @@ def classify_risk(command: str) -> str:
         return "L1"
     if executable == "snapshot":
         return "L1"
-    if _is_safe_local_pytest_command(c):
-        return "L0"
     safe_l0_commands = {
         "pwd",
     }
