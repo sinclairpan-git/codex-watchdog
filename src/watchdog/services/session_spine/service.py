@@ -2258,6 +2258,8 @@ def build_session_directory_bundle(
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
             sessions.append(bundle.session)
             progresses.append(bundle.progress)
@@ -2272,6 +2274,8 @@ def build_session_directory_bundle(
             session_service=session_service,
             decision_store=decision_store,
             receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=dispatch_cooldown_seconds,
         )
         sessions.append(bundle.session)
         progresses.append(bundle.progress)
