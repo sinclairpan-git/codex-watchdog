@@ -78,7 +78,7 @@ class OpenClawAdapter:
         self._session_service = SessionService.from_data_dir(data_dir)
         self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
         self._resident_orchestration_state_store = ResidentOrchestrationStateStore(
-            data_dir / "resident_orchestration_state.json"
+            data_dir / "resident_orchestrator.json"
         )
         self._approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
         self._decision_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
