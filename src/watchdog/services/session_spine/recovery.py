@@ -456,11 +456,12 @@ def _build_memory_advisory_context(
     *,
     project_id: str,
     task: dict[str, Any],
+    settings: Settings,
     session_service: SessionService | None,
     memory_hub_service: MemoryHubService | None,
 ) -> dict[str, Any] | None:
     session_id = stable_thread_id_for_project(project_id)
-    service = memory_hub_service or MemoryHubService()
+    service = memory_hub_service or MemoryHubService.from_data_dir(settings.data_dir)
     try:
         payload = service.build_runtime_advisory_context(
             query=f"resume {project_id}",
@@ -522,6 +523,7 @@ def perform_recovery_execution(
     memory_advisory_context = _build_memory_advisory_context(
         project_id=project_id,
         task=task,
+        settings=settings,
         session_service=session_service,
         memory_hub_service=memory_hub_service,
     )
