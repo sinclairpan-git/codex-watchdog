@@ -1136,7 +1136,7 @@ def test_perform_recovery_execution_builds_and_reuses_structured_continuation_pa
         explicit_deliverables=["packet truth object", "packet render contract"],
         completion_signals=["相关 recovery / adapter 回归测试通过"],
     )
-    goal_contracts.revise_contract(
+    revised = goal_contracts.revise_contract(
         project_id="repo-a",
         session_id="session:repo-a",
         expected_version=contract.version,
@@ -1186,7 +1186,7 @@ def test_perform_recovery_execution_builds_and_reuses_structured_continuation_pa
     assert handoff_packet["current_progress_summary"] == "已经定位到 handoff_summary 回流口"
     assert handoff_packet["remaining_tasks"] == ["相关 recovery / adapter 回归测试通过"]
     assert handoff_packet["first_action"].startswith("先检查最近已修改文件")
-    assert handoff_packet["source_refs"]["goal_contract_version"] == contract.version
+    assert handoff_packet["source_refs"]["goal_contract_version"] == revised.version
     assert handoff_packet["source_refs"]["authoritative_snapshot_version"] == "fact-v1"
     assert len(client.resume_calls) == 1
     assert client.resume_calls[0][3] == handoff_packet
@@ -1483,6 +1483,7 @@ def test_perform_recovery_execution_uses_goal_contract_version_from_continuation
         },
         handoff_data={
             "source_packet_id": "packet:handoff-v9",
+            "goal_contract_version": created.version,
             "continuation_packet": continuation_packet,
         },
         resume_data={

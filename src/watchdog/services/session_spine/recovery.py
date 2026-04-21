@@ -99,8 +99,8 @@ def _build_recovery_packet(
         session_id=stable_thread_id_for_project(project_id),
     )
     goal_contract_version = str(
-        task.get("goal_contract_version")
-        or getattr(contract, "version", "")
+        getattr(contract, "version", "")
+        or task.get("goal_contract_version")
         or "goal-contract:unknown"
     ).strip() or "goal-contract:unknown"
     project_total_goal = (
@@ -859,18 +859,18 @@ def _resolve_recovery_goal_contract_version(
     for payload in (handoff, resume or {}):
         if not isinstance(payload, dict):
             continue
+        continuation_packet = payload.get("continuation_packet")
+        if isinstance(continuation_packet, dict):
+            source_refs = continuation_packet.get("source_refs")
+            if isinstance(source_refs, dict):
+                packet_goal_contract_version = str(
+                    source_refs.get("goal_contract_version") or ""
+                ).strip()
+                if packet_goal_contract_version:
+                    return packet_goal_contract_version
         top_level = str(payload.get("goal_contract_version") or "").strip()
         if top_level:
             return top_level
-        continuation_packet = payload.get("continuation_packet")
-        if not isinstance(continuation_packet, dict):
-            continue
-        source_refs = continuation_packet.get("source_refs")
-        if not isinstance(source_refs, dict):
-            continue
-        packet_goal_contract_version = str(source_refs.get("goal_contract_version") or "").strip()
-        if packet_goal_contract_version:
-            return packet_goal_contract_version
     return "goal-contract:unknown"
 
 
