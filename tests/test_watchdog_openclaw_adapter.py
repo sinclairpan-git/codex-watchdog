@@ -14,6 +14,7 @@ from watchdog.contracts.session_spine.enums import (
 from watchdog.contracts.session_spine.models import FactRecord, WatchdogActionResult
 from watchdog.services.approvals.service import materialize_canonical_approval
 from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
+from watchdog.services.adapters.openclaw.intents import resolve_message_to_intent
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService
@@ -1364,6 +1365,10 @@ def test_adapter_list_approval_inbox_returns_stable_global_pending_queue(tmp_pat
     assert reply.reply_code == "approval_inbox"
     assert [approval.project_id for approval in reply.approvals] == ["repo-a", "repo-b"]
     assert [approval.thread_id for approval in reply.approvals] == ["session:repo-a", "session:repo-b"]
+
+
+def test_openclaw_approval_list_alias_resolves_to_global_inbox() -> None:
+    assert resolve_message_to_intent("审批列表") == "list_approval_inbox"
 
 
 def test_adapter_list_sessions_returns_stable_session_directory(tmp_path: Path) -> None:
