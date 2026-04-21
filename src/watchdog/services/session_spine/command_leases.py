@@ -148,6 +148,16 @@ class CommandLeaseStore:
             )
         return f"corr:command:{event.command_id}:claim:{event.claim_seq}"
 
+    @staticmethod
+    def _project_id_from_session_id(session_id: str) -> str:
+        normalized = str(session_id or "").strip()
+        if normalized.startswith("session:"):
+            parts = normalized.split(":")
+            if len(parts) >= 2 and parts[1]:
+                return parts[1]
+            normalized = normalized.removeprefix("session:")
+        return normalized
+
     def _mirror_event_to_session_service(self, event: CommandLeaseEvent) -> None:
         if self._session_service is None:
             return
@@ -160,7 +170,7 @@ class CommandLeaseStore:
             payload["reason"] = event.reason
         self._session_service.record_event(
             event_type=event.event_type,
-            project_id=event.session_id.removeprefix("session:"),
+            project_id=self._project_id_from_session_id(event.session_id),
             session_id=event.session_id,
             occurred_at=event.occurred_at,
             correlation_id=self._session_correlation_id(event),
