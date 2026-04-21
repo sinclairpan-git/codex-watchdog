@@ -339,6 +339,7 @@ class FeishuControlService:
             settings=self._settings,
             client=self._client,
             receipt_store=self._receipt_store,
+            session_service=self._session_service,
         )
         return adapter.handle_message(
             command_text,
