@@ -705,7 +705,7 @@ def _execute_continue(
         )
     continue_args = _normalize_continue_arguments(
         action,
-        current_stuck_level=bundle.task.get("stuck_level", 0),
+        current_stuck_level=(bundle.task or {}).get("stuck_level", 0),
     )
     if isinstance(continue_args, WatchdogActionResult):
         return continue_args
