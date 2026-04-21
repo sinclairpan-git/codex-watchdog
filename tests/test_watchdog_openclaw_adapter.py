@@ -292,6 +292,156 @@ def test_adapter_get_session_returns_stable_session_projection(tmp_path: Path) -
     assert reply.progress.summary == "editing files"
 
 
+def test_adapter_get_session_reads_dispatch_cooldown_from_canonical_orchestrator_state_file(
+    tmp_path: Path,
+) -> None:
+    adapter = _adapter(
+        tmp_path,
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+    )
+    continuation_identity = "repo-a:session:repo-a:thr_native_1:branch_complete_switch"
+    route_key = f"{continuation_identity}:fact-v1"
+    decision_id = "decision:branch-switch:repo-a"
+    command_id = "command:branch-switch:repo-a"
+    observed_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    adapter._session_service.record_continuation_gate_verdict(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        gate_kind="continuation_governance",
+        gate_status="eligible",
+        decision_source="external_model",
+        decision_class="branch_complete_switch",
+        action_ref="post_operator_guidance",
+        authoritative_snapshot_version="fact-v1",
+        snapshot_epoch="session-seq:1",
+        goal_contract_version="goal-v7",
+        continuation_identity=continuation_identity,
+        route_key=route_key,
+        branch_switch_token="branch-switch:repo-a:86:fact-v1",
+        source_packet_id="packet:handoff-v9",
+        causation_id=decision_id,
+        correlation_id="corr:continuation-gate:repo-a",
+        occurred_at="2026-04-05T05:21:00Z",
+    )
+    adapter._session_service.record_continuation_identity_state(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        continuation_identity=continuation_identity,
+        state="consumed",
+        decision_source="external_model",
+        decision_class="branch_complete_switch",
+        action_ref="post_operator_guidance",
+        authoritative_snapshot_version="fact-v1",
+        snapshot_epoch="session-seq:1",
+        goal_contract_version="goal-v7",
+        route_key=route_key,
+        source_packet_id="packet:handoff-v9",
+        consumed_at="2026-04-05T05:22:00Z",
+        causation_id=decision_id,
+        correlation_id="corr:continuation-identity:repo-a",
+        occurred_at="2026-04-05T05:22:00Z",
+    )
+    adapter._session_service.record_event(
+        event_type="command_created",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:command-created:repo-a",
+        causation_id=decision_id,
+        related_ids={
+            "decision_id": decision_id,
+            "action_ref": "post_operator_guidance",
+            "command_id": command_id,
+        },
+        occurred_at="2026-04-05T05:22:00Z",
+        payload={
+            "command_id": command_id,
+            "action_ref": "post_operator_guidance",
+            "action_args": {"message": "切换到 WI-086，并开始下一分支。"},
+            "decision_result": "auto_execute_and_notify",
+            "policy_version": "resident-policy-v1",
+            "fact_snapshot_version": "fact-v1",
+        },
+    )
+    adapter._session_service.record_event(
+        event_type="command_executed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:command-executed:repo-a",
+        causation_id=command_id,
+        related_ids={"command_id": command_id, "claim_seq": "1"},
+        occurred_at="2026-04-05T05:22:10Z",
+        payload={
+            "completion_judgment": {
+                "status": "completed",
+                "action_status": "completed",
+                "reply_code": "action_result",
+                "decision_trace_ref": "trace:branch-switch",
+                "goal_contract_version": "goal-v7",
+                "receipt_ref": "receipt:branch-switch",
+            },
+            "metrics_summary": {"decision_result": "auto_execute_and_notify"},
+        },
+    )
+    adapter._session_service.record_event(
+        event_type="handoff_packet_frozen",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:handoff-packet:repo-a",
+        causation_id=decision_id,
+        related_ids={
+            "source_packet_id": "packet:handoff-v9",
+            "continuation_identity": continuation_identity,
+            "route_key": route_key,
+        },
+        occurred_at="2026-04-05T05:21:30Z",
+        payload={
+            "decision_source": "external_model",
+            "decision_class": "branch_complete_switch",
+            "authoritative_snapshot_version": "fact-v1",
+            "snapshot_epoch": "session-seq:1",
+            "packet_hash": "sha256:packet-v9",
+            "rendered_markdown_hash": "sha256:render-v9",
+            "rendered_from_packet_id": "packet:handoff-v9",
+            "continuation_packet": {
+                "packet_id": "packet:handoff-v9",
+                "packet_version": "continuation-packet/v1",
+            },
+        },
+    )
+    adapter._resident_orchestration_state_store.put_auto_dispatch_checkpoint(
+        project_id="repo-a",
+        continuation_identity=continuation_identity,
+        route_key=route_key,
+        action_ref="post_operator_guidance",
+        last_auto_dispatch_at=observed_at,
+    )
+
+    reply = adapter.handle_intent("get_session", project_id="repo-a")
+
+    assert reply.progress is not None
+    control_plane = reply.progress.continuation_control_plane
+    assert control_plane is not None
+    assert control_plane.dispatch_cooldown is not None
+    assert control_plane.dispatch_cooldown.active is True
+    assert control_plane.dispatch_cooldown.action_ref == "post_operator_guidance"
+    assert control_plane.dispatch_cooldown.last_dispatched_at == observed_at
+    assert control_plane.dispatch_cooldown.remaining_seconds is not None
+    assert control_plane.dispatch_cooldown.remaining_seconds > 0
+
+
 def test_adapter_get_session_surfaces_operator_next_steps_for_pending_approval(
     tmp_path: Path,
 ) -> None:
