@@ -823,6 +823,8 @@ def _record_recovery_truth(
         data_dir=settings.data_dir,
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
+        child_session_id=recorded.child_session_id,
+        child_native_thread_id=_resume_native_thread_id(outcome.resume),
     )
     if recorded.child_session_id is None:
         return
@@ -857,6 +859,8 @@ def _supersede_stale_interactions_for_recovery(
     data_dir: str,
     recovery_transaction_id: str,
     source_packet_id: str,
+    child_session_id: str | None = None,
+    child_native_thread_id: str | None = None,
 ) -> None:
     from watchdog.services.delivery.store import DeliveryOutboxStore
 
@@ -921,6 +925,8 @@ def _supersede_stale_interactions_for_recovery(
                 update={
                     "envelope_id": new_envelope_id,
                     "correlation_id": f"{record.correlation_id}:recovery",
+                    "session_id": child_session_id or record.session_id,
+                    "native_thread_id": child_native_thread_id or record.native_thread_id,
                     "idempotency_key": f"{record.idempotency_key}:recovery",
                     "audit_ref": f"{record.audit_ref}:recovery",
                     "created_at": now,
@@ -939,6 +945,8 @@ def _supersede_stale_interactions_for_recovery(
                         **record.envelope_payload,
                         "envelope_id": new_envelope_id,
                         "correlation_id": f"{record.correlation_id}:recovery",
+                        "session_id": child_session_id or record.session_id,
+                        "native_thread_id": child_native_thread_id or record.native_thread_id,
                         "idempotency_key": f"{record.idempotency_key}:recovery",
                         "audit_ref": f"{record.audit_ref}:recovery",
                         "created_at": now,
