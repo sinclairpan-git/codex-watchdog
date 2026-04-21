@@ -257,8 +257,8 @@ class CommandLeaseStore:
                 lease_expires_at=lease_expires_at,
                 updated_at=claimed_at,
             )
-            self._mirror_events_to_session_service([event])
             self._write(data)
+            self._mirror_events_to_session_service([event])
         return event
 
     def renew_lease(
@@ -294,8 +294,8 @@ class CommandLeaseStore:
                     "updated_at": renewed_at,
                 }
             )
-            self._mirror_events_to_session_service([event])
             self._write(data)
+            self._mirror_events_to_session_service([event])
         return event
 
     def expire_and_requeue_expired(
@@ -347,8 +347,8 @@ class CommandLeaseStore:
                     }
                 )
             if expired_events:
-                self._mirror_events_to_session_service(expired_events)
                 self._write(data)
+                self._mirror_events_to_session_service(expired_events)
         return expired_events
 
     def record_terminal_result(
@@ -388,6 +388,6 @@ class CommandLeaseStore:
                     "updated_at": occurred_at,
                 }
             )
-            self._mirror_events_to_session_service([event])
             self._write(data)
+            self._mirror_events_to_session_service([event])
         return event
