@@ -303,20 +303,30 @@ class FeishuControlService:
                 session_id=session_id,
                 native_thread_id=native_thread_id,
             )
+            binding = self._latest_delivery_binding_for_envelope(approval.envelope_id)
+            update = {
+                "event_type": "approval_response",
+                "envelope_id": approval.envelope_id,
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "response_action": approval_response_action,
+                "response_token": approval.approval_token,
+                "project_id": approval.project_id,
+                "session_id": approval.session_id,
+                "native_thread_id": approval.effective_native_thread_id,
+            }
+            if binding is not None:
+                for field in (
+                    "interaction_context_id",
+                    "interaction_family_id",
+                    "action_window_expires_at",
+                    "channel_kind",
+                ):
+                    value = str(binding.get(field) or "").strip()
+                    if value:
+                        update[field] = value
             return self.handle_approval_response(
-                request.model_copy(
-                    update={
-                        "event_type": "approval_response",
-                        "envelope_id": approval.envelope_id,
-                        "approval_id": approval.approval_id,
-                        "decision_id": approval.decision.decision_id,
-                        "response_action": approval_response_action,
-                        "response_token": approval.approval_token,
-                        "project_id": approval.project_id,
-                        "session_id": approval.session_id,
-                        "native_thread_id": approval.effective_native_thread_id,
-                    }
-                )
+                request.model_copy(update=update)
             )
         intent_code = resolve_entry_message(command_text)
         if (
@@ -454,6 +464,10 @@ class FeishuControlService:
             "actor_id": str(payload.get("actor_id") or "").strip(),
             "receive_id": str(payload.get("receive_id") or "").strip(),
             "receive_id_type": str(payload.get("receive_id_type") or "").strip(),
+            "interaction_context_id": str(payload.get("interaction_context_id") or "").strip(),
+            "interaction_family_id": str(payload.get("interaction_family_id") or "").strip(),
+            "action_window_expires_at": str(payload.get("action_window_expires_at") or "").strip(),
+            "channel_kind": str(payload.get("channel_kind") or "").strip(),
         }
         if not binding["actor_id"] and not (
             binding["receive_id"] and binding["receive_id_type"]
