@@ -377,6 +377,90 @@ def test_execute_watchdog_continue_records_continuation_gate_verdict(
     assert "consumed_at" in consumed_events[0].payload
 
 
+def test_execute_watchdog_continue_handles_taskless_session_bundle(
+    tmp_path: Path,
+) -> None:
+    from watchdog.contracts.session_spine.enums import (
+        ActionCode,
+        AttentionState,
+        SessionState,
+    )
+    from watchdog.contracts.session_spine.models import (
+        SessionProjection,
+        SnapshotReadSemantics,
+        TaskProgressView,
+        WatchdogAction,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+    from watchdog.services.session_spine.actions import execute_watchdog_action
+    from watchdog.services.session_spine.service import SessionReadBundle
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    bundle = SessionReadBundle(
+        project_id="repo-a",
+        task=None,
+        approvals=[],
+        facts=[],
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state=SessionState.ACTIVE,
+            activity_phase="executing",
+            attention_state=AttentionState.NORMAL,
+            headline="working",
+            pending_approval_count=0,
+            available_intents=["continue_session"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="executing",
+            summary="working",
+            context_pressure="low",
+            stuck_level=0,
+            last_progress_at="2026-04-05T05:20:00Z",
+        ),
+        approval_queue=[],
+        snapshot=SnapshotReadSemantics(
+            read_source="persisted_spine",
+            is_persisted=True,
+            is_fresh=True,
+            is_stale=False,
+            session_seq=7,
+            fact_snapshot_version="fact-v7",
+        ),
+    )
+
+    with (
+        patch(
+            "watchdog.services.session_spine.actions._build_action_read_bundle",
+            return_value=bundle,
+        ),
+        patch("watchdog.services.session_spine.actions.post_steer") as steer_mock,
+    ):
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        result = execute_watchdog_action(
+            WatchdogAction(
+                action_code=ActionCode.CONTINUE_SESSION,
+                project_id="repo-a",
+                operator="operator",
+                idempotency_key="idem:taskless-continue",
+                arguments={"message": "继续推进当前任务"},
+            ),
+            settings=_settings(tmp_path),
+            client=FakeAClient(context_pressure="low"),
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+        )
+
+    assert result.action_status == "completed"
+    assert steer_mock.call_count == 1
+    assert steer_mock.call_args.kwargs["stuck_level"] == 0
+
+
 def test_execute_watchdog_resume_records_continuation_identity_lifecycle(
     tmp_path: Path,
 ) -> None:
