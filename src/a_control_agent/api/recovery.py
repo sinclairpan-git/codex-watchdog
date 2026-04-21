@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import ValidationError
 
 from a_control_agent.api.deps import require_token
 from a_control_agent.audit import append_jsonl
@@ -77,6 +78,19 @@ def _continuation_packet_from_body(body: dict[str, Any]) -> dict[str, Any] | Non
     if not isinstance(raw, dict):
         return None
     return model_validate_continuation_packet(raw).model_dump(mode="json", exclude_none=True)
+
+
+def _continuation_packet_validation_error(exc: ValidationError) -> dict[str, str]:
+    fields = [
+        ".".join(str(part) for part in item["loc"])
+        for item in exc.errors()
+        if item.get("loc")
+    ]
+    if not fields:
+        message = "continuation_packet must satisfy ContinuationPacket"
+    else:
+        message = f"missing or invalid continuation_packet fields: {', '.join(fields)}"
+    return {"code": "INVALID_ARGUMENT", "message": message}
 
 
 def _resume_target_phase(task: dict[str, Any] | None) -> str:
@@ -153,7 +167,13 @@ def handoff(
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
     reason = str(body.get("reason", "unspecified"))
-    continuation_packet = _continuation_packet_from_body(body)
+    try:
+        continuation_packet = _continuation_packet_from_body(body)
+    except ValidationError as exc:
+        return err(
+            request.headers.get("x-request-id"),
+            _continuation_packet_validation_error(exc),
+        )
     rec = store.get(project_id)
     if rec is None:
         return err(
@@ -250,7 +270,13 @@ async def resume(
 ) -> dict[str, Any]:
     mode = str(body.get("mode", "resume_or_new_thread"))
     summary = str(body.get("handoff_summary", ""))
-    continuation_packet = _continuation_packet_from_body(body)
+    try:
+        continuation_packet = _continuation_packet_from_body(body)
+    except ValidationError as exc:
+        return err(
+            request.headers.get("x-request-id"),
+            _continuation_packet_validation_error(exc),
+        )
     rendered_prompt = (
         render_continuation_packet_prompt(continuation_packet)
         if continuation_packet is not None
