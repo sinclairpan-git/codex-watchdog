@@ -1,0 +1,108 @@
+total_tasks: 8
+total_batches: 8
+tasks:
+- task_id: T851
+  title: formalize WI-085 owner、state entry、branch handoff 与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T852
+  title: 冻结 PCDI authoritative snapshot contract、continuation decision v3 schema 与 project/branch/progress truth 输入面
+  status: completed
+  phase: 2
+  depends_on:
+  - T851
+- task_id: T853
+  title: 实现 project-level execution state、approval hard gate、terminal suppression 与 fallback invalidation
+  status: completed
+  phase: 3
+  depends_on:
+  - T852
+- task_id: T854
+  title: 实现 lineage / provenance 写面并冻结 replayable gate verdict 与 invalidation 记录
+  status: completed
+  phase: 4
+  depends_on:
+  - T853
+- task_id: T855
+  title: 实现 eligibility/routing gate、continuation identity 与 branch switch token 单次消费状态机
+  status: completed
+  phase: 5
+  depends_on:
+  - T854
+- task_id: T856
+  title: 实现 operator control-plane projection 与 unified advisory/dispatch cooldown
+  status: completed
+  phase: 6
+  depends_on:
+  - T855
+- task_id: T857
+  title: 实现 ContinuationPacket 真值对象与 packet-to-render 单向渲染契约
+  status: completed
+  phase: 7
+  depends_on:
+  - T856
+- task_id: T858
+  title: 运行 targeted runtime/integration/full verification 并确认停止项目不再重复发 summary
+  status: completed
+  phase: 8
+  depends_on:
+  - T857
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T851
+  status: completed
+  started_at: '2026-04-20T15:20:03Z'
+  completed_at: '2026-04-20T15:20:03Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T852
+  status: completed
+  started_at: '2026-04-20T15:20:03Z'
+  completed_at: '2026-04-20T15:37:57Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T853
+  status: completed
+  started_at: '2026-04-20T15:37:57Z'
+  completed_at: '2026-04-20T16:19:07Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T854
+  status: completed
+  started_at: '2026-04-20T16:19:07Z'
+  completed_at: '2026-04-20T16:56:26Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T855
+  status: completed
+  started_at: '2026-04-20T16:56:26Z'
+  completed_at: '2026-04-20T18:26:38Z'
+- batch_id: 6
+  phase: 6
+  tasks:
+  - T856
+  status: completed
+  started_at: '2026-04-20T18:26:38Z'
+  completed_at: '2026-04-21T01:02:11Z'
+- batch_id: 7
+  phase: 7
+  tasks:
+  - T857
+  status: completed
+  started_at: '2026-04-21T01:02:11Z'
+  completed_at: '2026-04-21T02:15:30Z'
+- batch_id: 8
+  phase: 8
+  tasks:
+  - T858
+  status: completed
+  started_at: '2026-04-21T02:15:30Z'
+  completed_at: '2026-04-21T02:15:30Z'
+current_batch: 8

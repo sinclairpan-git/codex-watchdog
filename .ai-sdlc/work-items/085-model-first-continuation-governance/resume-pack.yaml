@@ -1,0 +1,21 @@
+work_item:
+  id: 085-model-first-continuation-governance
+  spec_dir: specs/085-model-first-continuation-governance
+  branch: codex/085-model-first-continuation-governance
+current_stage: completed
+current_batch: 8
+last_committed_task: ''
+current_branch: codex/085-model-first-continuation-governance
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: work item closed; route follow-on continuation governance expansion or branch advancement into WI-086 instead of reopening WI-085
+artifacts:
+  - specs/085-model-first-continuation-governance/spec.md
+  - specs/085-model-first-continuation-governance/plan.md
+  - specs/085-model-first-continuation-governance/tasks.md
+  - specs/085-model-first-continuation-governance/task-execution-log.md
+  - .ai-sdlc/work-items/085-model-first-continuation-governance/execution-plan.yaml
+  - .ai-sdlc/work-items/085-model-first-continuation-governance/runtime.yaml
+  - .ai-sdlc/work-items/085-model-first-continuation-governance/latest-summary.md
+timestamp: '2026-04-21T02:15:30Z'

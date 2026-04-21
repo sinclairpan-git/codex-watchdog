@@ -1,0 +1,29 @@
+# Development Summary
+
+Status: completed
+Total Tasks: 8
+Completed Tasks: 8
+Halted Tasks: 0
+Total Batches: 8
+Completed Batches: 8
+Last Committed Task: none
+
+## Notes
+
+- `WI-085` 已完成；`ContinuationPacket` 现正式成为 recovery / handoff / resume 的 source of truth，A-side handoff markdown 与 recovery-resume prompt 都退化为 packet 的 deterministic render，不再把渲染文本回流成 authoritative continuation 输入。
+- 针对旧 recover/handoff 契约漂移，已把 `tests/test_007_alignment.py`、`tests/test_m4_watchdog_recover.py`、`tests/test_a_control_agent_control_flow.py` 收口到当前 recover 内核与 packet render contract，避免继续通过过期 `httpx.Client` patch 伪造绿灯。
+- provider external-integration smoke harness 已修复：synthetic probe 现会先种入 `autonomous_ready` goal contract，再验证 provider success probe 与 resident_orchestrator fallback，确保 smoke 反映当前 goal-contract precondition，而不是被 precondition 直接短路。
+- `T857` 已完成：`ContinuationPacket` hash / rendered-from-packet hash / source_packet_id 已在 `SessionService`、operator control-plane、OpenClaw adapter、recovery truth write 面贯通，`handoff_summary` 文本不再承担 route/dedupe/model truth 角色。
+- `T858` 已完成：targeted runtime/integration suite、全量 `pytest`、`ruff check`、`ai_sdlc verify constraints` 与 `ai_sdlc status` 已全部复核通过；本次 closeout 后，系统能稳定区分 continue / recover / branch switch / project complete / await human / blocked，并保持停止项目 fail-closed。
+
+## Verification
+
+- `uv run pytest -q tests/test_watchdog_brain_provider_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py` -> `336 passed`
+- `uv run pytest -q` -> `1091 passed`
+- `uv run ruff check`
+- `uv run python -m ai_sdlc verify constraints`
+- `uv run python -m ai_sdlc status`
+
+## Handoff
+
+- `WI-085` 已闭环；后续若继续扩 continuation governance，请直接在 `WI-086` 或新的 follow-on work item 上推进，不要再把新需求或新缺口回写到 `WI-085`。

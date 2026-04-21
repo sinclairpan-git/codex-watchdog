@@ -1,33 +1,31 @@
-current_stage: completed
-current_batch: 5
+current_stage: execute
+current_batch: 8
 last_committed_task: ''
 working_set_snapshot:
   prd_path: openclaw-codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/084-runtime-truth-and-github-gate-hardening/spec.md
-  plan_path: specs/084-runtime-truth-and-github-gate-hardening/plan.md
-  tasks_path: specs/084-runtime-truth-and-github-gate-hardening/tasks.md
+  spec_path: specs/085-model-first-continuation-governance/spec.md
+  plan_path: specs/085-model-first-continuation-governance/plan.md
+  tasks_path: specs/085-model-first-continuation-governance/tasks.md
   active_files:
-  - '`README.md`'
-  - '`ai_sdlc/cli.py`'
-  - '`scripts/reconcile_ai_sdlc_state.py`'
-  - '`src/watchdog/validation/ai_sdlc_reconciliation.py`'
-  - '`src/watchdog/validation/ai_sdlc_runtime_io.py`'
-  - '`src/watchdog/validation/ai_sdlc_runtime_write_contracts.py`'
-  - '`src/watchdog/validation/ci_gate_contracts.py`'
-  - '`src/watchdog/validation/github_branch_protection_contracts.py`'
-  - '`.github/workflows/pr-gate.yml`'
-  - '`.github/workflows/branch-protection-audit.yml`'
-  - '`.github/branch-protection.main.json`'
-  - '`specs/084-runtime-truth-and-github-gate-hardening/spec.md`'
-  - '`specs/084-runtime-truth-and-github-gate-hardening/plan.md`'
-  - '`specs/084-runtime-truth-and-github-gate-hardening/tasks.md`'
-  - '`specs/084-runtime-truth-and-github-gate-hardening/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/runtime.yaml`'
-  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/resume-pack.yaml`'
-  - '`.ai-sdlc/work-items/084-runtime-truth-and-github-gate-hardening/latest-summary.md`'
+  - '`specs/085-model-first-continuation-governance/spec.md`'
+  - '`specs/085-model-first-continuation-governance/plan.md`'
+  - '`specs/085-model-first-continuation-governance/tasks.md`'
+  - '`specs/085-model-first-continuation-governance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/latest-summary.md`'
+  - '`src/watchdog/services/brain/provider_runtime.py`'
+  - '`src/watchdog/services/brain/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/session_spine/recovery.py`'
+  - '`src/watchdog/services/session_spine/facts.py`'
+  - '`src/watchdog/services/session_spine/task_state.py`'
+  - '`src/a_control_agent/storage/handoff_manager.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/integration/test_openclaw_integration_spine.py`'
   - '`.ai-sdlc/state/checkpoint.yml`'
   - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
@@ -36,32 +34,41 @@ working_set_snapshot:
 
     Status: completed
 
-    Total Tasks: 5
+    Total Tasks: 8
 
-    Completed Tasks: 5
+    Completed Tasks: 8
 
     Halted Tasks: 0
 
-    Total Batches: 5
+    Total Batches: 8
 
-    Completed Batches: 5
+    Completed Batches: 8
 
     Last Committed Task: none
 
 
     ## Notes
 
-    - 已把 runtime truth 从弱字符串读取收口到正式 YAML contract；invalid stage、invalid YAML、work_item_id 漂移与 leftover atomic temp file 现在都会成为 repo-local blocker。
+    - `WI-085` 已正式承接重复 handoff summary、停止项目误续跑、以及 model-first continuation governance 缺口，不再继续回写 `WI-084`。
 
-    - 新增 shared `write_yaml_atomic()` 与 runtime write scan，后续任何绕开 atomic writer 的 `runtime.yaml` 写入口都会被 `verify constraints` 阻断。
+    - 已完成两轮常驻专家对抗评审，当前 formal contract 已冻结为 `PCDI + eligibility/routing gates + ContinuationPacket` 三层结构。
 
-    - 仓库已补齐 `.github/workflows/pr-gate.yml`、`.github/branch-protection.main.json` 与 `.github/workflows/branch-protection-audit.yml`，并新增独立 `python -m ai_sdlc verify github-branch-protection` 在线审计入口。
+    - Batch 1 已完成：spec/plan/tasks/task-execution-log 与顶层 `.ai-sdlc` active state 已切到 `codex/085-model-first-continuation-governance`。
 
-    - 已修复 `.ai-sdlc/work-items/037-autonomy-golden-path-and-release-gate-e2e/runtime.yaml` 的 completed stale `current_task` 漂移，避免历史 completed mirror 影响 active WI 推断。'
-current_branch: codex/084-runtime-truth-and-github-gate-hardening
+    - Batch 2 已完成：provider/runtime 已开始消费 `PCDI` 并支持 continuation decision v3，同时在 provider 前执行 goal-contract / approval / non-active fail-closed gate。
+
+    - Batch 3 已完成：project-level execution state、approval hard gate、terminal suppression 与 fallback invalidation 已接入 `facts / projection / orchestrator / actions / recovery / session-events fallback`，两轮常驻专家评审已无 blocker。
+
+    - Batch 4 已完成：已补齐 continuation governance 的 lineage / provenance 写面，包含 gate verdict、identity/token issuance/invalidation、failed-retryable replay closeout，以及 handoff summary 文本与 recovery transaction identity 的脱钩。
+
+    - `T855` 已完成：`branch_complete_switch` 现正式落到 `post_operator_guidance` closeout，并在 success/failure 路径补齐 `branch_switch_token` 的 `consumed / invalidated` authoritative closeout。
+
+    - `T856` 已完成：operator control-plane 现正式投影 `continuation_identity / token / route / packet_id / suppression / decision_source / snapshot / last_dispatch_result / dispatch_cooldown`，shared auto-dispatch checkpoint 也已补齐 `claimed / completed / failed` 生命周期与 identity-first cooldown fallback。
+    - `T857/T858` 已完成：`ContinuationPacket` render contract、recover/handoff legacy test alignment、provider smoke harness repair 与全量验证已全部闭环；`WI-085` 现正式关闭，后续入口切到 `WI-086`。'
+current_branch: codex/085-model-first-continuation-governance
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-19T06:14:17Z'
+timestamp: '2026-04-21T02:15:30Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-19T06:14:17Z'
+checkpoint_last_updated: '2026-04-21T02:15:30Z'
 checkpoint_fingerprint: ''
