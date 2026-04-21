@@ -474,6 +474,12 @@ class ResidentOrchestrator:
                     should_execute=False,
                     current_status=conflicted.status,
                 )
+            return AutoExecuteCommandPlan(
+                command_id=command_id,
+                claim_seq=current.claim_seq,
+                should_execute=True,
+                current_status="claimed",
+            )
         return AutoExecuteCommandPlan(
             command_id=command_id,
             claim_seq=None,
