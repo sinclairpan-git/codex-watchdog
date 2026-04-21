@@ -633,6 +633,101 @@ def test_perform_recovery_execution_treats_stable_session_thread_resume_as_same_
     ) == []
 
 
+def test_perform_recovery_execution_reissued_interaction_uses_fresh_global_outbox_seq(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:unrelated-high-seq",
+            envelope_type="notification",
+            correlation_id="corr:repo-b:ctx-unrelated",
+            session_id="session:repo-b",
+            project_id="repo-b",
+            native_thread_id="thr_native_repo_b",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v8",
+            idempotency_key="idem:ctx-unrelated",
+            audit_ref="audit:ctx-unrelated",
+            created_at="2026-04-14T03:05:00Z",
+            updated_at="2026-04-14T03:05:00Z",
+            outbox_seq=5,
+            delivery_status="pending",
+            envelope_payload={
+                "interaction_context_id": "ctx-unrelated",
+                "interaction_family_id": "family-unrelated",
+                "actor_id": "user:bob",
+                "channel_kind": "dm",
+            },
+        )
+    )
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:ctx-recovery-old",
+            envelope_type="notification",
+            correlation_id="corr:family-recovery-1:ctx-recovery-old",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:ctx-recovery-old",
+            audit_ref="audit:ctx-recovery-old",
+            created_at="2026-04-14T03:10:00Z",
+            updated_at="2026-04-14T03:10:00Z",
+            outbox_seq=1,
+            delivery_status="delivered",
+            envelope_payload={
+                "interaction_context_id": "ctx-recovery-old",
+                "interaction_family_id": "family-recovery-1",
+                "actor_id": "user:alice",
+                "channel_kind": "dm",
+            },
+        )
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"goal_contract_version": "goal-v9"},
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+    records = {record.envelope_id: record for record in delivery_store.list_records()}
+    assert records["notification-envelope:ctx-recovery-old"].delivery_status == "superseded"
+    assert records["notification-envelope:ctx-recovery-old:recovery"].outbox_seq == 6
+    assert records["notification-envelope:ctx-recovery-old:recovery"].delivery_status == "pending"
+
+
 def test_perform_recovery_execution_treats_stable_parent_session_id_as_same_thread_when_task_thread_is_native(
     tmp_path,
 ) -> None:
