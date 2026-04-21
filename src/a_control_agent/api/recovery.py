@@ -27,6 +27,10 @@ _SAME_THREAD_RESUME = "same_thread_resume"
 _NEW_CHILD_SESSION = "new_child_session"
 
 
+class _InvalidContinuationPacket(ValueError):
+    pass
+
+
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
@@ -75,12 +79,16 @@ def _resume_response_payload(
 
 def _continuation_packet_from_body(body: dict[str, Any]) -> dict[str, Any] | None:
     raw = body.get("continuation_packet")
-    if not isinstance(raw, dict):
+    if raw is None:
         return None
+    if not isinstance(raw, dict):
+        raise _InvalidContinuationPacket("continuation_packet must be an object")
     return model_validate_continuation_packet(raw).model_dump(mode="json", exclude_none=True)
 
 
-def _continuation_packet_validation_error(exc: ValidationError) -> dict[str, str]:
+def _continuation_packet_validation_error(exc: ValidationError | _InvalidContinuationPacket) -> dict[str, str]:
+    if isinstance(exc, _InvalidContinuationPacket):
+        return {"code": "INVALID_ARGUMENT", "message": str(exc)}
     fields = [
         ".".join(str(part) for part in item["loc"])
         for item in exc.errors()
@@ -169,7 +177,7 @@ def handoff(
     reason = str(body.get("reason", "unspecified"))
     try:
         continuation_packet = _continuation_packet_from_body(body)
-    except ValidationError as exc:
+    except (ValidationError, _InvalidContinuationPacket) as exc:
         return err(
             request.headers.get("x-request-id"),
             _continuation_packet_validation_error(exc),
@@ -272,7 +280,7 @@ async def resume(
     summary = str(body.get("handoff_summary", ""))
     try:
         continuation_packet = _continuation_packet_from_body(body)
-    except ValidationError as exc:
+    except (ValidationError, _InvalidContinuationPacket) as exc:
         return err(
             request.headers.get("x-request-id"),
             _continuation_packet_validation_error(exc),
