@@ -1656,10 +1656,20 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
     assert [approval.approval_id for approval in records["repo-b"].approval_queue] == ["appr_002"]
 
 
-def test_session_spine_runtime_refresh_all_falls_back_when_shared_approvals_fail(
+def test_session_spine_runtime_refresh_all_preserves_existing_approval_state_when_project_fetch_fails(
     tmp_path: Path,
 ) -> None:
     class SharedApprovalFailureClient(MultiProjectResidentAClient):
+        def __init__(
+            self,
+            *,
+            tasks: list[dict[str, object]],
+            approvals: list[dict[str, object]],
+        ) -> None:
+            super().__init__(tasks=tasks, approvals=approvals)
+            self.fail_shared_approvals = False
+            self.fail_project_approvals: set[str] = set()
+
         def list_approvals(
             self,
             *,
@@ -1668,12 +1678,12 @@ def test_session_spine_runtime_refresh_all_falls_back_when_shared_approvals_fail
             decided_by: str | None = None,
             callback_status: str | None = None,
         ) -> list[dict[str, object]]:
-            if project_id is None:
+            if self.fail_shared_approvals and project_id is None:
                 self.list_approvals_calls.append((status, project_id, callback_status))
                 raise RuntimeError("shared approvals unavailable")
-            if project_id == "repo-b":
+            if project_id in self.fail_project_approvals:
                 self.list_approvals_calls.append((status, project_id, callback_status))
-                raise RuntimeError("repo-b approvals unavailable")
+                raise RuntimeError(f"{project_id} approvals unavailable")
             return super().list_approvals(
                 status=status,
                 project_id=project_id,
@@ -1734,6 +1744,52 @@ def test_session_spine_runtime_refresh_all_falls_back_when_shared_approvals_fail
     app = create_app(settings, a_client=a_client, start_background_workers=False)
 
     app.state.session_spine_runtime.refresh_all()
+    initial_records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+    assert sorted(initial_records) == ["repo-a", "repo-b"]
+    assert [approval.approval_id for approval in initial_records["repo-a"].approval_queue] == [
+        "appr_001"
+    ]
+    assert initial_records["repo-b"].approval_queue == []
+
+    a_client._tasks = [
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval a updated",
+            "files_touched": ["src/a.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:02:00Z",
+        },
+        {
+            "project_id": "repo-b",
+            "thread_id": "thr_native_2",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "keep coding repo-b updated",
+            "files_touched": ["src/b.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:02:00Z",
+        },
+    ]
+    a_client.fail_shared_approvals = True
+    a_client.fail_project_approvals = {"repo-b"}
+
+    records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+
+    app.state.session_spine_runtime.refresh_all()
 
     records = {
         record.project_id: record for record in app.state.session_spine_store.list_records()
@@ -1741,9 +1797,12 @@ def test_session_spine_runtime_refresh_all_falls_back_when_shared_approvals_fail
 
     assert sorted(records) == ["repo-a", "repo-b"]
     assert [approval.approval_id for approval in records["repo-a"].approval_queue] == ["appr_001"]
-    assert records["repo-b"].approval_queue == []
-    assert records["repo-b"].session.headline == "keep coding repo-b"
+    assert records["repo-a"].session.headline == "waiting for approval a updated"
+    assert records["repo-b"].approval_queue == initial_records["repo-b"].approval_queue
+    assert records["repo-b"].session.headline == initial_records["repo-b"].session.headline
     assert a_client.list_approvals_calls == [
+        ("pending", None, None),
+        ("approved", None, "deferred"),
         ("pending", None, None),
         ("pending", "repo-a", None),
         ("approved", "repo-a", "deferred"),
@@ -5183,7 +5242,7 @@ def test_resident_orchestrator_treats_claim_race_as_nonfatal_skip(
     assert [event.event_type for event in events] == ["command_claimed"]
 
 
-def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_command(
+def test_resident_orchestrator_reexecutes_its_active_claim_after_renewing_lease(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -5233,8 +5292,21 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
         lease_expires_at="2026-04-07T00:30:00Z",
     )
 
+    result = WatchdogActionResult(
+        action_code="continue_session",
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="resident-claimed-command",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.NOOP,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="ok",
+        facts=[],
+    )
+
     with patch(
-        "watchdog.services.session_spine.orchestrator.execute_canonical_decision"
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision",
+        return_value=result,
     ) as execute_mock:
         outcomes = app.state.resident_orchestrator.orchestrate_all(
             now=datetime(2026, 4, 7, 0, 10, 0, tzinfo=UTC)
@@ -5242,16 +5314,17 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
-    execute_mock.assert_not_called()
+    execute_mock.assert_called_once()
     events = app.state.command_lease_store.list_events(command_id=command_id)
     assert [event.event_type for event in events] == [
         "command_claimed",
         "command_lease_renewed",
+        "command_executed",
     ]
-    assert [event.claim_seq for event in events] == [1, 1]
+    assert [event.claim_seq for event in events] == [1, 1, 1]
     state = app.state.command_lease_store.get_command(command_id)
     assert state is not None
-    assert state.status == "claimed"
+    assert state.status == "executed"
     assert state.worker_id == "resident_orchestrator"
     assert state.claim_seq == 1
     assert state.lease_expires_at == "2026-04-07T01:10:00Z"
@@ -5263,9 +5336,10 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
     assert [event.event_type for event in session_events] == [
         "command_claimed",
         "command_lease_renewed",
+        "command_executed",
     ]
-    assert [event.related_ids["claim_seq"] for event in session_events] == ["1", "1"]
-    assert session_events[-1].payload["lease_expires_at"] == "2026-04-07T01:10:00Z"
+    assert [event.related_ids["claim_seq"] for event in session_events] == ["1", "1", "1"]
+    assert session_events[1].payload["lease_expires_at"] == "2026-04-07T01:10:00Z"
 
 
 def test_resident_orchestrator_continue_on_error_skips_failed_record(
