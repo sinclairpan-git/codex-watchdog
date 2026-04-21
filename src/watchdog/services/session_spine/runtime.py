@@ -80,7 +80,7 @@ class SessionSpineRuntime:
             try:
                 approvals = _load_approvals_or_raise(self._client, project_id)
             except RuntimeError:
-                approvals = []
+                return
 
         bundle = _build_session_read_bundle(
             project_id=project_id,
