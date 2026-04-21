@@ -323,3 +323,34 @@ def test_command_lease_store_mirrors_multiple_renewals_into_session_service(
         "2026-04-12T04:09:00Z",
     ]
     assert events[1].correlation_id != events[2].correlation_id
+
+
+def test_command_lease_store_mirrors_child_session_events_with_project_only_id(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    store.claim_command(
+        command_id="command:repo-a:child:1",
+        session_id="session:repo-a:thr_child_1",
+        worker_id="worker:child",
+        claimed_at="2026-04-12T05:00:00Z",
+        lease_expires_at="2026-04-12T05:05:00Z",
+    )
+
+    events = session_service.list_events(
+        session_id="session:repo-a:thr_child_1",
+        related_id_key="command_id",
+        related_id_value="command:repo-a:child:1",
+    )
+
+    assert len(events) == 1
+    mirrored = events[0]
+    assert mirrored.project_id == "repo-a"
