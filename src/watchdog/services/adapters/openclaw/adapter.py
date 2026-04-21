@@ -70,12 +70,13 @@ class OpenClawAdapter:
         settings: Settings,
         client: AControlAgentClient,
         receipt_store: ActionReceiptStore,
+        session_service: SessionService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._receipt_store = receipt_store
         data_dir = Path(self._settings.data_dir)
-        self._session_service = SessionService.from_data_dir(data_dir)
+        self._session_service = session_service or SessionService.from_data_dir(data_dir)
         self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
         self._resident_orchestration_state_store = ResidentOrchestrationStateStore(
             data_dir / "resident_orchestrator.json"
