@@ -341,12 +341,75 @@ class FeishuControlService:
             receipt_store=self._receipt_store,
             session_service=self._session_service,
         )
-        return adapter.handle_message(
+        reply = adapter.handle_message(
             command_text,
             project_id=project_id,
             native_thread_id=native_thread_id,
             operator="feishu",
             idempotency_key=f"feishu:{request.client_request_id}",
+        )
+        self._record_command_route_binding(
+            request=request,
+            reply=reply,
+            project_id=project_id,
+            session_id=session_id,
+            native_thread_id=native_thread_id,
+            command_text=command_text,
+        )
+        return reply
+
+    def _record_command_route_binding(
+        self,
+        *,
+        request: FeishuControlRequest,
+        reply,
+        project_id: str | None,
+        session_id: str | None,
+        native_thread_id: str | None,
+        command_text: str,
+    ) -> None:
+        resolved_project_id = str(
+            project_id
+            or getattr(getattr(reply, "action_result", None), "project_id", None)
+            or getattr(getattr(reply, "session", None), "project_id", None)
+            or getattr(getattr(reply, "progress", None), "project_id", None)
+            or ""
+        ).strip()
+        if not resolved_project_id:
+            return
+
+        resolved_session_id = str(
+            session_id
+            or getattr(getattr(reply, "session", None), "session_id", None)
+            or f"session:{resolved_project_id}"
+        ).strip()
+        if not resolved_session_id:
+            return
+
+        resolved_native_thread_id = str(
+            native_thread_id
+            or getattr(getattr(reply, "session", None), "native_thread_id", None)
+            or getattr(getattr(reply, "progress", None), "native_thread_id", None)
+            or ""
+        ).strip()
+
+        related_ids = self._goal_bootstrap_related_ids(request)
+        if resolved_native_thread_id:
+            related_ids["native_thread_id"] = resolved_native_thread_id
+
+        self._session_service.record_event_once(
+            event_type="feishu_command_route_bound",
+            project_id=resolved_project_id,
+            session_id=resolved_session_id,
+            correlation_id=f"corr:feishu-command-route:{request.client_request_id}",
+            causation_id=request.client_request_id,
+            related_ids=related_ids,
+            occurred_at=request.occurred_at,
+            payload={
+                "channel_kind": request.channel_kind,
+                "command_text": command_text,
+                "intent_code": str(getattr(reply, "intent_code", "") or "").strip(),
+            },
         )
 
     @classmethod
