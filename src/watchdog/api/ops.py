@@ -509,6 +509,7 @@ def _record_notification_requeued(
     next_retry_at = record.next_retry_at
     if next_retry_at is not None:
         mirrored["next_retry_at"] = next_retry_at
+    retry_point = next_retry_at or f"attempt:{record.delivery_attempt}"
     for field in (
         "event_id",
         "notification_kind",
@@ -532,7 +533,7 @@ def _record_notification_requeued(
         project_id=record.project_id,
         session_id=record.session_id,
         occurred_at=record.updated_at,
-        correlation_id=f"corr:notification:{record.envelope_id}:requeue:{reason}",
+        correlation_id=f"corr:notification:{record.envelope_id}:requeue:{retry_point}",
         causation_id=str(payload.get("event_id") or record.envelope_id),
         related_ids={
             "envelope_id": record.envelope_id,
