@@ -1111,6 +1111,57 @@ def test_watchdog_ops_requeue_transport_failures_uses_effective_native_thread_fr
     assert events[0].related_ids["native_thread_id"] == "thr_native_1"
 
 
+def test_watchdog_ops_can_requeue_retryable_http_transport_failures(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:http-failed",
+            envelope_type="notification",
+            correlation_id="corr:http-failed",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:http-failed",
+            audit_ref="audit:http-failed",
+            created_at="2099-01-01T00:20:00Z",
+            updated_at="2099-01-01T00:21:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            failure_code="http_503",
+            operator_notes=["delivery_failed failure_code=http_503 attempts=3"],
+            envelope_payload={
+                "envelope_type": "notification",
+                "event_id": "event:http-failed",
+                "notification_kind": "decision_result",
+                "severity": "warning",
+                "title": "decision update",
+                "summary": "historical failed notification",
+                "occurred_at": "2099-01-01T00:20:00Z",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["requeued"] == 1
+    assert payload["data"]["envelope_ids"] == ["notification-envelope:http-failed"]
+    updated = app.state.delivery_outbox_store.get_delivery_record("notification-envelope:http-failed")
+    assert updated is not None
+    assert updated.delivery_status == "pending"
+    assert updated.delivery_attempt == 0
+    assert updated.failure_code is None
+
+
 def test_build_ops_summary_surfaces_only_current_recovery_suppression_alerts(
     tmp_path: Path,
 ) -> None:
