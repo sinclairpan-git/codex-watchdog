@@ -6,6 +6,10 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.services.delivery.envelopes import build_envelopes_for_decision
+from watchdog.services.delivery.openclaw_webhook_store import (
+    OpenClawWebhookEndpointStore,
+    openclaw_webhook_endpoint_state_path,
+)
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.settings import Settings
@@ -288,3 +292,63 @@ def test_bootstrap_openclaw_webhook_allows_repeated_notification_requeue_events(
     ]
     assert [event.payload["delivery_attempt"] for event in events] == [0, 0]
     assert events[0].event_id != events[1].event_id
+
+
+def test_bootstrap_openclaw_webhook_does_not_requeue_when_endpoint_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        a_agent_token="at",
+        a_agent_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    app = create_app(settings, a_client=_ClientStub())
+    delivery_store: DeliveryOutboxStore = app.state.delivery_outbox_store
+    client = TestClient(app)
+
+    OpenClawWebhookEndpointStore(openclaw_webhook_endpoint_state_path(settings)).put(
+        openclaw_webhook_base_url="https://same-openclaw.trycloudflare.com",
+        changed_at="2026-04-07T18:00:00+08:00",
+        source="b-host-openclaw",
+        updated_at="2026-04-07T10:00:00Z",
+    )
+
+    (notification_record,) = delivery_store.enqueue_envelopes(
+        [build_envelopes_for_decision(_decision_record(decision_result="block_and_alert"))[0]]
+    )
+    delivery_store.update_delivery_record(
+        notification_record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "delivery_attempt": 3,
+                "failure_code": "transport_error",
+                "next_retry_at": None,
+                "operator_notes": ["delivery_dead_letter failure_code=transport_error attempts=3"],
+            }
+        )
+    )
+
+    response = client.post(
+        "/api/v1/watchdog/bootstrap/openclaw-webhook",
+        headers={"Authorization": "Bearer wt"},
+        json={
+            "event_type": "openclaw_webhook_base_url_changed",
+            "openclaw_webhook_base_url": "https://same-openclaw.trycloudflare.com",
+            "changed_at": "2026-04-07T19:00:00+08:00",
+            "source": "b-host-openclaw",
+        },
+    )
+
+    assert response.status_code == 200
+    retained = delivery_store.get_delivery_record(notification_record.envelope_id)
+    assert retained is not None
+    assert retained.delivery_status == "delivery_failed"
+    assert retained.delivery_attempt == 3
+    assert retained.failure_code == "transport_error"
+    events = app.state.session_service.list_events(
+        session_id=notification_record.session_id,
+        related_id_key="envelope_id",
+        related_id_value=notification_record.envelope_id,
+    )
+    assert events == []
