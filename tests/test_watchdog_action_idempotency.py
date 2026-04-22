@@ -11,6 +11,7 @@ from watchdog.contracts.session_spine.models import WatchdogAction
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_service.store import SessionServiceStore
 from watchdog.services.session_spine.actions import execute_watchdog_action
+from watchdog.services.session_spine.service import _task_with_authoritative_project_execution_state
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -624,7 +625,7 @@ def test_continue_session_uses_authoritative_project_state_on_session_event_read
     assert result.message == "project is not active for continuation"
 
 
-def test_continue_session_fails_closed_when_authoritative_project_state_is_unknown(
+def test_continue_session_degrades_gracefully_when_authoritative_project_state_is_unknown(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -660,6 +661,7 @@ def test_continue_session_fails_closed_when_authoritative_project_state_is_unkno
         "watchdog.services.session_spine.service._authoritative_project_execution_state",
         return_value="unknown",
     ), patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
         result = execute_watchdog_action(
             action,
             settings=settings,
@@ -667,12 +669,11 @@ def test_continue_session_fails_closed_when_authoritative_project_state_is_unkno
             receipt_store=_receipt_store(tmp_path),
         )
 
-    assert steer_mock.call_count == 0
-    assert result.action_status == "blocked"
-    assert result.effect == "noop"
-    assert result.reply_code == "action_not_available"
-    assert result.message == "authoritative project state is unavailable"
-    assert [fact.fact_code for fact in result.facts] == ["project_state_unavailable"]
+    assert steer_mock.call_count == 1
+    assert result.action_status == "completed"
+    assert result.effect == "steer_posted"
+    assert result.reply_code == "action_result"
+    assert [fact.fact_code for fact in result.facts] == []
 
 
 def test_continue_session_preserves_explicit_project_state_when_authoritative_state_is_unknown(
@@ -725,6 +726,40 @@ def test_continue_session_preserves_explicit_project_state_when_authoritative_st
     assert result.effect == "steer_posted"
     assert result.reply_code == "action_result"
     assert [fact.fact_code for fact in result.facts] == []
+
+
+def test_authoritative_project_state_is_scoped_to_matching_workspace_project(tmp_path: Path) -> None:
+    repo_root = tmp_path / "workspace-repo"
+    project_state_path = repo_root / ".ai-sdlc/project/config/project-state.yaml"
+    checkpoint_path = repo_root / ".ai-sdlc/state/checkpoint.yml"
+    project_state_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    project_state_path.write_text(
+        "project_name: workspace-repo\nstatus: completed\n",
+        encoding="utf-8",
+    )
+    checkpoint_path.write_text("feature:\n  id: wi-001\n", encoding="utf-8")
+
+    matching = _task_with_authoritative_project_execution_state(
+        {
+            "project_id": "workspace-repo",
+            "project_execution_state": "active",
+        },
+        repo_root=repo_root,
+    )
+    unrelated = _task_with_authoritative_project_execution_state(
+        {
+            "project_id": "repo-a",
+            "project_execution_state": "active",
+        },
+        repo_root=repo_root,
+    )
+
+    assert matching is not None
+    assert matching["project_execution_state"] == "completed"
+    assert unrelated is not None
+    assert unrelated["project_execution_state"] == "active"
+    assert "authoritative_project_execution_state_missing" not in unrelated
 
 
 @pytest.mark.parametrize(
