@@ -844,14 +844,68 @@ def test_child_resume_preserves_manual_activity_and_service_input_context(tmp_pa
     assert resumed_task["last_substantive_user_input_at"] == echoed_at
     assert resumed_task["last_substantive_user_input_fingerprint"] == echoed_fingerprint
     assert resumed_task["last_local_manual_activity_at"] == echoed_at
-    assert resumed_task["recent_service_inputs"] == [
+    assert len(resumed_task["recent_service_inputs"]) == 2
+    assert resumed_task["recent_service_inputs"][0] == {
+        "fingerprint": fingerprint_input_text("resume"),
+        "at": "2026-04-07T00:10:05Z",
+        "source": "a_control_agent",
+        "kind": "resume_summary",
+    }
+    assert resumed_task["recent_service_inputs"][1]["fingerprint"] == fingerprint_input_text(
+        "resume"
+    )
+    assert resumed_task["recent_service_inputs"][1]["source"] == "a_control_agent"
+    assert resumed_task["recent_service_inputs"][1]["kind"] == "resume_summary"
+
+
+def test_child_resume_retains_new_resume_summary_recorded_during_resume(tmp_path: Path) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="thr_child_1")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "p1",
+            "cwd": "/",
+            "task_title": "t",
+            "phase": "editing_source",
+        },
+        headers=h,
+    )
+    c.app.state.task_store.merge_update(
+        "p1",
         {
-            "fingerprint": fingerprint_input_text("resume"),
-            "at": "2026-04-07T00:10:05Z",
-            "source": "a_control_agent",
-            "kind": "resume_summary",
-        }
-    ]
+            "last_progress_at": "2026-04-07T00:00:00Z",
+            "recent_service_inputs": [],
+        },
+    )
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["data"]["resume_outcome"] == "new_child_session"
+
+    resumed_task = c.app.state.task_store.get("p1")
+
+    assert resumed_task is not None
+    assert len(resumed_task["recent_service_inputs"]) == 1
+    assert resumed_task["recent_service_inputs"][0]["source"] == "a_control_agent"
+    assert resumed_task["recent_service_inputs"][0]["kind"] == "resume_summary"
+    assert resumed_task["recent_service_inputs"][0]["fingerprint"] == fingerprint_input_text(
+        "resume"
+    )
+    assert resumed_task["last_progress_at"] != "2026-04-07T00:00:00Z"
 
 
 def test_child_resume_preserves_stuck_and_failure_counters(tmp_path: Path) -> None:
