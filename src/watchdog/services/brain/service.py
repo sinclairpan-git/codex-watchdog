@@ -269,7 +269,16 @@ class BrainDecisionService:
                 return normalized
         for candidate in all_candidates:
             normalized = str(candidate or "").strip().lower()
-            if normalized in {"execute", "decompose", "design", "refine", "init", "initialized", "active"}:
+            if normalized in {
+                "execute",
+                "decompose",
+                "design",
+                "refine",
+                "init",
+                "initialized",
+                "active",
+                "running",
+            }:
                 return "active"
         return "unknown"
 
