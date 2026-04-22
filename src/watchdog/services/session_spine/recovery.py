@@ -905,6 +905,7 @@ def _supersede_stale_interactions_for_recovery(
         old_context_id = str(record.envelope_payload.get("interaction_context_id") or "").strip()
         new_context_id = f"{old_context_id}:recovery"
         new_envelope_id = f"{record.envelope_id}:recovery"
+        effective_native_thread_id = child_native_thread_id or record.effective_native_thread_id
         session_service.record_event(
             event_type="interaction_context_superseded",
             project_id=record.project_id,
@@ -950,7 +951,7 @@ def _supersede_stale_interactions_for_recovery(
                     "envelope_id": new_envelope_id,
                     "correlation_id": f"{record.correlation_id}:recovery",
                     "session_id": child_session_id or record.session_id,
-                    "native_thread_id": child_native_thread_id or record.native_thread_id,
+                    "native_thread_id": effective_native_thread_id,
                     "idempotency_key": f"{record.idempotency_key}:recovery",
                     "audit_ref": f"{record.audit_ref}:recovery",
                     "created_at": now,
@@ -970,7 +971,7 @@ def _supersede_stale_interactions_for_recovery(
                         "envelope_id": new_envelope_id,
                         "correlation_id": f"{record.correlation_id}:recovery",
                         "session_id": child_session_id or record.session_id,
-                        "native_thread_id": child_native_thread_id or record.native_thread_id,
+                        "native_thread_id": effective_native_thread_id,
                         "idempotency_key": f"{record.idempotency_key}:recovery",
                         "audit_ref": f"{record.audit_ref}:recovery",
                         "created_at": now,
