@@ -4238,7 +4238,7 @@ def test_session_event_snapshot_route_dedupes_duplicate_raw_snapshot_event_ids(t
     assert data["events"][0]["event_code"] == "session_resumed"
 
 
-def test_session_event_snapshot_route_dedupes_duplicate_raw_events_without_event_id(
+def test_session_event_snapshot_route_keeps_distinct_legacy_raw_events_without_event_id(
     tmp_path,
 ) -> None:
     class MissingEventIdClient(FakeAClient):
@@ -4280,9 +4280,12 @@ def test_session_event_snapshot_route_dedupes_duplicate_raw_events_without_event
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["reply_code"] == "session_event_snapshot"
-    assert len(data["events"]) == 1
+    assert len(data["events"]) == 2
     assert data["events"][0]["event_code"] == "session_resumed"
+    assert data["events"][1]["event_code"] == "session_resumed"
     assert data["events"][0]["event_id"].startswith("synthetic:")
+    assert data["events"][1]["event_id"].startswith("synthetic:")
+    assert data["events"][0]["event_id"] != data["events"][1]["event_id"]
 
 
 def test_session_event_snapshot_route_prefers_explicit_native_thread_id(tmp_path) -> None:
