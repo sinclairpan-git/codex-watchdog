@@ -302,3 +302,30 @@ def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
 
     assert first_manual.get("last_local_manual_activity_at") == "2026-04-07T00:10:00Z"
     assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:15:00Z"
+
+
+def test_task_store_normalizes_null_files_touched_without_crashing(tmp_path) -> None:
+    path = tmp_path / "tasks.json"
+    path.write_text(
+        '{\n'
+        '  "version": 2,\n'
+        '  "projects": {"repo-a": {"current_thread_id": "thr_native_1", "thread_ids": ["thr_native_1"]}},\n'
+        '  "tasks": {\n'
+        '    "thr_native_1": {\n'
+        '      "project_id": "repo-a",\n'
+        '      "thread_id": "thr_native_1",\n'
+        '      "cwd": "/",\n'
+        '      "status": "running",\n'
+        '      "phase": "coding",\n'
+        '      "files_touched": null\n'
+        '    }\n'
+        '  }\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    store = TaskStore(path)
+    record = store.get("repo-a")
+
+    assert record is not None
+    assert record["files_touched"] == []
