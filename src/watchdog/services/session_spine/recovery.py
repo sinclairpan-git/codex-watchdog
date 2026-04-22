@@ -874,6 +874,13 @@ def _resolve_recovery_goal_contract_version(
     return "goal-contract:unknown"
 
 
+def _is_reissuable_recovery_interaction(record: Any) -> bool:
+    return str(getattr(record, "delivery_status", "") or "").strip() not in {
+        "superseded",
+        "delivery_failed",
+    }
+
+
 def _supersede_stale_interactions_for_recovery(
     *,
     project_id: str,
@@ -902,6 +909,8 @@ def _supersede_stale_interactions_for_recovery(
 
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     for family_id, record in latest_by_family.items():
+        if not _is_reissuable_recovery_interaction(record):
+            continue
         old_context_id = str(record.envelope_payload.get("interaction_context_id") or "").strip()
         new_context_id = f"{old_context_id}:recovery"
         new_envelope_id = f"{record.envelope_id}:recovery"
