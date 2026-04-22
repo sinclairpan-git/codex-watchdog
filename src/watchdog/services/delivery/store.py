@@ -299,6 +299,9 @@ class DeliveryOutboxStore:
             "transport_configuration_error",
         }:
             return True
+        if failure_code.startswith("http_"):
+            status = failure_code.removeprefix("http_")
+            return status in {"408", "409", "425", "429", "500", "502", "503", "504"}
         return failure_code.startswith("upstream_")
 
     @staticmethod
