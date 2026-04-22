@@ -1183,13 +1183,59 @@ def _build_session_read_bundle_from_session_events(
     events: list[SessionEventRecord],
     persisted_record: PersistedSessionRecord | None = None,
     task: dict[str, Any] | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
     session_service: SessionService | None = None,
     decision_store: PolicyDecisionStore | None = None,
     receipt_store: ActionReceiptStore | None = None,
     orchestration_state_store: ResidentOrchestrationStateStore | None = None,
     dispatch_cooldown_seconds: float = 0.0,
 ) -> SessionReadBundle:
-    approvals = _build_approval_rows_from_session_events(events)
+    event_approvals = _build_approval_rows_from_session_events(events)
+    terminal_event_approval_ids: set[str] = set()
+    for event in events:
+        if event.event_type == "approval_requested":
+            continue
+        if event.event_type not in SESSION_EVENT_APPROVAL_TYPES:
+            continue
+        approval_id = str(event.related_ids.get("approval_id") or "").strip()
+        if approval_id:
+            terminal_event_approval_ids.add(approval_id)
+    canonical_rows = _list_actionable_canonical_approval_rows(
+        approval_store,
+        project_id=project_id,
+    )
+    known_canonical_ids: set[str] = set()
+    actionable_canonical_ids = {
+        str(row.get("approval_id") or "")
+        for row in canonical_rows
+        if str(row.get("approval_id") or "")
+    }
+    if approval_store is not None:
+        known_canonical_ids = {
+            record.approval_id
+            for record in approval_store.list_records()
+            if record.project_id == project_id
+        }
+    approvals_by_id: dict[str, dict[str, Any]] = {}
+    for row in event_approvals:
+        approval_id = str(row.get("approval_id") or "")
+        if not approval_id:
+            continue
+        if approval_id in known_canonical_ids and approval_id not in actionable_canonical_ids:
+            continue
+        approvals_by_id[approval_id] = dict(row)
+    for row in canonical_rows:
+        approval_id = str(row.get("approval_id") or "")
+        if approval_id and approval_id not in terminal_event_approval_ids:
+            approvals_by_id[approval_id] = dict(row)
+    approvals = sorted(
+        approvals_by_id.values(),
+        key=lambda row: (
+            str(row.get("requested_at") or row.get("created_at") or "") == "",
+            str(row.get("requested_at") or row.get("created_at") or ""),
+            str(row.get("approval_id") or ""),
+        ),
+    )
     projected_task = _build_event_projection_task(
         project_id=project_id,
         approvals=approvals,
@@ -1773,6 +1819,7 @@ def build_session_read_bundle(
                 project_id=project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1800,6 +1847,7 @@ def build_session_read_bundle(
                 project_id=project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1861,6 +1909,7 @@ def build_session_read_bundle_by_native_thread(
                 project_id=persisted_record.project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1900,6 +1949,7 @@ def build_session_read_bundle_by_native_thread(
                     project_id=fallback_project_id,
                     events=session_events,
                     persisted_record=persisted_record,
+                    approval_store=approval_store,
                     session_service=session_service,
                     decision_store=decision_store,
                     receipt_store=receipt_store,
@@ -1930,6 +1980,7 @@ def build_session_read_bundle_by_native_thread(
                 project_id=project_id,
                 events=session_events,
                 task=task,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
