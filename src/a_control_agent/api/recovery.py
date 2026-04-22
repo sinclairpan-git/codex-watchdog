@@ -423,40 +423,41 @@ async def resume(
                 "mode": mode,
             },
         )
+    rec_latest = store.get(project_id) or rec
     next_state = {
         "project_id": project_id,
-        "cwd": str(rec.get("cwd") or ""),
-        "task_title": str(rec.get("task_title") or ""),
-        "task_prompt": str(rec.get("task_prompt") or ""),
-        "last_user_instruction": str(rec.get("last_user_instruction") or ""),
-        "current_phase_goal": str(rec.get("current_phase_goal") or ""),
-        "last_summary": str(rec.get("last_summary") or ""),
-        "files_touched": list(rec.get("files_touched") or []),
-        "approval_risk": rec.get("approval_risk"),
-        "last_error_signature": rec.get("last_error_signature"),
-        "last_substantive_user_input_at": rec.get("last_substantive_user_input_at"),
-        "last_substantive_user_input_fingerprint": rec.get(
+        "cwd": str(rec_latest.get("cwd") or ""),
+        "task_title": str(rec_latest.get("task_title") or ""),
+        "task_prompt": str(rec_latest.get("task_prompt") or ""),
+        "last_user_instruction": str(rec_latest.get("last_user_instruction") or ""),
+        "current_phase_goal": str(rec_latest.get("current_phase_goal") or ""),
+        "last_summary": str(rec_latest.get("last_summary") or ""),
+        "files_touched": list(rec_latest.get("files_touched") or []),
+        "approval_risk": rec_latest.get("approval_risk"),
+        "last_error_signature": rec_latest.get("last_error_signature"),
+        "last_substantive_user_input_at": rec_latest.get("last_substantive_user_input_at"),
+        "last_substantive_user_input_fingerprint": rec_latest.get(
             "last_substantive_user_input_fingerprint"
         ),
-        "last_local_manual_activity_at": rec.get("last_local_manual_activity_at"),
-        "recent_service_inputs": list(rec.get("recent_service_inputs") or []),
-        "model": str(rec.get("model") or ""),
-        "sandbox": str(rec.get("sandbox") or ""),
-        "approval_policy": str(rec.get("approval_policy") or ""),
-        "stuck_level": rec.get("stuck_level"),
-        "failure_count": rec.get("failure_count"),
+        "last_local_manual_activity_at": rec_latest.get("last_local_manual_activity_at"),
+        "recent_service_inputs": list(rec_latest.get("recent_service_inputs") or []),
+        "model": str(rec_latest.get("model") or ""),
+        "sandbox": str(rec_latest.get("sandbox") or ""),
+        "approval_policy": str(rec_latest.get("approval_policy") or ""),
+        "stuck_level": rec_latest.get("stuck_level"),
+        "failure_count": rec_latest.get("failure_count"),
         "status": "running",
         "pending_approval": False,
         "context_pressure": "medium",
         "phase": resume_target_phase,
         "thread_id": resumed_thread_id or parent_thread_id,
-        "goal_contract_version": rec.get("goal_contract_version"),
+        "goal_contract_version": rec_latest.get("goal_contract_version"),
     }
     if resume_outcome == _NEW_CHILD_SESSION and resumed_thread_id:
         if parent_thread_id:
             store.upsert_native_thread(
                 {
-                    **rec,
+                    **rec_latest,
                     "project_id": project_id,
                     "thread_id": parent_thread_id,
                     "status": "paused",
