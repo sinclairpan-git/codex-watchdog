@@ -366,13 +366,20 @@ class CodexAppServerBridge:
             snapshot["thread_id"] = str(thread_payload.get("id") or thread_id)
         else:
             snapshot.setdefault("thread_id", thread_id)
+        canonical_thread_id = str(snapshot.get("thread_id") or thread_id)
         self._thread_snapshots[thread_id] = snapshot
         active_turn_id = self._extract_active_turn_id(snapshot)
         if isinstance(active_turn_id, str) and active_turn_id:
             self._active_turn_ids[thread_id] = active_turn_id
+            if canonical_thread_id and canonical_thread_id != thread_id:
+                self._active_turn_ids[canonical_thread_id] = active_turn_id
             snapshot["active_turn_id"] = active_turn_id
         else:
             self._active_turn_ids.pop(thread_id, None)
+            if canonical_thread_id and canonical_thread_id != thread_id:
+                self._active_turn_ids.pop(canonical_thread_id, None)
+        if canonical_thread_id and canonical_thread_id != thread_id:
+            self._thread_snapshots[canonical_thread_id] = dict(snapshot)
         return snapshot
 
     def _remember_turn(self, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
