@@ -446,12 +446,24 @@ async def resume(
         "stuck_level": rec.get("stuck_level"),
         "failure_count": rec.get("failure_count"),
         "status": "running",
+        "pending_approval": False,
         "context_pressure": "medium",
         "phase": resume_target_phase,
         "thread_id": resumed_thread_id or parent_thread_id,
         "goal_contract_version": rec.get("goal_contract_version"),
     }
     if resume_outcome == _NEW_CHILD_SESSION and resumed_thread_id:
+        if parent_thread_id:
+            store.upsert_native_thread(
+                {
+                    **rec,
+                    "project_id": project_id,
+                    "thread_id": parent_thread_id,
+                    "status": "paused",
+                    "phase": "handoff",
+                    "pending_approval": False,
+                }
+            )
         rec3 = store.upsert_native_thread(next_state)
     else:
         store.merge_update(
