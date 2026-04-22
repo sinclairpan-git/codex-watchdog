@@ -83,31 +83,92 @@ def _read_yaml_mapping(relative_path: str, *, repo_root: Path | None = None) -> 
     return payload if isinstance(payload, dict) else {}
 
 
-def _authoritative_project_execution_state() -> str:
+def _normalized_scope_values(*values: object) -> set[str]:
+    normalized: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized.add(text)
+        normalized.add(text.lower())
+        if "/" in text:
+            tail = text.rsplit("/", 1)[-1].strip()
+            if tail:
+                normalized.add(tail)
+                normalized.add(tail.lower())
+    return normalized
+
+
+def _task_targets_workspace_project(
+    task: dict[str, Any] | None,
+    *,
+    project_state: dict[str, object],
+    checkpoint: dict[str, object],
+    state_resume: dict[str, object],
+    repo_root: Path | None = None,
+) -> bool:
+    if not isinstance(task, dict):
+        return False
+    project_id = str(task.get("project_id") or "").strip()
+    if not project_id:
+        return False
+    feature = checkpoint.get("feature")
+    feature_mapping = feature if isinstance(feature, dict) else {}
+    root = repo_root or Path(__file__).resolve().parents[4]
+    workspace_scope = _normalized_scope_values(
+        project_state.get("project_id"),
+        project_state.get("project_name"),
+        checkpoint.get("project_id"),
+        checkpoint.get("project_name"),
+        checkpoint.get("linked_wi_id"),
+        state_resume.get("project_id"),
+        state_resume.get("project_name"),
+        feature_mapping.get("id"),
+        feature_mapping.get("current_branch"),
+        feature_mapping.get("feature_branch"),
+        root.name,
+    )
+    return project_id in workspace_scope or project_id.lower() in workspace_scope
+
+
+def _authoritative_project_execution_state(
+    task: dict[str, Any] | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> str:
     from watchdog.services.brain.service import BrainDecisionService
 
+    project_state = _read_yaml_mapping(".ai-sdlc/project/config/project-state.yaml", repo_root=repo_root)
+    checkpoint = _read_yaml_mapping(".ai-sdlc/state/checkpoint.yml", repo_root=repo_root)
+    state_resume = _read_yaml_mapping(".ai-sdlc/state/resume-pack.yaml", repo_root=repo_root)
+    if not _task_targets_workspace_project(
+        task,
+        project_state=project_state,
+        checkpoint=checkpoint,
+        state_resume=state_resume,
+        repo_root=repo_root,
+    ):
+        return "unknown"
     return BrainDecisionService._normalize_project_execution_state(
-        project_state=_read_yaml_mapping(".ai-sdlc/project/config/project-state.yaml"),
-        checkpoint=_read_yaml_mapping(".ai-sdlc/state/checkpoint.yml"),
-        state_resume=_read_yaml_mapping(".ai-sdlc/state/resume-pack.yaml"),
+        project_state=project_state,
+        checkpoint=checkpoint,
+        state_resume=state_resume,
     )
 
 
 def _task_with_authoritative_project_execution_state(
     task: dict[str, Any] | None,
+    *,
+    repo_root: Path | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(task, dict):
         return task
-    authoritative_state = _authoritative_project_execution_state()
+    authoritative_state = _authoritative_project_execution_state(task, repo_root=repo_root)
     explicit_state = normalize_project_execution_state(task)
     updated = dict(task)
     if authoritative_state == "unknown":
-        if explicit_state == "unknown":
-            updated["project_execution_state"] = "unknown"
-            updated["authoritative_project_execution_state_missing"] = True
-            return updated
-        updated["project_execution_state"] = explicit_state
         updated.pop("authoritative_project_execution_state_missing", None)
+        updated["project_execution_state"] = explicit_state
         return updated
     updated.pop("authoritative_project_execution_state_missing", None)
     if explicit_state == "unknown":
