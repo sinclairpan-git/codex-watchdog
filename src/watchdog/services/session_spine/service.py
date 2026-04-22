@@ -2242,7 +2242,7 @@ def build_session_directory_bundle(
     try:
         tasks = _load_tasks_or_raise(client)
     except SessionSpineUpstreamError:
-        if persisted_by_project and merged_grouped_events and session_service is not None:
+        if merged_grouped_events and session_service is not None:
             sessions: list[SessionProjection] = []
             progresses: list[TaskProgressView] = []
             ordered_project_ids = list(
