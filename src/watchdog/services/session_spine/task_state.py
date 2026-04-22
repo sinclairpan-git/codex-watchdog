@@ -147,7 +147,13 @@ def validate_action_transition(
             return _reject()
         if source_status == "waiting_for_direction" and not has_human_guidance:
             return _reject()
-        if source_status in {"created", "running", "waiting_for_direction", "waiting_for_approval"}:
+        if source_status in {
+            "created",
+            "running",
+            "waiting_for_direction",
+            "waiting_for_approval",
+            "stuck",
+        }:
             return {
                 "allowed": True,
                 "target_status": "running",
