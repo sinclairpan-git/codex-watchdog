@@ -946,6 +946,105 @@ def test_perform_recovery_execution_rewrites_reissued_payload_ids_to_match_recor
     assert reissued.envelope_payload["interaction_context_id"] == "ctx-recovery-old:recovery"
 
 
+def test_perform_recovery_execution_skips_terminal_interaction_families_when_reissuing(
+    tmp_path,
+) -> None:
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:ctx-recovery-active",
+            envelope_type="notification",
+            correlation_id="corr:family-recovery-closed:ctx-recovery-active",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:ctx-recovery-active",
+            audit_ref="audit:ctx-recovery-active",
+            created_at="2026-04-14T03:10:00Z",
+            updated_at="2026-04-14T03:10:00Z",
+            outbox_seq=1,
+            delivery_status="delivered",
+            envelope_payload={
+                "interaction_context_id": "ctx-recovery-active",
+                "interaction_family_id": "family-recovery-closed",
+                "actor_id": "user:alice",
+                "channel_kind": "dm",
+            },
+        )
+    )
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:ctx-recovery-closed",
+            envelope_type="notification",
+            correlation_id="corr:family-recovery-closed:ctx-recovery-closed",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v8",
+            idempotency_key="idem:ctx-recovery-closed",
+            audit_ref="audit:ctx-recovery-closed",
+            created_at="2026-04-14T03:15:00Z",
+            updated_at="2026-04-14T03:15:00Z",
+            outbox_seq=2,
+            delivery_status="superseded",
+            envelope_payload={
+                "interaction_context_id": "ctx-recovery-closed",
+                "interaction_family_id": "family-recovery-closed",
+                "actor_id": "user:alice",
+                "channel_kind": "dm",
+            },
+        )
+    )
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "repeated failures",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        handoff_data={"goal_contract_version": "goal-v9"},
+        resume_data={
+            "resume_outcome": "new_child_session",
+            "session_id": "session:repo-a:child-v9",
+        },
+    )
+
+    outcome = perform_recovery_execution(
+        "repo-a",
+        settings=Settings(
+            api_token="wt",
+            a_agent_token="at",
+            a_agent_base_url="http://a.test",
+            data_dir=str(tmp_path),
+            recover_auto_resume=True,
+        ),
+        client=client,
+        session_service=session_service,
+    )
+
+    assert outcome.action == "handoff_and_resume"
+    records = {record.envelope_id: record for record in delivery_store.list_records()}
+    assert "notification-envelope:ctx-recovery-closed:recovery" not in records
+    assert records["notification-envelope:ctx-recovery-active"].delivery_status == "delivered"
+    assert records["notification-envelope:ctx-recovery-closed"].delivery_status == "superseded"
+    assert session_service.list_events(
+        session_id="session:repo-a",
+        event_type="interaction_context_superseded",
+    ) == []
+
+
 def test_perform_recovery_execution_retargets_reissued_interaction_to_child_session(
     tmp_path,
 ) -> None:
