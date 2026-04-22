@@ -1109,6 +1109,34 @@ def test_session_route_projects_native_thread_from_approval_requested_event_with
     assert a_client.list_approvals_calls == []
 
 
+def test_session_directory_route_falls_back_to_session_events_without_persisted_spine(
+    tmp_path,
+) -> None:
+    app = create_app(
+        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
+        a_client=BrokenAClient(),
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a").model_copy(update={"native_thread_id": "thr_native_1"}),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert [item["project_id"] for item in data["sessions"]] == ["repo-a"]
+    assert data["sessions"][0]["thread_id"] == "session:repo-a"
+    assert data["sessions"][0]["native_thread_id"] == "thr_native_1"
+    assert data["progresses"][0]["thread_id"] == "session:repo-a"
+    assert data["progresses"][0]["native_thread_id"] == "thr_native_1"
+    assert data["sessions"][0]["pending_approval_count"] == 1
+    assert data["message"] == "多项目进展（1）\n- repo-a | unknown | waiting for approval | 上下文=low"
+    assert approval.approval_id
+
+
 def test_progress_route_uses_effective_native_thread_from_legacy_decision_record_for_decision_trace(
     tmp_path,
 ) -> None:
