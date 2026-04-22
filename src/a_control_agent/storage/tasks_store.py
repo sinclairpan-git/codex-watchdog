@@ -87,6 +87,17 @@ def _normalize_optional_text(value: Any) -> str | None:
     return normalized
 
 
+def _normalize_files_touched(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
 def _canonicalize_task_record(
     rec: dict[str, Any],
     *,
@@ -104,7 +115,7 @@ def _canonicalize_task_record(
     )
     rec["stuck_level"] = _safe_int(rec.get("stuck_level", 0), default=0, minimum=0, maximum=4)
     rec["failure_count"] = _safe_int(rec.get("failure_count", 0), default=0, minimum=0)
-    rec["files_touched"] = list(rec.get("files_touched", []))
+    rec["files_touched"] = _normalize_files_touched(rec.get("files_touched"))
     rec["approval_risk"] = rec.get("approval_risk")
     rec["last_error_signature"] = rec.get("last_error_signature")
     rec["task_title"] = str(rec.get("task_title", ""))
