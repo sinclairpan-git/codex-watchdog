@@ -53,5 +53,20 @@ def test_validate_action_transition_rejects_missing_guards_and_preserves_source_
     assert verdict["reason_code"] == "rejected_invalid_state"
 
 
+def test_validate_action_transition_allows_continue_from_stuck_status() -> None:
+    verdict = task_state.validate_action_transition(
+        "continue",
+        task={
+            "status": "stuck",
+            "phase": "debugging",
+            "pending_approval": False,
+        },
+    )
+
+    assert verdict["allowed"] is True
+    assert verdict["target_status"] == "running"
+    assert verdict["reason_code"] == "continue"
+
+
 def test_failed_task_is_terminal_under_canonical_runtime_semantics() -> None:
     assert task_state.is_terminal_task({"status": "failed", "phase": "debugging"}) is True
