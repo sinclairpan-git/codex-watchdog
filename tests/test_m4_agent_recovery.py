@@ -656,6 +656,98 @@ def test_child_resume_surfaces_risk_and_error_context_without_reopening_pending_
     assert "last_error_signature=context overflow loop" in handoff_text
 
 
+def test_child_resume_clears_parent_resuming_state_after_switching_threads(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="thr_child_1")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    created = c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    ).json()["data"]
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["data"]["resume_outcome"] == "new_child_session"
+    parent_task = c.app.state.task_store.get_by_thread(created["thread_id"])
+    assert parent_task is not None
+    assert parent_task["status"] == "paused"
+    assert parent_task["phase"] == "handoff"
+
+
+def test_child_resume_clears_stale_pending_approval_on_existing_child_thread(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="thr_child_2")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "p1",
+            "cwd": "/",
+            "task_title": "t",
+            "phase": "editing_source",
+            "pending_approval": False,
+        },
+        headers=h,
+    )
+    data = c.app.state.task_store._read()
+    data["tasks"]["thr_child_2"] = {
+        "project_id": "p1",
+        "thread_id": "thr_child_2",
+        "cwd": "/",
+        "task_title": "stale child",
+        "status": "waiting_for_approval",
+        "phase": "planning",
+        "pending_approval": True,
+        "created_at": "2026-04-22T03:00:00Z",
+        "last_progress_at": "2026-04-22T03:00:00Z",
+        "recent_service_inputs": [],
+    }
+    project_meta = data["projects"]["p1"]
+    if "thr_child_2" not in project_meta["thread_ids"]:
+        project_meta["thread_ids"].append("thr_child_2")
+    c.app.state.task_store._write(data)
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["data"]["resume_outcome"] == "new_child_session"
+    resumed_task = c.app.state.task_store.get("p1")
+    assert resumed_task is not None
+    assert resumed_task["thread_id"] == "thr_child_2"
+    assert resumed_task["pending_approval"] is False
+    assert resumed_task["status"] == "running"
+
+
 def test_child_resume_handoff_uses_unknown_goal_contract_when_version_is_absent(
     tmp_path: Path,
 ) -> None:
