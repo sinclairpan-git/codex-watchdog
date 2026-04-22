@@ -169,15 +169,23 @@ def post_openclaw_webhook_bootstrap(
                 "message": "event_type must be openclaw_webhook_base_url_changed",
             },
         )
+    previous_state = store.get()
+    previous_base_url = (
+        str(previous_state.openclaw_webhook_base_url or "").strip()
+        if previous_state is not None
+        else ""
+    )
     state = store.put(
         openclaw_webhook_base_url=contract.openclaw_webhook_base_url,
         changed_at=contract.changed_at,
         source=contract.source,
     )
-    requeued = delivery_store.requeue_transport_failures(
-        reason="openclaw_webhook_base_url_changed",
-        updated_at=state.updated_at,
-    )
+    requeued = []
+    if previous_base_url != contract.openclaw_webhook_base_url.strip():
+        requeued = delivery_store.requeue_transport_failures(
+            reason="openclaw_webhook_base_url_changed",
+            updated_at=state.updated_at,
+        )
     for record in requeued:
         previous_failure_code = None
         for note in reversed(record.operator_notes):
