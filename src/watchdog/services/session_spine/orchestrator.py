@@ -2324,6 +2324,9 @@ class ResidentOrchestrator:
                             client=self._client,
                             receipt_store=self._action_receipt_store,
                             session_service=self._session_service,
+                            store=self._session_spine_store,
+                            approval_store=self._approval_store,
+                            decision_store=self._decision_store,
                         )
                         if result.action_status == ActionStatus.COMPLETED:
                             self._consume_completed_future_worker_results(
