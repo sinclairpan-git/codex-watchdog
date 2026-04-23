@@ -332,18 +332,20 @@ def _approval_matches_runtime_pending(
     record: CanonicalApprovalRecord,
     runtime_pending_rows: list[dict[str, object]],
 ) -> bool:
-    requested_action = str(record.requested_action or "").strip()
+    approval_id = str(record.approval_id or "").strip()
+    if not approval_id:
+        return False
     native_thread_id = str(record.effective_native_thread_id or "").strip()
     for row in runtime_pending_rows:
+        runtime_approval_id = str(row.get("approval_id") or "").strip()
+        if runtime_approval_id != approval_id:
+            continue
         project_id = str(row.get("project_id") or "").strip()
         if project_id != record.project_id:
             continue
         runtime_thread_id = str(row.get("thread_id") or "").strip()
         if native_thread_id and runtime_thread_id and native_thread_id != runtime_thread_id:
             continue
-        command = str(row.get("command") or "").strip().lower()
-        if requested_action == "continue_session" and "continue" in command:
-            return True
         return True
     return False
 
@@ -1192,8 +1194,6 @@ def build_ops_health_summary(
         decision_records,
         session_spine_store=session_spine_store,
     )
-    if runtime_pending_approvals is None:
-        runtime_pending_approvals = _fetch_runtime_pending_approvals(settings)
 
     blocked_too_long = _count_blocked_too_long(
         decision_records,

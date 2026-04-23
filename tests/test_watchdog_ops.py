@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
@@ -188,6 +189,24 @@ def test_watchdog_ops_alerts_and_healthz_report_degraded_status(tmp_path: Path) 
         "mapping_incomplete",
         "recovery_failed",
     ]
+
+
+def test_watchdog_healthz_does_not_fetch_runtime_pending_approvals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_ops_alerts(tmp_path)
+
+    def fail_runtime_fetch(*_: object, **__: object) -> None:
+        raise AssertionError("healthz must not call runtime approvals")
+
+    monkeypatch.setattr("watchdog.api.ops._fetch_runtime_pending_approvals", fail_runtime_fetch)
+
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    response = TestClient(app).get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
 
 
 def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) -> None:
@@ -2655,6 +2674,76 @@ def test_build_ops_summary_ignores_locally_pending_approvals_when_runtime_has_no
         data_dir=tmp_path,
         settings=settings,
         runtime_pending_approvals=[],
+    )
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_requires_exact_runtime_pending_approval_id(
+    tmp_path: Path,
+) -> None:
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    settings = Settings(data_dir=str(tmp_path))
+    decision = CanonicalDecisionRecord(
+        decision_id="decision:approval-template",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|approval-template",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        approval_id="approval:repo-a-old",
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="needs approval",
+        matched_policy_rules=["human_gate"],
+        why_not_escalated=None,
+        why_escalated="human_gate matched persisted facts",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|approval:repo-a-old",
+        created_at="2000-01-01T00:00:00Z",
+        operator_notes=[],
+        evidence={},
+    )
+    approval_store.put(
+        CanonicalApprovalRecord(
+            approval_id="approval:repo-a-old",
+            envelope_id="approval-envelope:repo-a-old",
+            approval_kind="canonical_user_decision",
+            requested_action="continue_session",
+            requested_action_args={},
+            approval_token="approval-token:repo-a-old",
+            decision_options=["approve", "reject", "execute_action"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v1",
+            idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|approval:repo-a-old|approval",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            status="pending",
+            created_at="2000-01-01T00:00:00Z",
+            operator_notes=[],
+            decision=decision,
+        )
+    )
+
+    summary = build_ops_summary(
+        data_dir=tmp_path,
+        settings=settings,
+        runtime_pending_approvals=[
+            {
+                "approval_id": "approval:repo-a-different",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "command": "continue",
+            }
+        ],
     )
 
     assert summary.status == "ok"
