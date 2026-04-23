@@ -152,6 +152,56 @@ def test_policy_decision_store_reuses_existing_canonical_decision_for_same_decis
     assert store.list_records() == [stored_first]
 
 
+def test_policy_decision_store_updates_existing_record_when_evidence_changes_for_same_key(
+    tmp_path: Path,
+) -> None:
+    store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    persisted_record = _record()
+
+    first = build_canonical_decision_record(
+        persisted_record=persisted_record,
+        decision_result="auto_execute_and_notify",
+        brain_intent="propose_execute",
+        risk_class="none",
+        action_ref="continue_session",
+        matched_policy_rules=["registered_action"],
+        decision_reason="registered action and complete evidence",
+        why_not_escalated="policy_allows_auto_execution",
+        why_escalated=None,
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        extra_evidence={
+            "decision_trace": {
+                "provider": "resident_orchestrator",
+                "model": "rule-based-brain",
+            }
+        },
+    )
+    second = first.model_copy(
+        update={
+            "created_at": "2026-04-07T00:01:00Z",
+            "evidence": {
+                **first.evidence,
+                "decision_trace": {
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                },
+            },
+        }
+    )
+
+    stored_first = store.put(first)
+    stored_second = store.put(second)
+    records = store.list_records()
+
+    assert stored_first.decision_key == stored_second.decision_key
+    assert stored_first.decision_id == stored_second.decision_id
+    assert len(records) == 1
+    assert records[0].created_at == "2026-04-07T00:01:00Z"
+    assert records[0].evidence["decision_trace"]["provider"] == "openai-compatible"
+    assert records[0].evidence["decision_trace"]["model"] == "MiniMax-M2.7"
+
+
 def test_canonical_decision_record_carries_policy_and_fact_snapshot_evidence() -> None:
     record = build_canonical_decision_record(
         persisted_record=_record(fact_snapshot_version="fact-v9"),

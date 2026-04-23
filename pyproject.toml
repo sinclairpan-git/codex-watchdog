@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "openclaw-codex-watchdog"
+name = "codex-watchdog"
 version = "0.1.0"
-description = "A-Control-Agent 与 Watchdog（PRD M1）"
+description = "Codex runtime watchdog and control-plane services"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

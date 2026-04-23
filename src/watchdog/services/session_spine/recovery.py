@@ -10,7 +10,7 @@ import httpx
 from watchdog.services.memory_hub.models import ContextQualitySnapshot
 from watchdog.services.memory_hub.service import MemoryHubService
 from watchdog.contracts.session_spine.models import FactRecord
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
@@ -99,8 +99,8 @@ def _build_recovery_packet(
         session_id=stable_thread_id_for_project(project_id),
     )
     goal_contract_version = str(
-        task.get("goal_contract_version")
-        or getattr(contract, "version", "")
+        getattr(contract, "version", "")
+        or task.get("goal_contract_version")
         or "goal-contract:unknown"
     ).strip() or "goal-contract:unknown"
     project_total_goal = (
@@ -218,6 +218,7 @@ def _record_recovery_suppressed(
             "suppression_reason": suppression_reason,
             "task_status": task_status,
             "context_pressure": context_pressure,
+            "last_progress_at": str(task.get("last_progress_at") or ""),
             **(
                 {"project_execution_state": project_execution_state}
                 if project_execution_state not in (None, "", "unknown")
@@ -351,18 +352,18 @@ def _extract_success_data(
 
 
 def _load_task_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
 ) -> dict[str, Any]:
     try:
         body = client.get_envelope(project_id)
     except (httpx.RequestError, RuntimeError, OSError) as exc:
-        raise _control_link_error("无法连接 A-Control-Agent") from exc
+        raise _control_link_error("无法连接 Codex runtime") from exc
     if not body.get("success"):
         error = body.get("error")
         if isinstance(error, dict):
             raise SessionSpineUpstreamError(dict(error))
-        raise _control_link_error("无法连接 A-Control-Agent")
+        raise _control_link_error("无法连接 Codex runtime")
     data = body.get("data")
     if isinstance(data, dict):
         return dict(data)
@@ -455,11 +456,12 @@ def _build_memory_advisory_context(
     *,
     project_id: str,
     task: dict[str, Any],
+    settings: Settings,
     session_service: SessionService | None,
     memory_hub_service: MemoryHubService | None,
 ) -> dict[str, Any] | None:
     session_id = stable_thread_id_for_project(project_id)
-    service = memory_hub_service or MemoryHubService()
+    service = memory_hub_service or MemoryHubService.from_data_dir(settings.data_dir)
     try:
         payload = service.build_runtime_advisory_context(
             query=f"resume {project_id}",
@@ -505,7 +507,7 @@ def perform_recovery_execution(
     project_id: str,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     memory_hub_service: MemoryHubService | None = None,
 ) -> RecoveryExecutionOutcome:
@@ -521,6 +523,7 @@ def perform_recovery_execution(
     memory_advisory_context = _build_memory_advisory_context(
         project_id=project_id,
         task=task,
+        settings=settings,
         session_service=session_service,
         memory_hub_service=memory_hub_service,
     )
@@ -786,11 +789,10 @@ def _record_recovery_truth(
         task=task,
         settings=settings,
     )
-    goal_contract_version = str(
-        outcome.handoff.get("goal_contract_version")
-        or (outcome.resume or {}).get("goal_contract_version")
-        or "goal-contract:unknown"
-    ).strip() or "goal-contract:unknown"
+    goal_contract_version = _resolve_recovery_goal_contract_version(
+        handoff=outcome.handoff,
+        resume=outcome.resume,
+    )
     source_packet_id = str(
         outcome.handoff.get("source_packet_id")
         or (outcome.resume or {}).get("source_packet_id")
@@ -820,16 +822,17 @@ def _record_recovery_truth(
         data_dir=settings.data_dir,
         recovery_transaction_id=recorded.recovery_transaction_id,
         source_packet_id=recorded.source_packet_id,
+        child_session_id=recorded.child_session_id,
+        child_native_thread_id=_resume_native_thread_id(outcome.resume),
     )
+    if recorded.child_session_id is None:
+        return
     _supersede_parent_future_workers_for_recovery(
         project_id=project_id,
         parent_session_id=recorded.parent_session_id,
         session_service=service,
     )
-    if (
-        recorded.child_session_id is None
-        or goal_contract_version == "goal-contract:unknown"
-    ):
+    if goal_contract_version == "goal-contract:unknown":
         return
     goal_contracts = GoalContractService(service)
     if goal_contracts.get_current_contract(
@@ -848,6 +851,36 @@ def _record_recovery_truth(
     )
 
 
+def _resolve_recovery_goal_contract_version(
+    *,
+    handoff: dict[str, Any],
+    resume: dict[str, Any] | None,
+) -> str:
+    for payload in (handoff, resume or {}):
+        if not isinstance(payload, dict):
+            continue
+        continuation_packet = payload.get("continuation_packet")
+        if isinstance(continuation_packet, dict):
+            source_refs = continuation_packet.get("source_refs")
+            if isinstance(source_refs, dict):
+                packet_goal_contract_version = str(
+                    source_refs.get("goal_contract_version") or ""
+                ).strip()
+                if packet_goal_contract_version:
+                    return packet_goal_contract_version
+        top_level = str(payload.get("goal_contract_version") or "").strip()
+        if top_level:
+            return top_level
+    return "goal-contract:unknown"
+
+
+def _is_reissuable_recovery_interaction(record: Any) -> bool:
+    return str(getattr(record, "delivery_status", "") or "").strip() not in {
+        "superseded",
+        "delivery_failed",
+    }
+
+
 def _supersede_stale_interactions_for_recovery(
     *,
     project_id: str,
@@ -855,6 +888,8 @@ def _supersede_stale_interactions_for_recovery(
     data_dir: str,
     recovery_transaction_id: str,
     source_packet_id: str,
+    child_session_id: str | None = None,
+    child_native_thread_id: str | None = None,
 ) -> None:
     from watchdog.services.delivery.store import DeliveryOutboxStore
 
@@ -874,14 +909,19 @@ def _supersede_stale_interactions_for_recovery(
 
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     for family_id, record in latest_by_family.items():
+        if not _is_reissuable_recovery_interaction(record):
+            continue
         old_context_id = str(record.envelope_payload.get("interaction_context_id") or "").strip()
         new_context_id = f"{old_context_id}:recovery"
         new_envelope_id = f"{record.envelope_id}:recovery"
+        effective_native_thread_id = child_native_thread_id or record.effective_native_thread_id
         session_service.record_event(
             event_type="interaction_context_superseded",
             project_id=record.project_id,
             session_id=record.session_id,
-            correlation_id=f"corr:recovery-interaction:{family_id}",
+            correlation_id=(
+                f"corr:recovery-interaction:{family_id}:{recovery_transaction_id}:{new_context_id}"
+            ),
             causation_id=recovery_transaction_id,
             related_ids={
                 "interaction_context_id": old_context_id,
@@ -913,16 +953,19 @@ def _supersede_stale_interactions_for_recovery(
                 }
             )
         )
+        fresh_outbox_seq = store.reserve_outbox_seq()
         store.update_delivery_record(
             record.model_copy(
                 update={
                     "envelope_id": new_envelope_id,
                     "correlation_id": f"{record.correlation_id}:recovery",
+                    "session_id": child_session_id or record.session_id,
+                    "native_thread_id": effective_native_thread_id,
                     "idempotency_key": f"{record.idempotency_key}:recovery",
                     "audit_ref": f"{record.audit_ref}:recovery",
                     "created_at": now,
                     "updated_at": now,
-                    "outbox_seq": record.outbox_seq + 1,
+                    "outbox_seq": fresh_outbox_seq,
                     "delivery_status": "pending",
                     "delivery_attempt": 0,
                     "receipt_id": None,
@@ -934,6 +977,13 @@ def _supersede_stale_interactions_for_recovery(
                     ],
                     "envelope_payload": {
                         **record.envelope_payload,
+                        "envelope_id": new_envelope_id,
+                        "correlation_id": f"{record.correlation_id}:recovery",
+                        "session_id": child_session_id or record.session_id,
+                        "native_thread_id": effective_native_thread_id,
+                        "idempotency_key": f"{record.idempotency_key}:recovery",
+                        "audit_ref": f"{record.audit_ref}:recovery",
+                        "created_at": now,
                         "interaction_context_id": new_context_id,
                     },
                 }

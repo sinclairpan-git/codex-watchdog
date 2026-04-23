@@ -35,7 +35,7 @@ def test_long_running_residual_contracts_flag_item_missing_evidence_refs(tmp_pat
         residual_items:
           - residual_id: RES-001
             source_refs:
-              - openclaw-codex-watchdog-prd.md
+              - codex-watchdog-prd.md
             disposition: residual
             formal_truth_refs: []
             notes: example
@@ -70,7 +70,7 @@ def test_long_running_residual_contracts_flag_status_doc_mismatch(tmp_path: Path
         residual_items:
           - residual_id: RES-001
             source_refs:
-              - openclaw-codex-watchdog-prd.md
+              - codex-watchdog-prd.md
             disposition: residual
             formal_truth_refs:
               - .ai-sdlc/state/checkpoint.yml

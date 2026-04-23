@@ -1,16 +1,29 @@
-#!/bin/zsh
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-export PATH="/Users/sinclairpan/.local/bin:/Users/sinclairpan/.nvm/versions/node/v24.11.1/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+SCRIPT_PATH=$0
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+APP_DIR=${APP_DIR:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}
 
-APP_DIR="/Users/sinclairpan/project/openclaw-codex-watchdog"
 cd "$APP_DIR"
 
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 set -a
-source "$APP_DIR/.env.a"
+. "$APP_DIR/.env.a"
 set +a
 
-exec /Users/sinclairpan/.local/bin/uv run uvicorn a_control_agent.main:app \
+UV_BIN="${UV_BIN:-$(command -v uv || true)}"
+if [ -z "$UV_BIN" ]; then
+  echo "uv is required on PATH" >&2
+  exit 1
+fi
+
+exec "$UV_BIN" run uvicorn a_control_agent.main:app \
   --host "$A_AGENT_HOST" \
   --port "$A_AGENT_PORT" \
   --app-dir src

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from watchdog.contracts.session_spine.models import FactRecord
@@ -51,6 +51,19 @@ def _build_fact(
     )
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _auto_recovery_suppressed(task: dict[str, Any] | None) -> bool:
     return normalize_task_status(task) in {
         "handoff_in_progress",
@@ -58,6 +71,18 @@ def _auto_recovery_suppressed(task: dict[str, Any] | None) -> bool:
         "paused",
         "waiting_for_direction",
     }
+
+
+def _recent_local_activity_supersedes_stuck_signal(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    manual_activity_at = _parse_iso(task.get("last_local_manual_activity_at"))
+    if manual_activity_at is None:
+        return False
+    last_progress_at = _parse_iso(task.get("last_progress_at"))
+    if last_progress_at is None:
+        return True
+    return manual_activity_at > last_progress_at
 
 
 def build_fact_records(
@@ -173,7 +198,10 @@ def build_fact_records(
     if _auto_recovery_suppressed(task):
         return facts
 
-    if int(_task_value(task, "stuck_level", 0)) >= 2:
+    if (
+        int(_task_value(task, "stuck_level", 0)) >= 2
+        and not _recent_local_activity_supersedes_stuck_signal(task)
+    ):
         facts.append(
             _build_fact(
                 project_id,

@@ -35,8 +35,8 @@ class FakeEventsClient:
 
 def test_session_events_snapshot_route_returns_stable_sse(tmp_path) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 'id: evt_001\n'
                 "event: task_created\n"
@@ -59,8 +59,8 @@ def test_session_events_snapshot_route_returns_stable_sse(tmp_path) -> None:
 
 def test_session_events_snapshot_route_dedupes_duplicate_raw_snapshot_event_ids(tmp_path) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 'id: evt_001\n'
                 "event: task_created\n"
@@ -86,8 +86,8 @@ def test_session_events_snapshot_route_dedupes_duplicate_raw_snapshot_events_wit
     tmp_path,
 ) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 "event: resume\n"
                 'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:02:00Z"}\n\n'
@@ -110,8 +110,8 @@ def test_session_events_snapshot_route_dedupes_duplicate_raw_snapshot_events_wit
 
 def test_session_events_follow_route_streams_stable_events(tmp_path) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot="",
             stream_chunks=[
                 'id: evt_002\nevent: steer\ndata: {"event_id":"evt_002","project_id":"repo-a","thread_id":"thr_native_1","event_type":"steer","event_source":"watchdog","payload_json":{"message":"stay focused","reason":"policy"},"created_at":"2026-04-05T10:01:00Z"}\n\n',
@@ -136,8 +136,8 @@ def test_session_events_follow_route_bootstraps_stable_snapshot_before_stream(
     tmp_path,
 ) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 'id: evt_001\n'
                 "event: task_created\n"
@@ -165,8 +165,8 @@ def test_session_events_follow_route_dedupes_replayed_snapshot_events_from_raw_s
     tmp_path,
 ) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 'id: evt_001\n'
                 "event: task_created\n"
@@ -194,8 +194,8 @@ def test_session_events_follow_route_dedupes_replayed_snapshot_events_without_ev
     tmp_path,
 ) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 "event: resume\n"
                 'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:02:00Z"}\n\n'
@@ -225,8 +225,8 @@ def test_session_events_follow_route_dedupes_duplicate_bootstrap_snapshot_event_
     tmp_path,
 ) -> None:
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot=(
                 'id: evt_001\n'
                 "event: task_created\n"
@@ -258,8 +258,8 @@ def test_session_events_follow_route_prepends_session_service_child_adoption_eve
     from watchdog.services.goal_contract.service import GoalContractService
 
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=FakeEventsClient(
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=FakeEventsClient(
             snapshot="",
             stream_chunks=[
                 'id: evt_002\nevent: resume\ndata: {"event_id":"evt_002","project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:02:00Z"}\n\n',
@@ -324,8 +324,8 @@ def test_session_events_follow_route_falls_back_to_session_service_when_stream_s
             raise httpx.ConnectError("refused", request=httpx.Request("GET", "http://a.test"))
 
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=BrokenEventsClient(),
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=BrokenEventsClient(),
     )
     goal_contracts = GoalContractService(app.state.session_service)
     created = goal_contracts.bootstrap_contract(
@@ -372,8 +372,8 @@ def test_session_events_route_returns_control_link_error_on_upstream_failure(tmp
             raise httpx.ConnectError("refused", request=httpx.Request("GET", "http://a.test"))
 
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=BrokenEventsClient(),
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=BrokenEventsClient(),
     )
     c = TestClient(app)
 
@@ -403,8 +403,8 @@ def test_session_events_snapshot_route_falls_back_to_session_service_when_upstre
             raise httpx.ConnectError("refused", request=httpx.Request("GET", "http://a.test"))
 
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=BrokenEventsClient(),
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=BrokenEventsClient(),
     )
     goal_contracts = GoalContractService(app.state.session_service)
     created = goal_contracts.bootstrap_contract(
@@ -460,8 +460,8 @@ def test_session_events_follow_route_returns_control_link_error_on_stream_start_
             raise httpx.ConnectError("refused", request=httpx.Request("GET", "http://a.test"))
 
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=BrokenEventsClient(),
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=BrokenEventsClient(),
     )
     c = TestClient(app)
 
@@ -505,8 +505,8 @@ def test_session_events_follow_route_falls_back_to_session_service_when_first_st
             return _iter()
 
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=DeferredBrokenEventsClient(),
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=DeferredBrokenEventsClient(),
     )
     goal_contracts = GoalContractService(app.state.session_service)
     created = goal_contracts.bootstrap_contract(

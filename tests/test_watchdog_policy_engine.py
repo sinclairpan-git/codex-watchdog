@@ -192,6 +192,20 @@ def test_policy_engine_allows_auto_execution_for_brain_proposed_recovery() -> No
         action_ref="execute_recovery",
         trigger="resident_supervision",
         brain_intent="propose_recovery",
+        validator_verdict={
+            "status": "pass",
+            "reason": "action_args_valid",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "not_applicable",
+                "decision_trace_ref": "trace:recovery",
+                "approval_read_ref": "approval:none",
+                "report_id": "report:not_applicable",
+                "report_hash": "sha256:not_applicable",
+                "input_hash": "sha256:recovery",
+            }
+        },
     )
 
     assert decision.decision_result == "auto_execute_and_notify"
@@ -208,6 +222,76 @@ def test_policy_engine_allows_auto_execution_for_brain_proposed_recovery() -> No
         "auto_execute_allowed_intents": ["propose_recovery"],
         "auto_execute_eligible": True,
     }
+
+
+def test_policy_engine_allows_auto_execution_for_brain_proposed_request_recovery() -> None:
+    record = _record(facts=[_fact("recovery_available", fact_kind="action")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="request_recovery",
+        trigger="resident_supervision",
+        brain_intent="propose_recovery",
+        validator_verdict={
+            "status": "pass",
+            "reason": "advisory_recovery_ok",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "not_applicable",
+                "decision_trace_ref": "trace:request-recovery",
+                "approval_read_ref": "approval:none",
+                "report_id": "report:not_applicable",
+                "report_hash": "sha256:not_applicable",
+                "input_hash": "sha256:request-recovery",
+            }
+        },
+    )
+
+    assert decision.decision_result == "auto_execute_and_notify"
+    assert decision.risk_class == "none"
+    assert decision.why_not_escalated == "policy_allows_auto_execution"
+    assert decision.why_escalated is None
+    assert "registered_action" in decision.matched_policy_rules
+    assert decision.evidence["managed_agent_boundary"] == {
+        "status": "pass",
+        "action_ref": "request_recovery",
+        "brain_intent": "propose_recovery",
+        "capability": "session_recovery",
+        "allowed_brain_intents": ["propose_recovery"],
+        "auto_execute_allowed_intents": ["propose_recovery"],
+        "auto_execute_eligible": True,
+    }
+
+
+def test_policy_engine_blocks_proposed_recovery_when_validator_degrades() -> None:
+    record = _record(facts=[_fact("recovery_available", fact_kind="action")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="execute_recovery",
+        trigger="resident_supervision",
+        brain_intent="propose_recovery",
+        validator_verdict={
+            "status": "degraded",
+            "reason": "action_args_invalid",
+        },
+        release_gate_verdict={
+            "release_gate_verdict": {
+                "status": "not_applicable",
+                "decision_trace_ref": "trace:recovery",
+                "approval_read_ref": "approval:none",
+                "report_id": "report:not_applicable",
+                "report_hash": "sha256:not_applicable",
+                "input_hash": "sha256:recovery",
+            }
+        },
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert "validator_gate_degraded" in decision.matched_policy_rules
+    assert decision.uncertainty_reasons == ["action_args_invalid"]
 
 
 def test_policy_engine_blocks_managed_agent_intent_action_mismatch() -> None:

@@ -79,6 +79,25 @@ def test_replay_canonical_audit_materializes_resident_expert_consultation_event(
         "consulted_at": "2026-04-07T00:00:00Z",
         "coverage_status": "degraded",
         "degraded_expert_ids": ["hermes-agent-expert"],
+        "opinions": [
+            {
+                "expert_id": "managed-agent-expert",
+                "next_slice_recommendation": "tighten recovery lineage",
+                "rationale": "managed execution closure should stay replayable",
+                "risks_to_avoid": ["implicit recovery state transitions"],
+            },
+            {
+                "expert_id": "hermes-agent-expert",
+                "next_slice_recommendation": "reduce operator triage noise",
+                "rationale": "incident dispatch still carries too much low-signal text",
+                "risks_to_avoid": ["burying the next operator step"],
+            },
+        ],
+        "synthesis": {
+            "summary": "take the smallest slice that improves lineage and triage together",
+            "chosen_next_slice": "lineage plus concise triage summary",
+            "dissent_summary": "managed prioritizes lineage while hermes prioritizes triage density",
+        },
         "experts": [
             {
                 "expert_id": "managed-agent-expert",

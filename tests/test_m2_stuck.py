@@ -65,7 +65,7 @@ def test_task_store_updates_last_local_manual_activity_only_for_non_service_echo
         "repo-a",
         message="continue coding",
         source="watchdog",
-        reason="openclaw_continue_session",
+        reason="watchdog_continue_session",
     )
     echoed = store.upsert_native_thread(
         {
@@ -116,7 +116,7 @@ def test_task_store_treats_small_negative_skew_as_service_echo(tmp_path, monkeyp
         "repo-a",
         message="continue coding",
         source="watchdog",
-        reason="openclaw_continue_session",
+        reason="watchdog_continue_session",
     )
 
     echoed = store.upsert_native_thread(
@@ -154,7 +154,7 @@ def test_task_store_treats_larger_negative_skew_as_service_echo(tmp_path, monkey
         "repo-a",
         message="continue coding",
         source="watchdog",
-        reason="openclaw_continue_session",
+        reason="watchdog_continue_session",
     )
 
     echoed = store.upsert_native_thread(
@@ -206,7 +206,7 @@ def test_task_store_clears_manual_activity_when_service_input_arrives_late(tmp_p
         "repo-a",
         message="continue coding",
         source="watchdog",
-        reason="openclaw_continue_session",
+        reason="watchdog_continue_session",
     )
 
     assert reconciled is not None
@@ -233,7 +233,7 @@ def test_task_store_treats_large_positive_delay_as_manual_activity(tmp_path, mon
         "repo-a",
         message="continue coding",
         source="watchdog",
-        reason="openclaw_continue_session",
+        reason="watchdog_continue_session",
     )
 
     manual = store.upsert_native_thread(
@@ -274,7 +274,7 @@ def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
         "repo-a",
         message="continue coding",
         source="watchdog",
-        reason="openclaw_continue_session",
+        reason="watchdog_continue_session",
     )
 
     first_manual = store.upsert_native_thread(
@@ -302,3 +302,30 @@ def test_task_store_does_not_reuse_consumed_service_echo_for_later_manual_input(
 
     assert first_manual.get("last_local_manual_activity_at") == "2026-04-07T00:10:00Z"
     assert manual.get("last_local_manual_activity_at") == "2026-04-07T00:15:00Z"
+
+
+def test_task_store_normalizes_null_files_touched_without_crashing(tmp_path) -> None:
+    path = tmp_path / "tasks.json"
+    path.write_text(
+        '{\n'
+        '  "version": 2,\n'
+        '  "projects": {"repo-a": {"current_thread_id": "thr_native_1", "thread_ids": ["thr_native_1"]}},\n'
+        '  "tasks": {\n'
+        '    "thr_native_1": {\n'
+        '      "project_id": "repo-a",\n'
+        '      "thread_id": "thr_native_1",\n'
+        '      "cwd": "/",\n'
+        '      "status": "running",\n'
+        '      "phase": "coding",\n'
+        '      "files_touched": null\n'
+        '    }\n'
+        '  }\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    store = TaskStore(path)
+    record = store.get("repo-a")
+
+    assert record is not None
+    assert record["files_touched"] == []

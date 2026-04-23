@@ -25,6 +25,17 @@ def test_local_pytest_commands_are_auto_approved() -> None:
     assert auto_approve_allowed(classify_risk("pytest -q")) is True
     assert auto_approve_allowed(classify_risk("uv run pytest -q")) is True
     assert auto_approve_allowed(classify_risk("python3 -m pytest -q")) is True
+    assert (
+        auto_approve_allowed(classify_risk("uv run pytest tests/test_watchdog_release_gate.py -q"))
+        is True
+    )
+    assert auto_approve_allowed(classify_risk("uv run pytest https://example.com -q")) is False
+
+
+def test_local_paths_with_sensitive_substrings_do_not_escalate_to_l3() -> None:
+    assert classify_risk("git diff tests/fixtures/release_gate_label_manifest.json") == "L2"
+    assert classify_risk("git diff docs/secret-handling.md") == "L2"
+    assert classify_risk("git diff tmp/response_token_snapshot.txt") == "L2"
 
 
 def test_safe_file_permissions_can_auto_approve_but_network_and_credentials_cannot() -> None:

@@ -106,8 +106,8 @@ class FakeAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
 
@@ -944,6 +944,64 @@ def test_approve_response_is_idempotent_and_executes_requested_action_once(
     assert pending[1].envelope_payload["notification_kind"] == "approval_result"
 
 
+def test_repeated_approve_with_new_request_id_replays_cleanly(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.approvals.service import (
+        ApprovalResponseStore,
+        CanonicalApprovalStore,
+        materialize_canonical_approval,
+        respond_to_canonical_approval,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    client = FakeAClient(context_pressure="critical")
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    response_store = ApprovalResponseStore(tmp_path / "approval_responses.json")
+    receipt_store = ActionReceiptStore(tmp_path / "action_receipts.json")
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=approval_store,
+        session_service=session_service,
+    )
+
+    first = respond_to_canonical_approval(
+        envelope_id=approval.envelope_id,
+        response_action="approve",
+        client_request_id="req-001",
+        operator="alice",
+        note="looks safe",
+        approval_store=approval_store,
+        response_store=response_store,
+        settings=_settings(tmp_path),
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+    )
+    second = respond_to_canonical_approval(
+        envelope_id=approval.envelope_id,
+        response_action="approve",
+        client_request_id="req-002",
+        operator="alice",
+        note="looks safe",
+        approval_store=approval_store,
+        response_store=response_store,
+        settings=_settings(tmp_path),
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+    )
+
+    assert client.decision_calls == [("appr_001", "approve", "alice", "looks safe")]
+    assert client.handoff_calls == [("repo-a", "context_critical")]
+    assert first.approval_status == "approved"
+    assert second.approval_status == "approved"
+    assert second.execution_result is None
+    assert len(session_service.list_events(session_id=approval.session_id, event_type="approval_approved")) == 1
+
+
 def test_approve_response_executes_registered_action_from_persisted_spine_when_live_read_is_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -973,7 +1031,7 @@ def test_approve_response_executes_registered_action_from_persisted_spine_when_l
             return []
 
     live_client = RuntimeSeedClient(context_pressure="low")
-    app = create_app(_settings(tmp_path), a_client=live_client, start_background_workers=False)
+    app = create_app(_settings(tmp_path), runtime_client=live_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     approval = materialize_canonical_approval(
@@ -1647,7 +1705,7 @@ def test_startup_reconcile_expires_stale_pending_approvals(tmp_path: Path) -> No
 
     settings = _settings(tmp_path).model_copy(update={"approval_expiration_seconds": 60.0})
     client = FakeAClient(context_pressure="critical")
-    app = create_app(settings=settings, a_client=client)
+    app = create_app(settings=settings, runtime_client=client)
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
@@ -1780,134 +1838,6 @@ def test_respond_to_canonical_approval_records_session_event(
         assert override_events[0].payload["execution_effect"] == "handoff_triggered"
 
 
-def test_openclaw_response_api_uses_response_tuple_as_idempotency_key(tmp_path: Path) -> None:
-    from watchdog.services.approvals.service import materialize_canonical_approval
-
-    settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
-    approval = materialize_canonical_approval(
-        _decision(),
-        approval_store=app.state.canonical_approval_store,
-    )
-
-    with TestClient(app) as client:
-        headers = {"Authorization": f"Bearer {settings.api_token}"}
-        body = {
-            "envelope_id": approval.envelope_id,
-            "envelope_type": "approval",
-            "approval_id": approval.approval_id,
-            "decision_id": approval.decision.decision_id,
-            "response_action": "approve",
-            "response_token": approval.approval_token,
-            "user_ref": "user:carol",
-            "channel_ref": "feishu:chat:approval-room",
-            "client_request_id": "req-003",
-            "operator": "carol",
-            "note": "ship it",
-        }
-
-        first = client.post("/api/v1/watchdog/openclaw/responses", json=body, headers=headers)
-        second = client.post("/api/v1/watchdog/openclaw/responses", json=body, headers=headers)
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["success"] is True
-    assert first.json()["data"] == second.json()["data"]
-    override_events = app.state.session_service.list_events(
-        session_id=approval.session_id,
-        event_type="human_override_recorded",
-    )
-    assert len(override_events) == 1
-    assert override_events[0].payload["response_action"] == "approve"
-    assert override_events[0].payload["operator"] == "carol"
-
-
-def test_openclaw_response_api_records_receipt_with_native_thread_id(tmp_path: Path) -> None:
-    from watchdog.services.approvals.service import materialize_canonical_approval
-
-    settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
-    approval = materialize_canonical_approval(
-        _decision(),
-        approval_store=app.state.canonical_approval_store,
-        session_service=app.state.session_service,
-    )
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/watchdog/openclaw/responses",
-            json={
-                "envelope_id": approval.envelope_id,
-                "envelope_type": "approval",
-                "approval_id": approval.approval_id,
-                "decision_id": approval.decision.decision_id,
-                "response_action": "approve",
-                "response_token": approval.approval_token,
-                "user_ref": "user:carol",
-                "channel_ref": "feishu:chat:approval-room",
-                "client_request_id": "req-native-receipt-1",
-                "operator": "carol",
-                "note": "ship it",
-            },
-            headers={"Authorization": f"Bearer {settings.api_token}"},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    receipt_events = app.state.session_service.list_events(
-        session_id=approval.session_id,
-        event_type="notification_receipt_recorded",
-    )
-    assert len(receipt_events) == 1
-    assert receipt_events[0].related_ids["native_thread_id"] == "thr_native_1"
-
-
-def test_openclaw_response_api_uses_effective_native_thread_from_legacy_approval_record(
-    tmp_path: Path,
-) -> None:
-    from watchdog.services.approvals.service import materialize_canonical_approval
-
-    settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
-    approval = materialize_canonical_approval(
-        _decision(),
-        approval_store=app.state.canonical_approval_store,
-        session_service=app.state.session_service,
-    )
-    path = tmp_path / "canonical_approvals.json"
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload[approval.envelope_id]["native_thread_id"] = None
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/watchdog/openclaw/responses",
-            json={
-                "envelope_id": approval.envelope_id,
-                "envelope_type": "approval",
-                "approval_id": approval.approval_id,
-                "decision_id": approval.decision.decision_id,
-                "response_action": "approve",
-                "response_token": approval.approval_token,
-                "user_ref": "user:carol",
-                "channel_ref": "feishu:chat:approval-room",
-                "client_request_id": "req-native-receipt-legacy",
-                "operator": "carol",
-                "note": "ship it",
-            },
-            headers={"Authorization": f"Bearer {settings.api_token}"},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["success"] is True
-    receipt_events = app.state.session_service.list_events(
-        session_id=approval.session_id,
-        event_type="notification_receipt_recorded",
-    )
-    assert len(receipt_events) == 1
-    assert receipt_events[0].related_ids["native_thread_id"] == "thr_native_1"
-
-
 def test_expired_approval_event_uses_effective_native_thread_from_deep_legacy_approval_record(
     tmp_path: Path,
 ) -> None:
@@ -1915,7 +1845,7 @@ def test_expired_approval_event_uses_effective_native_thread_from_deep_legacy_ap
     from watchdog.services.approvals.service import materialize_canonical_approval
 
     settings = _settings(tmp_path).model_copy(update={"approval_expiration_seconds": 60.0})
-    app = create_app(settings=settings, a_client=FakeAClient(context_pressure="critical"))
+    app = create_app(settings=settings, runtime_client=FakeAClient(context_pressure="critical"))
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,

@@ -9,7 +9,7 @@ from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.enums import ActionCode
 from watchdog.contracts.session_spine.models import WatchdogAction
 from watchdog.envelope import err, ok
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_service import SessionService
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
@@ -24,8 +24,8 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def get_receipt_store(request: Request) -> ActionReceiptStore:
@@ -82,7 +82,7 @@ def _build_alias_action(
     action_body: dict[str, Any] = {
         "action_code": action_code,
         "project_id": project_id,
-        "operator": str(body.get("operator") or "openclaw"),
+        "operator": str(body.get("operator") or "watchdog"),
         "idempotency_key": str(body.get("idempotency_key") or ""),
         "arguments": arguments,
         "note": str(body.get("note") or ""),
@@ -93,7 +93,7 @@ def _build_alias_action(
 
 
 def _resolve_project_id_for_approval(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     approval_id: str,
     *,
     approval_store: Any | None = None,
@@ -121,7 +121,7 @@ def handle_action(
     *,
     request: Request,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
     session_service: SessionService,
     store: SessionSpineStore,
@@ -157,7 +157,7 @@ def post_action(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -197,7 +197,7 @@ def continue_session_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -238,7 +238,7 @@ def pause_session_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -280,7 +280,7 @@ def resume_session_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -322,7 +322,7 @@ def summarize_session_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -363,7 +363,7 @@ def force_handoff_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -405,7 +405,7 @@ def retry_with_conservative_path_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -446,7 +446,7 @@ def request_recovery_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -488,7 +488,7 @@ def post_operator_guidance_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -531,7 +531,7 @@ def execute_recovery_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -572,7 +572,7 @@ def evaluate_supervision_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -613,7 +613,7 @@ def approve_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
@@ -665,7 +665,7 @@ def reject_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),

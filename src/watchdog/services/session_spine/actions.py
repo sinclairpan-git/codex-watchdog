@@ -17,7 +17,7 @@ from watchdog.services.action_executor.steer import (
     post_steer,
     steer_template_registry,
 )
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.recovery import perform_recovery_execution
 from watchdog.services.session_spine.service import (
@@ -34,11 +34,13 @@ from watchdog.services.session_spine.task_state import (
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
+_CONTINUATION_IDENTITY_ISSUED_TTL_SECONDS = 900.0
+
 
 def _build_action_read_bundle(
     action: WatchdogAction,
     *,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -52,9 +54,27 @@ def _build_action_read_bundle(
         approval_store=approval_store,
         decision_store=decision_store,
     )
-    if bundle.task is not None:
-        return bundle
     fact_codes = {fact.fact_code for fact in bundle.facts}
+    if bundle.task is not None:
+        pending_indicators = bool(bundle.approvals) or bool(
+            fact_codes.intersection({"approval_pending", "awaiting_human_direction"})
+        ) or bool((bundle.task or {}).get("pending_approval")) or bool(
+            getattr(bundle.session, "pending_approval_count", 0)
+        )
+        if pending_indicators and approval_store is not None:
+            has_live_pending_approval = any(
+                approval.status == "pending"
+                and approval.project_id == action.project_id
+                and approval.session_id == bundle.session.thread_id
+                for approval in approval_store.list_records()
+            )
+            if not has_live_pending_approval:
+                return build_session_read_bundle(
+                    client,
+                    action.project_id,
+                    approval_store=approval_store,
+                )
+        return bundle
     if fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
         return bundle
     return build_session_read_bundle(
@@ -302,6 +322,88 @@ def _latest_continuation_identity_state(
     return str(latest.payload.get("state") or "").strip() or None
 
 
+def _latest_continuation_identity_event(
+    service: SessionService,
+    *,
+    session_id: str,
+    continuation_identity: str | None,
+):
+    if continuation_identity is None:
+        return None
+    events = service.list_events(
+        session_id=session_id,
+        related_id_key="continuation_identity",
+        related_id_value=continuation_identity,
+    )
+    relevant = [
+        event
+        for event in events
+        if event.event_type
+        in {
+            "continuation_identity_issued",
+            "continuation_identity_consumed",
+            "continuation_identity_invalidated",
+        }
+    ]
+    if not relevant:
+        return None
+    return max(relevant, key=lambda event: event.log_seq or 0)
+
+
+def _parse_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _continuation_identity_issued_ttl_seconds(settings: Settings) -> float:
+    return max(
+        _CONTINUATION_IDENTITY_ISSUED_TTL_SECONDS,
+        float(getattr(settings, "auto_continue_cooldown_seconds", 0.0) or 0.0),
+        float(getattr(settings, "auto_recovery_cooldown_seconds", 0.0) or 0.0),
+    )
+
+
+def _issued_continuation_identity_is_stale(
+    event,
+    *,
+    governance: dict[str, str | None],
+    settings: Settings,
+) -> bool:
+    event_route_key = str(event.related_ids.get("route_key") or "").strip() or None
+    current_route_key = str(governance.get("route_key") or "").strip() or None
+    if (
+        event_route_key is not None
+        and current_route_key is not None
+        and event_route_key != current_route_key
+    ):
+        return True
+
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    event_snapshot_version = str(payload.get("authoritative_snapshot_version") or "").strip() or None
+    current_snapshot_version = (
+        str(governance.get("authoritative_snapshot_version") or "").strip() or None
+    )
+    if (
+        event_snapshot_version is not None
+        and current_snapshot_version is not None
+        and event_snapshot_version != current_snapshot_version
+    ):
+        return True
+
+    event_snapshot_epoch = str(payload.get("snapshot_epoch") or "").strip() or None
+    current_snapshot_epoch = str(governance.get("snapshot_epoch") or "").strip() or None
+    if (
+        event_snapshot_epoch is not None
+        and current_snapshot_epoch is not None
+        and event_snapshot_epoch != current_snapshot_epoch
+    ):
+        return True
+
+    age_seconds = (
+        datetime.now(UTC) - _parse_timestamp(event.occurred_at)
+    ).total_seconds()
+    return age_seconds >= _continuation_identity_issued_ttl_seconds(settings)
+
+
 def _record_continuation_identity_for_action(
     action: WatchdogAction,
     *,
@@ -344,20 +446,36 @@ def _preflight_continuation_identity_for_action(
 ) -> tuple[SessionService, WatchdogActionResult | None]:
     service = session_service or SessionService.from_data_dir(settings.data_dir)
     governance = _continuation_governance_for_action(action, bundle=bundle)
-    if (
-        _latest_continuation_identity_state(
-            service,
-            session_id=bundle.session.thread_id,
-            continuation_identity=governance["continuation_identity"],
-        )
-        == "issued"
-    ):
-        return service, _continuation_identity_in_flight_result(
-            action,
+    latest_event = _latest_continuation_identity_event(
+        service,
+        session_id=bundle.session.thread_id,
+        continuation_identity=governance["continuation_identity"],
+    )
+    latest_state = (
+        str((latest_event.payload if latest_event is not None else {}).get("state") or "").strip()
+        or None
+    )
+    if latest_state == "issued":
+        if latest_event is not None and _issued_continuation_identity_is_stale(
+            latest_event,
+            governance=governance,
             settings=settings,
-            bundle=bundle,
-            session_service=service,
-        )
+        ):
+            _record_continuation_identity_for_action(
+                action,
+                settings=settings,
+                bundle=bundle,
+                state="invalidated",
+                session_service=service,
+                suppression_reason="stale_entry",
+            )
+        else:
+            return service, _continuation_identity_in_flight_result(
+                action,
+                settings=settings,
+                bundle=bundle,
+                session_service=service,
+            )
     _record_continuation_identity_for_action(
         action,
         settings=settings,
@@ -507,7 +625,7 @@ def _validate_steer_response_or_raise(steer_body: Any) -> None:
         if isinstance(error, dict):
             raise SessionSpineUpstreamError(dict(error))
     raise SessionSpineUpstreamError(
-        {"code": "CONTROL_LINK_ERROR", "message": "A 侧拒绝 steer"}
+        {"code": "CONTROL_LINK_ERROR", "message": "runtime 拒绝 steer"}
     )
 
 
@@ -542,10 +660,10 @@ def _normalize_continue_arguments(
     if not message:
         message = SOFT_STEER_MESSAGE
     reason_code = str(
-        action.arguments.get("reason_code") or soft.reason_code or "openclaw_continue_session"
+        action.arguments.get("reason_code") or soft.reason_code or "watchdog_continue_session"
     ).strip()
     if not reason_code:
-        reason_code = "openclaw_continue_session"
+        reason_code = "watchdog_continue_session"
     stuck_level_raw = action.arguments.get("stuck_level", current_stuck_level)
     try:
         stuck_level = int(stuck_level_raw or 0)
@@ -560,7 +678,7 @@ def _execute_continue(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -603,9 +721,24 @@ def _execute_continue(
             message="session is already complete",
             facts=bundle.facts,
         )
+    verdict = validate_action_transition("continue", task=bundle.task)
+    if not verdict["allowed"]:
+        _record_continuation_gate_for_action(
+            action,
+            settings=settings,
+            bundle=bundle,
+            gate_status="suppressed",
+            suppression_reason="continue_not_allowed",
+            session_service=session_service,
+        )
+        return _rejected_transition(
+            action,
+            message="continue is not allowed from current state",
+            facts=bundle.facts,
+        )
     continue_args = _normalize_continue_arguments(
         action,
-        current_stuck_level=bundle.task.get("stuck_level", 0),
+        current_stuck_level=(bundle.task or {}).get("stuck_level", 0),
     )
     if isinstance(continue_args, WatchdogActionResult):
         return continue_args
@@ -620,8 +753,8 @@ def _execute_continue(
     message, reason_code, stuck_level = continue_args
     try:
         steer_body = post_steer(
-            settings.a_agent_base_url,
-            settings.a_agent_token,
+            settings.codex_runtime_base_url,
+            settings.codex_runtime_token,
             action.project_id,
             message=message,
             reason=reason_code,
@@ -645,7 +778,7 @@ def _execute_continue(
         if isinstance(exc, SessionSpineUpstreamError):
             raise
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 Codex runtime"}
         ) from exc
     _record_continuation_gate_for_action(
         action,
@@ -689,7 +822,7 @@ def _rejected_transition(
 def _execute_pause(
     action: WatchdogAction,
     *,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -710,7 +843,7 @@ def _execute_pause(
         body = client.trigger_pause(action.project_id)
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "pause 调用失败：无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "pause 调用失败：无法连接 Codex runtime"}
         ) from exc
     if not body.get("success"):
         error = body.get("error")
@@ -733,7 +866,7 @@ def _execute_resume_session(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -749,6 +882,10 @@ def _execute_resume_session(
     )
     handoff_summary = str(action.arguments.get("handoff_summary") or "")
     continuation_packet = action.arguments.get("continuation_packet")
+    if continuation_packet is not None and not isinstance(continuation_packet, dict):
+        raise SessionSpineUpstreamError(
+            {"code": "INVALID_ARGUMENT", "message": "continuation_packet must be an object"}
+        )
     hard_block = _continuation_hard_block_result(action, bundle=bundle)
     if hard_block is not None:
         _record_continuation_gate_for_action(
@@ -789,7 +926,7 @@ def _execute_resume_session(
             action.project_id,
             mode=mode,
             handoff_summary=handoff_summary,
-            continuation_packet=continuation_packet if isinstance(continuation_packet, dict) else None,
+            continuation_packet=continuation_packet,
         )
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         _invalidate_continuation_identity_for_action(
@@ -800,7 +937,7 @@ def _execute_resume_session(
             suppression_reason="control_link_error",
         )
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "resume 调用失败：无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "resume 调用失败：无法连接 Codex runtime"}
         ) from exc
     if not body.get("success"):
         _invalidate_continuation_identity_for_action(
@@ -842,7 +979,7 @@ def _execute_resume_session(
 def _execute_summarize(
     action: WatchdogAction,
     *,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -871,7 +1008,7 @@ def _execute_force_handoff(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -927,7 +1064,7 @@ def _execute_force_handoff(
             suppression_reason="control_link_error",
         )
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "handoff 调用失败：无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "handoff 调用失败：无法连接 Codex runtime"}
         ) from exc
     if not body.get("success"):
         _invalidate_continuation_identity_for_action(
@@ -970,7 +1107,7 @@ def _execute_retry_with_conservative_path(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -1021,8 +1158,8 @@ def _execute_retry_with_conservative_path(
     template = steer_template_registry()["break_loop"]
     try:
         steer_body = post_steer(
-            settings.a_agent_base_url,
-            settings.a_agent_token,
+            settings.codex_runtime_base_url,
+            settings.codex_runtime_token,
             action.project_id,
             message=template.message,
             reason=template.reason_code,
@@ -1046,7 +1183,7 @@ def _execute_retry_with_conservative_path(
         if isinstance(exc, SessionSpineUpstreamError):
             raise
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 Codex runtime"}
         ) from exc
     _record_continuation_gate_for_action(
         action,
@@ -1075,7 +1212,7 @@ def _execute_operator_guidance(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -1095,8 +1232,8 @@ def _execute_operator_guidance(
     )
     try:
         steer_body = post_steer(
-            settings.a_agent_base_url,
-            settings.a_agent_token,
+            settings.codex_runtime_base_url,
+            settings.codex_runtime_token,
             action.project_id,
             message=message,
             reason=reason_code,
@@ -1115,7 +1252,7 @@ def _execute_operator_guidance(
         if isinstance(exc, SessionSpineUpstreamError):
             raise
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "steer 调用失败：无法连接 Codex runtime"}
         ) from exc
     _consume_branch_switch_token_for_action(
         action,
@@ -1136,7 +1273,7 @@ def _execute_operator_guidance(
 def _execute_request_recovery(
     action: WatchdogAction,
     *,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
@@ -1168,7 +1305,7 @@ def _execute_recovery(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     session_service: SessionService | None = None,
 ) -> WatchdogActionResult:
     outcome = perform_recovery_execution(
@@ -1230,7 +1367,7 @@ def _execute_recovery(
 def _execute_approval_action(
     action: WatchdogAction,
     *,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     decision: str,
 ) -> WatchdogActionResult:
     approval_id = str(action.arguments.get("approval_id") or "")
@@ -1251,7 +1388,7 @@ def _execute_approval_action(
         )
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "无法连接 A-Control-Agent"}
+            {"code": "CONTROL_LINK_ERROR", "message": "无法连接 Codex runtime"}
         ) from exc
     if not body.get("success"):
         error = body.get("error")
@@ -1274,7 +1411,7 @@ def execute_watchdog_action(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
     session_service: SessionService | None = None,
     store: Any | None = None,

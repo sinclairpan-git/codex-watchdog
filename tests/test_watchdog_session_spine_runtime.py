@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import inspect
 import json
 import threading
 import time
@@ -15,9 +16,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from _polling import wait_until, wait_until_async
-from watchdog.main import _run_delivery_loop, create_app
+from watchdog.main import _run_delivery_loop, _run_session_spine_refresh_loop, create_app
 from watchdog.contracts.session_spine.enums import ActionStatus, Effect, ReplyCode
-from watchdog.contracts.session_spine.models import WatchdogActionResult
+from watchdog.contracts.session_spine.models import ApprovalProjection, WatchdogActionResult
 from watchdog.services.brain.models import DecisionIntent, DecisionTrace
 from watchdog.services.brain.release_gate import (
     DEFAULT_RUNTIME_CONTRACT_SURFACE_REF,
@@ -27,7 +28,7 @@ from watchdog.services.brain.release_gate import (
 )
 from watchdog.services.brain.release_gate_loading import load_release_gate_artifacts
 from watchdog.services.approvals.service import materialize_canonical_approval
-from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.future_worker.models import FutureWorkerExecutionRequest
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import (
@@ -41,7 +42,9 @@ from watchdog.services.session_spine.orchestrator import (
     ResidentOrchestrator,
     _parse_iso,
 )
+from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.service import build_approval_inbox_bundle, build_session_read_bundle
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 
 
@@ -54,9 +57,11 @@ class FakeResidentAClient:
         *,
         task: dict[str, object],
         approvals: list[dict[str, object]] | None = None,
+        workspace_activity: dict[str, object] | None = None,
     ) -> None:
         self._task = dict(task)
         self._approvals = [dict(approval) for approval in approvals or []]
+        self._workspace_activity = dict(workspace_activity or {})
 
     def list_tasks(self) -> list[dict[str, object]]:
         return [dict(self._task)]
@@ -80,6 +85,29 @@ class FakeResidentAClient:
         if project_id:
             rows = [row for row in rows if row.get("project_id") == project_id]
         return rows
+
+    def get_workspace_activity_envelope(
+        self,
+        project_id: str,
+        *,
+        recent_minutes: int = 15,
+    ) -> dict[str, object]:
+        assert project_id == self._task["project_id"]
+        activity = {
+            "cwd_exists": True,
+            "files_scanned": 0,
+            "latest_mtime_iso": None,
+            "recent_change_count": 0,
+            "recent_window_minutes": recent_minutes,
+        }
+        activity.update(self._workspace_activity)
+        return {
+            "success": True,
+            "data": {
+                "project_id": project_id,
+                "activity": activity,
+            },
+        }
 
 
 class CyclingResidentAClient(FakeResidentAClient):
@@ -156,6 +184,19 @@ class RecoveringResidentAClient(FakeResidentAClient):
             "success": True,
             "data": {"project_id": project_id, "status": "running", "mode": mode},
         }
+
+
+def _bind_dual_resident_experts(app, *, observed_at: str) -> None:
+    app.state.resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="managed-agent-expert",
+        runtime_handle="agent:managed:1",
+        observed_at=observed_at,
+    )
+    app.state.resident_expert_runtime_service.bind_runtime_handle(
+        expert_id="hermes-agent-expert",
+        runtime_handle="agent:hermes:1",
+        observed_at=observed_at,
+    )
 
 
 class UniqueRecoveryResidentAClient(RecoveringResidentAClient):
@@ -265,6 +306,89 @@ class MultiProjectResidentAClient:
         if callback_status:
             rows = [row for row in rows if row.get("callback_status") == callback_status]
         return rows
+
+
+def test_session_spine_runtime_refresh_all_uses_authoritative_current_task_for_duplicate_project_entries(
+    tmp_path: Path,
+) -> None:
+    class DuplicateProjectClient:
+        def __init__(self) -> None:
+            self.get_envelope_calls: list[str] = []
+
+        def list_tasks(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "project_id": "Ai_AutoSDLC",
+                    "thread_id": "thr_old",
+                    "status": "running",
+                    "phase": "planning",
+                    "context_pressure": "critical",
+                    "stuck_level": 4,
+                    "failure_count": 0,
+                    "last_summary": "stale task snapshot",
+                    "files_touched": [],
+                    "pending_approval": False,
+                    "last_progress_at": "2026-04-22T08:23:07Z",
+                },
+                {
+                    "project_id": "Ai_AutoSDLC",
+                    "thread_id": "thr_new",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "context_pressure": "medium",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_summary": "authoritative current task",
+                    "files_touched": [],
+                    "pending_approval": False,
+                    "last_progress_at": "2026-04-22T10:45:37Z",
+                },
+            ]
+
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            self.get_envelope_calls.append(project_id)
+            assert project_id == "Ai_AutoSDLC"
+            return {
+                "success": True,
+                "data": {
+                    "project_id": "Ai_AutoSDLC",
+                    "thread_id": "thr_new",
+                    "status": "running",
+                    "phase": "editing_source",
+                    "context_pressure": "medium",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_summary": "authoritative current task",
+                    "files_touched": [],
+                    "pending_approval": False,
+                    "last_progress_at": "2026-04-22T10:45:37Z",
+                },
+            }
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
+    store = SessionSpineStore(tmp_path / SESSION_SPINE_STORE_FILENAME)
+    client = DuplicateProjectClient()
+    runtime = SessionSpineRuntime(client=client, store=store)
+
+    runtime.refresh_all()
+
+    record = store.get("Ai_AutoSDLC")
+    assert record is not None
+    assert record.effective_native_thread_id == "thr_new"
+    assert record.progress.activity_phase == "editing_source"
+    assert record.progress.context_pressure == "medium"
+    assert record.progress.summary == "authoritative current task"
+    assert client.get_envelope_calls == ["Ai_AutoSDLC"]
 
 
 def _runtime_gate_pass_kwargs() -> dict[str, dict[str, object]]:
@@ -734,8 +858,8 @@ def test_background_runtime_persists_session_spine_and_keeps_fact_snapshot_versi
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -755,7 +879,7 @@ def test_background_runtime_persists_session_spine_and_keeps_fact_snapshot_versi
         }
     )
 
-    with TestClient(create_app(settings, a_client=a_client, start_background_workers=True)):
+    with TestClient(create_app(settings, runtime_client=a_client, start_background_workers=True)):
         pass
 
     first_store_path = _store_path(tmp_path)
@@ -765,7 +889,7 @@ def test_background_runtime_persists_session_spine_and_keeps_fact_snapshot_versi
     assert first_version
     assert first_snapshot["sessions"]["repo-a"]["session"]["thread_id"] == "session:repo-a"
 
-    with TestClient(create_app(settings, a_client=a_client, start_background_workers=True)):
+    with TestClient(create_app(settings, runtime_client=a_client, start_background_workers=True)):
         pass
 
     second_snapshot = _read_store(tmp_path)
@@ -777,8 +901,8 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=0.01,
     )
@@ -827,7 +951,7 @@ def test_background_runtime_refreshes_session_spine_periodically_and_advances_se
         }
     ]
 
-    with TestClient(create_app(settings, a_client=a_client, start_background_workers=True)):
+    with TestClient(create_app(settings, runtime_client=a_client, start_background_workers=True)):
         first_snapshot = _read_store(tmp_path)
         first_seq = int(first_snapshot["sessions"]["repo-a"]["session_seq"])
         assert first_seq >= 1
@@ -854,8 +978,8 @@ def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         progress_summary_max_age_seconds=0.0,
     )
@@ -874,7 +998,7 @@ def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     app.state.session_spine_runtime.refresh_all()
     outcomes = app.state.resident_orchestrator.orchestrate_all(
@@ -896,8 +1020,8 @@ def test_approval_read_snapshot_uses_session_projection_instead_of_full_approval
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -929,7 +1053,7 @@ def test_approval_read_snapshot_uses_session_projection_instead_of_full_approval
             }
         ],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     app.state.session_service.record_event_once(
@@ -971,8 +1095,8 @@ def test_approval_read_snapshot_ignores_locally_superseded_projected_approval(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -1004,7 +1128,7 @@ def test_approval_read_snapshot_ignores_locally_superseded_projected_approval(
             }
         ],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     app.state.session_service.record_event_once(
         event_type="approval_requested",
@@ -1076,8 +1200,8 @@ def test_approval_read_snapshot_uses_locally_pending_canonical_approval_when_pro
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -1095,7 +1219,7 @@ def test_approval_read_snapshot_uses_locally_pending_canonical_approval_when_pro
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     stale_decision = CanonicalDecisionRecord(
         decision_id="decision:repo-a:fact-v1:require_user_decision:local-only",
@@ -1150,8 +1274,8 @@ def test_resident_orchestrator_filters_locally_superseded_projection_before_poli
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1184,7 +1308,7 @@ def test_resident_orchestrator_filters_locally_superseded_projection_before_poli
             }
         ],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
     app.state.session_spine_runtime.refresh_all()
     stale_decision = CanonicalDecisionRecord(
@@ -1253,8 +1377,8 @@ def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_pr
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -1272,7 +1396,7 @@ def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_pr
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     prior_decision = CanonicalDecisionRecord(
@@ -1340,8 +1464,8 @@ def test_resident_orchestrator_remints_approval_when_projected_command_conflicts
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1374,7 +1498,7 @@ def test_resident_orchestrator_remints_approval_when_projected_command_conflicts
             }
         ],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     prior_decision = CanonicalDecisionRecord(
@@ -1454,13 +1578,94 @@ def test_resident_orchestrator_remints_approval_when_projected_command_conflicts
     assert len(approval_events) == 2
 
 
+def test_resident_orchestrator_ignores_orphaned_stale_canonical_approval_when_runtime_has_none(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        feishu_interaction_window_seconds=900.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "stale local approval should not block",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[],
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    stale_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision:stale-approval",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="stale continue approval",
+        matched_policy_rules=["brain_requires_approval"],
+        why_not_escalated=None,
+        why_escalated="brain intent requires explicit human approval",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "continue_session",
+                "approval_id": "appr_001",
+            }
+        },
+    )
+    approval = materialize_canonical_approval(
+        stale_decision,
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+        session_service=app.state.session_service,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(
+            update={
+                "created_at": "2026-04-05T05:21:30Z",
+            }
+        )
+    )
+
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    assert app.state.resident_orchestrator._canonical_pending_approval_projections(record) == []
+    assert app.state.resident_orchestrator._active_approvals(record) == []
+
+
 def test_resident_orchestrator_remints_approval_when_projected_goal_contract_drifts(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1493,7 +1698,7 @@ def test_resident_orchestrator_remints_approval_when_projected_goal_contract_dri
             }
         ],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
     prior_decision = CanonicalDecisionRecord(
@@ -1578,8 +1783,8 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = MultiProjectResidentAClient(
@@ -1638,7 +1843,7 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
             },
         ],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     app.state.session_spine_runtime.refresh_all()
 
@@ -1655,13 +1860,167 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
     assert [approval.approval_id for approval in records["repo-b"].approval_queue] == ["appr_002"]
 
 
+def test_session_spine_runtime_refresh_all_preserves_existing_approval_state_when_project_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    class SharedApprovalFailureClient(MultiProjectResidentAClient):
+        def __init__(
+            self,
+            *,
+            tasks: list[dict[str, object]],
+            approvals: list[dict[str, object]],
+        ) -> None:
+            super().__init__(tasks=tasks, approvals=approvals)
+            self.fail_shared_approvals = False
+            self.fail_project_approvals: set[str] = set()
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            if self.fail_shared_approvals and project_id is None:
+                self.list_approvals_calls.append((status, project_id, callback_status))
+                raise RuntimeError("shared approvals unavailable")
+            if project_id in self.fail_project_approvals:
+                self.list_approvals_calls.append((status, project_id, callback_status))
+                raise RuntimeError(f"{project_id} approvals unavailable")
+            return super().list_approvals(
+                status=status,
+                project_id=project_id,
+                decided_by=decided_by,
+                callback_status=callback_status,
+            )
+
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = SharedApprovalFailureClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "waiting for approval a",
+                "files_touched": ["src/a.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "keep coding repo-b",
+                "files_touched": ["src/b.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:01:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "uv run pytest repo-a",
+                "reason": "verify repo-a",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2099-01-01T00:00:30Z",
+            }
+        ],
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+
+    app.state.session_spine_runtime.refresh_all()
+    initial_records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+    assert sorted(initial_records) == ["repo-a", "repo-b"]
+    assert [approval.approval_id for approval in initial_records["repo-a"].approval_queue] == [
+        "appr_001"
+    ]
+    assert initial_records["repo-b"].approval_queue == []
+
+    a_client._tasks = [
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval a updated",
+            "files_touched": ["src/a.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:02:00Z",
+        },
+        {
+            "project_id": "repo-b",
+            "thread_id": "thr_native_2",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "keep coding repo-b updated",
+            "files_touched": ["src/b.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:02:00Z",
+        },
+    ]
+    a_client.fail_shared_approvals = True
+    a_client.fail_project_approvals = {"repo-b"}
+
+    records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+
+    app.state.session_spine_runtime.refresh_all()
+
+    records = {
+        record.project_id: record for record in app.state.session_spine_store.list_records()
+    }
+
+    assert sorted(records) == ["repo-a", "repo-b"]
+    assert [approval.approval_id for approval in records["repo-a"].approval_queue] == ["appr_001"]
+    assert records["repo-a"].session.headline == "waiting for approval a updated"
+    assert records["repo-b"].approval_queue == initial_records["repo-b"].approval_queue
+    assert records["repo-b"].session.headline == initial_records["repo-b"].session.headline
+    assert a_client.list_approvals_calls == [
+        ("pending", None, None),
+        ("approved", None, "deferred"),
+        ("pending", None, None),
+        ("pending", "repo-a", None),
+        ("approved", "repo-a", "deferred"),
+        ("pending", "repo-b", None),
+    ]
+
+
 def test_background_runtime_approval_queue_uses_effective_native_thread_from_legacy_approval_record(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -1680,7 +2039,7 @@ def test_background_runtime_approval_queue_uses_effective_native_thread_from_leg
         },
         approvals=[],
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     approval = materialize_canonical_approval(
         CanonicalDecisionRecord(
             decision_id="decision:runtime-legacy-approval-queue",
@@ -1732,8 +2091,8 @@ def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1752,7 +2111,7 @@ def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
     app.state.session_spine_runtime.refresh_all()
 
@@ -1779,8 +2138,8 @@ def test_resident_orchestrator_routes_brain_require_approval_to_human_gate(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1799,7 +2158,7 @@ def test_resident_orchestrator_routes_brain_require_approval_to_human_gate(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
     app.state.session_spine_runtime.refresh_all()
 
@@ -1825,8 +2184,8 @@ def test_resident_orchestrator_auto_executes_brain_proposed_recovery(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1845,7 +2204,7 @@ def test_resident_orchestrator_auto_executes_brain_proposed_recovery(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
     app.state.session_spine_runtime.refresh_all()
     recovery_result = WatchdogActionResult(
@@ -1891,8 +2250,8 @@ def test_resident_orchestrator_routes_brain_suggest_only_to_notification(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -1911,7 +2270,7 @@ def test_resident_orchestrator_routes_brain_suggest_only_to_notification(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="suggest_only")
     app.state.session_spine_runtime.refresh_all()
 
@@ -1938,8 +2297,8 @@ def test_resident_orchestrator_cooldown_only_suppresses_propose_execute(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=600.0,
     )
@@ -1958,7 +2317,7 @@ def test_resident_orchestrator_cooldown_only_suppresses_propose_execute(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     app.state.resident_orchestration_state_store.put_auto_continue_checkpoint(
         project_id="repo-a",
@@ -1994,8 +2353,8 @@ def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -2014,7 +2373,7 @@ def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     app.state.session_spine_runtime.refresh_all()
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -2048,8 +2407,8 @@ def test_resident_orchestrator_auto_executes_branch_complete_switch_as_operator_
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -2068,7 +2427,7 @@ def test_resident_orchestrator_auto_executes_branch_complete_switch_as_operator_
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     GoalContractService(app.state.session_service).bootstrap_contract(
@@ -2104,7 +2463,17 @@ def test_resident_orchestrator_auto_executes_branch_complete_switch_as_operator_
                 provider_output_schema_ref="schema:provider-continuation-decision-v3",
             )
 
+        def progress_summary_for_decision_context(self, _record: object) -> str:
+            return (
+                "当前分支目标：Land branch-complete routing for the current work item；"
+                "当前阶段：editing_source；当前信号：branch_goal_complete"
+            )
+
     app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    _bind_dual_resident_experts(
+        app,
+        observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    )
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
         steer_mock.return_value = {"success": True, "data": {"accepted": True}}
@@ -2121,7 +2490,8 @@ def test_resident_orchestrator_auto_executes_branch_complete_switch_as_operator_
     assert "当前分支目标" in message
     assert "Land branch-complete routing for the current work item" in message
     assert "当前进度" in message
-    assert "completed continuation governance on current branch" in message
+    assert "当前阶段：editing_source" in message
+    assert "当前信号：branch_goal_complete" in message
     assert "后续任务" in message
     assert "086" in message
     assert "086-next-branch-routing" in message
@@ -2167,8 +2537,8 @@ def test_resident_orchestrator_blocks_branch_complete_switch_without_authoritati
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -2187,7 +2557,7 @@ def test_resident_orchestrator_blocks_branch_complete_switch_without_authoritati
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     GoalContractService(app.state.session_service).bootstrap_contract(
@@ -2241,8 +2611,8 @@ def test_resident_orchestrator_applies_shared_dispatch_cooldown_to_branch_guidan
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=300.0,
     )
@@ -2289,7 +2659,7 @@ def test_resident_orchestrator_applies_shared_dispatch_cooldown_to_branch_guidan
             },
         ]
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     GoalContractService(app.state.session_service).bootstrap_contract(
@@ -2326,6 +2696,10 @@ def test_resident_orchestrator_applies_shared_dispatch_cooldown_to_branch_guidan
             )
 
     app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    _bind_dual_resident_experts(
+        app,
+        observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    )
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
         steer_mock.return_value = {"success": True, "data": {"accepted": True}}
@@ -2351,13 +2725,13 @@ def test_background_runtime_persists_last_local_manual_activity_from_a_side_task
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     app = create_app(
         settings,
-        a_client=FakeResidentAClient(
+        runtime_client=FakeResidentAClient(
             task={
                 "project_id": "repo-a",
                 "thread_id": "thr_native_1",
@@ -2384,13 +2758,636 @@ def test_background_runtime_persists_last_local_manual_activity_from_a_side_task
     )
 
 
+def test_resident_orchestrator_suppresses_auto_continue_during_recent_local_manual_activity(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        local_manual_activity_auto_execute_quiet_window_seconds=600.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files locally",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "last_local_manual_activity_at": "2026-04-06T23:55:30Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.orchestrator.execute_canonical_decision") as execute_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert app.state.policy_decision_store.list_records() == []
+    execute_mock.assert_not_called()
+    gate_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    assert gate_events == []
+
+
+def test_session_spine_runtime_uses_recent_workspace_activity_as_manual_activity_fallback(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "editing locally without new chat input",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 2,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-05T05:20:00Z",
+                "last_local_manual_activity_at": None,
+            },
+            workspace_activity={
+                "cwd_exists": True,
+                "files_scanned": 12,
+                "latest_mtime_iso": "2026-04-06T23:55:30Z",
+                "recent_change_count": 3,
+            },
+        ),
+        start_background_workers=False,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+
+    assert record is not None
+    assert record.last_local_manual_activity_at == "2026-04-06T23:55:30Z"
+
+
+def test_session_spine_runtime_uses_newer_workspace_mtime_even_without_recent_change_count(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "workspace moved ahead of runtime progress",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 2,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T14:25:26.841551+00:00",
+                "last_local_manual_activity_at": None,
+            },
+            workspace_activity={
+                "cwd_exists": True,
+                "files_scanned": 500,
+                "latest_mtime_iso": "2026-04-23T03:59:16.049808+00:00",
+                "recent_change_count": 0,
+            },
+        ),
+        start_background_workers=False,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+
+    assert record is not None
+    assert record.last_local_manual_activity_at == "2026-04-23T03:59:16.049808+00:00"
+
+
+def test_resident_orchestrator_suppresses_auto_continue_when_recent_workspace_activity_indicates_manual_work(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        local_manual_activity_auto_execute_quiet_window_seconds=600.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files locally",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "last_local_manual_activity_at": None,
+        },
+        workspace_activity={
+            "cwd_exists": True,
+            "files_scanned": 12,
+            "latest_mtime_iso": "2026-04-06T23:55:30Z",
+            "recent_change_count": 3,
+        },
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.orchestrator.execute_canonical_decision") as execute_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert app.state.policy_decision_store.list_records() == []
+    execute_mock.assert_not_called()
+
+
+def test_session_spine_runtime_pauses_project_when_workspace_cwd_is_missing(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "workspace missing",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-23T02:20:49Z",
+                "last_local_manual_activity_at": None,
+            },
+            workspace_activity={
+                "cwd_exists": False,
+                "files_scanned": 0,
+                "latest_mtime_iso": None,
+                "recent_change_count": 0,
+            },
+        ),
+        start_background_workers=False,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+
+    assert record is not None
+    assert record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in record.facts} == {"project_not_active"}
+
+
+def test_session_spine_runtime_pauses_project_when_workspace_mtime_is_stale_relative_to_runtime_progress(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "handoff",
+                "pending_approval": False,
+                "last_summary": "runtime progress is newer than any real workspace activity",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T13:01:11.938008+00:00",
+                "last_local_manual_activity_at": "2026-03-26T08:54:44.400Z",
+            },
+            workspace_activity={
+                "cwd_exists": True,
+                "files_scanned": 189,
+                "latest_mtime_iso": "2026-03-26T08:57:16.598350+00:00",
+                "recent_change_count": 0,
+            },
+        ),
+        start_background_workers=False,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+
+    assert record is not None
+    assert record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in record.facts} == {"project_not_active"}
+
+
+def test_session_spine_runtime_reconciles_missing_persisted_project_via_workspace_liveness(
+    tmp_path: Path,
+) -> None:
+    seed_store = SessionSpineStore(tmp_path / SESSION_SPINE_STORE_FILENAME)
+    seed_runtime = SessionSpineRuntime(
+        client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "handoff",
+                "pending_approval": False,
+                "last_summary": "runtime still thinks the task is alive",
+                "files_touched": [],
+                "context_pressure": "medium",
+                "stuck_level": 4,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T13:01:11.938008+00:00",
+                "last_local_manual_activity_at": "2026-03-26T08:54:44.400Z",
+            }
+        ),
+        store=seed_store,
+    )
+    seed_runtime.refresh_all()
+
+    seeded_record = seed_store.get("repo-a")
+    assert seeded_record is not None
+    assert {fact.fact_code for fact in seeded_record.facts} == {
+        "stuck_no_progress",
+        "recovery_available",
+    }
+
+    class MissingRuntimeTaskClient:
+        def list_tasks(self) -> list[dict[str, object]]:
+            return []
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
+        def get_workspace_activity_envelope(
+            self,
+            project_id: str,
+            *,
+            recent_minutes: int = 15,
+        ) -> dict[str, object]:
+            assert project_id == "repo-a"
+            return {
+                "success": True,
+                "data": {
+                    "project_id": project_id,
+                    "activity": {
+                        "cwd_exists": True,
+                        "files_scanned": 189,
+                        "latest_mtime_iso": "2026-03-26T08:57:16.598350+00:00",
+                        "recent_change_count": 0,
+                        "recent_window_minutes": recent_minutes,
+                    },
+                },
+            }
+
+    reconcile_runtime = SessionSpineRuntime(client=MissingRuntimeTaskClient(), store=seed_store)
+    reconcile_runtime.refresh_all()
+
+    reconciled_record = seed_store.get("repo-a")
+    assert reconciled_record is not None
+    assert reconciled_record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
+
+
+def test_session_spine_runtime_pauses_project_when_only_stale_substantive_input_remains(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "handoff",
+                "pending_approval": False,
+                "last_summary": "stale runtime progress is masking a dead workspace",
+                "files_touched": [],
+                "context_pressure": "medium",
+                "stuck_level": 4,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T13:01:11.938008+00:00",
+                "last_local_manual_activity_at": "2026-03-26T08:54:44.400Z",
+                "last_substantive_user_input_at": "2026-04-09T12:40:42.376Z",
+            },
+            workspace_activity={
+                "cwd_exists": True,
+                "files_scanned": 189,
+                "latest_mtime_iso": "2026-03-26T08:57:16.598350+00:00",
+                "recent_change_count": 0,
+            },
+        ),
+        start_background_workers=False,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+
+    assert record is not None
+    assert record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in record.facts} == {"project_not_active"}
+
+
+def test_resident_orchestrator_suppresses_auto_recovery_during_recent_local_manual_activity(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        local_manual_activity_auto_execute_quiet_window_seconds=600.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted but user is still actively editing",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "last_local_manual_activity_at": "2026-04-06T23:55:30Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.orchestrator.execute_canonical_decision") as execute_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert app.state.policy_decision_store.list_records() == []
+    execute_mock.assert_not_called()
+    gate_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    assert gate_events == []
+
+
+def test_resident_orchestrator_marks_recently_idle_presence_without_suppressing_auto_continue(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        local_manual_activity_auto_execute_quiet_window_seconds=600.0,
+        local_manual_activity_recently_idle_window_seconds=1800.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "local work paused a little while ago",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "last_local_manual_activity_at": "2026-04-06T23:45:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    orchestrator = app.state.resident_orchestrator
+    brain_intent = orchestrator._evaluate_brain_intent(record)
+    action_ref = orchestrator._action_ref_for_brain_intent(record, brain_intent.intent)
+    assert action_ref == "continue_session"
+    assert (
+        orchestrator._local_manual_activity_suppression_details(
+            record,
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC),
+        )
+        is None
+    )
+    requested_action_args = orchestrator._requested_action_args_for_intent(
+        record,
+        brain_intent=brain_intent,
+    )
+    trusted_record = orchestrator._record_with_trustworthy_approval_identity(
+        record,
+        action_ref=action_ref,
+        requested_action_args=requested_action_args,
+        goal_contract_version=orchestrator._goal_contract_version_for_record(record),
+        policy_version="policy-v1",
+    )
+    intent_evidence = orchestrator._decision_evidence_for_intent(
+        trusted_record,
+        brain_intent=brain_intent,
+        action_ref=action_ref,
+        requested_action_args=requested_action_args,
+        goal_contract_readiness=orchestrator._goal_contract_readiness_for_record(record),
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC),
+    )
+
+    assert intent_evidence["human_presence"] == {
+        "state": "human_recently_idle",
+        "last_local_manual_activity_at": "2026-04-06T23:45:00Z",
+        "idle_seconds": 900,
+        "active_window_seconds": 600,
+        "recently_idle_window_seconds": 1800,
+    }
+    assert (
+        intent_evidence["continuation_governance"]["human_presence_state"]
+        == "human_recently_idle"
+    )
+
+
+def test_resident_orchestrator_maps_propose_recovery_to_request_recovery_when_execute_recovery_unavailable(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "session looks stuck and may need recovery",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "medium",
+            "stuck_level": 3,
+            "failure_count": 1,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    record = record.model_copy(
+        update={
+            "session": record.session.model_copy(
+                update={
+                    "available_intents": [
+                        "get_session",
+                        "continue_session",
+                        "request_recovery",
+                    ]
+                }
+            )
+        }
+    )
+
+    action_ref = app.state.resident_orchestrator._action_ref_for_brain_intent(
+        record,
+        "propose_recovery",
+    )
+
+    assert action_ref == "request_recovery"
+
+
+def test_resident_orchestrator_keeps_pending_approval_requested_action_for_require_approval(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "session is waiting on a recovery approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "medium",
+            "stuck_level": 3,
+            "failure_count": 1,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    record = record.model_copy(
+        update={
+            "approval_queue": [
+                ApprovalProjection(
+                    approval_id="appr_recovery",
+                    project_id="repo-a",
+                    thread_id="session:repo-a",
+                    native_thread_id="thr_native_1",
+                    risk_level="L1",
+                    command="request_recovery",
+                    reason="need explicit approval before recovery guidance",
+                    alternative="",
+                    status="pending",
+                    requested_at="2026-04-07T00:00:00Z",
+                )
+            ],
+            "session": record.session.model_copy(update={"pending_approval_count": 1}),
+        }
+    )
+
+    action_ref = app.state.resident_orchestrator._action_ref_for_brain_intent(
+        record,
+        "require_approval",
+    )
+
+    assert action_ref == "request_recovery"
+
+
 def test_background_runtime_auto_executes_context_critical_recovery(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=True,
         session_spine_refresh_interval_seconds=0.01,
@@ -2413,7 +3410,7 @@ def test_background_runtime_auto_executes_context_critical_recovery(
         }
     )
     delivery_client = RecordingDeliveryClient()
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
     app.state.delivery_worker._delivery_client = delivery_client
 
@@ -2450,8 +3447,8 @@ def test_background_runtime_does_not_repeat_recovery_while_handoff_is_in_progres
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         session_spine_refresh_interval_seconds=0.01,
@@ -2473,7 +3470,7 @@ def test_background_runtime_does_not_repeat_recovery_while_handoff_is_in_progres
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
 
     with TestClient(app):
@@ -2490,8 +3487,8 @@ def test_resident_orchestrator_does_not_rearm_recovery_without_newer_progress_af
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2512,7 +3509,7 @@ def test_resident_orchestrator_does_not_rearm_recovery_without_newer_progress_af
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_service.record_recovery_execution(
         project_id="repo-a",
         parent_session_id="session:repo-a",
@@ -2560,8 +3557,8 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2582,7 +3579,7 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_service.record_recovery_execution(
         project_id="repo-a",
         parent_session_id="session:repo-a",
@@ -2617,8 +3614,8 @@ def test_resident_orchestrator_treats_preflight_recovery_dispatch_as_in_flight(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2639,7 +3636,7 @@ def test_resident_orchestrator_treats_preflight_recovery_dispatch_as_in_flight(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_service.record_event_once(
         event_type="recovery_dispatch_started",
         project_id="repo-a",
@@ -2683,8 +3680,8 @@ def test_resident_orchestrator_applies_cooldown_to_repeated_auto_recovery(
     second_progress_at = (base_now + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2736,7 +3733,7 @@ def test_resident_orchestrator_applies_cooldown_to_repeated_auto_recovery(
         }
 
     a_client.trigger_handoff = _trigger_handoff  # type: ignore[attr-defined]
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
 
     app.state.session_spine_runtime.refresh_all()
@@ -2777,13 +3774,139 @@ def test_resident_orchestrator_applies_cooldown_to_repeated_auto_recovery(
     ) == []
 
 
+def test_resident_orchestrator_applies_cooldown_after_recent_recovery_inflight_suppression(
+    tmp_path: Path,
+) -> None:
+    base_now = datetime.now(UTC).replace(microsecond=0)
+    progress_at = base_now.isoformat().replace("+00:00", "Z")
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=300.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": progress_at,
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+    app.state.session_service.record_event_once(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recent-recovery-suppression",
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+        },
+        occurred_at=base_now.isoformat().replace("+00:00", "Z"),
+    )
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=base_now + timedelta(minutes=2)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    assert suppressed_events[-1].payload["suppression_reason"] == "cooldown_window_active"
+
+
+def test_resident_orchestrator_records_new_recovery_suppression_event_when_state_version_changes(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    app.state.resident_orchestrator._record_recovery_reentry_suppressed(
+        record,
+        details={
+            "recovery_transaction_id": "txn-1",
+            "recovery_status": "running",
+            "recovery_updated_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "suppression_reason": "recovery_in_flight",
+        },
+    )
+    app.state.resident_orchestrator._record_recovery_reentry_suppressed(
+        record,
+        details={
+            "recovery_transaction_id": "txn-1",
+            "recovery_status": "running",
+            "recovery_updated_at": "2026-04-07T00:00:05Z",
+            "last_progress_at": "2026-04-05T05:20:00Z",
+            "suppression_reason": "recovery_in_flight",
+        },
+    )
+
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    gate_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    assert len(suppressed_events) == 2
+    assert [event.payload["recovery_updated_at"] for event in suppressed_events] == [
+        "2026-04-07T00:00:00Z",
+        "2026-04-07T00:00:05Z",
+    ]
+    suppressed_gate_events = [
+        event for event in gate_events if event.payload.get("gate_kind") == "recovery_execution"
+    ]
+    assert len(suppressed_gate_events) == 2
+
+
 def test_resident_orchestrator_does_not_auto_recover_stale_unrefreshed_session_record(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2805,7 +3928,7 @@ def test_resident_orchestrator_does_not_auto_recover_stale_unrefreshed_session_r
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
 
     app.state.session_spine_runtime.refresh_all()
@@ -2834,8 +3957,8 @@ def test_resident_orchestrator_does_not_auto_recover_paused_session_without_new_
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2856,7 +3979,7 @@ def test_resident_orchestrator_does_not_auto_recover_paused_session_without_new_
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
 
     app.state.session_spine_runtime.refresh_all()
@@ -2874,8 +3997,8 @@ def test_resident_orchestrator_does_not_auto_recover_non_active_project_executio
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2897,7 +4020,7 @@ def test_resident_orchestrator_does_not_auto_recover_non_active_project_executio
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
 
     app.state.session_spine_runtime.refresh_all()
@@ -2915,8 +4038,8 @@ def test_resident_orchestrator_does_not_auto_continue_non_active_project_executi
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
@@ -2938,7 +4061,7 @@ def test_resident_orchestrator_does_not_auto_continue_non_active_project_executi
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
 
     app.state.session_spine_runtime.refresh_all()
@@ -2950,13 +4073,144 @@ def test_resident_orchestrator_does_not_auto_continue_non_active_project_executi
     assert [outcome.decision_result for outcome in outcomes] == [None]
 
 
+def test_background_runtime_pauses_disconnected_stale_session_before_orchestration(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "meeting",
+            "thread_id": "019d757d-d272-7913-b4a2-a8adafe62bc5",
+            "status": "running",
+            "phase": "planning",
+            "project_execution_state": "active",
+            "pending_approval": False,
+            "last_summary": "stale zombie task",
+            "files_touched": ["docs/spec.md"],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-23T02:20:49Z",
+            "last_local_manual_activity_at": "2026-04-10T03:44:44Z",
+            "last_error_signature": "[Errno 32] Broken pipe",
+        },
+        approvals=[
+            {
+                "approval_id": "approval:meeting-stale",
+                "project_id": "meeting",
+                "thread_id": "session:meeting",
+                "native_thread_id": "019d757d-d272-7913-b4a2-a8adafe62bc5",
+                "requested_action": "post_operator_guidance",
+                "status": "pending",
+                "created_at": "2026-04-23T03:59:37Z",
+            }
+        ],
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_execute")
+
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("meeting")
+    session_bundle = build_session_read_bundle(
+        a_client,
+        "meeting",
+        store=app.state.session_spine_store,
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.session_service.record_event_once(
+        event_type="approval_requested",
+        project_id="meeting",
+        session_id="session:meeting",
+        correlation_id="corr:test:approval:meeting-stale",
+        related_ids={"approval_id": "approval:meeting-stale"},
+        payload={
+            "requested_action": "post_operator_guidance",
+            "fact_snapshot_version": "fact-v99",
+            "goal_contract_version": "goal-contract:v2",
+            "expires_at": "2026-04-23T06:59:37Z",
+        },
+        occurred_at="2026-04-23T03:59:37Z",
+    )
+    event_bundle = build_approval_inbox_bundle(
+        a_client,
+        project_id="meeting",
+        session_service=app.state.session_service,
+        store=app.state.session_spine_store,
+        approval_store=app.state.canonical_approval_store,
+    )
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 23, 3, 0, 0, tzinfo=UTC)
+    )
+
+    assert record is not None
+    assert "project_not_active" in [fact.fact_code for fact in record.facts]
+    assert record.progress.activity_phase == "planning"
+    assert session_bundle.approvals == []
+    assert session_bundle.session.pending_approval_count == 0
+    assert event_bundle.approvals == []
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+
+
+def test_resident_orchestrator_does_not_request_branch_switch_guidance_for_non_active_project(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "meeting",
+            "thread_id": "019d757d-d272-7913-b4a2-a8adafe62bc5",
+            "status": "running",
+            "phase": "planning",
+            "project_execution_state": "active",
+            "pending_approval": False,
+            "last_summary": "stale zombie task",
+            "files_touched": [],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-23T02:20:49Z",
+            "last_local_manual_activity_at": "2026-04-10T03:44:44Z",
+            "last_error_signature": "[Errno 32] Broken pipe",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="branch_complete_switch")
+
+    app.state.session_spine_runtime.refresh_all()
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 23, 3, 0, 0, tzinfo=UTC)
+    )
+    pending = [
+        approval
+        for approval in app.state.canonical_approval_store.list_records()
+        if approval.project_id == "meeting" and approval.status == "pending"
+    ]
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert pending == []
+
+
 def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_auto_continue(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         progress_summary_max_age_seconds=0.0,
@@ -2991,7 +4245,7 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
             },
         ]
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
 
     app.state.session_spine_runtime.refresh_all()
@@ -3021,6 +4275,13 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
         store=app.state.session_spine_store,
         approval_store=app.state.canonical_approval_store,
     )
+    event_inbox_bundle = build_approval_inbox_bundle(
+        a_client,
+        project_id="repo-a",
+        session_service=app.state.session_service,
+        store=app.state.session_spine_store,
+        approval_store=app.state.canonical_approval_store,
+    )
 
     assert [outcome.action_ref for outcome in first] == ["continue_session"]
     assert [outcome.decision_result for outcome in first] == ["require_user_decision"]
@@ -3042,6 +4303,7 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
     assert session_bundle.session.pending_approval_count == 0
     assert session_bundle.approvals == []
     assert inbox_bundle.approvals == []
+    assert event_inbox_bundle.approvals == []
     approval_delivery = app.state.delivery_outbox_store.get_delivery_record(first_approvals[0].envelope_id)
     assert approval_delivery is not None
     assert approval_delivery.delivery_status == "superseded"
@@ -3060,8 +4322,8 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3080,7 +4342,7 @@ def test_resident_orchestrator_records_command_lease_for_auto_continue(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3131,8 +4393,8 @@ def test_resident_orchestrator_records_resident_expert_consultation_evidence(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3151,7 +4413,7 @@ def test_resident_orchestrator_records_resident_expert_consultation_evidence(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
     app.state.session_spine_runtime.refresh_all()
 
@@ -3190,8 +4452,8 @@ def test_resident_orchestrator_marks_resident_expert_coverage_degraded_when_stal
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         resident_expert_stale_after_seconds=60.0,
@@ -3211,7 +4473,7 @@ def test_resident_orchestrator_marks_resident_expert_coverage_degraded_when_stal
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
     app.state.resident_expert_runtime_service.bind_runtime_handle(
         expert_id="managed-agent-expert",
@@ -3249,8 +4511,8 @@ def test_resident_orchestrator_does_not_reconsult_resident_experts_for_identical
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3269,7 +4531,7 @@ def test_resident_orchestrator_does_not_reconsult_resident_experts_for_identical
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
     app.state.session_spine_runtime.refresh_all()
     spy_runtime_service = SpyResidentExpertRuntimeService()
@@ -3299,13 +4561,322 @@ def test_resident_orchestrator_does_not_reconsult_resident_experts_for_identical
     assert len(spy_runtime_service.calls) == 1
 
 
+def test_resident_orchestrator_requires_dual_resident_expert_gate_for_external_auto_execute(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "continue implementation",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="propose_execute",
+                rationale="model recommends continue",
+                action_arguments={
+                    "message": "继续推进并验证 watchdog 修复。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 2,
+                },
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision"
+    ) as execute_mock, patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    execute_mock.assert_not_called()
+    steer_mock.assert_not_called()
+
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    decision = decisions[0]
+    assert decision.runtime_disposition == "require_user_decision"
+    assert "resident_expert_dual_gate" in decision.matched_policy_rules
+    assert decision.evidence["resident_expert_gate"]["gate_status"] == "suppressed"
+    assert decision.evidence["resident_expert_gate"]["missing_expert_ids"] == []
+    assert decision.evidence["resident_expert_gate"]["unhealthy_expert_ids"] == [
+        "hermes-agent-expert",
+        "managed-agent-expert",
+    ]
+
+    consultation = decision.evidence["resident_expert_consultation"]
+    assert consultation["coverage_status"] == "degraded"
+    assert [item["status"] for item in consultation["experts"]] == [
+        "unavailable",
+        "unavailable",
+    ]
+    assert len(app.state.canonical_approval_store.list_records()) == 1
+
+
+def test_resident_orchestrator_allows_external_auto_execute_with_healthy_dual_resident_experts(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "continue implementation",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="propose_execute",
+                rationale="model recommends continue",
+                action_arguments={
+                    "message": "继续推进并验证 watchdog 修复。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 2,
+                },
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    _bind_dual_resident_experts(
+        app,
+        observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    )
+    app.state.session_spine_runtime.refresh_all()
+    continue_result = WatchdogActionResult(
+        action_code="continue_session",
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="decision:auto-continue",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.STEER_POSTED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="continued",
+        facts=[],
+    )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision",
+        return_value=continue_result,
+    ) as execute_mock, patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    execute_mock.assert_called_once()
+    steer_mock.assert_not_called()
+
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    decision = decisions[0]
+    assert decision.runtime_disposition == "auto_execute_and_notify"
+    assert decision.evidence["resident_expert_gate"]["gate_status"] == "eligible"
+    assert decision.evidence["resident_expert_gate"]["unhealthy_expert_ids"] == []
+    assert [
+        item["status"] for item in decision.evidence["resident_expert_consultation"]["experts"]
+    ] == ["restoring", "restoring"]
+    assert app.state.canonical_approval_store.list_records() == []
+
+
+def test_resident_orchestrator_embeds_recorded_resident_expert_opinions_for_external_model_decision(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "continue implementation",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="propose_execute",
+                rationale="model recommends continue",
+                action_arguments={
+                    "message": "继续推进并验证 watchdog 修复。",
+                    "reason_code": "brain_auto_continue",
+                    "stuck_level": 2,
+                },
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    _bind_dual_resident_experts(
+        app,
+        observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    )
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    orchestrator = app.state.resident_orchestrator
+    brain_intent = orchestrator._evaluate_brain_intent(record)
+    action_ref = orchestrator._action_ref_for_brain_intent(record, brain_intent.intent)
+    assert action_ref == "continue_session"
+    requested_action_args = orchestrator._requested_action_args_for_intent(
+        record,
+        brain_intent=brain_intent,
+    )
+    trusted_record = orchestrator._record_with_trustworthy_approval_identity(
+        record,
+        action_ref=action_ref,
+        requested_action_args=requested_action_args,
+        goal_contract_version=orchestrator._goal_contract_version_for_record(record),
+        policy_version="policy-v1",
+    )
+    intent_evidence = orchestrator._decision_evidence_for_intent(
+        trusted_record,
+        brain_intent=brain_intent,
+        action_ref=action_ref,
+        requested_action_args=requested_action_args,
+        goal_contract_readiness=orchestrator._goal_contract_readiness_for_record(record),
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC),
+    )
+    seed_decision = evaluate_persisted_session_policy(
+        trusted_record,
+        action_ref=action_ref,
+        trigger="resident_orchestrator",
+        brain_intent=brain_intent.intent,
+        validator_verdict=intent_evidence,
+        release_gate_verdict=intent_evidence,
+        goal_contract_readiness=orchestrator._goal_contract_readiness_for_record(record),
+    ).model_copy(update={"evidence": {**intent_evidence}})
+
+    app.state.resident_expert_runtime_service.record_consultation_payload(
+        consultation_ref=seed_decision.decision_id,
+        consulted_at="2026-04-07T00:00:00Z",
+        opinions=[
+            {
+                "expert_id": "managed-agent-expert",
+                "next_slice_recommendation": "stabilize recovery lineage before expanding autonomy",
+                "rationale": "lineage needs to stay replayable under auto-execute paths",
+                "risks_to_avoid": ["implicit recovery state resurrection"],
+            },
+            {
+                "expert_id": "hermes-agent-expert",
+                "next_slice_recommendation": "compress operator-facing next action text",
+                "rationale": "dispatch guidance is still too dense during triage",
+                "risks_to_avoid": ["burying the next branch action"],
+            },
+        ],
+        synthesis={
+            "summary": "take the smallest slice that improves lineage and operator triage together",
+            "chosen_next_slice": "tighten lineage plus concise operator guidance",
+            "dissent_summary": "managed prioritizes lineage, hermes prioritizes triage density",
+        },
+    )
+
+    continue_result = WatchdogActionResult(
+        action_code="continue_session",
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="decision:auto-continue",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.STEER_POSTED,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="continued",
+        facts=[],
+    )
+
+    with patch(
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision",
+        return_value=continue_result,
+    ), patch("watchdog.services.session_spine.actions.post_steer"):
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    stored = app.state.policy_decision_store.list_records()[0]
+    consultation = stored.evidence["resident_expert_consultation"]
+    assert [item["expert_id"] for item in consultation["opinions"]] == [
+        "managed-agent-expert",
+        "hermes-agent-expert",
+    ]
+    assert consultation["synthesis"]["chosen_next_slice"] == (
+        "tighten lineage plus concise operator guidance"
+    )
+
+
 def test_resident_orchestrator_reuses_existing_decision_lifecycle_events_on_identical_replay(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3324,7 +4895,7 @@ def test_resident_orchestrator_reuses_existing_decision_lifecycle_events_on_iden
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3354,8 +4925,8 @@ def test_resident_orchestrator_preserves_existing_lifecycle_trace_when_refreshin
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3374,7 +4945,7 @@ def test_resident_orchestrator_preserves_existing_lifecycle_trace_when_refreshin
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3390,9 +4961,17 @@ def test_resident_orchestrator_preserves_existing_lifecycle_trace_when_refreshin
             "evidence": {
                 **decision.evidence,
                 "goal_contract_version": "goal-contract:test-refresh",
+                "decision_input": {
+                    "current_progress_summary": "当前分支目标：refreshed summary",
+                },
+                "brain_output": {
+                    "evidence_codes": ["provider_unavailable"],
+                    "remaining_work_hypothesis": ["retry provider"],
+                },
                 "decision_trace": {
                     **decision.evidence["decision_trace"],
                     "trace_id": "trace:regenerated",
+                    "degrade_reason": "provider_unavailable",
                 },
             }
         }
@@ -3401,11 +4980,17 @@ def test_resident_orchestrator_preserves_existing_lifecycle_trace_when_refreshin
     stored = app.state.resident_orchestrator._record_and_store_decision(regenerated)
 
     assert stored.evidence["decision_trace"]["trace_id"] == original_trace
+    assert stored.evidence["decision_trace"]["degrade_reason"] == "provider_unavailable"
     assert stored.evidence["goal_contract_version"] == "goal-contract:test-refresh"
+    assert stored.evidence["decision_input"]["current_progress_summary"] == "当前分支目标：refreshed summary"
+    assert stored.evidence["brain_output"]["evidence_codes"] == ["provider_unavailable"]
     persisted = app.state.policy_decision_store.get(decision.decision_key)
     assert persisted is not None
     assert persisted.evidence["decision_trace"]["trace_id"] == original_trace
+    assert persisted.evidence["decision_trace"]["degrade_reason"] == "provider_unavailable"
     assert persisted.evidence["goal_contract_version"] == "goal-contract:test-refresh"
+    assert persisted.evidence["decision_input"]["current_progress_summary"] == "当前分支目标：refreshed summary"
+    assert persisted.evidence["brain_output"]["evidence_codes"] == ["provider_unavailable"]
 
     session_events = app.state.session_service.list_events(
         session_id=decision.session_id,
@@ -3424,8 +5009,8 @@ def test_resident_orchestrator_backfills_missing_decision_store_from_existing_li
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3444,7 +5029,7 @@ def test_resident_orchestrator_backfills_missing_decision_store_from_existing_li
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3505,8 +5090,8 @@ def test_resident_orchestrator_raises_on_decision_lifecycle_payload_drift(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3525,7 +5110,7 @@ def test_resident_orchestrator_raises_on_decision_lifecycle_payload_drift(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3573,8 +5158,8 @@ def test_resident_orchestrator_raises_on_command_created_payload_drift(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3593,7 +5178,7 @@ def test_resident_orchestrator_raises_on_command_created_payload_drift(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
@@ -3642,8 +5227,8 @@ def test_resident_orchestrator_replay_reads_future_worker_events_by_decision_tra
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3662,7 +5247,7 @@ def test_resident_orchestrator_replay_reads_future_worker_events_by_decision_tra
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3744,8 +5329,8 @@ def test_resident_orchestrator_replay_excludes_future_worker_events_with_wrong_t
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3764,7 +5349,7 @@ def test_resident_orchestrator_replay_excludes_future_worker_events_with_wrong_t
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
@@ -3820,8 +5405,8 @@ def test_resident_orchestrator_consumes_completed_future_worker_results_for_same
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3840,7 +5425,7 @@ def test_resident_orchestrator_consumes_completed_future_worker_results_for_same
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     trace = _release_gate_trace().model_copy(update={"trace_id": "trace:consume-worker"})
@@ -3923,8 +5508,8 @@ def test_resident_orchestrator_materializes_future_worker_requests_once_per_deci
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -3943,7 +5528,7 @@ def test_resident_orchestrator_materializes_future_worker_requests_once_per_deci
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     trace = _release_gate_trace().model_copy(update={"trace_id": "trace:request-contract"})
@@ -4011,14 +5596,14 @@ def test_resident_orchestrator_materializes_future_worker_requests_with_effectiv
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
     app = create_app(
         settings,
-        a_client=FakeResidentAClient(
+        runtime_client=FakeResidentAClient(
             task={
                 "project_id": "repo-a",
                 "thread_id": "thr_native_1",
@@ -4097,8 +5682,8 @@ def test_resident_orchestrator_rejects_partial_future_worker_request_materializa
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4117,7 +5702,7 @@ def test_resident_orchestrator_rejects_partial_future_worker_request_materializa
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     trace = _release_gate_trace().model_copy(update={"trace_id": "trace:request-batch"})
@@ -4188,8 +5773,8 @@ def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contr
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4208,7 +5793,7 @@ def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contr
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     GoalContractService(app.state.session_service).bootstrap_contract(
@@ -4252,13 +5837,101 @@ def test_resident_orchestrator_requires_human_decision_for_incomplete_goal_contr
     assert approval_events[0].related_ids["decision_id"] == decisions[0].decision_id
 
 
+def test_resident_orchestrator_bootstraps_missing_goal_contract_for_legacy_provider_session(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        brain_provider_name="openai-compatible",
+        brain_provider_base_url="http://provider.test/v1",
+        brain_provider_api_key="provider-key",
+        brain_provider_model="gpt-test",
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "task_title": "Ship the watchdog auto-continue fix",
+            "task_prompt": "Ship the watchdog auto-continue fix with regression coverage.",
+            "last_summary": "still stuck on the watchdog auto-continue fix",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    assert (
+        GoalContractService(app.state.session_service).get_current_contract(
+            project_id="repo-a",
+            session_id="session:repo-a",
+        )
+        is None
+    )
+
+    provider_calls: list[str] = []
+
+    def fake_provider_decide(**_: object) -> DecisionIntent:
+        provider_calls.append("called")
+        return DecisionIntent(
+            intent="propose_execute",
+            rationale="provider decided continue",
+            action_arguments={
+                "message": "继续推进 watchdog 修复并验证。",
+                "reason_code": "brain_auto_continue",
+                "stuck_level": 3,
+            },
+        )
+
+    with patch.object(
+        type(app.state.resident_orchestrator._brain_service._provider),
+        "decide",
+        side_effect=fake_provider_decide,
+    ), patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        _bind_dual_resident_experts(
+            app,
+            observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        )
+        steer_mock.return_value = {"success": True, "data": {"status": "running"}}
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    contract = GoalContractService(app.state.session_service).get_current_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+    )
+    assert contract is not None
+    assert contract.current_phase_goal == "Ship the watchdog auto-continue fix with regression coverage."
+    assert contract.explicit_deliverables == ["Ship the watchdog auto-continue fix"]
+    assert contract.completion_signals == ["autonomy golden path release blocker passes"]
+    assert provider_calls == ["called"]
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
+    goal_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="goal_contract_created",
+    )
+    assert len(goal_events) == 1
+
+
 def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_session_events(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4277,7 +5950,7 @@ def test_resident_orchestrator_records_release_gate_and_validator_verdict_in_ses
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     contract_module = importlib.import_module(
         "watchdog.services.session_spine.event_gate_payload_contract"
@@ -4358,8 +6031,8 @@ def test_resident_orchestrator_command_terminal_payload_uses_gate_payload_contra
     )
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -4384,7 +6057,7 @@ def test_resident_orchestrator_command_terminal_payload_uses_gate_payload_contra
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     contract_module = importlib.import_module(
         "watchdog.services.session_spine.event_gate_payload_contract"
@@ -4434,8 +6107,8 @@ def test_resident_orchestrator_does_not_execute_when_release_gate_or_validator_d
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4454,7 +6127,7 @@ def test_resident_orchestrator_does_not_execute_when_release_gate_or_validator_d
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     def _decision_with_degraded_gate(*args, **kwargs) -> CanonicalDecisionRecord:
@@ -4508,8 +6181,8 @@ def test_resident_orchestrator_fails_closed_when_auto_execute_decision_lacks_gat
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4528,7 +6201,7 @@ def test_resident_orchestrator_fails_closed_when_auto_execute_decision_lacks_gat
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch.object(
@@ -4559,8 +6232,8 @@ def test_resident_orchestrator_uses_configured_release_gate_report_for_auto_exec
     )
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -4585,7 +6258,7 @@ def test_resident_orchestrator_uses_configured_release_gate_report_for_auto_exec
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     write_contract_module = importlib.import_module(
@@ -4645,8 +6318,8 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_is_e
     )
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -4671,7 +6344,7 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_is_e
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch.object(
@@ -4710,8 +6383,8 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_gove
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -4736,7 +6409,7 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_gove
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch.object(
@@ -4780,8 +6453,8 @@ def test_resident_orchestrator_uses_release_gate_write_contract_for_report_load_
     trace = _release_gate_trace()
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -4806,7 +6479,7 @@ def test_resident_orchestrator_uses_release_gate_write_contract_for_report_load_
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     write_contract_module = importlib.import_module(
         "watchdog.services.brain.release_gate_write_contract"
@@ -4844,8 +6517,8 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_is_n
     trace = _release_gate_trace()
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -4870,7 +6543,7 @@ def test_resident_orchestrator_degrades_when_configured_release_gate_report_is_n
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch.object(
@@ -4900,8 +6573,8 @@ def test_resident_orchestrator_fails_closed_when_decision_event_write_fails(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4920,7 +6593,7 @@ def test_resident_orchestrator_fails_closed_when_decision_event_write_fails(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     original_record_event = app.state.session_service.record_event
@@ -4948,8 +6621,8 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -4968,7 +6641,7 @@ def test_resident_orchestrator_skips_auto_execute_when_command_is_already_claime
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
@@ -5016,8 +6689,8 @@ def test_resident_orchestrator_treats_claim_race_as_nonfatal_skip(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -5036,7 +6709,7 @@ def test_resident_orchestrator_treats_claim_race_as_nonfatal_skip(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
@@ -5087,13 +6760,13 @@ def test_resident_orchestrator_treats_claim_race_as_nonfatal_skip(
     assert [event.event_type for event in events] == ["command_claimed"]
 
 
-def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_command(
+def test_resident_orchestrator_reexecutes_its_active_claim_after_renewing_lease(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         resident_orchestrator_interval_seconds=3600,
@@ -5113,7 +6786,7 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
@@ -5137,8 +6810,21 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
         lease_expires_at="2026-04-07T00:30:00Z",
     )
 
+    result = WatchdogActionResult(
+        action_code="continue_session",
+        project_id="repo-a",
+        approval_id=None,
+        idempotency_key="resident-claimed-command",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.NOOP,
+        reply_code=ReplyCode.ACTION_RESULT,
+        message="ok",
+        facts=[],
+    )
+
     with patch(
-        "watchdog.services.session_spine.orchestrator.execute_canonical_decision"
+        "watchdog.services.session_spine.orchestrator.execute_canonical_decision",
+        return_value=result,
     ) as execute_mock:
         outcomes = app.state.resident_orchestrator.orchestrate_all(
             now=datetime(2026, 4, 7, 0, 10, 0, tzinfo=UTC)
@@ -5146,16 +6832,17 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in outcomes] == ["auto_execute_and_notify"]
-    execute_mock.assert_not_called()
+    execute_mock.assert_called_once()
     events = app.state.command_lease_store.list_events(command_id=command_id)
     assert [event.event_type for event in events] == [
         "command_claimed",
         "command_lease_renewed",
+        "command_executed",
     ]
-    assert [event.claim_seq for event in events] == [1, 1]
+    assert [event.claim_seq for event in events] == [1, 1, 1]
     state = app.state.command_lease_store.get_command(command_id)
     assert state is not None
-    assert state.status == "claimed"
+    assert state.status == "executed"
     assert state.worker_id == "resident_orchestrator"
     assert state.claim_seq == 1
     assert state.lease_expires_at == "2026-04-07T01:10:00Z"
@@ -5167,9 +6854,10 @@ def test_resident_orchestrator_renews_its_active_claim_without_reexecuting_comma
     assert [event.event_type for event in session_events] == [
         "command_claimed",
         "command_lease_renewed",
+        "command_executed",
     ]
-    assert [event.related_ids["claim_seq"] for event in session_events] == ["1", "1"]
-    assert session_events[-1].payload["lease_expires_at"] == "2026-04-07T01:10:00Z"
+    assert [event.related_ids["claim_seq"] for event in session_events] == ["1", "1", "1"]
+    assert session_events[1].payload["lease_expires_at"] == "2026-04-07T01:10:00Z"
 
 
 def test_resident_orchestrator_continue_on_error_skips_failed_record(
@@ -5178,8 +6866,8 @@ def test_resident_orchestrator_continue_on_error_skips_failed_record(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -5197,7 +6885,7 @@ def test_resident_orchestrator_continue_on_error_skips_failed_record(
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     good_record = app.state.session_spine_store.get("repo-a")
     assert good_record is not None
@@ -5247,8 +6935,8 @@ def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -5267,7 +6955,7 @@ def test_resident_orchestrator_requeues_expired_claim_before_reexecuting_command
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
     record = app.state.session_spine_store.get("repo-a")
     assert record is not None
@@ -5340,8 +7028,8 @@ def test_startup_reconciles_stale_pending_canonical_approval_against_later_auto_
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=3600,
         resident_orchestrator_interval_seconds=3600,
@@ -5363,7 +7051,7 @@ def test_startup_reconciles_stale_pending_canonical_approval_against_later_auto_
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     stale_decision = CanonicalDecisionRecord(
         decision_id="decision:repo-a:fact-v1:require_user_decision",
         decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|execute_recovery|",
@@ -5455,8 +7143,8 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -5475,7 +7163,7 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch(
@@ -5501,7 +7189,7 @@ def test_resident_orchestrator_caches_auto_continue_control_link_error_per_decis
     assert receipts[0].action_status == "error"
     assert receipts[0].effect == "noop"
     assert receipts[0].reply_code == "control_link_error"
-    assert receipts[0].message == "steer 调用失败：无法连接 A-Control-Agent"
+    assert receipts[0].message == "steer 调用失败：无法连接 Codex runtime"
     assert [fact.fact_code for fact in receipts[0].facts] == [
         "stuck_no_progress",
         "recovery_available",
@@ -5534,8 +7222,8 @@ def test_resident_orchestrator_persists_brain_requested_action_args_for_continue
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -5554,7 +7242,7 @@ def test_resident_orchestrator_persists_brain_requested_action_args_for_continue
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     class StructuredBrainService:
@@ -5570,6 +7258,10 @@ def test_resident_orchestrator_persists_brain_requested_action_args_for_continue
             )
 
     app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    _bind_dual_resident_experts(
+        app,
+        observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    )
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
         steer_mock.return_value = {"success": True, "data": {"accepted": True}}
@@ -5607,8 +7299,8 @@ def test_resident_orchestrator_records_continuation_gate_verdict_for_provider_co
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -5627,7 +7319,7 @@ def test_resident_orchestrator_records_continuation_gate_verdict_for_provider_co
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     class StructuredBrainService:
@@ -5654,6 +7346,10 @@ def test_resident_orchestrator_records_continuation_gate_verdict_for_provider_co
             )
 
     app.state.resident_orchestrator._brain_service = StructuredBrainService()
+    _bind_dual_resident_experts(
+        app,
+        observed_at=datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    )
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
         steer_mock.return_value = {"success": True, "data": {"accepted": True}}
@@ -5695,8 +7391,8 @@ def test_resident_orchestrator_records_branch_switch_token_lifecycle_from_govern
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
     a_client = FakeResidentAClient(
@@ -5714,7 +7410,7 @@ def test_resident_orchestrator_records_branch_switch_token_lifecycle_from_govern
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     issued_decision = CanonicalDecisionRecord(
         decision_id="decision:branch-switch-issued",
@@ -5838,8 +7534,8 @@ def test_resident_orchestrator_blocks_brain_continue_when_action_args_violate_co
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -5858,7 +7554,7 @@ def test_resident_orchestrator_blocks_brain_continue_when_action_args_violate_co
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     class StructuredBrainService:
@@ -5908,8 +7604,8 @@ def test_resident_orchestrator_applies_cooldown_to_repeated_auto_continue(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=300.0,
     )
@@ -5943,7 +7639,7 @@ def test_resident_orchestrator_applies_cooldown_to_repeated_auto_continue(
             },
         ]
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
         steer_mock.return_value = {"success": True, "data": {"accepted": True}}
@@ -5977,8 +7673,8 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_control_link
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=300.0,
     )
@@ -6012,7 +7708,7 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_control_link
             },
         ]
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     app.state.session_spine_runtime.refresh_all()
     with patch(
@@ -6048,8 +7744,8 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_error_receip
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=300.0,
     )
@@ -6068,7 +7764,7 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_error_receip
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     cached_error = WatchdogActionResult(
@@ -6103,13 +7799,13 @@ def test_resident_orchestrator_does_not_start_cooldown_after_cached_error_receip
     assert app.state.delivery_outbox_store.list_records() == []
 
 
-def test_background_runtime_pushes_progress_summary_when_project_progress_changes(
+def test_background_runtime_pushes_progress_summary_only_for_done_phase(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=0.01,
         resident_orchestrator_interval_seconds=0.01,
@@ -6121,9 +7817,9 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
                 "project_id": "repo-a",
                 "thread_id": "thr_native_1",
                 "status": "running",
-                "phase": "editing_source",
+                "phase": "running_tests",
                 "pending_approval": False,
-                "last_summary": "editing files",
+                "last_summary": "tests are running",
                 "files_touched": ["src/example.py"],
                 "context_pressure": "low",
                 "stuck_level": 0,
@@ -6134,9 +7830,9 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
                 "project_id": "repo-a",
                 "thread_id": "thr_native_1",
                 "status": "running",
-                "phase": "running_tests",
+                "phase": "done",
                 "pending_approval": False,
-                "last_summary": "tests are running",
+                "last_summary": "ready for wrap-up",
                 "files_touched": ["src/example.py", "tests/test_example.py"],
                 "context_pressure": "low",
                 "stuck_level": 0,
@@ -6146,14 +7842,14 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
         ]
     )
     delivery_client = RecordingDeliveryClient()
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
         assert wait_until(
             lambda: any(
                 record.get("notification_kind") == "progress_summary"
-                and record.get("summary") == "tests are running"
+                and record.get("summary") == "ready for wrap-up"
                 for record in delivery_client.records
             ),
             timeout_s=0.5,
@@ -6166,16 +7862,67 @@ def test_background_runtime_pushes_progress_summary_when_project_progress_change
     ]
 
     assert len(progress_notifications) >= 1
-    assert progress_notifications[-1]["summary"] == "tests are running"
+    assert progress_notifications[-1]["summary"] == "ready for wrap-up"
 
 
-def test_background_runtime_pushes_progress_summary_for_multiple_projects(
+def test_background_runtime_pushes_progress_summary_for_handoff_ready_closing_phase(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "handoff",
+            "pending_approval": False,
+            "last_summary": "ready for handoff after final review",
+            "files_touched": ["src/example.py", "tests/test_example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:01:00Z",
+        }
+    )
+    delivery_client = RecordingDeliveryClient()
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    app.state.delivery_worker._delivery_client = delivery_client
+
+    with TestClient(app):
+        assert wait_until(
+            lambda: any(
+                record.get("notification_kind") == "progress_summary"
+                and record.get("summary") == "ready for handoff after final review"
+                for record in delivery_client.records
+            ),
+            timeout_s=0.5,
+        )
+
+    progress_notifications = [
+        record
+        for record in delivery_client.records
+        if record.get("notification_kind") == "progress_summary"
+    ]
+
+    assert len(progress_notifications) >= 1
+    assert progress_notifications[-1]["summary"] == "ready for handoff after final review"
+
+
+def test_background_runtime_skips_progress_summary_for_non_closing_projects(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=0.01,
         resident_orchestrator_interval_seconds=0.01,
@@ -6213,18 +7960,15 @@ def test_background_runtime_pushes_progress_summary_for_multiple_projects(
         approvals=[],
     )
     delivery_client = RecordingDeliveryClient()
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
         assert wait_until(
-            lambda: {
-                record.get("project_id")
-                for record in delivery_client.records
-                if record.get("notification_kind") == "progress_summary"
-            }
-            >= {"repo-a", "repo-b"},
+            lambda: _store_path(tmp_path).exists()
+            and "repo-a" in _read_store(tmp_path).get("sessions", {})
+            and "repo-b" in _read_store(tmp_path).get("sessions", {}),
             timeout_s=0.5,
         )
 
@@ -6234,8 +7978,119 @@ def test_background_runtime_pushes_progress_summary_for_multiple_projects(
         if record.get("notification_kind") == "progress_summary"
     ]
 
-    project_ids = {record.get("project_id") for record in progress_notifications}
-    assert {"repo-a", "repo-b"} <= project_ids
+    assert progress_notifications == []
+
+
+def test_background_runtime_skips_progress_summary_for_non_terminal_handoff_state(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "handoff",
+            "pending_approval": False,
+            "last_summary": "handoff drafted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:01:00Z",
+        }
+    )
+    delivery_client = RecordingDeliveryClient()
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    app.state.delivery_worker._delivery_client = delivery_client
+
+    with TestClient(app):
+        assert wait_until(
+            lambda: _store_path(tmp_path).exists()
+            and "repo-a" in _read_store(tmp_path).get("sessions", {}),
+            timeout_s=0.5,
+        )
+
+    progress_notifications = [
+        record
+        for record in delivery_client.records
+        if record.get("notification_kind") == "progress_summary"
+    ]
+
+    assert progress_notifications == []
+
+
+def test_background_runtime_does_not_push_session_directory_summary_for_multiple_projects(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=0.01,
+        resident_orchestrator_interval_seconds=0.01,
+        progress_summary_interval_seconds=0.0,
+    )
+    a_client = MultiProjectResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "repo-a editing",
+                "files_touched": ["src/a.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:00:00Z",
+            },
+            {
+                "project_id": "repo-b",
+                "thread_id": "thr_native_2",
+                "status": "running",
+                "phase": "running_tests",
+                "pending_approval": False,
+                "last_summary": "repo-b testing",
+                "files_touched": ["src/b.py", "tests/test_b.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:01:00Z",
+            },
+        ],
+        approvals=[],
+    )
+    delivery_client = RecordingDeliveryClient()
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+    app.state.delivery_worker._delivery_client = delivery_client
+
+    with TestClient(app):
+        assert wait_until(
+            lambda: _store_path(tmp_path).exists()
+            and "repo-a" in _read_store(tmp_path).get("sessions", {})
+            and "repo-b" in _read_store(tmp_path).get("sessions", {}),
+            timeout_s=0.5,
+        )
+
+    directory_notifications = [
+        record
+        for record in delivery_client.records
+        if record.get("notification_kind") == "session_directory_summary"
+    ]
+
+    assert directory_notifications == []
 
 
 def test_background_runtime_skips_stale_progress_summary_even_when_project_progress_changes(
@@ -6243,8 +8098,8 @@ def test_background_runtime_skips_stale_progress_summary_even_when_project_progr
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=0.01,
         resident_orchestrator_interval_seconds=0.01,
@@ -6282,7 +8137,7 @@ def test_background_runtime_skips_stale_progress_summary_even_when_project_progr
         ]
     )
     delivery_client = RecordingDeliveryClient()
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     app.state.delivery_worker._delivery_client = delivery_client
 
     with TestClient(app):
@@ -6312,8 +8167,8 @@ def test_background_workers_survive_transient_startup_and_loop_failures(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=0.01,
         resident_orchestrator_interval_seconds=0.01,
@@ -6336,7 +8191,7 @@ def test_background_workers_survive_transient_startup_and_loop_failures(
         }
     )
 
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
     app.state.session_spine_runtime = FlakyRuntime(app.state.session_spine_runtime)
     app.state.resident_orchestrator = FlakyOrchestrator(app.state.resident_orchestrator)
     app.state.delivery_worker._delivery_client = RecordingDeliveryClient()
@@ -6348,25 +8203,15 @@ def test_background_workers_survive_transient_startup_and_loop_failures(
             and app.state.session_spine_runtime.calls >= 2
             and app.state.resident_orchestrator.calls >= 2
             and app.state.delivery_worker.calls >= 2
-            and any(
-                record.get("notification_kind") == "progress_summary"
-                for record in app.state.delivery_worker._delegate._delivery_client.records
-            ),
+            ,
             timeout_s=0.5,
         )
 
     snapshot = _read_store(tmp_path)
-    progress_notifications = [
-        record
-        for record in app.state.delivery_worker._delegate._delivery_client.records
-        if record.get("notification_kind") == "progress_summary"
-    ]
-
     assert snapshot["sessions"]["repo-a"]["session_seq"] >= 1
     assert app.state.session_spine_runtime.calls >= 2
     assert app.state.resident_orchestrator.calls >= 2
     assert app.state.delivery_worker.calls >= 2
-    assert progress_notifications
 
 
 @pytest.mark.asyncio
@@ -6376,8 +8221,8 @@ async def test_delivery_loop_runs_drain_outside_event_loop(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         delivery_worker_interval_seconds=3600,
     )
@@ -6396,7 +8241,7 @@ async def test_delivery_loop_runs_drain_outside_event_loop(
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=False)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
 
     def blocking_drain(_app, *, now=None) -> None:
         _ = now
@@ -6419,14 +8264,68 @@ async def test_delivery_loop_runs_drain_outside_event_loop(
 
 
 @pytest.mark.asyncio
+async def test_session_spine_refresh_loop_reconciles_approvals_before_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    calls: list[str] = []
+
+    async def immediate_sleep(_seconds: float) -> None:
+        return None
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        calls.append(step_name)
+        if step_name == "session_spine_runtime.refresh_all":
+            raise asyncio.CancelledError
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    monkeypatch.setattr("watchdog.main.asyncio.sleep", immediate_sleep)
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _run_session_spine_refresh_loop(app)
+
+    assert calls == [
+        "canonical_approval_store.reconcile_pending_records_against_decisions",
+        "session_spine_runtime.refresh_all",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_startup_drain_runs_outside_event_loop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=3600,
         resident_orchestrator_interval_seconds=3600,
@@ -6447,7 +8346,7 @@ async def test_startup_drain_runs_outside_event_loop(
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
 
     def blocking_drain(_app, *, now=None) -> None:
         _ = now
@@ -6480,8 +8379,8 @@ async def test_startup_does_not_wait_for_full_delivery_drain(
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=3600,
         resident_orchestrator_interval_seconds=3600,
@@ -6502,7 +8401,7 @@ async def test_startup_does_not_wait_for_full_delivery_drain(
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
 
     def blocking_drain(_app, *, now=None) -> None:
         _ = (_app, now)
@@ -6525,14 +8424,14 @@ async def test_startup_does_not_wait_for_full_delivery_drain(
 
 
 @pytest.mark.asyncio
-async def test_startup_does_not_wait_for_initial_orchestrator(
+async def test_startup_waits_for_approval_reconcile_before_starting_delivery_loop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=3600,
         resident_orchestrator_interval_seconds=3600,
@@ -6553,7 +8452,219 @@ async def test_startup_does_not_wait_for_initial_orchestrator(
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    reconcile_started = asyncio.Event()
+    release_reconcile = asyncio.Event()
+    delivery_started = asyncio.Event()
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        if step_name == "canonical_approval_store.reconcile_pending_records_against_decisions":
+            reconcile_started.set()
+            await release_reconcile.wait()
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def gated_delivery_loop(_app) -> None:
+        _ = _app
+        delivery_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+    monkeypatch.setattr("watchdog.main._run_delivery_loop", gated_delivery_loop)
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+
+    try:
+        await asyncio.wait_for(reconcile_started.wait(), timeout=0.1)
+        await asyncio.sleep(0)
+        assert not delivery_started.is_set()
+        release_reconcile.set()
+        await asyncio.wait_for(startup_task, timeout=0.1)
+        assert delivery_started.is_set()
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_waits_for_approval_reconcile_before_starting_orchestrators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    reconcile_started = asyncio.Event()
+    release_reconcile = asyncio.Event()
+    startup_orchestrator_started = asyncio.Event()
+    resident_orchestrator_started = asyncio.Event()
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        if step_name == "canonical_approval_store.reconcile_pending_records_against_decisions":
+            reconcile_started.set()
+            await release_reconcile.wait()
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def gated_startup_orchestrator(_app) -> None:
+        _ = _app
+        startup_orchestrator_started.set()
+        await asyncio.Event().wait()
+
+    async def gated_resident_orchestrator(_app) -> None:
+        _ = _app
+        resident_orchestrator_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+    monkeypatch.setattr("watchdog.main._run_startup_orchestrator_once", gated_startup_orchestrator)
+    monkeypatch.setattr("watchdog.main._run_resident_orchestrator_loop", gated_resident_orchestrator)
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+
+    try:
+        await asyncio.wait_for(reconcile_started.wait(), timeout=0.1)
+        await asyncio.sleep(0)
+        assert not startup_orchestrator_started.is_set()
+        assert not resident_orchestrator_started.is_set()
+        release_reconcile.set()
+        await asyncio.wait_for(startup_task, timeout=0.1)
+        assert startup_orchestrator_started.is_set()
+        assert resident_orchestrator_started.is_set()
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_does_not_start_background_loops_when_reconcile_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    session_spine_started = asyncio.Event()
+    memory_ingest_started = asyncio.Event()
+
+    async def controlled_background_step(step_name: str, fn, /, *args, **kwargs):
+        if step_name == "canonical_approval_store.reconcile_pending_records_against_decisions":
+            raise RuntimeError("boom")
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def gated_session_spine_loop(_app) -> None:
+        _ = _app
+        session_spine_started.set()
+        await asyncio.Event().wait()
+
+    async def gated_memory_ingest_loop(_app) -> None:
+        _ = _app
+        memory_ingest_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("watchdog.main._run_background_step_async", controlled_background_step)
+    monkeypatch.setattr("watchdog.main._run_session_spine_refresh_loop", gated_session_spine_loop)
+    monkeypatch.setattr("watchdog.main._run_memory_ingest_loop", gated_memory_ingest_loop)
+
+    lifespan = app.router.lifespan_context(app)
+    with pytest.raises(RuntimeError, match="boom"):
+        await lifespan.__aenter__()
+
+    assert not session_spine_started.is_set()
+    assert not memory_ingest_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_startup_does_not_wait_for_initial_orchestrator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
 
     def blocking_orchestrate(*, now=None):
         _ = now
@@ -6590,14 +8701,122 @@ async def test_startup_does_not_wait_for_initial_orchestrator(
 
 
 @pytest.mark.asyncio
+async def test_startup_does_not_wait_for_background_supervision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+
+    def slow_supervision(*_args, **_kwargs):
+        time.sleep(0.2)
+
+    monkeypatch.setattr(
+        "watchdog.main.supervision_routes.run_background_supervision",
+        slow_supervision,
+    )
+
+    lifespan = app.router.lifespan_context(app)
+    startup_task = asyncio.create_task(lifespan.__aenter__())
+
+    try:
+        await asyncio.wait_for(startup_task, timeout=0.05)
+    finally:
+        if startup_task.done() and not startup_task.cancelled():
+            await lifespan.__aexit__(None, None, None)
+        else:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
+
+@pytest.mark.asyncio
+async def test_startup_spawns_feishu_long_connection_runtime_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        session_spine_refresh_interval_seconds=3600,
+        resident_orchestrator_interval_seconds=3600,
+        delivery_worker_interval_seconds=3600,
+        feishu_event_ingress_mode="long_connection",
+        feishu_callback_ingress_mode="long_connection",
+        feishu_app_id="cli_long_connection",
+        feishu_app_secret="secret-long-connection",
+        feishu_verification_token="verify-token",
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
+    started: list[object] = []
+
+    def fake_start_feishu_runtime(started_app):
+        started.append(started_app)
+        return None
+
+    monkeypatch.setattr(
+        "watchdog.main._start_feishu_long_connection_runtime",
+        fake_start_feishu_runtime,
+    )
+
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+
+    try:
+        assert started == [app]
+    finally:
+        await lifespan.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
 async def test_startup_and_periodic_orchestrator_runs_do_not_overlap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
         session_spine_refresh_interval_seconds=3600,
         resident_orchestrator_interval_seconds=0.01,
@@ -6618,7 +8837,7 @@ async def test_startup_and_periodic_orchestrator_runs_do_not_overlap(
             "last_progress_at": "2099-01-01T00:00:00Z",
         }
     )
-    app = create_app(settings, a_client=a_client, start_background_workers=True)
+    app = create_app(settings, runtime_client=a_client, start_background_workers=True)
 
     state_lock = threading.Lock()
     active_calls = 0

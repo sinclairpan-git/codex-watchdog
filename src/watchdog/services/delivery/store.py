@@ -1,4 +1,5 @@
 from __future__ import annotations
+from copy import deepcopy
 import fcntl
 import os
 import re
@@ -100,13 +101,13 @@ class DeliveryOutboxStore:
     def _read(self) -> _DeliveryStoreFile:
         signature = self._file_signature()
         if self._cache is not None and signature == self._cache_signature:
-            return self._cache
+            return deepcopy(self._cache)
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
             data = _DeliveryStoreFile()
         else:
             data = _DeliveryStoreFile.model_validate_json(raw)
-        self._cache = data
+        self._cache = deepcopy(data)
         self._cache_signature = self._file_signature()
         return data
 
@@ -115,7 +116,7 @@ class DeliveryOutboxStore:
         try:
             tmp.write_text(data.model_dump_json(indent=2), encoding="utf-8")
             tmp.replace(self._path)
-            self._cache = data
+            self._cache = deepcopy(data)
             self._cache_signature = self._file_signature()
         finally:
             with suppress(FileNotFoundError):
@@ -178,8 +179,17 @@ class DeliveryOutboxStore:
             data = self._read()
             data.decision_outbox[record.envelope_id] = record
             data.delivery_outbox[record.envelope_id] = record
+            data.next_outbox_seq = max(data.next_outbox_seq, record.outbox_seq + 1)
             self._write(data)
         return record
+
+    def reserve_outbox_seq(self) -> int:
+        with self._guard_io():
+            data = self._read()
+            outbox_seq = data.next_outbox_seq
+            data.next_outbox_seq += 1
+            self._write(data)
+        return outbox_seq
 
     def snapshot_rows(self) -> list[DeliveryOutboxRecord]:
         with self._guard_io():
@@ -232,6 +242,7 @@ class DeliveryOutboxStore:
                 updated = record.model_copy(
                     update={
                         "delivery_status": "pending",
+                        "delivery_attempt": 0,
                         "failure_code": None,
                         "next_retry_at": None,
                         "operator_notes": notes,
@@ -288,6 +299,9 @@ class DeliveryOutboxStore:
             "transport_configuration_error",
         }:
             return True
+        if failure_code.startswith("http_"):
+            status = failure_code.removeprefix("http_")
+            return status in {"408", "409", "425", "429", "500", "502", "503", "504"}
         return failure_code.startswith("upstream_")
 
     @staticmethod

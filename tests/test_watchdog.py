@@ -10,13 +10,13 @@ from watchdog.settings import Settings
 
 
 def test_watchdog_healthz() -> None:
-    app = create_app(Settings(api_token="wt", a_agent_base_url="http://127.0.0.1:9"))
+    app = create_app(Settings(api_token="wt", codex_runtime_base_url="http://127.0.0.1:9"))
     c = TestClient(app)
     r = c.get("/healthz")
     assert r.status_code == 200
 
 
-@patch("watchdog.services.a_client.client.httpx.Client")
+@patch("watchdog.services.runtime_client.client.httpx.Client")
 def test_progress_ok(mock_cls: MagicMock) -> None:
     mock_inst = MagicMock()
     mock_cls.return_value.__enter__.return_value = mock_inst
@@ -32,7 +32,7 @@ def test_progress_ok(mock_cls: MagicMock) -> None:
             "last_progress_at": None,
         },
     }
-    app = create_app(Settings(api_token="wt", a_agent_token="at"))
+    app = create_app(Settings(api_token="wt", codex_runtime_token="at"))
     c = TestClient(app)
     r = c.get(
         "/api/v1/watchdog/tasks/x/progress",
@@ -44,8 +44,8 @@ def test_progress_ok(mock_cls: MagicMock) -> None:
     assert b["data"]["status"] == "running"
 
 
-@patch("watchdog.services.a_client.client.httpx.Client")
-def test_progress_a_unreachable(mock_cls: MagicMock) -> None:
+@patch("watchdog.services.runtime_client.client.httpx.Client")
+def test_progress_runtime_unreachable(mock_cls: MagicMock) -> None:
     mock_inst = MagicMock()
     mock_cls.return_value.__enter__.return_value = mock_inst
     mock_inst.get.side_effect = httpx.ConnectError("refused", request=MagicMock())
@@ -62,7 +62,7 @@ def test_progress_a_unreachable(mock_cls: MagicMock) -> None:
     assert b["error"]["code"] == "CONTROL_LINK_ERROR"
 
 
-@patch("watchdog.services.a_client.client.httpx.Client")
+@patch("watchdog.services.runtime_client.client.httpx.Client")
 def test_events_snapshot_proxy_ok(mock_cls: MagicMock) -> None:
     mock_inst = MagicMock()
     mock_cls.return_value.__enter__.return_value = mock_inst
@@ -71,7 +71,7 @@ def test_events_snapshot_proxy_ok(mock_cls: MagicMock) -> None:
     mock_response.text = 'event: task_created\ndata: {"project_id":"x"}\n\n'
     mock_inst.get.return_value = mock_response
 
-    app = create_app(Settings(api_token="wt", a_agent_token="at"))
+    app = create_app(Settings(api_token="wt", codex_runtime_token="at"))
     c = TestClient(app)
     r = c.get(
         "/api/v1/watchdog/tasks/x/events?follow=false",
@@ -83,7 +83,7 @@ def test_events_snapshot_proxy_ok(mock_cls: MagicMock) -> None:
     assert "event: task_created" in r.text
 
 
-@patch("watchdog.services.a_client.client.httpx.Client")
+@patch("watchdog.services.runtime_client.client.httpx.Client")
 def test_events_stream_proxy_ok(mock_cls: MagicMock) -> None:
     mock_inst = MagicMock()
     mock_cls.return_value.__enter__.return_value = mock_inst
@@ -102,7 +102,7 @@ def test_events_stream_proxy_ok(mock_cls: MagicMock) -> None:
     )
     mock_inst.stream.return_value.__enter__.return_value = stream_response
 
-    app = create_app(Settings(api_token="wt", a_agent_token="at"))
+    app = create_app(Settings(api_token="wt", codex_runtime_token="at"))
     c = TestClient(app)
     r = c.get(
         "/api/v1/watchdog/tasks/x/events",
@@ -115,8 +115,8 @@ def test_events_stream_proxy_ok(mock_cls: MagicMock) -> None:
     assert "event: resume" in r.text
 
 
-@patch("watchdog.services.a_client.client.httpx.Client")
-def test_events_proxy_a_unreachable(mock_cls: MagicMock) -> None:
+@patch("watchdog.services.runtime_client.client.httpx.Client")
+def test_events_proxy_runtime_unreachable(mock_cls: MagicMock) -> None:
     mock_inst = MagicMock()
     mock_cls.return_value.__enter__.return_value = mock_inst
     mock_inst.get.side_effect = httpx.ConnectError("refused", request=MagicMock())
@@ -133,8 +133,8 @@ def test_events_proxy_a_unreachable(mock_cls: MagicMock) -> None:
     assert r.json()["error"]["code"] == "CONTROL_LINK_ERROR"
 
 
-@patch("watchdog.services.a_client.client.httpx.Client")
-def test_events_proxy_relays_a_agent_business_error(mock_cls: MagicMock) -> None:
+@patch("watchdog.services.runtime_client.client.httpx.Client")
+def test_events_proxy_relays_runtime_business_error(mock_cls: MagicMock) -> None:
     mock_inst = MagicMock()
     mock_cls.return_value.__enter__.return_value = mock_inst
     mock_response = MagicMock()
@@ -145,7 +145,7 @@ def test_events_proxy_relays_a_agent_business_error(mock_cls: MagicMock) -> None
     }
     mock_inst.get.return_value = mock_response
 
-    app = create_app(Settings(api_token="wt", a_agent_token="at"))
+    app = create_app(Settings(api_token="wt", codex_runtime_token="at"))
     c = TestClient(app)
     r = c.get(
         "/api/v1/watchdog/tasks/x/events?follow=false",

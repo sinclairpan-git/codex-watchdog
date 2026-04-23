@@ -3,7 +3,7 @@
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.openclaw.watchdog</string>
+    <string>com.codex.watchdog</string>
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
@@ -16,8 +16,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/openclaw-watchdog.out.log</string>
+    <string>__HOME__/Library/Logs/codex-watchdog.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/openclaw-watchdog.err.log</string>
+    <string>__HOME__/Library/Logs/codex-watchdog.err.log</string>
   </dict>
 </plist>

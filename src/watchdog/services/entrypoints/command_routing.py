@@ -4,13 +4,13 @@ from typing import Any
 
 import httpx
 
-from watchdog.services.a_client.client import AControlAgentClient
-from watchdog.services.adapters.openclaw.intents import resolve_message_to_intent
+from watchdog.services.runtime_client.client import CodexRuntimeClient
+from watchdog.services.entrypoints.intents import resolve_message_to_intent
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
 
 _CONTROL_LINK_ERROR = {
     "code": "CONTROL_LINK_ERROR",
-    "message": "A 侧返回数据格式异常",
+    "message": "runtime 返回数据格式异常",
 }
 
 
@@ -20,7 +20,7 @@ def resolve_entry_message(message: str) -> str | None:
 
 def resolve_entry_route(
     *,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     intent_code: str,
     project_id: str | None = None,
     native_thread_id: str | None = None,
@@ -47,7 +47,7 @@ def resolve_entry_route(
 
 
 def _load_task_by_native_thread_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     native_thread_id: str,
 ) -> dict[str, Any]:
     try:

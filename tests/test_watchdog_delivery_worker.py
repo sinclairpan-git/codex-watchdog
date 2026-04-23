@@ -13,11 +13,13 @@ from watchdog.services.approvals.service import (
 from watchdog.services.delivery.envelopes import (
     DecisionEnvelope,
     NotificationEnvelope,
+    SESSION_DIRECTORY_PROJECT_ID,
+    SESSION_DIRECTORY_SESSION_ID,
     build_progress_summary_envelope,
     build_envelopes_for_approval_response,
     build_envelopes_for_decision,
 )
-from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
@@ -123,7 +125,7 @@ def _approval_response(
         status=approval_status,
         created_at="2026-04-07T00:00:00Z",
         decided_at="2026-04-07T00:00:30Z",
-        decided_by="openclaw",
+        decided_by="watchdog",
         operator_notes=[],
         decision=decision,
     )
@@ -136,7 +138,7 @@ def _approval_response(
         idempotency_key=f"{approval.envelope_id}|{response_action}|req_001",
         project_id=decision.project_id,
         approval_status=approval_status,
-        operator="openclaw",
+        operator="watchdog",
         note="looks safe",
         created_at="2026-04-07T00:00:31Z",
         operator_notes=[],
@@ -287,7 +289,7 @@ def test_envelope_builder_emits_approval_result_notification_after_user_response
     assert envelopes[0].summary == "approval approved via approve"
 
 
-def test_approval_envelope_carries_openclaw_compatibility_fields_and_action_args() -> None:
+def test_approval_envelope_carries_legacy_delivery_fields_and_action_args() -> None:
     decision = _decision(
         decision_result="require_user_decision",
         action_ref="execute_recovery",
@@ -342,7 +344,7 @@ def test_decision_artifacts_use_effective_native_thread_id_from_legacy_decision_
     assert envelope.native_thread_id == "thr_native_legacy"
 
 
-def test_decision_envelope_carries_openclaw_compatibility_fields_and_action_args() -> None:
+def test_decision_envelope_carries_legacy_delivery_fields_and_action_args() -> None:
     decision = _decision(
         decision_result="auto_execute_and_notify",
         action_ref="execute_recovery",
@@ -390,19 +392,15 @@ def test_delivery_outbox_store_assigns_monotonic_outbox_seq_and_seeds_delivery_s
 ) -> None:
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
 
-    first = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(decision_result="block_and_alert", fact_snapshot_version="fact-v7")
-        )
-    )
+    first = store.enqueue_envelopes([_notification(envelope_id="notification-envelope:first")])
     second = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="require_user_decision",
+        [
+            _notification(
+                envelope_id="notification-envelope:second",
                 fact_snapshot_version="fact-v8",
-                approval_id="appr_001",
+                event_id="event:second",
             )
-        )
+        ]
     )
 
     assert [record.outbox_seq for record in first + second] == [1, 2]
@@ -530,22 +528,22 @@ def test_delivery_outbox_store_orders_same_session_by_fact_snapshot_then_outbox_
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
 
     later_snapshot = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="block_and_alert",
+        [
+            _notification(
+                envelope_id="notification-envelope:later",
                 fact_snapshot_version="fact-v10",
-                action_ref="execute_recovery",
+                event_id="event:later",
             )
-        )
+        ]
     )
     earlier_snapshot = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="block_and_alert",
+        [
+            _notification(
+                envelope_id="notification-envelope:earlier",
                 fact_snapshot_version="fact-v2",
-                action_ref="continue_session",
+                event_id="event:earlier",
             )
-        )
+        ]
     )
 
     pending = store.list_pending_delivery_records(session_id="session:repo-a")
@@ -573,7 +571,7 @@ class _OrderedClient:
         self.calls: list[str] = []
 
     def deliver_record(self, record):
-        from watchdog.services.delivery.http_client import DeliveryAttemptResult
+        from watchdog.services.delivery.models import DeliveryAttemptResult
 
         self.calls.append(record.envelope_id)
         if record.envelope_id == self.blocked_envelope_id:
@@ -613,7 +611,7 @@ class _NotificationObservingClient:
         self.visible_event_types_during_delivery: list[str] = []
 
     def deliver_record(self, record):
-        from watchdog.services.delivery.http_client import DeliveryAttemptResult
+        from watchdog.services.delivery.models import DeliveryAttemptResult
 
         self.calls.append(record.envelope_id)
         self.visible_event_types_during_delivery = [
@@ -639,7 +637,7 @@ class _RouteObservingClient:
         self.payloads: list[dict[str, object]] = []
 
     def deliver_record(self, record):
-        from watchdog.services.delivery.http_client import DeliveryAttemptResult
+        from watchdog.services.delivery.models import DeliveryAttemptResult
 
         self.calls.append(record.envelope_id)
         self.payloads.append(dict(record.envelope_payload))
@@ -668,22 +666,22 @@ def test_delivery_worker_blocks_later_records_in_same_session_while_head_is_retr
 
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
     first = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="block_and_alert",
+        [
+            _notification(
+                envelope_id="notification-envelope:session-head",
                 fact_snapshot_version="fact-v7",
-                action_ref="execute_recovery",
+                event_id="event:session-head",
             )
-        )
+        ]
     )[0]
     second = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="block_and_alert",
+        [
+            _notification(
+                envelope_id="notification-envelope:session-tail",
                 fact_snapshot_version="fact-v8",
-                action_ref="continue_session",
+                event_id="event:session-tail",
             )
-        )
+        ]
     )[0]
 
     client = _OrderedClient(first.envelope_id)
@@ -713,26 +711,30 @@ def test_delivery_worker_does_not_block_other_sessions_when_one_session_head_is_
 
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
     blocked = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                project_id="repo-a",
+        [
+            _notification(
+                envelope_id="notification-envelope:repo-a",
+                correlation_id="notification:repo-a",
                 session_id="session:repo-a",
-                thread_id="session:repo-a",
+                project_id="repo-a",
                 native_thread_id="thr_native_1",
                 fact_snapshot_version="fact-v7",
+                event_id="event:repo-a",
             )
-        )
+        ]
     )[0]
     ready = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                project_id="repo-b",
+        [
+            _notification(
+                envelope_id="notification-envelope:repo-b",
+                correlation_id="notification:repo-b",
                 session_id="session:repo-b",
-                thread_id="session:repo-b",
+                project_id="repo-b",
                 native_thread_id="thr_native_2",
                 fact_snapshot_version="fact-v3",
+                event_id="event:repo-b",
             )
-        )
+        ]
     )[0]
     store.update_delivery_record(
         blocked.model_copy(
@@ -895,6 +897,103 @@ def test_delivery_worker_resolves_feishu_route_from_latest_session_event(
     assert persisted.envelope_payload["receive_id_type"] == "open_id"
 
 
+def test_delivery_worker_falls_back_to_global_portfolio_feishu_route_when_project_route_missing(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    service.record_event(
+        event_type="feishu_command_route_bound",
+        project_id=SESSION_DIRECTORY_PROJECT_ID,
+        session_id=SESSION_DIRECTORY_SESSION_ID,
+        correlation_id="corr:feishu-portfolio-route:chat-portfolio",
+        causation_id="evt-feishu-portfolio-route",
+        occurred_at="2026-04-07T00:19:30Z",
+        related_ids={
+            "feishu_receive_id": "chat-portfolio",
+            "feishu_receive_id_type": "chat_id",
+            "feishu_chat_id": "chat-portfolio",
+            "feishu_actor_id": "ou_portfolio_actor",
+        },
+        payload={"channel_kind": "feishu_long_connection", "intent_code": "portfolio_route_binding"},
+    )
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    (record,) = store.enqueue_envelopes([_notification(envelope_id="notification-envelope:route-global")])
+    client = _RouteObservingClient()
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path).model_copy(update={"delivery_transport": "feishu"}),
+        session_service=service,
+    )
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.delivery_status == "delivered"
+    assert client.payloads[0]["receive_id"] == "chat-portfolio"
+    assert client.payloads[0]["receive_id_type"] == "chat_id"
+
+
+def test_delivery_worker_routes_session_directory_summary_via_latest_global_feishu_route(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    service.record_event(
+        event_type="goal_contract_revised",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:goal-contract:repo-a:goal-v8",
+        causation_id="evt-feishu-route-global",
+        occurred_at="2026-04-07T00:19:30Z",
+        related_ids={
+            "feishu_receive_id": "ou_global_actor",
+            "feishu_receive_id_type": "open_id",
+            "feishu_actor_id": "ou_global_actor",
+        },
+        payload={"contract": {"version": "goal-v8"}},
+    )
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    (record,) = store.enqueue_envelopes(
+        [
+            _notification(
+                envelope_id="notification-envelope:directory-route",
+                correlation_id="session-directory-summary:global",
+                session_id=SESSION_DIRECTORY_SESSION_ID,
+                project_id=SESSION_DIRECTORY_PROJECT_ID,
+                native_thread_id=None,
+                notification_kind="session_directory_summary",
+                title="session directory summary",
+                summary="portfolio snapshot",
+                reason="14 projects tracked",
+            )
+        ]
+    )
+    client = _RouteObservingClient()
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path).model_copy(update={"delivery_transport": "feishu"}),
+        session_service=service,
+    )
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id=SESSION_DIRECTORY_SESSION_ID,
+    )
+
+    assert delivered is not None
+    assert delivered.delivery_status == "delivered"
+    assert client.payloads[0]["receive_id"] == "ou_global_actor"
+    assert client.payloads[0]["receive_id_type"] == "open_id"
+
+
 def test_delivery_worker_prefers_matching_interaction_family_feishu_route(
     tmp_path: Path,
 ) -> None:
@@ -956,7 +1055,7 @@ def test_delivery_worker_prefers_matching_interaction_family_feishu_route(
     assert client.payloads[0]["receive_id_type"] == "open_id"
 
 
-def test_delivery_worker_leaves_feishu_route_empty_when_candidates_are_ambiguous(
+def test_delivery_worker_refuses_unscoped_feishu_route_when_history_is_ambiguous(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1002,12 +1101,69 @@ def test_delivery_worker_leaves_feishu_route_empty_when_candidates_are_ambiguous
         now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
     )
 
-    assert updated.envelope_payload.get("receive_id") in {None, ""}
-    assert updated.envelope_payload.get("receive_id_type") in {None, ""}
+    assert updated.envelope_payload.get("receive_id") == record.envelope_payload.get("receive_id")
+    assert updated.envelope_payload.get("receive_id_type") == record.envelope_payload.get(
+        "receive_id_type"
+    )
+    assert not any(
+        note.startswith("delivery_route_resolved ") for note in updated.operator_notes
+    )
     persisted = store.get_delivery_record(record.envelope_id)
     assert persisted is not None
-    assert persisted.envelope_payload.get("receive_id") in {None, ""}
-    assert persisted.envelope_payload.get("receive_id_type") in {None, ""}
+    assert persisted.envelope_payload.get("receive_id") == record.envelope_payload.get("receive_id")
+    assert persisted.envelope_payload.get("receive_id_type") == record.envelope_payload.get(
+        "receive_id_type"
+    )
+
+
+def test_delivery_worker_falls_back_to_global_feishu_route_when_project_history_has_no_route(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    service.record_event(
+        event_type="feishu_command_route_bound",
+        project_id=SESSION_DIRECTORY_PROJECT_ID,
+        session_id=SESSION_DIRECTORY_SESSION_ID,
+        correlation_id="corr:portfolio:route",
+        causation_id="evt-portfolio-route",
+        occurred_at="2026-04-07T00:18:30Z",
+        related_ids={
+            "feishu_receive_id": "ou_global_route",
+            "feishu_receive_id_type": "open_id",
+        },
+        payload={"intent_code": "portfolio_route_binding"},
+    )
+    service.record_event(
+        event_type="goal_contract_revised",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:goal-contract:repo-a:goal-v8",
+        causation_id="evt-project-no-route",
+        occurred_at="2026-04-07T00:19:30Z",
+        related_ids={"goal_contract_version": "goal-v8"},
+        payload={"contract": {"version": "goal-v8"}},
+    )
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    (record,) = store.enqueue_envelopes([_notification(envelope_id="notification-envelope:global-fallback")])
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=_RouteObservingClient(),
+        settings=_settings(tmp_path).model_copy(update={"delivery_transport": "feishu"}),
+        session_service=service,
+    )
+
+    updated = worker._apply_dynamic_delivery_route(
+        record=record,
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+    )
+
+    assert updated.envelope_payload.get("receive_id") == "ou_global_route"
+    assert updated.envelope_payload.get("receive_id_type") == "open_id"
+    assert any(
+        note.startswith("delivery_route_resolved ") for note in updated.operator_notes
+    )
 
 
 def test_delivery_worker_records_notification_requeued_after_retryable_failure(
@@ -1188,7 +1344,7 @@ def test_delivery_worker_does_not_reannounce_notification_on_retry(
     ]
 
 
-def test_delivery_worker_raises_on_notification_announcement_payload_drift(
+def test_delivery_worker_records_distinct_notification_announcements_for_payload_refresh(
     tmp_path: Path,
 ) -> None:
     service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
@@ -1239,21 +1395,35 @@ def test_delivery_worker_raises_on_notification_announcement_payload_drift(
         ]
     )
 
-    with pytest.raises(ValueError, match="conflicting session event for idempotency key"):
-        worker._record_notification_announced(
-            record=refreshed,
-            payload=refreshed.envelope_payload,
-        )
+    worker._record_notification_announced(
+        record=refreshed,
+        payload=refreshed.envelope_payload,
+    )
 
     events = service.list_events(
         session_id=record.session_id,
         related_id_key="envelope_id",
         related_id_value=record.envelope_id,
     )
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0].payload["summary"] == "still coding locally"
     assert events[0].payload["facts"] == []
     assert events[0].payload["recommended_actions"] == []
+    assert events[1].payload["summary"] == "still coding locally"
+    assert events[1].payload["facts"] == [
+        {
+            "fact_id": "fact-2",
+            "fact_code": "context_shifted",
+            "summary": "context changed",
+        }
+    ]
+    assert events[1].payload["recommended_actions"] == [
+        {
+            "action_code": "continue_session",
+            "label": "continue session",
+            "action_ref": "continue_session",
+        }
+    ]
 
 
 def test_delivery_worker_records_dead_letter_note_when_retry_budget_is_exhausted(
@@ -1263,12 +1433,13 @@ def test_delivery_worker_records_dead_letter_note_when_retry_budget_is_exhausted
 
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
     first = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="block_and_alert",
+        [
+            _notification(
+                envelope_id="notification-envelope:dead-letter",
                 fact_snapshot_version="fact-v7",
+                event_id="event:dead-letter",
             )
-        )
+        ]
     )[0]
 
     client = _OrderedClient(first.envelope_id)
@@ -1301,12 +1472,13 @@ def test_delivery_worker_records_retry_note_with_next_retry_at(
 
     store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
     first = store.enqueue_envelopes(
-        build_envelopes_for_decision(
-            _decision(
-                decision_result="block_and_alert",
+        [
+            _notification(
+                envelope_id="notification-envelope:retry-note",
                 fact_snapshot_version="fact-v7",
+                event_id="event:retry-note",
             )
-        )
+        ]
     )[0]
 
     client = _OrderedClient(first.envelope_id)
@@ -1590,7 +1762,7 @@ def test_delivery_worker_delivers_deferred_notification_after_local_manual_activ
     assert client.calls == [record.envelope_id]
 
 
-def test_delivery_worker_attempts_stale_auto_execute_envelopes_downstream(
+def test_delivery_worker_suppresses_legacy_auto_execute_decision_and_notification_records(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1662,19 +1834,19 @@ def test_delivery_worker_attempts_stale_auto_execute_envelopes_downstream(
 
     assert delivered_decision is not None
     assert delivered_decision.envelope_id == decision_record.envelope_id
-    assert delivered_decision.delivery_status == "delivered"
-    assert delivered_decision.failure_code is None
-    assert delivered_decision.delivery_attempt == 1
+    assert delivered_decision.delivery_status == "delivery_failed"
+    assert delivered_decision.failure_code == "suppressed_notification_policy"
+    assert delivered_decision.delivery_attempt == 0
 
     assert delivered_notification is not None
     assert delivered_notification.envelope_id == notification_record.envelope_id
-    assert delivered_notification.delivery_status == "delivered"
-    assert delivered_notification.failure_code is None
-    assert delivered_notification.delivery_attempt == 1
-    assert client.calls == [decision_record.envelope_id, notification_record.envelope_id]
+    assert delivered_notification.delivery_status == "delivery_failed"
+    assert delivered_notification.failure_code == "suppressed_notification_policy"
+    assert delivered_notification.delivery_attempt == 0
+    assert client.calls == []
 
 
-def test_delivery_worker_attempts_legacy_auto_execute_notification_without_payload_decision_result(
+def test_delivery_worker_suppresses_legacy_auto_execute_notification_without_payload_decision_result(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1721,7 +1893,7 @@ def test_delivery_worker_attempts_legacy_auto_execute_notification_without_paylo
 
     assert delivered is not None
     assert delivered.envelope_id == record.envelope_id
-    assert delivered.delivery_status == "delivered"
-    assert delivered.failure_code is None
-    assert delivered.delivery_attempt == 1
-    assert client.calls == [record.envelope_id]
+    assert delivered.delivery_status == "delivery_failed"
+    assert delivered.failure_code == "suppressed_notification_policy"
+    assert delivered.delivery_attempt == 0
+    assert client.calls == []

@@ -7,6 +7,10 @@ from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
 from watchdog.services.approvals.service import materialize_canonical_approval
+from watchdog.services.feishu_ingress.service import (
+    FeishuIngressNormalizationService,
+    FeishuMessageCallback,
+)
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.session_service import SessionService
@@ -74,8 +78,8 @@ class _IngressAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
         feishu_verification_token="verify-token",
     )
@@ -249,7 +253,7 @@ def _provider_invalid_decision(
 
 
 def test_feishu_ingress_answers_url_verification_challenge(tmp_path: Path) -> None:
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[]))
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[]))
 
     with TestClient(app) as client:
         response = client.post(
@@ -267,7 +271,7 @@ def test_feishu_ingress_answers_url_verification_challenge(tmp_path: Path) -> No
 
 def test_feishu_ingress_routes_text_message_with_explicit_repo_prefix(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -284,7 +288,7 @@ def test_feishu_ingress_explicit_repo_goal_uses_local_session_spine_without_upst
     tmp_path: Path,
 ) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
     app.state.session_spine_runtime.refresh_all()
 
     def _unexpected_call(*_: object, **__: object) -> object:
@@ -311,7 +315,7 @@ def test_feishu_ingress_can_auto_bind_single_active_task_for_goal_bootstrap(
     tmp_path: Path,
 ) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -348,7 +352,7 @@ def test_feishu_ingress_auto_bind_prefers_native_thread_lookup_for_single_active
 
     app = create_app(
         settings=_settings(tmp_path),
-        a_client=NativeLookupClient(
+        runtime_client=NativeLookupClient(
             tasks=[_task("repo-a", thread_id="session:repo-a", native_thread_id="thr:repo-a")]
         ),
     )
@@ -388,7 +392,7 @@ def test_feishu_ingress_goal_bootstrap_falls_back_to_stable_session_id_when_enve
 
     app = create_app(
         settings=_settings(tmp_path),
-        a_client=MissingSessionThreadClient(
+        runtime_client=MissingSessionThreadClient(
             tasks=[_task("repo-a", thread_id="session:repo-a", native_thread_id="thr:repo-a")]
         ),
     )
@@ -417,7 +421,7 @@ def test_feishu_ingress_default_bound_plain_text_bootstraps_goal_without_command
 ) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -441,7 +445,7 @@ def test_feishu_ingress_default_bound_goal_bootstrap_uses_effective_native_threa
 ) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     task = _task("repo-a", thread_id="session:repo-a", native_thread_id="thr:repo-a")
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     app.state.session_spine_store.put(
@@ -483,7 +487,7 @@ def test_feishu_ingress_default_bound_goal_bootstrap_uses_effective_native_threa
 def test_feishu_ingress_default_bound_status_stays_command_request(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -500,7 +504,7 @@ def test_feishu_ingress_default_bound_status_stays_command_request(tmp_path: Pat
 def test_feishu_ingress_default_bound_project_directory_stays_command_request(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -522,7 +526,7 @@ def test_feishu_ingress_default_bound_project_directory_stays_command_request(tm
 def test_feishu_ingress_default_bound_discovery_alias_stays_command_request(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -544,7 +548,7 @@ def test_feishu_ingress_default_bound_discovery_alias_stays_command_request(tmp_
 def test_feishu_ingress_progress_surfaces_decision_degradation_annotations(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     app.state.policy_decision_store.put(_provider_invalid_decision())
 
     with TestClient(app) as client:
@@ -570,7 +574,7 @@ def test_feishu_ingress_progress_surfaces_goal_contract_context(tmp_path: Path) 
 
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     GoalContractService(app.state.session_service).bootstrap_contract(
         project_id="repo-a",
         session_id="session:repo-a",
@@ -617,7 +621,7 @@ def test_feishu_ingress_session_directory_surfaces_goal_contract_context(tmp_pat
             }
         ]
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     GoalContractService(app.state.session_service).bootstrap_contract(
         project_id="repo-a",
         session_id="session:repo-a",
@@ -662,7 +666,7 @@ def test_feishu_ingress_session_directory_surfaces_current_child_session_id_resu
             }
         ]
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     app.state.session_service.record_recovery_execution(
         project_id="repo-a",
         parent_session_id="session:repo-a",
@@ -733,7 +737,7 @@ def test_feishu_ingress_blocker_explanation_surfaces_goal_contract_context(tmp_p
             }
         ],
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     GoalContractService(app.state.session_service).bootstrap_contract(
         project_id="repo-a",
         session_id="session:repo-a",
@@ -792,7 +796,7 @@ def test_feishu_ingress_session_surfaces_operator_next_steps_for_pending_approva
             }
         ],
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -842,7 +846,7 @@ def test_feishu_ingress_session_surfaces_active_recovery_suppression(tmp_path: P
             }
         ]
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -900,7 +904,7 @@ def test_feishu_ingress_session_surfaces_recovery_cooldown_suppression(tmp_path:
             }
         ]
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -959,7 +963,7 @@ def test_feishu_ingress_session_surfaces_recovery_in_flight_suppression(tmp_path
             }
         ]
     )
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -989,7 +993,7 @@ def test_feishu_ingress_session_surfaces_recovery_in_flight_suppression(tmp_path
 
 def test_feishu_ingress_global_project_directory_command_skips_project_binding(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -1015,7 +1019,7 @@ def test_feishu_ingress_global_project_directory_command_skips_project_binding(t
 
 def test_feishu_ingress_discovery_alias_routes_to_session_directory(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -1061,7 +1065,7 @@ def test_feishu_ingress_project_directory_surfaces_next_steps_for_pending_approv
             }
         ],
     )
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -1096,7 +1100,7 @@ def test_feishu_ingress_lists_projects_with_relative_freshness(tmp_path: Path) -
             "last_progress_at": "",
         },
     ]
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=tasks))
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=tasks))
 
     with TestClient(app) as client:
         response = client.post(
@@ -1116,7 +1120,7 @@ def test_feishu_ingress_lists_projects_with_relative_freshness(tmp_path: Path) -
 
 def test_feishu_ingress_rejects_ambiguous_project_binding(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -1128,9 +1132,29 @@ def test_feishu_ingress_rejects_ambiguous_project_binding(tmp_path: Path) -> Non
     assert "project" in response.json()["detail"].lower()
 
 
+def test_feishu_ingress_allows_approval_reply_without_project_binding(tmp_path: Path) -> None:
+    a_client = _IngressAClient(tasks=[_task("repo-a"), _task("repo-b")])
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
+    ingress = FeishuIngressNormalizationService(
+        settings=_settings(tmp_path),
+        client=a_client,
+        session_spine_store=app.state.session_spine_store,
+    )
+
+    normalized = ingress.normalize_message_event(
+        FeishuMessageCallback.model_validate(_message_event("同意"))
+    )
+
+    assert normalized.event_type == "command_request"
+    assert normalized.command_text == "同意"
+    assert normalized.project_id is None
+    assert normalized.native_thread_id is None
+    assert normalized.session_id is None
+
+
 def test_feishu_ingress_does_not_auto_bind_only_completed_task(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", status="completed")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -1144,7 +1168,7 @@ def test_feishu_ingress_does_not_auto_bind_only_completed_task(tmp_path: Path) -
 
 def test_feishu_ingress_rejects_malformed_create_time(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
     body = _message_event("repo:repo-a pause")
     body["header"]["create_time"] = "not-a-timestamp"
 
@@ -1172,7 +1196,7 @@ def test_feishu_ingress_auto_bind_uses_active_thread_envelope(tmp_path: Path) ->
             ),
         ]
     )
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -1194,7 +1218,7 @@ def test_feishu_ingress_auto_bind_uses_active_thread_envelope(tmp_path: Path) ->
 
 def test_feishu_ingress_replay_does_not_overwrite_newer_goal_contract(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         first = client.post(
@@ -1246,7 +1270,7 @@ def test_feishu_ingress_replay_does_not_overwrite_newer_goal_contract(tmp_path: 
 
 def test_feishu_ingress_replay_rejects_drifted_goal_payload(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
 
     with TestClient(app) as client:
         first = client.post(
@@ -1273,7 +1297,7 @@ def test_feishu_ingress_replay_rejects_drifted_goal_payload(tmp_path: Path) -> N
 
 def test_feishu_goal_bootstrap_supersedes_pending_approval_and_outbox(tmp_path: Path) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
     approval = materialize_canonical_approval(
         _approval_decision(),
         approval_store=app.state.canonical_approval_store,
@@ -1313,7 +1337,7 @@ def test_feishu_goal_bootstrap_supersede_event_uses_effective_native_thread_from
     tmp_path: Path,
 ) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
     approval = materialize_canonical_approval(
         _approval_decision(),
         approval_store=app.state.canonical_approval_store,
@@ -1354,7 +1378,7 @@ def test_feishu_goal_bootstrap_only_supersedes_stale_goal_contract_approvals(
     tmp_path: Path,
 ) -> None:
     a_client = _IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")])
-    app = create_app(settings=_settings(tmp_path), a_client=a_client)
+    app = create_app(settings=_settings(tmp_path), runtime_client=a_client)
     contracts = GoalContractService(app.state.session_service)
     current = contracts.bootstrap_contract(
         project_id="repo-a",

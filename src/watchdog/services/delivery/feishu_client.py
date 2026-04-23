@@ -1,22 +1,35 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import httpx
+from pydantic import ValidationError
 
 from watchdog.services.delivery.envelopes import (
     ApprovalEnvelope,
     DecisionEnvelope,
     NotificationEnvelope,
 )
-from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.delivery.store import DeliveryOutboxRecord
 from watchdog.settings import Settings
 
 
 def _iso_z(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _compact_whitespace(value: str) -> str:
+    return " ".join(str(value or "").replace("\n", " ").split())
+
+
+def _truncate_text(value: str, *, limit: int) -> str:
+    normalized = _compact_whitespace(value)
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(limit - 1, 0)].rstrip() + "…"
 
 
 @dataclass(slots=True)
@@ -60,7 +73,15 @@ class FeishuAppDeliveryClient:
                 accepted=False,
                 failure_code="unsupported_envelope_type",
             )
-        envelope = model.model_validate(payload)
+        try:
+            envelope = model.model_validate(payload)
+        except ValidationError:
+            return DeliveryAttemptResult(
+                envelope_id=record.envelope_id,
+                delivery_status="delivery_failed",
+                accepted=False,
+                failure_code="invalid_envelope_payload",
+            )
         return self.deliver_envelope(envelope)
 
     def deliver_envelope(
@@ -290,6 +311,8 @@ class FeishuAppDeliveryClient:
             return cls._render_decision_text(envelope)
         if envelope.notification_kind == "decision_result":
             return cls._render_decision_notification_text(envelope)
+        if envelope.notification_kind == "session_directory_summary":
+            return cls._render_session_directory_notification_text(envelope)
         return cls._render_notification_text(envelope)
 
     @staticmethod
@@ -378,10 +401,40 @@ class FeishuAppDeliveryClient:
         message = str(action_args.get("message") or "").strip()
         if not message:
             return ""
+        message = _compact_whitespace(message)
+        message = re.sub(r"(?:\[\s*steer:[^\]]+\]\s*)+", "", message)
+        message = re.sub(
+            r"(?:下一步建议：\s*)+",
+            "下一步建议：",
+            message,
+        )
+        message = re.sub(
+            r"(?:建议下一步：\s*)+",
+            "建议下一步：",
+            message,
+        )
+        message = re.sub(
+            r"(?:\[steer:[^\]]+\]\s*下一步建议：继续推进\s*)+",
+            "",
+            message,
+        )
+        message = re.sub(
+            r"(?:下一步建议：继续推进\s*){2,}",
+            "下一步建议：继续推进 ",
+            message,
+        )
+        message = re.sub(
+            r"(?:建议下一步：继续推进\s*){2,}",
+            "建议下一步：继续推进 ",
+            message,
+        )
+        message = re.sub(r"(?:并优先验证最近改动[。.,，]*)+", "并优先验证最近改动。", message)
+        message = re.sub(r"(?:如果无阻塞，请立即继续执行。?)+", "", message)
         for prefix in ("下一步建议：", "建议下一步："):
             if message.startswith(prefix):
                 message = message[len(prefix) :].strip()
                 break
+        message = message.strip(" |；。，,")
         return message
 
     @staticmethod
@@ -459,6 +512,89 @@ class FeishuAppDeliveryClient:
             lines.append(f"关键依据：{key_facts}")
         lines.append('你现在可以这样干预：回复“状态”查看详情，或回复“人工接管”')
         return "\n".join(lines)
+
+    @classmethod
+    def _render_session_directory_notification_text(cls, envelope: NotificationEnvelope) -> str:
+        lines = ["Watchdog 多项目目录更新"]
+        summary = str(envelope.summary or "").strip()
+        if not summary:
+            return "\n".join(lines)
+
+        raw_lines = summary.splitlines()
+        header = _compact_whitespace(raw_lines[0]) if raw_lines else ""
+        if header:
+            header = re.sub(r"\s*\|\s*监督=[^|]+", "", header)
+            header = re.sub(r"\s*\|\s*最近合议=[^|]+", "", header)
+            header = " | ".join(part.strip() for part in header.split("|") if part.strip())
+            lines.append(header)
+
+        chunks = [chunk.strip() for chunk in summary.split("\n- ") if chunk.strip()]
+        project_chunks = chunks[1:] if chunks and chunks[0].startswith("多项目进展（") else chunks
+        for chunk in project_chunks[:6]:
+            rendered = cls._render_session_directory_project_line(chunk)
+            if rendered:
+                lines.append(rendered)
+
+        remaining = len(project_chunks) - min(len(project_chunks), 6)
+        if remaining > 0:
+            lines.append(f"其余 {remaining} 个项目已省略，回复“项目列表”查看完整目录。")
+        return "\n".join(lines)
+
+    @classmethod
+    def _render_session_directory_project_line(cls, chunk: str) -> str:
+        normalized = str(chunk or "").strip()
+        if normalized.startswith("- "):
+            normalized = normalized[2:].strip()
+        parts = [part.strip() for part in normalized.split(" | ") if part.strip()]
+        if len(parts) < 2:
+            return ""
+
+        project_id = parts[0]
+        phase = parts[1]
+        detail = cls._normalize_session_directory_detail(parts[2] if len(parts) > 2 else "")
+
+        fields: dict[str, str] = {}
+        for part in parts[3:]:
+            key, separator, value = part.partition("=")
+            if not separator:
+                continue
+            key = key.strip()
+            value = _truncate_text(value.strip(), limit=36)
+            if value and key not in fields:
+                fields[key] = value
+
+        segments = [f"- {project_id}：{phase}"]
+        if detail:
+            segments.append(detail)
+        if "关注" in fields:
+            segments.append(fields["关注"])
+        if "当前目标" in fields:
+            segments.append(f"目标={fields['当前目标']}")
+        if "下一步" in fields:
+            segments.append(f"下一步={fields['下一步']}")
+        elif "决策" in fields:
+            segments.append(fields["决策"])
+        if "上下文" in fields:
+            segments.append(f"上下文={fields['上下文']}")
+        return "；".join(segment for segment in segments if segment)
+
+    @staticmethod
+    def _normalize_session_directory_detail(value: str) -> str:
+        normalized = _compact_whitespace(value)
+        if not normalized:
+            return ""
+        normalized = re.sub(
+            r"(?:\[steer:[^\]]+\]\s*下一步建议：继续推进\s*)+",
+            "",
+            normalized,
+        )
+        normalized = re.sub(r"(?:并优先验证最近改动。?)+", "", normalized)
+        normalized = re.sub(r"(?:如果无阻塞，请立即继续执行。?)+", "", normalized)
+        normalized = re.sub(r"(?:\d+\.\s*已完成内容\s*)+", "", normalized)
+        normalized = re.sub(r"(?:\d+\.\s*当前阻塞点\s*)+", "", normalized)
+        normalized = re.sub(r"(?:\d+\.\s*下一步最小动作\s*)+", "", normalized)
+        normalized = normalized.strip(" |；。，,")
+        return _truncate_text(normalized, limit=48)
 
     @classmethod
     def _render_notification_text(cls, envelope: NotificationEnvelope) -> str:

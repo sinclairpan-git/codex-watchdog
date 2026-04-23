@@ -9,7 +9,7 @@ import httpx
 
 from watchdog.contracts.session_spine.enums import EventCode, EventKind
 from watchdog.contracts.session_spine.models import SessionEvent
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_service.models import SessionEventRecord
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.projection import stable_thread_id_for_project
@@ -94,12 +94,20 @@ def _stable_event_id(raw_event: dict[str, Any], *, attributes: dict[str, Any]) -
             "event_source": str(raw_event.get("event_source") or ""),
             "created_at": str(raw_event.get("created_at") or raw_event.get("ts") or ""),
             "attributes": attributes,
+            "raw_event_ordinal": _normalize_raw_event_ordinal(raw_event.get("_raw_event_ordinal")),
         },
         sort_keys=True,
         separators=(",", ":"),
     )
     digest = hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:16]
     return f"synthetic:{digest}"
+
+
+def _normalize_raw_event_ordinal(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def project_raw_event(raw_event: dict[str, Any]) -> SessionEvent:
@@ -293,15 +301,17 @@ def _parse_raw_event_message(message: str) -> dict[str, Any] | None:
 
 
 def _iter_projected_events_from_snapshot(raw_snapshot: str) -> Iterator[SessionEvent]:
-    for message in _iter_sse_messages(raw_snapshot):
+    for ordinal, message in enumerate(_iter_sse_messages(raw_snapshot), start=1):
         raw_event = _parse_raw_event_message(message)
         if raw_event is None:
             continue
+        raw_event.setdefault("_raw_event_ordinal", ordinal)
         yield project_raw_event(raw_event)
 
 
 def _iter_projected_events_from_chunks(raw_chunks: Iterable[str]) -> Iterator[SessionEvent]:
     buffer = ""
+    ordinal = 0
     for chunk in raw_chunks:
         if not chunk:
             continue
@@ -313,10 +323,14 @@ def _iter_projected_events_from_chunks(raw_chunks: Iterable[str]) -> Iterator[Se
             raw_event = _parse_raw_event_message(message)
             if raw_event is None:
                 continue
+            ordinal += 1
+            raw_event.setdefault("_raw_event_ordinal", ordinal)
             yield project_raw_event(raw_event)
     if buffer.strip():
         raw_event = _parse_raw_event_message(buffer)
         if raw_event is not None:
+            ordinal += 1
+            raw_event.setdefault("_raw_event_ordinal", ordinal)
             yield project_raw_event(raw_event)
 
 
@@ -340,7 +354,7 @@ def _iter_deduped_projected_events(events: Iterable[SessionEvent]) -> Iterator[S
 
 
 def _load_initial_session_events(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     poll_interval: float = 0.5,
@@ -361,7 +375,7 @@ def iter_stable_sse_stream(raw_chunks: Iterable[str]) -> Iterator[str]:
 
 
 def _load_raw_events_snapshot_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     poll_interval: float = 0.5,
@@ -375,14 +389,14 @@ def _load_raw_events_snapshot_or_raise(
         if isinstance(error, dict):
             raise SessionSpineUpstreamError(dict(error))
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧事件流返回格式异常"}
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 事件流返回格式异常"}
         )
     body, _content_type = snapshot
     return body
 
 
 def list_session_events(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     poll_interval: float = 0.5,
@@ -406,7 +420,7 @@ def list_session_events(
 
 
 def iter_session_events(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     poll_interval: float = 0.5,

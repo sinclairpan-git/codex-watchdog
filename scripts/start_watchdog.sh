@@ -21,7 +21,7 @@ if [[ -z "$UV_BIN" ]]; then
   exit 127
 fi
 
-exec "$UV_BIN" run uvicorn watchdog.main:create_runtime_app \
+exec "$UV_BIN" run python -m uvicorn watchdog.main:create_runtime_app \
   --host "${WATCHDOG_HOST:-127.0.0.1}" \
   --port "${WATCHDOG_PORT:-8720}" \
   --factory \

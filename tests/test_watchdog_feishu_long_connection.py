@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 
 from watchdog.main import create_app
+from watchdog.services.delivery.envelopes import (
+    SESSION_DIRECTORY_PROJECT_ID,
+    SESSION_DIRECTORY_SESSION_ID,
+)
 from watchdog.services.feishu_long_connection import (
     FeishuLongConnectionConfigError,
     FeishuLongConnectionGateway,
@@ -51,8 +55,8 @@ class _IngressAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
         feishu_event_ingress_mode="long_connection",
         feishu_callback_ingress_mode="long_connection",
@@ -156,7 +160,7 @@ def _p2p_entered_event() -> dict[str, object]:
 
 
 def test_feishu_long_connection_gateway_routes_message_event(tmp_path: Path) -> None:
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[_task("repo-a")]))
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[_task("repo-a")]))
     gateway = FeishuLongConnectionGateway.from_app(app)
 
     result = gateway.handle_message_event(_message_event("repo:repo-a pause"))
@@ -165,7 +169,20 @@ def test_feishu_long_connection_gateway_routes_message_event(tmp_path: Path) -> 
     assert result["event_type"] == "command_request"
     assert result["chat_id"] == "oc_dm_chat_1"
     assert result["sender_open_id"] == "ou_actor_1"
-    assert app.state.a_client.pause_calls == ["repo-a"]
+    assert app.state.runtime_client.pause_calls == ["repo-a"]
+
+
+def test_feishu_long_connection_gateway_accepts_blank_websocket_header_token(
+    tmp_path: Path,
+) -> None:
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[_task("repo-a")]))
+    gateway = FeishuLongConnectionGateway.from_app(app)
+
+    result = gateway.handle_message_event(_message_event("repo:repo-a pause", token=""))
+
+    assert result["accepted"] is True
+    assert result["chat_id"] == "oc_dm_chat_1"
+    assert app.state.runtime_client.pause_calls == ["repo-a"]
 
 
 def test_feishu_long_connection_gateway_import_boundary_suppresses_sdk_deprecation_warnings(
@@ -175,7 +192,7 @@ def test_feishu_long_connection_gateway_import_boundary_suppresses_sdk_deprecati
         if module_name == "lark_oapi" or module_name.startswith("lark_oapi.") or module_name == "websockets" or module_name.startswith("websockets."):
             sys.modules.pop(module_name, None)
 
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[_task("repo-a")]))
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[_task("repo-a")]))
     gateway = FeishuLongConnectionGateway.from_app(app)
 
     with warnings.catch_warnings():
@@ -188,7 +205,7 @@ def test_feishu_long_connection_gateway_import_boundary_suppresses_sdk_deprecati
 def test_feishu_long_connection_gateway_can_bootstrap_goal_contract(tmp_path: Path) -> None:
     app = create_app(
         settings=_settings(tmp_path),
-        a_client=_IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")]),
+        runtime_client=_IngressAClient(tasks=[_task("repo-a", thread_id="session:repo-a")]),
     )
     gateway = FeishuLongConnectionGateway.from_app(app)
 
@@ -208,7 +225,7 @@ def test_feishu_long_connection_gateway_uses_default_project_binding_when_config
     settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
     app = create_app(
         settings=settings,
-        a_client=_IngressAClient(
+        runtime_client=_IngressAClient(
             tasks=[
                 _task("repo-a", thread_id="session:repo-a"),
                 _task("repo-b", thread_id="session:repo-b"),
@@ -228,7 +245,7 @@ def test_feishu_long_connection_gateway_uses_default_project_binding_when_config
 
 
 def test_feishu_long_connection_gateway_acknowledges_card_callback(tmp_path: Path) -> None:
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[]))
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[]))
     gateway = FeishuLongConnectionGateway.from_app(app)
 
     result = gateway.handle_card_action_callback(_callback_event("card.action.trigger"))
@@ -237,7 +254,7 @@ def test_feishu_long_connection_gateway_acknowledges_card_callback(tmp_path: Pat
 
 
 def test_feishu_long_connection_gateway_accepts_p2p_chat_entered_event(tmp_path: Path) -> None:
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[]))
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[]))
     gateway = FeishuLongConnectionGateway.from_app(app)
 
     result = gateway.handle_bot_p2p_chat_entered_event(_p2p_entered_event())
@@ -248,31 +265,52 @@ def test_feishu_long_connection_gateway_accepts_p2p_chat_entered_event(tmp_path:
         "operator_open_id": "ou_actor_1",
     }
 
+    events = app.state.session_service.list_events(session_id=SESSION_DIRECTORY_SESSION_ID)
+    assert len(events) == 1
+    assert events[0].event_type == "feishu_command_route_bound"
+    assert events[0].project_id == SESSION_DIRECTORY_PROJECT_ID
+    assert events[0].related_ids["feishu_receive_id"] == "oc_dm_chat_1"
+    assert events[0].related_ids["feishu_receive_id_type"] == "chat_id"
+    assert events[0].related_ids["feishu_actor_id"] == "ou_actor_1"
 
-def test_feishu_long_connection_gateway_rewrites_websocket_header_token(tmp_path: Path) -> None:
-    app = create_app(settings=_settings(tmp_path), a_client=_IngressAClient(tasks=[]))
-    gateway = FeishuLongConnectionGateway.from_app(app)
 
-    result = gateway.handle_bot_p2p_chat_entered_event(
-        _p2p_entered_event()
+def test_feishu_long_connection_runtime_ignores_message_read_event(tmp_path: Path) -> None:
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[]))
+    runtime = FeishuLongConnectionRuntime(
+        settings=_settings(tmp_path),
+        gateway=FeishuLongConnectionGateway.from_app(app),
+    )
+
+    runtime._handle_message_read_event(
+        _message_event("repo:repo-a 状态")
         | {
             "header": {
-                **_p2p_entered_event()["header"],
-                "token": "unexpected-ws-token",
+                **_message_event("repo:repo-a 状态")["header"],
+                "event_type": "im.message.message_read_v1",
             }
         }
     )
 
-    assert result == {
-        "accepted": "true",
-        "chat_id": "oc_dm_chat_1",
-        "operator_open_id": "ou_actor_1",
-    }
+
+def test_feishu_long_connection_gateway_rejects_unexpected_websocket_header_token(tmp_path: Path) -> None:
+    app = create_app(settings=_settings(tmp_path), runtime_client=_IngressAClient(tasks=[]))
+    gateway = FeishuLongConnectionGateway.from_app(app)
+
+    with pytest.raises(ValueError, match="invalid feishu verification token"):
+        gateway.handle_bot_p2p_chat_entered_event(
+            _p2p_entered_event()
+            | {
+                "header": {
+                    **_p2p_entered_event()["header"],
+                    "token": "unexpected-ws-token",
+                }
+            }
+        )
 
 
 def test_feishu_long_connection_runtime_requires_credentials(tmp_path: Path) -> None:
     settings = _settings(tmp_path).model_copy(update={"feishu_app_secret": None})
-    app = create_app(settings=settings, a_client=_IngressAClient(tasks=[]))
+    app = create_app(settings=settings, runtime_client=_IngressAClient(tasks=[]))
     runtime = FeishuLongConnectionRuntime(
         settings=settings,
         gateway=FeishuLongConnectionGateway.from_app(app),

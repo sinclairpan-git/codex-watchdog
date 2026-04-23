@@ -15,7 +15,7 @@ def build_a_metrics_text(
     *,
     approvals_audit_path: Path | None = None,
 ) -> str:
-    """A 侧：任务数 + 审计按 action 计数 + PRD 对齐摘要 gauge。"""
+    """runtime 侧：任务数 + 审计按 action 计数 + PRD 对齐摘要 gauge。"""
     counts = aggregate_audit_actions(audit_path)
     if approvals_audit_path and approvals_audit_path.is_file():
         extra = aggregate_audit_actions(approvals_audit_path)
@@ -24,12 +24,12 @@ def build_a_metrics_text(
     parts: list[str] = [
         render_gauge(
             "aca_tasks_total",
-            "Number of tasks persisted in A-Control-Agent.",
+            "Number of tasks persisted in Codex runtime service.",
             float(store.count_tasks()),
         ),
         render_gauge(
             "aca_projects_total",
-            "Number of distinct projects persisted in A-Control-Agent.",
+            "Number of distinct projects persisted in Codex runtime service.",
             float(store.count_projects()),
         ),
     ]

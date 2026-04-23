@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,8 +17,6 @@ from watchdog.api import feishu_control as feishu_control_routes
 from watchdog.api import feishu_ingress as feishu_ingress_routes
 from watchdog.api import memory_hub_preview as memory_hub_preview_routes
 from watchdog.api import metrics as metrics_routes
-from watchdog.api import openclaw_bootstrap as openclaw_bootstrap_routes
-from watchdog.api import openclaw_responses as openclaw_response_routes
 from watchdog.api import ops as ops_routes
 from watchdog.api import recover_watchdog as recover_watchdog_routes
 from watchdog.api import progress as progress_routes
@@ -25,20 +24,19 @@ from watchdog.api import session_spine_actions as session_spine_actions_routes
 from watchdog.api import session_spine_events as session_spine_events_routes
 from watchdog.api import session_spine_queries as session_spine_query_routes
 from watchdog.api import supervision as supervision_routes
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.approvals.service import (
     ApprovalResponseStore,
     CanonicalApprovalStore,
     expire_pending_canonical_approvals,
 )
-from watchdog.services.delivery.http_client import OpenClawDeliveryClient
 from watchdog.services.delivery.feishu_client import FeishuAppDeliveryClient
-from watchdog.services.delivery.openclaw_webhook_store import (
-    OpenClawWebhookEndpointStore,
-    openclaw_webhook_endpoint_state_path,
-)
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
+from watchdog.services.feishu_long_connection import (
+    FeishuLongConnectionGateway,
+    FeishuLongConnectionRuntime,
+)
 from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.brain.service import BrainDecisionService
 from watchdog.services.memory_hub.ingest_queue import (
@@ -48,6 +46,7 @@ from watchdog.services.memory_hub.ingest_queue import (
 )
 from watchdog.services.memory_hub.ingest_worker import MemoryIngestWorker
 from watchdog.services.memory_hub.service import MemoryHubService
+from watchdog.services.project_aliases import migrate_legacy_project_aliases_in_data_dir
 from watchdog.services.policy.decisions import PolicyDecisionStore
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService, SessionServiceStore
@@ -90,20 +89,28 @@ def _run_resident_orchestrator_step(orchestrate_all, *, now: datetime):
     return orchestrate_all(now=now, **_resident_orchestrator_call_kwargs(orchestrate_all))
 
 
-def _build_delivery_client(
-    *,
-    settings: Settings,
-    openclaw_endpoint_store: OpenClawWebhookEndpointStore,
-):
+def _build_delivery_client(*, settings: Settings):
     transport = str(settings.delivery_transport or "").strip()
     if transport in {"feishu", "feishu-app"}:
         return FeishuAppDeliveryClient(settings=settings)
-    if transport == "openclaw":
-        return OpenClawDeliveryClient(
-            settings=settings,
-            endpoint_store=openclaw_endpoint_store,
-        )
     raise ValueError(f"unsupported delivery_transport: {transport or '<empty>'}")
+
+
+def _start_feishu_long_connection_runtime(app: FastAPI) -> threading.Thread | None:
+    if not app.state.settings.feishu_long_connection_enabled():
+        return None
+    runtime = FeishuLongConnectionRuntime(
+        settings=app.state.settings,
+        gateway=FeishuLongConnectionGateway.from_app(app),
+    )
+    thread = threading.Thread(
+        target=_run_background_step,
+        args=("feishu_long_connection.run_forever", runtime.run_forever),
+        name="watchdog-feishu-long-connection",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
@@ -191,6 +198,11 @@ async def _run_session_spine_refresh_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         await _run_background_step_async(
+            "canonical_approval_store.reconcile_pending_records_against_decisions",
+            _reconcile_stale_pending_approvals,
+            app,
+        )
+        await _run_background_step_async(
             "session_spine_runtime.refresh_all",
             app.state.session_spine_runtime.refresh_all,
         )
@@ -269,19 +281,22 @@ async def _run_delivery_drain_once(
 def create_app(
     settings: Settings | None = None,
     *,
-    a_client: AControlAgentClient | None = None,
+    runtime_client: CodexRuntimeClient | None = None,
     start_background_workers: bool = False,
 ) -> FastAPI:
     settings = settings or Settings()
+    migrate_legacy_project_aliases_in_data_dir(Path(settings.data_dir))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         startup_reconcile_task: asyncio.Task[object] | None = None
+        startup_supervision_task: asyncio.Task[object] | None = None
         session_spine_loop_task: asyncio.Task[None] | None = None
         startup_orchestrator_task: asyncio.Task[None] | None = None
         resident_orchestrator_task: asyncio.Task[None] | None = None
         memory_ingest_loop_task: asyncio.Task[None] | None = None
         delivery_loop_task: asyncio.Task[None] | None = None
+        feishu_long_connection_thread: threading.Thread | None = None
         if start_background_workers:
             startup_reconcile_task = asyncio.create_task(
                 _run_background_step_async(
@@ -303,6 +318,7 @@ def create_app(
                 _drain_memory_ingest_queue,
                 app,
             )
+            await startup_reconcile_task
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))
             memory_ingest_loop_task = asyncio.create_task(_run_memory_ingest_loop(app))
             startup_orchestrator_task = asyncio.create_task(
@@ -310,15 +326,24 @@ def create_app(
             )
             resident_orchestrator_task = asyncio.create_task(_run_resident_orchestrator_loop(app))
             delivery_loop_task = asyncio.create_task(_run_delivery_loop(app))
-            _run_background_step(
-                "supervision.run_background_supervision",
-                supervision_routes.run_background_supervision,
-                app.state.settings,
-                app.state.a_client,
+            startup_supervision_task = asyncio.create_task(
+                _run_background_step_async(
+                    "supervision.run_background_supervision",
+                    supervision_routes.run_background_supervision,
+                    app.state.settings,
+                    app.state.runtime_client,
+                )
             )
+            feishu_long_connection_thread = _start_feishu_long_connection_runtime(app)
+            app.state.feishu_long_connection_thread = feishu_long_connection_thread
         try:
             yield
         finally:
+            app.state.feishu_long_connection_thread = None
+            if startup_supervision_task is not None:
+                startup_supervision_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await startup_supervision_task
             if startup_reconcile_task is not None:
                 startup_reconcile_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -346,7 +371,7 @@ def create_app(
 
     app = FastAPI(title="Watchdog", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
-    app.state.a_client = a_client or AControlAgentClient(settings)
+    app.state.runtime_client = runtime_client or CodexRuntimeClient(settings)
     app.state.action_receipt_store = ActionReceiptStore(
         Path(settings.data_dir) / "action_receipts.json"
     )
@@ -401,12 +426,8 @@ def create_app(
     app.state.future_worker_service = FutureWorkerExecutionService(
         app.state.session_service,
     )
-    app.state.openclaw_webhook_endpoint_store = OpenClawWebhookEndpointStore(
-        openclaw_webhook_endpoint_state_path(settings)
-    )
     app.state.delivery_client = _build_delivery_client(
         settings=settings,
-        openclaw_endpoint_store=app.state.openclaw_webhook_endpoint_store,
     )
     app.state.delivery_worker = DeliveryWorker(
         store=app.state.delivery_outbox_store,
@@ -416,7 +437,7 @@ def create_app(
         session_service=app.state.session_service,
     )
     app.state.session_spine_runtime = SessionSpineRuntime(
-        client=app.state.a_client,
+        client=app.state.runtime_client,
         store=app.state.session_spine_store,
     )
     app.state.resident_orchestration_state_store = ResidentOrchestrationStateStore(
@@ -424,7 +445,7 @@ def create_app(
     )
     app.state.resident_orchestrator = ResidentOrchestrator(
         settings=settings,
-        client=app.state.a_client,
+        client=app.state.runtime_client,
         session_spine_store=app.state.session_spine_store,
         decision_store=app.state.policy_decision_store,
         approval_store=app.state.canonical_approval_store,
@@ -450,8 +471,6 @@ def create_app(
     app.include_router(memory_hub_preview_routes.router, prefix="/api/v1")
     app.include_router(supervision_routes.router, prefix="/api/v1")
     app.include_router(approvals_proxy_routes.router, prefix="/api/v1")
-    app.include_router(openclaw_bootstrap_routes.router, prefix="/api/v1")
-    app.include_router(openclaw_response_routes.router, prefix="/api/v1")
     app.include_router(recover_watchdog_routes.router, prefix="/api/v1")
     app.include_router(session_spine_query_routes.router, prefix="/api/v1")
     app.include_router(session_spine_actions_routes.router, prefix="/api/v1")

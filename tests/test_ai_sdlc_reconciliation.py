@@ -31,13 +31,13 @@ def test_collect_reconciliation_inventory_tracks_missing_mirrors_and_stale_top_l
     )
     _write(
         tmp_path
-        / ".ai-sdlc/work-items/023-codex-client-openclaw-route-template/runtime.yaml",
+        / ".ai-sdlc/work-items/023-codex-client-routing-template/runtime.yaml",
         """
         current_stage: completed
         current_batch: 5
         current_task: ''
         last_committed_task: T235
-        current_branch: codex/023-codex-client-openclaw-route-template
+        current_branch: codex/023-codex-client-routing-template
         """,
     )
     _write(
@@ -56,8 +56,8 @@ def test_collect_reconciliation_inventory_tracks_missing_mirrors_and_stale_top_l
         """
         current_stage: verify
         feature:
-          id: 023-codex-client-openclaw-route-template
-        linked_wi_id: 023-codex-client-openclaw-route-template
+          id: 023-codex-client-routing-template
+        linked_wi_id: 023-codex-client-routing-template
         """,
     )
     _write(
@@ -75,7 +75,7 @@ def test_collect_reconciliation_inventory_tracks_missing_mirrors_and_stale_top_l
     assert inventory.missing_work_item_mirrors == ("006-m5-hardening",)
     assert any(
         ".ai-sdlc/state/checkpoint.yml" in violation
-        and "023-codex-client-openclaw-route-template" in violation
+        and "023-codex-client-routing-template" in violation
         and "047-ai-sdlc-state-reconciliation-and-canonical-gate-repair" in violation
         for violation in inventory.stale_pointers
     )
@@ -383,7 +383,7 @@ def test_validate_completed_review_gate_mirror_drift_flags_pending_review_metada
     tmp_path: Path,
 ) -> None:
     reconciliation = _load_reconciliation_module()
-    wi_root = tmp_path / ".ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure"
+    wi_root = tmp_path / ".ai-sdlc/work-items/049-feishu-entrypoint-closure"
 
     _write(
         wi_root / "runtime.yaml",
@@ -392,7 +392,7 @@ def test_validate_completed_review_gate_mirror_drift_flags_pending_review_metada
         current_batch: 5
         current_task: ''
         last_committed_task: T495
-        current_branch: codex/049-feishu-and-openclaw-entrypoint-closure
+        current_branch: codex/049-feishu-entrypoint-closure
         review_approval_status: pending
         """,
     )
@@ -403,7 +403,7 @@ def test_validate_completed_review_gate_mirror_drift_flags_pending_review_metada
         current_batch: 5
         current_task: ''
         last_committed_task: T495
-        current_branch: codex/049-feishu-and-openclaw-entrypoint-closure
+        current_branch: codex/049-feishu-entrypoint-closure
         review_approval_status: pending
         timestamp: '2026-04-18T00:00:00Z'
         """,
@@ -413,10 +413,10 @@ def test_validate_completed_review_gate_mirror_drift_flags_pending_review_metada
 
     assert violations == [
         "completed work-item review gate mirror "
-        "(049-feishu-and-openclaw-entrypoint-closure): "
+        "(049-feishu-entrypoint-closure): "
         "runtime.yaml: review_approval_status must be removed once current_stage=completed",
         "completed work-item review gate mirror "
-        "(049-feishu-and-openclaw-entrypoint-closure): "
+        "(049-feishu-entrypoint-closure): "
         "resume-pack.yaml: review_approval_status must be removed once current_stage=completed",
     ]
 
@@ -519,11 +519,11 @@ def test_collect_reconciliation_inventory_flags_top_level_state_resume_pack_drif
         tmp_path / ".ai-sdlc/state/resume-pack.yaml",
         """
         current_stage: execute
-        current_branch: codex/023-codex-client-openclaw-route-template
+        current_branch: codex/023-codex-client-routing-template
         working_set_snapshot:
-          spec_path: specs/023-codex-client-openclaw-route-template/spec.md
-          plan_path: specs/023-codex-client-openclaw-route-template/plan.md
-          tasks_path: specs/023-codex-client-openclaw-route-template/tasks.md
+          spec_path: specs/023-codex-client-routing-template/spec.md
+          plan_path: specs/023-codex-client-routing-template/plan.md
+          tasks_path: specs/023-codex-client-routing-template/tasks.md
         checkpoint_path: .ai-sdlc/state/checkpoint.yml
         checkpoint_last_updated: '2026-04-14T16:16:19+08:00'
         """,
@@ -540,13 +540,13 @@ def test_collect_reconciliation_inventory_flags_top_level_state_resume_pack_drif
     )
     assert any(
         ".ai-sdlc/state/resume-pack.yaml" in violation
-        and "current_branch=codex/023-codex-client-openclaw-route-template" in violation
+        and "current_branch=codex/023-codex-client-routing-template" in violation
         and "codex/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair" in violation
         for violation in inventory.stale_pointers
     )
     assert any(
         ".ai-sdlc/state/resume-pack.yaml" in violation
-        and "spec_path=specs/023-codex-client-openclaw-route-template/spec.md" in violation
+        and "spec_path=specs/023-codex-client-routing-template/spec.md" in violation
         and "specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/spec.md" in violation
         for violation in inventory.stale_pointers
     )

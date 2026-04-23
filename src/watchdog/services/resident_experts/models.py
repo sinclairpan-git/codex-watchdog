@@ -62,3 +62,23 @@ class ResidentExpertRuntimeView(_ResidentExpertModel):
     last_seen_at: str | None = None
     last_consulted_at: str | None = None
     last_consultation_ref: str | None = None
+
+
+class ResidentExpertOpinion(_ResidentExpertModel):
+    expert_id: str = Field(min_length=1)
+    next_slice_recommendation: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    risks_to_avoid: list[str] = Field(default_factory=list)
+
+
+class ResidentExpertConsultationSynthesis(_ResidentExpertModel):
+    summary: str = Field(min_length=1)
+    chosen_next_slice: str | None = None
+    dissent_summary: str | None = None
+
+
+class ResidentExpertConsultationRecord(_ResidentExpertModel):
+    consultation_ref: str = Field(min_length=1)
+    consulted_at: str = Field(min_length=1)
+    opinions: list[ResidentExpertOpinion] = Field(default_factory=list)
+    synthesis: ResidentExpertConsultationSynthesis | None = None

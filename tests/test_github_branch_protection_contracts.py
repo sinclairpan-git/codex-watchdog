@@ -70,7 +70,7 @@ def test_branch_protection_contract_surfaces_reject_drifted_values(tmp_path: Pat
         tmp_path,
         {
             "owner": "wrong-owner",
-            "repo": "openclaw-codex-watchdog",
+            "repo": "codex-watchdog",
             "branch": "main",
             "required_status_checks": {
                 "strict": False,
@@ -212,7 +212,7 @@ def test_live_github_branch_protection_matches_contract(tmp_path: Path) -> None:
         assert args == [
             "gh",
             "api",
-            "repos/sinclairpan-git/openclaw-codex-watchdog/branches/main/protection",
+            "repos/sinclairpan-git/codex-watchdog/branches/main/protection",
         ]
         assert cwd == tmp_path
         assert capture_output is True
@@ -315,7 +315,7 @@ def test_live_github_branch_protection_reports_gh_failure(tmp_path: Path) -> Non
     violations = validate_live_github_branch_protection(tmp_path, runner=fake_runner)
 
     assert violations == [
-        "github branch protection live check failed for sinclairpan-git/openclaw-codex-watchdog@main: HTTP 403: resource not accessible"
+        "github branch protection live check failed for sinclairpan-git/codex-watchdog@main: HTTP 403: resource not accessible"
     ]
 
 
@@ -336,7 +336,7 @@ def _write_default_contract(tmp_path: Path) -> None:
         tmp_path,
         {
             "owner": "sinclairpan-git",
-            "repo": "openclaw-codex-watchdog",
+            "repo": "codex-watchdog",
             "branch": "main",
             "required_status_checks": {
                 "strict": True,

@@ -72,7 +72,7 @@ async def test_bridge_initializes_and_resumes_known_thread() -> None:
     assert transport.calls[0] == (
         "initialize",
         {
-            "clientInfo": {"name": "openclaw-codex-watchdog", "version": "0.1.0"},
+            "clientInfo": {"name": "codex-watchdog", "version": "0.1.0"},
             "capabilities": None,
         },
     )
@@ -83,6 +83,38 @@ async def test_bridge_initializes_and_resumes_known_thread() -> None:
 
     await bridge.stop()
     assert transport.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_bridge_resume_aliases_active_turn_to_resumed_child_thread() -> None:
+    transport = FakeTransport(
+        {
+            "initialize": [{"server": "fake-codex"}],
+            "thread/resume": [
+                {
+                    "thread": {
+                        "id": "thr_child",
+                        "status": {"type": "active", "activeFlags": []},
+                        "turns": [
+                            {"id": "turn_done", "status": "completed", "items": [], "error": None},
+                            {"id": "turn_child_live", "status": "inProgress", "items": [], "error": None},
+                        ],
+                    }
+                }
+            ],
+        }
+    )
+
+    bridge = CodexAppServerBridge(transport=transport)
+
+    await bridge.start()
+    snapshot = await bridge.resume_thread("thr_parent")
+
+    assert snapshot["thread_id"] == "thr_child"
+    assert bridge.thread_snapshot("thr_parent") == snapshot
+    assert bridge.thread_snapshot("thr_child") == snapshot
+    assert bridge.active_turn_id("thr_parent") == "turn_child_live"
+    assert bridge.active_turn_id("thr_child") == "turn_child_live"
 
 
 @pytest.mark.asyncio

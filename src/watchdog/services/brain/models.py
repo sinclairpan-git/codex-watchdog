@@ -77,6 +77,34 @@ class PCDIGovernanceRef(_BrainModel):
     pending_approval: bool = False
 
 
+class PCDIApprovalRef(_BrainModel):
+    pending_approval_count: int = Field(default=0, ge=0)
+    actionable_commands: list[str] = Field(default_factory=list)
+    latest_approval_reason: str | None = None
+
+
+class PCDICompletionRef(_BrainModel):
+    task_completion_candidate: bool = False
+    branch_completion_candidate: bool = False
+    next_branch_available: bool = False
+    target_work_item_seq: int | None = Field(default=None, ge=1)
+
+
+class PCDIErrorRef(_BrainModel):
+    primary_fact_codes: list[str] = Field(default_factory=list)
+    blocker_fact_codes: list[str] = Field(default_factory=list)
+    latest_error_summary: str | None = None
+    recovery_candidate: bool = False
+
+
+class PCDIDecisionScopeRef(_BrainModel):
+    can_request_approval: bool = True
+    can_continue_current_branch: bool = True
+    can_recover_current_branch: bool = True
+    can_switch_branch: bool = True
+    can_close_session: bool = True
+
+
 class PCDIFreshnessRef(_BrainModel):
     snapshot_epoch: str = Field(min_length=1)
     snapshot_version: str = Field(min_length=1)
@@ -90,6 +118,10 @@ class ProjectContinuationDecisionInput(_BrainModel):
     progress_ref: PCDIProgressRef
     session_ref: PCDISessionRef
     governance_ref: PCDIGovernanceRef
+    approval_ref: PCDIApprovalRef | None = None
+    completion_ref: PCDICompletionRef | None = None
+    error_ref: PCDIErrorRef | None = None
+    decision_scope_ref: PCDIDecisionScopeRef | None = None
     freshness_ref: PCDIFreshnessRef
     continuation_identity: str | None = None
     route_key: str | None = None

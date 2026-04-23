@@ -148,6 +148,16 @@ class CommandLeaseStore:
             )
         return f"corr:command:{event.command_id}:claim:{event.claim_seq}"
 
+    @staticmethod
+    def _project_id_from_session_id(session_id: str) -> str:
+        normalized = str(session_id or "").strip()
+        if normalized.startswith("session:"):
+            parts = normalized.split(":")
+            if len(parts) >= 2 and parts[1]:
+                return parts[1]
+            normalized = normalized.removeprefix("session:")
+        return normalized
+
     def _mirror_event_to_session_service(self, event: CommandLeaseEvent) -> None:
         if self._session_service is None:
             return
@@ -160,7 +170,7 @@ class CommandLeaseStore:
             payload["reason"] = event.reason
         self._session_service.record_event(
             event_type=event.event_type,
-            project_id=event.session_id.removeprefix("session:"),
+            project_id=self._project_id_from_session_id(event.session_id),
             session_id=event.session_id,
             occurred_at=event.occurred_at,
             correlation_id=self._session_correlation_id(event),
@@ -247,8 +257,8 @@ class CommandLeaseStore:
                 lease_expires_at=lease_expires_at,
                 updated_at=claimed_at,
             )
-            self._mirror_events_to_session_service([event])
             self._write(data)
+            self._mirror_events_to_session_service([event])
         return event
 
     def renew_lease(
@@ -284,8 +294,8 @@ class CommandLeaseStore:
                     "updated_at": renewed_at,
                 }
             )
-            self._mirror_events_to_session_service([event])
             self._write(data)
+            self._mirror_events_to_session_service([event])
         return event
 
     def expire_and_requeue_expired(
@@ -337,8 +347,8 @@ class CommandLeaseStore:
                     }
                 )
             if expired_events:
-                self._mirror_events_to_session_service(expired_events)
                 self._write(data)
+                self._mirror_events_to_session_service(expired_events)
         return expired_events
 
     def record_terminal_result(
@@ -378,6 +388,6 @@ class CommandLeaseStore:
                     "updated_at": occurred_at,
                 }
             )
-            self._mirror_events_to_session_service([event])
             self._write(data)
+            self._mirror_events_to_session_service([event])
         return event

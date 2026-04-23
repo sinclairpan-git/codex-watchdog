@@ -182,6 +182,27 @@ def test_projection_builds_recovery_related_facts_from_stuck_and_critical_pressu
     ]
 
 
+def test_projection_suppresses_stuck_fact_during_recent_local_manual_activity() -> None:
+    raw_task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_2",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "actively editing locally",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 2,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T04:00:00Z",
+        "last_local_manual_activity_at": "2026-04-06T23:55:30Z",
+    }
+
+    facts = build_fact_records(project_id="repo-a", task=raw_task, approvals=[])
+
+    assert {fact.fact_code for fact in facts}.isdisjoint({"stuck_no_progress", "recovery_available"})
+
+
 def test_projection_suppresses_recovery_facts_while_handoff_is_in_progress() -> None:
     raw_task = {
         "project_id": "repo-a",
@@ -286,7 +307,7 @@ def test_projection_surfaces_control_link_error_without_raw_task() -> None:
         project_id="repo-a",
         task=None,
         approvals=[],
-        link_error="A-Control-Agent unavailable",
+        link_error="Codex runtime unavailable",
     )
     session = build_session_projection(project_id="repo-a", task=None, approvals=[], facts=facts)
 

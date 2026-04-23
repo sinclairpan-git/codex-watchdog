@@ -97,8 +97,8 @@ class _RecoveryAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
         recover_auto_resume=True,
     )
@@ -111,7 +111,7 @@ def test_recovery_continuation_supersedes_stale_interaction_without_manual_patch
 ) -> None:
     settings = _settings(tmp_path)
     client = _RecoveryAClient(use_current_child_session_shape=use_current_child_session_shape)
-    app = create_app(settings=settings, a_client=client, start_background_workers=False)
+    app = create_app(settings=settings, runtime_client=client, start_background_workers=False)
 
     goal_contracts = GoalContractService(app.state.session_service)
     created = goal_contracts.bootstrap_contract(

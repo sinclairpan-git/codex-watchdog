@@ -27,6 +27,7 @@ HUMAN_GATE_FACT_CODES = {
 
 REGISTERED_ACTION_REFS = {
     "continue_session",
+    "request_recovery",
     "execute_recovery",
     "post_operator_guidance",
 }
@@ -45,6 +46,11 @@ MANAGED_AGENT_ACTION_BOUNDARY = {
             "observe_only",
         ),
         "auto_execute_allowed_intents": ("propose_execute",),
+    },
+    "request_recovery": {
+        "capability": "session_recovery",
+        "allowed_brain_intents": ("propose_recovery",),
+        "auto_execute_allowed_intents": ("propose_recovery",),
     },
     "execute_recovery": {
         "capability": "session_recovery",
@@ -65,6 +71,10 @@ MANAGED_AGENT_ACTION_ARGUMENT_CONTRACTS = {
             "reason_code",
             "stuck_level",
         ),
+        "required_keys": (),
+    },
+    "request_recovery": {
+        "allowed_keys": (),
         "required_keys": (),
     },
     "execute_recovery": {

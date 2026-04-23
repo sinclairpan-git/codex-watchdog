@@ -160,7 +160,7 @@ def test_reply_and_action_models_expose_stable_semantic_keys() -> None:
     action = WatchdogAction(
         action_code=ActionCode.EXECUTE_RECOVERY,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-1",
         arguments={},
         note="execute recovery",

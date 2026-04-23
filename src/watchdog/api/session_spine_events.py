@@ -7,7 +7,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from watchdog.api.deps import require_token
 from watchdog.envelope import err
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.events import (
     iter_session_events,
@@ -20,8 +20,8 @@ from watchdog.services.session_spine.service import SessionSpineUpstreamError
 router = APIRouter(prefix="/watchdog", tags=["session-spine-events"])
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def get_session_service(request: Request) -> SessionService:
@@ -47,7 +47,7 @@ def get_session_events(
     request: Request,
     follow: bool = Query(default=True),
     poll_interval: float = Query(default=0.5, ge=0.1, le=10.0),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     _: None = Depends(require_token),
 ) -> Any:

@@ -95,6 +95,35 @@ def test_project_raw_event_synthesizes_stable_event_id_when_missing() -> None:
     assert payload["event_id"] != "synthetic:"
 
 
+def test_project_raw_event_uses_raw_event_ordinal_to_disambiguate_legacy_duplicates() -> None:
+    first = project_raw_event(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "event_type": "resume",
+            "event_source": "a_control_agent",
+            "payload_json": {"mode": "resume_or_new_thread"},
+            "created_at": "2026-04-05T10:02:00Z",
+            "_raw_event_ordinal": 1,
+        }
+    )
+    second = project_raw_event(
+        {
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "event_type": "resume",
+            "event_source": "a_control_agent",
+            "payload_json": {"mode": "resume_or_new_thread"},
+            "created_at": "2026-04-05T10:02:00Z",
+            "_raw_event_ordinal": 2,
+        }
+    )
+
+    assert first.event_id.startswith("synthetic:")
+    assert second.event_id.startswith("synthetic:")
+    assert first.event_id != second.event_id
+
+
 def test_render_stable_sse_snapshot_transforms_raw_events_without_leaking_payload_json() -> None:
     raw_snapshot = (
         'id: evt_001\n'
@@ -129,7 +158,7 @@ def test_render_stable_sse_snapshot_dedupes_duplicate_event_ids() -> None:
     assert stable_snapshot.count("event: session_created") == 1
 
 
-def test_render_stable_sse_snapshot_dedupes_duplicate_events_when_raw_event_id_is_missing() -> None:
+def test_render_stable_sse_snapshot_keeps_distinct_legacy_events_when_raw_event_id_is_missing() -> None:
     raw_snapshot = (
         "event: resume\n"
         'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:02:00Z"}\n\n'
@@ -139,7 +168,7 @@ def test_render_stable_sse_snapshot_dedupes_duplicate_events_when_raw_event_id_i
 
     stable_snapshot = render_stable_sse_snapshot(raw_snapshot)
 
-    assert stable_snapshot.count("event: session_resumed") == 1
+    assert stable_snapshot.count("event: session_resumed") == 2
 
 
 def test_iter_stable_sse_stream_reassembles_split_chunks() -> None:

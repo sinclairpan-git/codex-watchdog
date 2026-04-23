@@ -57,25 +57,37 @@ from watchdog.services.future_worker.service import FutureWorkerExecutionService
 from watchdog.services.goal_contract.models import GoalContractReadiness
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.policy.decisions import CanonicalDecisionRecord, PolicyDecisionStore
+from watchdog.services.policy.decisions import build_decision_key
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
 from watchdog.services.policy.rules import (
     DECISION_AUTO_EXECUTE_AND_NOTIFY,
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
     POLICY_VERSION,
+    RISK_CLASS_HUMAN_GATE,
 )
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service.service import SessionService
-from watchdog.services.session_spine.service import SessionSpineUpstreamError
+from watchdog.services.session_spine.service import (
+    SessionSpineUpstreamError,
+)
+from watchdog.services.session_spine.approval_visibility import (
+    is_actionable_approval,
+    is_visible_projected_approval,
+)
 from watchdog.services.session_spine.command_leases import CommandLeaseStore
 from watchdog.services.session_spine.orchestration_store import ResidentOrchestrationStateStore
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key_for_action
 
 logger = logging.getLogger(__name__)
 _CANONICAL_APPROVAL_DECISION_OPTIONS = ["approve", "reject", "execute_action"]
+_DUAL_RESIDENT_EXPERT_IDS = (
+    "managed-agent-expert",
+    "hermes-agent-expert",
+)
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -125,6 +137,52 @@ class ResidentOrchestrationOutcome:
     emitted_progress_summary: bool
 
 
+def _should_emit_closing_summary(record: PersistedSessionRecord) -> bool:
+    if str(record.session.session_state or "").strip().lower() != "active":
+        return False
+    if str(record.session.attention_state or "").strip().lower() != "normal":
+        return False
+    if record.session.pending_approval_count > 0:
+        return False
+
+    phase = str(record.progress.activity_phase or "").strip().lower()
+    if phase in {"done", "completed", "complete", "finished", "closed"}:
+        return True
+
+    fact_codes = {str(fact.fact_code or "").strip().lower() for fact in record.facts}
+    if "task_completed" in fact_codes:
+        return True
+
+    if phase not in {"handoff", "wrap_up", "wrap-up", "finalizing", "release"}:
+        return False
+
+    completion_signals = (
+        "ready for handoff",
+        "ready to hand off",
+        "ready for wrap-up",
+        "ready for wrap up",
+        "ready to wrap up",
+        "ready to close",
+        "ready to ship",
+        "ready to deliver",
+        "ready to merge",
+        "final summary",
+        "delivery complete",
+        "handoff complete",
+        "wrap-up complete",
+        "wrap up complete",
+    )
+    summary_text = " ".join(
+        part.strip().lower()
+        for part in (
+            str(record.progress.summary or ""),
+            str(record.session.headline or ""),
+        )
+        if part and str(part).strip()
+    )
+    return any(signal in summary_text for signal in completion_signals)
+
+
 @dataclass(frozen=True, slots=True)
 class AutoExecuteCommandPlan:
     command_id: str
@@ -138,7 +196,7 @@ class ResidentOrchestrator:
         self,
         *,
         settings: Settings,
-        client: AControlAgentClient,
+        client: CodexRuntimeClient,
         session_spine_store: SessionSpineStore,
         decision_store: PolicyDecisionStore,
         approval_store: CanonicalApprovalStore,
@@ -197,7 +255,7 @@ class ResidentOrchestrator:
     @staticmethod
     def _decision_source_for_brain_intent(brain_intent) -> str:
         provider = str(getattr(brain_intent, "provider", "") or "").strip().lower()
-        if provider and provider != "rule-based-brain":
+        if provider and provider not in {"rule-based-brain", "resident_orchestrator"}:
             return "external_model"
         return "rules_fallback"
 
@@ -474,6 +532,12 @@ class ResidentOrchestrator:
                     should_execute=False,
                     current_status=conflicted.status,
                 )
+            return AutoExecuteCommandPlan(
+                command_id=command_id,
+                claim_seq=current.claim_seq,
+                should_execute=True,
+                current_status="claimed",
+            )
         return AutoExecuteCommandPlan(
             command_id=command_id,
             claim_seq=None,
@@ -555,6 +619,180 @@ class ResidentOrchestrator:
             return False
         return bundle.get("consultation_ref") == self._resident_expert_consultation_ref(decision)
 
+    @staticmethod
+    def _resident_expert_gate_applies(decision) -> bool:
+        if decision.decision_result != DECISION_AUTO_EXECUTE_AND_NOTIFY:
+            return False
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        governance = (
+            evidence.get("continuation_governance")
+            if isinstance(evidence.get("continuation_governance"), dict)
+            else {}
+        )
+        return str(governance.get("decision_source") or "").strip() == "external_model"
+
+    def _resident_expert_gate_bundle(self, decision) -> dict[str, Any]:
+        consultation = self._resident_expert_consultation_bundle(decision) or {}
+        experts = consultation.get("experts")
+        expert_rows = experts if isinstance(experts, list) else []
+        statuses_by_id = {
+            str(item.get("expert_id") or "").strip(): str(item.get("status") or "").strip()
+            for item in expert_rows
+            if isinstance(item, dict) and str(item.get("expert_id") or "").strip()
+        }
+        missing_expert_ids = sorted(
+            expert_id
+            for expert_id in _DUAL_RESIDENT_EXPERT_IDS
+            if expert_id not in statuses_by_id
+        )
+        unhealthy_expert_ids = sorted(
+            expert_id
+            for expert_id in _DUAL_RESIDENT_EXPERT_IDS
+            if statuses_by_id.get(expert_id) in {"stale", "unavailable", ""}
+        )
+        gate_status = (
+            "eligible"
+            if not missing_expert_ids
+            and not unhealthy_expert_ids
+            and consultation.get("coverage_status") == "healthy"
+            else "suppressed"
+        )
+        return {
+            "gate_kind": "resident_expert_dual_gate",
+            "gate_status": gate_status,
+            "required_expert_ids": list(_DUAL_RESIDENT_EXPERT_IDS),
+            "coverage_status": str(consultation.get("coverage_status") or "unknown"),
+            "consultation_ref": consultation.get("consultation_ref"),
+            "missing_expert_ids": missing_expert_ids,
+            "unhealthy_expert_ids": unhealthy_expert_ids,
+        }
+
+    @staticmethod
+    def _decision_id_for_key(decision_key: str) -> str:
+        digest = hashlib.sha256(decision_key.encode("utf-8")).hexdigest()[:16]
+        return f"decision:{digest}"
+
+    @staticmethod
+    def _operator_notes_for_decision(
+        *,
+        decision,
+        decision_result: str,
+        risk_class: str,
+        matched_policy_rules: list[str],
+        why_not_escalated: str | None,
+        why_escalated: str | None,
+        uncertainty_reasons: list[str],
+    ) -> list[str]:
+        notes = [
+            f"decision={decision_result} risk={risk_class} action={decision.action_ref}",
+            (
+                f"snapshot={decision.fact_snapshot_version} "
+                f"policy={decision.policy_version} session={decision.session_id}"
+            ),
+        ]
+        if matched_policy_rules:
+            notes.append(f"rules={','.join(matched_policy_rules)}")
+        if uncertainty_reasons:
+            notes.append(f"uncertainty={','.join(uncertainty_reasons)}")
+        if why_not_escalated:
+            notes.append(f"why_not_escalated={why_not_escalated}")
+        if why_escalated:
+            notes.append(f"why_escalated={why_escalated}")
+        return notes
+
+    def _with_resident_expert_gate(self, decision):
+        evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+        gate_bundle = self._resident_expert_gate_bundle(decision)
+        continuation_governance = (
+            evidence.get("continuation_governance")
+            if isinstance(evidence.get("continuation_governance"), dict)
+            else None
+        )
+        base_evidence = {
+            **evidence,
+            "resident_expert_gate": gate_bundle,
+        }
+        if not self._resident_expert_gate_applies(decision) or gate_bundle["gate_status"] == "eligible":
+            return decision.model_copy(update={"evidence": base_evidence})
+
+        decision_result = DECISION_REQUIRE_USER_DECISION
+        matched_policy_rules = list(decision.matched_policy_rules)
+        if "resident_expert_dual_gate" not in matched_policy_rules:
+            matched_policy_rules.append("resident_expert_dual_gate")
+        why_escalated = (
+            "dual resident expert oversight is required before autonomous "
+            "external-model execution"
+        )
+        operator_notes = self._operator_notes_for_decision(
+            decision=decision,
+            decision_result=decision_result,
+            risk_class=RISK_CLASS_HUMAN_GATE,
+            matched_policy_rules=matched_policy_rules,
+            why_not_escalated=None,
+            why_escalated=why_escalated,
+            uncertainty_reasons=list(decision.uncertainty_reasons),
+        )
+        decision_key = build_decision_key(
+            session_id=decision.session_id,
+            fact_snapshot_version=decision.fact_snapshot_version,
+            policy_version=decision.policy_version,
+            decision_result=decision_result,
+            brain_intent=decision.brain_intent,
+            action_ref=decision.action_ref,
+            approval_id=decision.approval_id,
+        )
+        updated_governance = None
+        if continuation_governance is not None:
+            updated_governance = {
+                **continuation_governance,
+                "gate_status": "suppressed",
+                "suppression_reason": "resident_expert_dual_gate",
+            }
+        updated_evidence = {
+            **base_evidence,
+            "matched_policy_rules": matched_policy_rules,
+            "risk_class": RISK_CLASS_HUMAN_GATE,
+            "decision_reason": "resident expert dual gate requires explicit human decision",
+            "why_not_escalated": None,
+            "why_escalated": why_escalated,
+            "idempotency_key": decision_key,
+            "operator_notes": operator_notes,
+            "decision": {
+                **(
+                    evidence.get("decision")
+                    if isinstance(evidence.get("decision"), dict)
+                    else {}
+                ),
+                "brain_intent": decision.brain_intent,
+                "runtime_disposition": decision_result,
+                "decision_result": decision_result,
+                "decision_reason": "resident expert dual gate requires explicit human decision",
+                "why_not_escalated": None,
+                "why_escalated": why_escalated,
+                "uncertainty_reasons": list(decision.uncertainty_reasons),
+                "action_ref": decision.action_ref,
+                "approval_id": decision.approval_id,
+            },
+        }
+        if updated_governance is not None:
+            updated_evidence["continuation_governance"] = updated_governance
+        return decision.model_copy(
+            update={
+                "decision_id": self._decision_id_for_key(decision_key),
+                "decision_key": decision_key,
+                "runtime_disposition": decision_result,
+                "decision_result": decision_result,
+                "risk_class": RISK_CLASS_HUMAN_GATE,
+                "decision_reason": "resident expert dual gate requires explicit human decision",
+                "matched_policy_rules": matched_policy_rules,
+                "why_not_escalated": None,
+                "why_escalated": why_escalated,
+                "idempotency_key": decision_key,
+                "operator_notes": operator_notes,
+                "evidence": updated_evidence,
+            }
+        )
+
     def _with_resident_expert_consultation(self, decision):
         if self._resident_expert_runtime_service is None:
             return decision
@@ -588,6 +826,24 @@ class ResidentOrchestrator:
                 for binding in bindings
             ],
         }
+        get_consultation_payload = getattr(
+            self._resident_expert_runtime_service,
+            "get_consultation_payload",
+            None,
+        )
+        consultation_payload = (
+            get_consultation_payload(consultation_ref)
+            if callable(get_consultation_payload)
+            else None
+        )
+        if consultation_payload is not None:
+            consultation_bundle["opinions"] = [
+                opinion.model_dump(mode="json") for opinion in consultation_payload.opinions
+            ]
+            if consultation_payload.synthesis is not None:
+                consultation_bundle["synthesis"] = consultation_payload.synthesis.model_dump(
+                    mode="json"
+                )
         evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
         return decision.model_copy(
             update={
@@ -896,9 +1152,111 @@ class ResidentOrchestrator:
         return True
 
     def _shared_auto_dispatch_cooldown_seconds(self, *, action_ref: str | None) -> float:
-        if action_ref not in {"continue_session", "post_operator_guidance"}:
+        if action_ref not in {"continue_session", "request_recovery", "post_operator_guidance"}:
             return 0.0
         return max(self._settings.auto_continue_cooldown_seconds, 0.0)
+
+    def _shared_local_manual_activity_quiet_window_seconds(
+        self,
+        *,
+        action_ref: str | None,
+    ) -> float:
+        if action_ref not in {
+            "continue_session",
+            "request_recovery",
+            "post_operator_guidance",
+            "execute_recovery",
+        }:
+            return 0.0
+        return max(self._settings.local_manual_activity_auto_execute_quiet_window_seconds, 0.0)
+
+    def _human_presence_state_for_record(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        now: datetime,
+    ) -> dict[str, object]:
+        active_window_seconds = max(
+            self._settings.local_manual_activity_auto_execute_quiet_window_seconds,
+            0.0,
+        )
+        recently_idle_window_seconds = max(
+            self._settings.local_manual_activity_recently_idle_window_seconds,
+            active_window_seconds,
+        )
+        last_manual_activity = _parse_iso(record.last_local_manual_activity_at)
+        if last_manual_activity is None:
+            return {
+                "state": "human_absent",
+                "last_local_manual_activity_at": None,
+                "idle_seconds": None,
+                "active_window_seconds": int(active_window_seconds),
+                "recently_idle_window_seconds": int(recently_idle_window_seconds),
+            }
+        idle_seconds = max((now - last_manual_activity.astimezone(UTC)).total_seconds(), 0.0)
+        if idle_seconds < active_window_seconds:
+            state = "human_active"
+        elif idle_seconds < recently_idle_window_seconds:
+            state = "human_recently_idle"
+        else:
+            state = "human_absent"
+        return {
+            "state": state,
+            "last_local_manual_activity_at": record.last_local_manual_activity_at,
+            "idle_seconds": int(idle_seconds),
+            "active_window_seconds": int(active_window_seconds),
+            "recently_idle_window_seconds": int(recently_idle_window_seconds),
+        }
+
+    def _local_manual_activity_suppression_details(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        brain_intent,
+        action_ref: str | None,
+        now: datetime,
+    ) -> dict[str, str] | None:
+        if action_ref is None:
+            return None
+        presence = self._human_presence_state_for_record(record, now=now)
+        if presence["state"] != "human_active":
+            return None
+        decision_class = self._continuation_decision_class_for_intent(
+            record=record,
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+        )
+        continuation_identity = self._continuation_identity_for_record(
+            record=record,
+            decision_class=decision_class,
+            brain_intent=brain_intent,
+        )
+        route_key = self._route_key_for_record(
+            record=record,
+            continuation_identity=continuation_identity,
+            brain_intent=brain_intent,
+        )
+        return {
+            "decision_class": str(decision_class or ""),
+            "decision_source": self._decision_source_for_brain_intent(brain_intent),
+            "continuation_identity": str(continuation_identity or ""),
+            "route_key": str(route_key or ""),
+            "last_local_manual_activity_at": str(
+                presence.get("last_local_manual_activity_at") or ""
+            ),
+            "quiet_window_seconds": str(int(presence.get("active_window_seconds") or 0)),
+            "remaining_seconds": str(
+                int(
+                    max(
+                        float(presence.get("active_window_seconds") or 0)
+                        - float(presence.get("idle_seconds") or 0),
+                        0.0,
+                    )
+                )
+            ),
+            "action_ref": action_ref,
+            "human_presence_state": str(presence.get("state") or "human_active"),
+        }
 
     def _auto_dispatch_cooldown_details(
         self,
@@ -959,6 +1317,43 @@ class ResidentOrchestrator:
             "action_ref": action_ref,
         }
 
+    def _record_local_manual_activity_suppressed(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        details: dict[str, str],
+    ) -> None:
+        if self._session_service is None:
+            return
+        correlation_id = (
+            "corr:human-presence-suppressed:"
+            f"{record.project_id}:{details.get('continuation_identity', 'unknown')}:"
+            f"{details.get('action_ref', 'unknown')}:"
+            f"{details.get('last_local_manual_activity_at', '')}"
+        )
+        self._session_service.record_continuation_gate_verdict(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+            gate_kind="human_presence",
+            gate_status="suppressed",
+            decision_source=str(details.get("decision_source") or "rules_fallback"),
+            decision_class=str(details.get("decision_class") or "blocked"),
+            action_ref=str(details.get("action_ref") or "") or None,
+            authoritative_snapshot_version=record.fact_snapshot_version,
+            snapshot_epoch=f"session-seq:{record.session_seq}",
+            goal_contract_version=self._goal_contract_version_for_record(record),
+            suppression_reason="local_manual_activity_window_active",
+            continuation_identity=str(details.get("continuation_identity") or "") or None,
+            route_key=str(details.get("route_key") or "") or None,
+            lineage_refs=[
+                value
+                for value in [details.get("last_local_manual_activity_at")]
+                if value
+            ],
+            correlation_id=correlation_id,
+            occurred_at=record.last_refreshed_at,
+        )
+
     def _record_auto_dispatch_suppressed(
         self,
         record: PersistedSessionRecord,
@@ -997,7 +1392,11 @@ class ResidentOrchestrator:
         status: str,
         now: datetime,
     ) -> None:
-        if decision.action_ref not in {"continue_session", "post_operator_guidance"}:
+        if decision.action_ref not in {
+            "continue_session",
+            "request_recovery",
+            "post_operator_guidance",
+        }:
             return
         evidence = self._decision_evidence_map(decision)
         governance = (
@@ -1124,7 +1523,32 @@ class ResidentOrchestrator:
             and item.failure_signature == "critical"
         ]
         if not matching:
-            return None
+            suppressed_events = self._session_service.list_events(
+                session_id=record.thread_id,
+                event_type="recovery_execution_suppressed",
+            )
+            recent_inflight = [
+                event
+                for event in suppressed_events
+                if str((event.payload or {}).get("suppression_reason") or "").strip()
+                in {"recovery_in_flight", "cooldown_window_active"}
+            ]
+            if not recent_inflight:
+                return None
+            latest_event = max(recent_inflight, key=lambda item: item.log_seq or 0)
+            suppressed_at = _parse_iso(getattr(latest_event, "occurred_at", None))
+            if suppressed_at is None:
+                return None
+            elapsed = (now - suppressed_at.astimezone(UTC)).total_seconds()
+            if elapsed >= cooldown_seconds:
+                return None
+            return {
+                "recovery_status": "suppressed_recently",
+                "recovery_updated_at": latest_event.occurred_at,
+                "last_progress_at": str(record.progress.last_progress_at or ""),
+                "suppression_reason": "cooldown_window_active",
+                "cooldown_seconds": str(int(cooldown_seconds)),
+            }
         latest = max(matching, key=lambda item: item.log_seq or 0)
         recovery_updated_at = _parse_iso(latest.updated_at)
         if recovery_updated_at is None:
@@ -1184,6 +1608,8 @@ class ResidentOrchestrator:
             "corr:recovery-suppressed:"
             f"{record.project_id}:{details.get('recovery_transaction_id', 'unknown')}:"
             f"{details.get('last_progress_at', '')}:{details.get('suppression_reason', 'unknown')}"
+            f":{details.get('recovery_status', '')}:{details.get('recovery_updated_at', '')}"
+            f":{details.get('source_packet_id', '')}:{details.get('cooldown_seconds', '')}"
         )
         self._session_service.record_event_once(
             event_type="recovery_execution_suppressed",
@@ -1276,7 +1702,71 @@ class ResidentOrchestrator:
             session_id=record.thread_id,
         )
 
+    def _provider_requires_goal_contract(self) -> bool:
+        profile = self._settings.active_brain_provider_profile()
+        if profile is None or profile.provider != "openai-compatible":
+            return False
+        return (
+            bool(str(profile.base_url or "").strip())
+            and bool(str(profile.api_key or "").strip())
+            and bool(str(profile.model or "").strip())
+        )
+
+    def _maybe_bootstrap_legacy_goal_contract(
+        self,
+        record: PersistedSessionRecord,
+    ) -> None:
+        if self._session_service is None or not self._provider_requires_goal_contract():
+            return
+        service = GoalContractService(self._session_service)
+        existing = service.get_current_contract(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+        )
+        if existing is not None:
+            return
+
+        task: dict[str, Any] = {}
+        try:
+            body = self._client.get_envelope(record.project_id)
+        except Exception:
+            body = {}
+        if isinstance(body, dict) and body.get("success") and isinstance(body.get("data"), dict):
+            task = dict(body["data"])
+
+        task_title = str(task.get("task_title") or "").strip()
+        task_prompt = str(task.get("task_prompt") or "").strip()
+        last_summary = str(
+            task.get("last_summary")
+            or record.progress.summary
+            or record.session.headline
+            or ""
+        ).strip()
+        phase = str(task.get("phase") or record.progress.activity_phase or "bootstrap").strip()
+        goal_seed = task_title or task_prompt or last_summary
+        if not goal_seed:
+            return
+
+        related_ids = {}
+        if record.effective_native_thread_id:
+            related_ids["native_thread_id"] = record.effective_native_thread_id
+
+        service.bootstrap_contract(
+            project_id=record.project_id,
+            session_id=record.thread_id,
+            task_title=task_title or goal_seed,
+            task_prompt=task_prompt or goal_seed,
+            last_user_instruction=task_prompt or task_title or goal_seed,
+            phase=phase,
+            last_summary=last_summary or goal_seed,
+            explicit_deliverables=[task_title or goal_seed],
+            completion_signals=["autonomy golden path release blocker passes"],
+            causation_id=f"legacy-goal-bootstrap:{record.project_id}:{record.fact_snapshot_version}",
+            related_ids=related_ids,
+        )
+
     def _evaluate_brain_intent(self, record: PersistedSessionRecord):
+        self._maybe_bootstrap_legacy_goal_contract(record)
         return self._brain_service.evaluate_session(
             record=record,
         )
@@ -1292,21 +1782,31 @@ class ResidentOrchestrator:
             "propose_execute",
             "require_approval",
             "propose_recovery",
+            "branch_complete_switch",
+            "candidate_closure",
         }:
             return None
         if brain_intent in {"propose_execute", "require_approval", "suggest_only", "observe_only"}:
             if brain_intent == "observe_only" and not record.facts:
                 return None
-            if (
-                brain_intent in {"propose_execute", "require_approval"}
-                and "continue_session" not in available_intents
-            ):
+            if brain_intent == "require_approval":
+                approval_read = self._approval_read_snapshot_for_session(record)
+                requested_action = (
+                    str(approval_read.requested_action or "").strip()
+                    if approval_read is not None
+                    else ""
+                )
+                if requested_action:
+                    return requested_action
+            if brain_intent == "propose_execute" and "continue_session" not in available_intents:
                 return None
             return "continue_session"
         if brain_intent == "propose_recovery":
-            if "execute_recovery" not in available_intents:
-                return None
-            return "execute_recovery"
+            if "execute_recovery" in available_intents:
+                return "execute_recovery"
+            if "request_recovery" in available_intents:
+                return "request_recovery"
+            return None
         if brain_intent == "branch_complete_switch":
             return "post_operator_guidance"
         if brain_intent == "candidate_closure":
@@ -1344,10 +1844,13 @@ class ResidentOrchestrator:
             or str(getattr(contract, "active_goal", "") or "").strip()
             or record.progress.activity_phase
         )
-        current_progress = (
-            str(record.progress.summary or "").strip()
-            or "current progress summary unavailable"
-        )
+        summary_builder = getattr(self._brain_service, "progress_summary_for_decision_context", None)
+        if callable(summary_builder):
+            current_progress = str(summary_builder(record) or "").strip()
+        else:
+            current_progress = str(record.progress.summary or "").strip()
+        if not current_progress:
+            current_progress = "current progress summary unavailable"
         next_branch_hypothesis = str(getattr(brain_intent, "next_branch_hypothesis", "") or "").strip()
         remaining_work = [
             str(item or "").strip()
@@ -1433,6 +1936,13 @@ class ResidentOrchestrator:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
         if requested_action_args:
             evidence["requested_action_args"] = dict(requested_action_args)
+        summary_builder = getattr(self._brain_service, "progress_summary_for_decision_context", None)
+        if callable(summary_builder):
+            provider_input_progress_summary = str(summary_builder(record) or "").strip()
+            if provider_input_progress_summary:
+                evidence["decision_input"] = {
+                    "current_progress_summary": provider_input_progress_summary,
+                }
         brain_output: dict[str, object] = {}
         if brain_intent.confidence is not None:
             brain_output["confidence"] = brain_intent.confidence
@@ -1522,10 +2032,12 @@ class ResidentOrchestrator:
             brain_intent=brain_intent,
         )
         lineage_refs = [decision_trace.trace_id]
+        human_presence = self._human_presence_state_for_record(record, now=now)
         evidence["decision_trace"] = decision_trace.model_dump(mode="json")
         evidence["managed_action_args_contract"] = action_args_contract.model_dump(mode="json")
         evidence["validator_verdict"] = validator_verdict.model_dump(mode="json")
         evidence["release_gate_verdict"] = release_gate_evidence.verdict.model_dump(mode="json")
+        evidence["human_presence"] = human_presence
         evidence["continuation_governance"] = {
             "gate_kind": "continuation_governance",
             "gate_status": "eligible",
@@ -1538,6 +2050,7 @@ class ResidentOrchestrator:
             "suppression_reason": None,
             "continuation_identity": continuation_identity,
             "route_key": route_key,
+            "human_presence_state": human_presence["state"],
             "branch_switch_token": str(getattr(brain_intent, "branch_switch_token", "") or "").strip()
             or None,
             "lineage_refs": lineage_refs,
@@ -1550,9 +2063,9 @@ class ResidentOrchestrator:
         return evidence
 
     def _record_and_store_decision(self, decision):
+        decision = self._with_resident_expert_consultation(decision)
+        decision = self._with_resident_expert_gate(decision)
         existing = self._decision_store.get(decision.decision_key)
-        if existing is None or not self._decision_has_resident_expert_consultation(existing):
-            decision = self._with_resident_expert_consultation(decision)
         if existing is not None:
             has_canonical_events = self._has_canonical_decision_events(existing)
             if not self._decision_has_runtime_gate(existing):
@@ -1567,6 +2080,9 @@ class ResidentOrchestrator:
             if not self._decision_has_resident_expert_consultation(existing):
                 updated = self._merge_existing_lifecycle_evidence(existing, decision)
                 return self._decision_store.update(updated)
+            if self._decision_evidence_needs_refresh(existing, decision):
+                updated = self._merge_existing_lifecycle_evidence(existing, decision)
+                return self._decision_store.update(updated)
             return existing
         if self._has_canonical_decision_events(decision):
             return self._decision_store.put(decision)
@@ -1579,14 +2095,47 @@ class ResidentOrchestrator:
         regenerated_evidence = (
             regenerated.evidence if isinstance(regenerated.evidence, dict) else {}
         )
+        existing_trace = (
+            existing_evidence.get("decision_trace")
+            if isinstance(existing_evidence.get("decision_trace"), dict)
+            else None
+        )
+        regenerated_trace = (
+            regenerated_evidence.get("decision_trace")
+            if isinstance(regenerated_evidence.get("decision_trace"), dict)
+            else None
+        )
         merged_evidence = {
             **existing_evidence,
             **regenerated_evidence,
         }
-        for key in ("decision_trace", "validator_verdict", "release_gate_verdict"):
+        if existing_trace is not None and regenerated_trace is not None:
+            merged_evidence["decision_trace"] = {
+                **existing_trace,
+                **regenerated_trace,
+                "trace_id": existing_trace.get("trace_id") or regenerated_trace.get("trace_id"),
+            }
+        elif existing_trace is not None:
+            merged_evidence["decision_trace"] = existing_trace
+        for key in ("validator_verdict", "release_gate_verdict"):
             if key in existing_evidence:
                 merged_evidence[key] = existing_evidence[key]
         return existing.model_copy(update={"evidence": merged_evidence})
+
+    @staticmethod
+    def _decision_evidence_needs_refresh(existing, regenerated) -> bool:
+        existing_evidence = existing.evidence if isinstance(existing.evidence, dict) else {}
+        regenerated_evidence = regenerated.evidence if isinstance(regenerated.evidence, dict) else {}
+        refresh_keys = (
+            "brain_output",
+            "decision_input",
+            "requested_action_args",
+            "human_presence",
+            "continuation_governance",
+            "resident_expert_consultation",
+            "resident_expert_gate",
+        )
+        return any(existing_evidence.get(key) != regenerated_evidence.get(key) for key in refresh_keys)
 
     @staticmethod
     def _pass_verdict_requires_bundle(release_gate_verdict: ReleaseGateVerdict) -> bool:
@@ -1672,10 +2221,15 @@ class ResidentOrchestrator:
     def _projected_approval_is_locally_pending(
         self,
         *,
+        approval: ApprovalProjection,
         approval_id: str,
         session_id: str,
         project_id: str,
     ) -> bool:
+        if is_visible_projected_approval(approval) and (
+            str(approval.status or "").lower() != "pending"
+        ):
+            return True
         records = self._approval_store.records_for_approval_id(
             approval_id,
             session_id=session_id,
@@ -1695,7 +2249,7 @@ class ResidentOrchestrator:
                 for approval in record.approval_queue
                 if approval.thread_id == record.thread_id
                 and approval.project_id == record.project_id
-                and approval.status == "pending"
+                and is_visible_projected_approval(approval)
             ),
             key=lambda approval: approval.requested_at,
         )
@@ -1703,6 +2257,7 @@ class ResidentOrchestrator:
             approval
             for approval in approvals
             if self._projected_approval_is_locally_pending(
+                approval=approval,
                 approval_id=approval.approval_id,
                 session_id=record.thread_id,
                 project_id=record.project_id,
@@ -1720,13 +2275,20 @@ class ResidentOrchestrator:
         self,
         record: PersistedSessionRecord,
     ) -> list[ApprovalProjection]:
+        runtime_actionable_ids = self._runtime_actionable_approval_ids(record)
         pending_records = sorted(
             (
                 approval
                 for approval in self._approval_store.list_records()
                 if approval.project_id == record.project_id
                 and approval.session_id == record.thread_id
-                and approval.status == "pending"
+                and (
+                    approval.status == "pending"
+                    or (
+                        runtime_actionable_ids is not None
+                        and approval.approval_id in runtime_actionable_ids
+                    )
+                )
             ),
             key=lambda approval: (
                 str(approval.created_at or "") == "",
@@ -1750,7 +2312,61 @@ class ResidentOrchestrator:
                 decided_by=approval.decided_by,
             )
             for approval in pending_records
+            if not self._canonical_pending_approval_is_orphaned(
+                approval,
+                runtime_pending_ids=runtime_actionable_ids,
+            )
         ]
+
+    def _runtime_actionable_approval_ids(
+        self,
+        record: PersistedSessionRecord,
+    ) -> set[str] | None:
+        try:
+            approval_slices = [
+                self._client.list_approvals(
+                    status="pending",
+                    project_id=record.project_id,
+                ),
+                self._client.list_approvals(
+                    project_id=record.project_id,
+                    decided_by="policy-auto",
+                    callback_status="deferred",
+                ),
+            ]
+        except Exception:
+            return None
+        runtime_ids: set[str] = set()
+        thread_candidates = {record.thread_id, record.effective_native_thread_id or ""}
+        for approval_slice in approval_slices:
+            for item in approval_slice:
+                if not is_actionable_approval(item):
+                    continue
+                if str(item.get("thread_id") or item.get("session_id") or "").strip() not in thread_candidates:
+                    continue
+                approval_id = str(item.get("approval_id") or "").strip()
+                if approval_id:
+                    runtime_ids.add(approval_id)
+        return runtime_ids
+
+    def _canonical_pending_approval_is_orphaned(
+        self,
+        approval,
+        *,
+        runtime_pending_ids: set[str] | None,
+    ) -> bool:
+        if runtime_pending_ids is None:
+            return False
+        if approval.approval_id in runtime_pending_ids:
+            return False
+        created_at = _parse_iso(str(approval.created_at or ""))
+        if created_at is None:
+            return False
+        age_seconds = (datetime.now(UTC) - created_at.astimezone(UTC)).total_seconds()
+        return age_seconds >= max(
+            float(self._settings.feishu_interaction_window_seconds or 0.0),
+            0.0,
+        )
 
     def _active_approvals(
         self,
@@ -2175,6 +2791,7 @@ class ResidentOrchestrator:
                     record.project_id,
                     record.thread_id,
                 )
+        self._maybe_emit_session_directory_summary(now=current)
         return outcomes
 
     def _orchestrate_record(
@@ -2197,6 +2814,18 @@ class ResidentOrchestrator:
         decision_result: str | None = None
         goal_contract_readiness = self._goal_contract_readiness_for_record(record)
 
+        local_manual_activity_details = self._local_manual_activity_suppression_details(
+            record,
+            brain_intent=brain_intent,
+            action_ref=action_ref,
+            now=now,
+        )
+        if local_manual_activity_details is not None:
+            action_ref = None
+            self._record_local_manual_activity_suppressed(
+                record,
+                details=local_manual_activity_details,
+            )
         if brain_intent.intent in {"propose_execute", "branch_complete_switch"}:
             dispatch_cooldown_details = self._auto_dispatch_cooldown_details(
                 record,
@@ -2318,6 +2947,9 @@ class ResidentOrchestrator:
                             client=self._client,
                             receipt_store=self._action_receipt_store,
                             session_service=self._session_service,
+                            store=self._session_spine_store,
+                            approval_store=self._approval_store,
+                            decision_store=self._decision_store,
                         )
                         if result.action_status == ActionStatus.COMPLETED:
                             self._consume_completed_future_worker_results(
@@ -2416,6 +3048,8 @@ class ResidentOrchestrator:
         *,
         now: datetime,
     ) -> bool:
+        if not _should_emit_closing_summary(record):
+            return False
         progress_at = _parse_iso(record.progress.last_progress_at)
         if progress_at is None:
             return False
@@ -2445,3 +3079,11 @@ class ResidentOrchestrator:
             last_progress_notification_at=created_at,
         )
         return True
+
+    def _maybe_emit_session_directory_summary(
+        self,
+        *,
+        now: datetime,
+    ) -> bool:
+        _ = now
+        return False

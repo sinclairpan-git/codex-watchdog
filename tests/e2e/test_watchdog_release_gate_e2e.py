@@ -41,8 +41,8 @@ class _ResidentAClient:
 def _settings(tmp_path: Path, report_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
         release_gate_report_path=str(report_path),
@@ -123,7 +123,7 @@ def test_low_risk_auto_execute_requires_formal_release_gate_evidence_bundle(
     trace = _trace()
     _write_report(report_path, trace=trace)
     settings = _settings(tmp_path, report_path)
-    app = create_app(settings=settings, a_client=_ResidentAClient(), start_background_workers=False)
+    app = create_app(settings=settings, runtime_client=_ResidentAClient(), start_background_workers=False)
     app.state.session_spine_runtime.refresh_all()
 
     with patch.object(

@@ -230,8 +230,8 @@ def test_recovery_execution_records_memory_unavailable_degraded_and_continues(
         "repo-a",
         settings=Settings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path),
             recover_auto_resume=False,
         ),

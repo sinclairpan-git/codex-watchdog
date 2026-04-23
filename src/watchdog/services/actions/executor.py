@@ -4,7 +4,7 @@ from typing import Any
 
 from watchdog.contracts.session_spine.enums import ActionCode
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.actions.registry import get_registered_action
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.policy.rules import DECISION_AUTO_EXECUTE_AND_NOTIFY
@@ -41,7 +41,7 @@ def _extract_action_arguments(
 def build_watchdog_action_from_decision(
     decision: CanonicalDecisionRecord,
     *,
-    operator: str = "openclaw",
+    operator: str = "watchdog",
 ) -> WatchdogAction:
     registration = get_registered_action(decision.action_ref)
     arguments = _extract_action_arguments(
@@ -67,13 +67,13 @@ def execute_canonical_decision(
     decision: CanonicalDecisionRecord,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
     decision_store: Any | None = None,
-    operator: str = "openclaw",
+    operator: str = "watchdog",
 ) -> WatchdogActionResult:
     if decision.decision_result != DECISION_AUTO_EXECUTE_AND_NOTIFY:
         raise ValueError(
@@ -96,31 +96,22 @@ def execute_registered_action_for_decision(
     decision: CanonicalDecisionRecord,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
     session_service: SessionService | None = None,
     store: Any | None = None,
     approval_store: Any | None = None,
     decision_store: Any | None = None,
-    operator: str = "openclaw",
+    operator: str = "watchdog",
 ) -> WatchdogActionResult:
     action = build_watchdog_action_from_decision(decision, operator=operator)
-    effective_session_service = session_service
-    effective_store = store
-    effective_approval_store = approval_store
-    effective_decision_store = decision_store
-    if action.action_code == ActionCode.CONTINUE_SESSION:
-        effective_session_service = None
-        effective_store = None
-        effective_approval_store = None
-        effective_decision_store = None
     return execute_watchdog_action(
         action,
         settings=settings,
         client=client,
         receipt_store=receipt_store,
-        session_service=effective_session_service,
-        store=effective_store,
-        approval_store=effective_approval_store,
-        decision_store=effective_decision_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )

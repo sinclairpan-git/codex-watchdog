@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,6 +56,10 @@ class _StructuredProviderContinuationDecision(_ProviderRuntimeModel):
 PROVIDER_DECISION_OUTPUT_SCHEMA_REF = "schema:provider-decision-v2"
 PROVIDER_CONTINUATION_DECISION_OUTPUT_SCHEMA_REF = "schema:provider-continuation-decision-v3"
 PROVIDER_OUTPUT_INVALID_DEGRADE_REASON = "provider_output_invalid"
+PROVIDER_UNAVAILABLE_DEGRADE_REASON = "provider_unavailable"
+PROVIDER_RATE_LIMITED_DEGRADE_REASON = "provider_rate_limited"
+_RETRYABLE_PROVIDER_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+_PROVIDER_RETRY_ATTEMPTS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +141,19 @@ class OpenAICompatibleBrainProvider:
             and bool(str(profile.model or "").strip())
         )
 
+    def _request_timeout_seconds(self, profile: BrainProviderProfile) -> float:
+        provider_timeout = (
+            float(profile.http_timeout_s)
+            if profile.http_timeout_s is not None
+            else float(self.settings.brain_provider_http_timeout_s)
+        )
+        if provider_timeout > 0.0:
+            return provider_timeout
+        watchdog_timeout = max(float(self.settings.http_timeout_s or 0.0), 0.0)
+        if watchdog_timeout > 0.0:
+            return watchdog_timeout
+        return 30.0
+
     def capability_matrix(self) -> ProviderCapabilityMatrix:
         return ProviderCapabilityMatrix(
             strict_json_schema=False,
@@ -146,6 +164,104 @@ class OpenAICompatibleBrainProvider:
             timeout_profile="http-timeout",
             cost_class="external",
         )
+
+    @staticmethod
+    def _retryable_status_code(status_code: int) -> bool:
+        return status_code in _RETRYABLE_PROVIDER_STATUS_CODES
+
+    @staticmethod
+    def _retry_backoff_seconds(attempt_index: int) -> float:
+        return 0.25 * float(attempt_index + 1)
+
+    @staticmethod
+    def degrade_reason_for_http_status(status_code: int) -> str:
+        if status_code == 429:
+            return PROVIDER_RATE_LIMITED_DEGRADE_REASON
+        return PROVIDER_UNAVAILABLE_DEGRADE_REASON
+
+    @staticmethod
+    def _coerce_confidence_like(value: object) -> object:
+        normalized = OpenAICompatibleBrainProvider._coerce_scalar_text(value)
+        if normalized is None:
+            return value
+        lowered = normalized.lower()
+        confidence_aliases = {
+            "low": 0.25,
+            "medium": 0.5,
+            "med": 0.5,
+            "high": 0.85,
+        }
+        if lowered in confidence_aliases:
+            return confidence_aliases[lowered]
+        return value
+
+    @staticmethod
+    def _coerce_scalar_text(value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        if isinstance(value, (int, float, bool)):
+            normalized = str(value).strip()
+            return normalized or None
+        if isinstance(value, dict):
+            for key in (
+                "code",
+                "value",
+                "status",
+                "label",
+                "summary",
+                "text",
+                "reason",
+                "decision",
+                "message",
+            ):
+                if key in value:
+                    coerced = OpenAICompatibleBrainProvider._coerce_scalar_text(value.get(key))
+                    if coerced:
+                        return coerced
+            try:
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                return str(value).strip() or None
+        if isinstance(value, (list, tuple, set)):
+            items = [
+                item
+                for item in (
+                    OpenAICompatibleBrainProvider._coerce_scalar_text(part)
+                    for part in value
+                )
+                if item
+            ]
+            if not items:
+                return None
+            if len(items) == 1:
+                return items[0]
+            return " | ".join(items)
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _coerce_string_list_like(value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            item = value.strip()
+            return [item] if item else []
+        if isinstance(value, dict):
+            for key in ("items", "steps", "list", "values"):
+                if key in value and isinstance(value.get(key), (list, tuple, set)):
+                    return OpenAICompatibleBrainProvider._coerce_string_list_like(value.get(key))
+            item = OpenAICompatibleBrainProvider._coerce_scalar_text(value)
+            return [item] if item else []
+        if isinstance(value, (list, tuple, set)):
+            items: list[str] = []
+            for part in value:
+                items.extend(OpenAICompatibleBrainProvider._coerce_string_list_like(part))
+            return items
+        item = OpenAICompatibleBrainProvider._coerce_scalar_text(value)
+        return [item] if item else []
 
     def decide(
         self,
@@ -178,6 +294,10 @@ class OpenAICompatibleBrainProvider:
                         "Preferred keys: continuation_decision, routing_preference, goal_coverage, "
                         "remaining_work_hypothesis, completion_confidence, next_branch_hypothesis, "
                         "decision_reason, evidence_codes. "
+                        "Use decision_context.project_ref, branch_ref, progress_ref, approval_ref, "
+                        "completion_ref, error_ref, and decision_scope_ref to decide whether to "
+                        "continue current branch, request human approval, recover, switch branch, "
+                        "or mark the current branch/session complete. "
                         "Legacy v2 keys are accepted during migration. "
                         "Do not emit action_ref, action_arguments, approval_id, mode, or resume payloads. "
                         "Watchdog derives requested action arguments locally from the managed action contract."
@@ -214,16 +334,43 @@ class OpenAICompatibleBrainProvider:
             "Content-Type": "application/json",
         }
         with httpx.Client(
-            timeout=(
-                profile.http_timeout_s
-                if profile.http_timeout_s is not None
-                else self.settings.brain_provider_http_timeout_s
-            ),
+            timeout=self._request_timeout_seconds(profile),
             transport=self.transport,
             trust_env=False,
         ) as client:
-            response = client.post(url, json=body, headers=headers)
-            response.raise_for_status()
+            response: httpx.Response | None = None
+            last_error: Exception | None = None
+            for attempt in range(_PROVIDER_RETRY_ATTEMPTS):
+                try:
+                    response = client.post(url, json=body, headers=headers)
+                    if (
+                        self._retryable_status_code(response.status_code)
+                        and attempt + 1 < _PROVIDER_RETRY_ATTEMPTS
+                    ):
+                        time.sleep(self._retry_backoff_seconds(attempt))
+                        continue
+                    response.raise_for_status()
+                    last_error = None
+                    break
+                except httpx.HTTPStatusError as exc:
+                    last_error = exc
+                    if (
+                        self._retryable_status_code(exc.response.status_code)
+                        and attempt + 1 < _PROVIDER_RETRY_ATTEMPTS
+                    ):
+                        time.sleep(self._retry_backoff_seconds(attempt))
+                        continue
+                    raise
+                except httpx.RequestError as exc:
+                    last_error = exc
+                    if attempt + 1 < _PROVIDER_RETRY_ATTEMPTS:
+                        time.sleep(self._retry_backoff_seconds(attempt))
+                        continue
+                    raise
+            if response is None:
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError("provider_request_failed")
         payload = response.json()
         request_id = str(payload.get("id") or "").strip() or None
         content = self._extract_content(payload)
@@ -283,6 +430,92 @@ class OpenAICompatibleBrainProvider:
         )
 
     @staticmethod
+    def _normalize_provider_decision_payload(payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise ProviderOutputSchemaError()
+        normalized = dict(payload)
+        continuation_allowed_keys = {
+            "continuation_decision",
+            "routing_preference",
+            "goal_coverage",
+            "remaining_work_hypothesis",
+            "completion_confidence",
+            "next_branch_hypothesis",
+            "decision_reason",
+            "evidence_codes",
+        }
+        legacy_allowed_keys = {
+            "session_decision",
+            "execution_advice",
+            "approval_advice",
+            "risk_band",
+            "goal_coverage",
+            "remaining_work_hypothesis",
+            "confidence",
+            "reason_short",
+            "evidence_codes",
+        }
+        if "continuation_decision" in normalized:
+            normalized = {
+                key: value for key, value in normalized.items() if key in continuation_allowed_keys
+            }
+        elif "session_decision" in normalized:
+            normalized = {key: value for key, value in normalized.items() if key in legacy_allowed_keys}
+        goal_coverage = normalized.get("goal_coverage")
+        if goal_coverage not in (None, ""):
+            normalized["goal_coverage"] = (
+                OpenAICompatibleBrainProvider._coerce_scalar_text(goal_coverage) or ""
+            )
+        for key in (
+            "continuation_decision",
+            "routing_preference",
+            "next_branch_hypothesis",
+            "decision_reason",
+            "session_decision",
+            "execution_advice",
+            "approval_advice",
+            "risk_band",
+            "reason_short",
+        ):
+            if key in normalized:
+                normalized[key] = OpenAICompatibleBrainProvider._coerce_scalar_text(
+                    normalized.get(key)
+                )
+        for key in ("remaining_work_hypothesis", "evidence_codes"):
+            normalized[key] = OpenAICompatibleBrainProvider._coerce_string_list_like(
+                normalized.get(key)
+            )
+        for key in ("completion_confidence", "confidence"):
+            if key in normalized:
+                normalized[key] = OpenAICompatibleBrainProvider._coerce_confidence_like(
+                    normalized.get(key)
+                )
+        continuation_decision = str(normalized.get("continuation_decision") or "").strip().lower()
+        routing_preference = str(normalized.get("routing_preference") or "").strip().lower()
+        if continuation_decision in {
+            "recover",
+            "recover_and_proceed",
+            "execute_recovery",
+            "propose_recovery",
+            "route_to_recovery",
+            "request_recovery",
+        }:
+            normalized["continuation_decision"] = "recover_current_branch"
+        elif continuation_decision in {"block", "blocked"} and any(
+            token in routing_preference for token in ("recover", "recovery")
+        ):
+            normalized["continuation_decision"] = "recover_current_branch"
+        elif continuation_decision in {
+            "switch_branch",
+            "branch_switch",
+            "switch_to_next_branch",
+            "move_to_next_branch",
+            "switch_branch_with_recovery_attempt",
+        }:
+            normalized["continuation_decision"] = "branch_complete_switch"
+        return normalized
+
+    @staticmethod
     def _validate_decision_context(
         value: ProjectContinuationDecisionInput | dict[str, object],
     ) -> ProjectContinuationDecisionInput:
@@ -293,7 +526,10 @@ class OpenAICompatibleBrainProvider:
     @staticmethod
     def _validate_provider_decision(content: str) -> _NormalizedProviderDecision:
         try:
-            structured = _StructuredProviderContinuationDecision.model_validate_json(content)
+            payload = OpenAICompatibleBrainProvider._normalize_provider_decision_payload(
+                json.loads(content)
+            )
+            structured = _StructuredProviderContinuationDecision.model_validate(payload)
             return _NormalizedProviderDecision(
                 continuation_decision=str(structured.continuation_decision or "").strip(),
                 routing_preference=str(structured.routing_preference or "").strip() or None,
@@ -308,7 +544,10 @@ class OpenAICompatibleBrainProvider:
             )
         except Exception:
             try:
-                structured = _StructuredProviderDecision.model_validate_json(content)
+                payload = OpenAICompatibleBrainProvider._normalize_provider_decision_payload(
+                    json.loads(content)
+                )
+                structured = _StructuredProviderDecision.model_validate(payload)
             except Exception as exc:
                 raise ProviderOutputSchemaError() from exc
             return _NormalizedProviderDecision(
@@ -339,9 +578,24 @@ class OpenAICompatibleBrainProvider:
         if not isinstance(message, dict):
             raise ValueError("provider response missing message")
         content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("provider response missing content")
-        return OpenAICompatibleBrainProvider._normalize_json_content(content)
+        if isinstance(content, str) and content.strip():
+            return OpenAICompatibleBrainProvider._normalize_json_content(content)
+        if isinstance(content, dict):
+            candidate = OpenAICompatibleBrainProvider._coerce_scalar_text(content)
+            if candidate:
+                return OpenAICompatibleBrainProvider._normalize_json_content(candidate)
+        if isinstance(content, list):
+            parts = [
+                part
+                for part in (
+                    OpenAICompatibleBrainProvider._coerce_scalar_text(item)
+                    for item in content
+                )
+                if part
+            ]
+            if parts:
+                return OpenAICompatibleBrainProvider._normalize_json_content("\n".join(parts))
+        raise ValueError("provider response missing content")
 
     @staticmethod
     def _normalize_json_content(content: str) -> str:
@@ -388,7 +642,7 @@ class OpenAICompatibleBrainProvider:
         continuation_decision = str(structured.continuation_decision or "").strip().lower()
         if continuation_decision == "project_complete":
             return "candidate_closure"
-        if continuation_decision == "recover_current_branch":
+        if continuation_decision in {"recover_current_branch", "execute_recovery"}:
             return "propose_recovery"
         if continuation_decision == "branch_complete_switch":
             return "branch_complete_switch"
@@ -429,7 +683,7 @@ class OpenAICompatibleBrainProvider:
         remaining_work_hypothesis: list[str],
     ) -> dict[str, object]:
         continuation_decision = str(structured.continuation_decision or "").strip().lower()
-        if continuation_decision not in {"continue_current_branch", "recover_current_branch"}:
+        if continuation_decision != "continue_current_branch":
             return {}
         if remaining_work_hypothesis:
             message = f"下一步建议：{'；'.join(remaining_work_hypothesis)}。"

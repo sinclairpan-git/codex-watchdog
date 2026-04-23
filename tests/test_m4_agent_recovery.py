@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from a_control_agent.main import create_app
@@ -225,6 +226,45 @@ def test_resume_reports_new_child_session_outcome_when_bridge_switches_threads(
     )
 
 
+def test_resume_preserves_canonical_child_session_id_when_bridge_returns_session_thread(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="session:p1:child-1")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    created = c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    ).json()["data"]
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["data"] == {
+        "project_id": "p1",
+        "status": "running",
+        "mode": "resume_or_new_thread",
+        "resume_outcome": "new_child_session",
+        "thread_id": "session:p1:child-1",
+        "parent_thread_id": created["thread_id"],
+        "child_session_id": "session:p1:child-1",
+        "resume_target_phase": "editing_source",
+    }
+
+
 def test_handoff_unknown(tmp_path: Path) -> None:
     s = Settings(api_token="t", data_dir=str(tmp_path / "d"))
     c = TestClient(create_app(s))
@@ -297,6 +337,68 @@ def test_handoff_prefers_supplied_continuation_packet_as_truth(tmp_path: Path) -
     assert "这是旧摘要，不该覆盖 packet 真值" not in handoff_text
 
 
+def test_handoff_rejects_malformed_continuation_packet_without_state_changes(tmp_path: Path) -> None:
+    root = tmp_path / "d"
+    s = Settings(api_token="t", data_dir=str(root))
+    c = TestClient(create_app(s))
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/handoff",
+        json={"reason": "ctx", "continuation_packet": {"packet_id": "broken-packet"}},
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet" in body["error"]["message"]
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
+    assert not (root / "handoffs").exists()
+
+
+@pytest.mark.parametrize("raw_packet", ["broken-packet", ["broken-packet"]])
+def test_handoff_rejects_non_object_continuation_packet_without_state_changes(
+    tmp_path: Path,
+    raw_packet: object,
+) -> None:
+    root = tmp_path / "d"
+    s = Settings(api_token="t", data_dir=str(root))
+    c = TestClient(create_app(s))
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/handoff",
+        json={"reason": "ctx", "continuation_packet": raw_packet},
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet must be an object" in body["error"]["message"]
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
+    assert not (root / "handoffs").exists()
+
+
 def test_resume_prefers_continuation_packet_render_over_raw_handoff_summary(
     tmp_path: Path,
 ) -> None:
@@ -332,6 +434,88 @@ def test_resume_prefers_continuation_packet_render_over_raw_handoff_summary(
     assert "IGNORE THIS RAW SUMMARY" not in prompt
     assert "项目总目标：把 watchdog 自动推进收口为 model-first continuation governance" in prompt
     assert "第一步动作：先读取 recovery packet，并只继续当前分支内的 recovery/handoff 改造。" in prompt
+
+
+def test_resume_rejects_malformed_continuation_packet_without_side_effects(tmp_path: Path) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge()
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={
+            "mode": "resume_or_new_thread",
+            "handoff_summary": "resume",
+            "continuation_packet": {"packet_id": "broken-packet"},
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet" in body["error"]["message"]
+    assert bridge.resume_calls == []
+    assert bridge.started_turns == []
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
+
+
+@pytest.mark.parametrize("raw_packet", ["broken-packet", ["broken-packet"]])
+def test_resume_rejects_non_object_continuation_packet_without_side_effects(
+    tmp_path: Path,
+    raw_packet: object,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge()
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    )
+
+    response = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={
+            "mode": "resume_or_new_thread",
+            "handoff_summary": "resume",
+            "continuation_packet": raw_packet,
+        },
+        headers=h,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ARGUMENT"
+    assert "continuation_packet must be an object" in body["error"]["message"]
+    assert bridge.resume_calls == []
+    assert bridge.started_turns == []
+    task = c.app.state.task_store.get("p1")
+    assert task is not None
+    assert task["status"] == "running"
+    assert task["phase"] == "editing_source"
 
 
 def test_child_resume_preserves_last_summary_for_followup_handoff(tmp_path: Path) -> None:
@@ -472,6 +656,98 @@ def test_child_resume_surfaces_risk_and_error_context_without_reopening_pending_
     assert "last_error_signature=context overflow loop" in handoff_text
 
 
+def test_child_resume_clears_parent_resuming_state_after_switching_threads(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="thr_child_1")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    created = c.post(
+        "/api/v1/tasks",
+        json={"project_id": "p1", "cwd": "/", "task_title": "t", "phase": "editing_source"},
+        headers=h,
+    ).json()["data"]
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["data"]["resume_outcome"] == "new_child_session"
+    parent_task = c.app.state.task_store.get_by_thread(created["thread_id"])
+    assert parent_task is not None
+    assert parent_task["status"] == "paused"
+    assert parent_task["phase"] == "handoff"
+
+
+def test_child_resume_clears_stale_pending_approval_on_existing_child_thread(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="thr_child_2")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "p1",
+            "cwd": "/",
+            "task_title": "t",
+            "phase": "editing_source",
+            "pending_approval": False,
+        },
+        headers=h,
+    )
+    data = c.app.state.task_store._read()
+    data["tasks"]["thr_child_2"] = {
+        "project_id": "p1",
+        "thread_id": "thr_child_2",
+        "cwd": "/",
+        "task_title": "stale child",
+        "status": "waiting_for_approval",
+        "phase": "planning",
+        "pending_approval": True,
+        "created_at": "2026-04-22T03:00:00Z",
+        "last_progress_at": "2026-04-22T03:00:00Z",
+        "recent_service_inputs": [],
+    }
+    project_meta = data["projects"]["p1"]
+    if "thr_child_2" not in project_meta["thread_ids"]:
+        project_meta["thread_ids"].append("thr_child_2")
+    c.app.state.task_store._write(data)
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+
+    assert resumed.status_code == 200
+    assert resumed.json()["data"]["resume_outcome"] == "new_child_session"
+    resumed_task = c.app.state.task_store.get("p1")
+    assert resumed_task is not None
+    assert resumed_task["thread_id"] == "thr_child_2"
+    assert resumed_task["pending_approval"] is False
+    assert resumed_task["status"] == "running"
+
+
 def test_child_resume_handoff_uses_unknown_goal_contract_when_version_is_absent(
     tmp_path: Path,
 ) -> None:
@@ -568,14 +844,68 @@ def test_child_resume_preserves_manual_activity_and_service_input_context(tmp_pa
     assert resumed_task["last_substantive_user_input_at"] == echoed_at
     assert resumed_task["last_substantive_user_input_fingerprint"] == echoed_fingerprint
     assert resumed_task["last_local_manual_activity_at"] == echoed_at
-    assert resumed_task["recent_service_inputs"] == [
+    assert len(resumed_task["recent_service_inputs"]) == 2
+    assert resumed_task["recent_service_inputs"][0] == {
+        "fingerprint": fingerprint_input_text("resume"),
+        "at": "2026-04-07T00:10:05Z",
+        "source": "a_control_agent",
+        "kind": "resume_summary",
+    }
+    assert resumed_task["recent_service_inputs"][1]["fingerprint"] == fingerprint_input_text(
+        "resume"
+    )
+    assert resumed_task["recent_service_inputs"][1]["source"] == "a_control_agent"
+    assert resumed_task["recent_service_inputs"][1]["kind"] == "resume_summary"
+
+
+def test_child_resume_retains_new_resume_summary_recorded_during_resume(tmp_path: Path) -> None:
+    root = tmp_path / "d"
+    bridge = _ResumeBridge(resumed_thread_id="thr_child_1")
+    c = TestClient(
+        create_app(
+            Settings(api_token="t", data_dir=str(root)),
+            codex_bridge=bridge,
+        )
+    )
+    h = {"Authorization": "Bearer t"}
+    c.post(
+        "/api/v1/tasks",
+        json={
+            "project_id": "p1",
+            "cwd": "/",
+            "task_title": "t",
+            "phase": "editing_source",
+        },
+        headers=h,
+    )
+    c.app.state.task_store.merge_update(
+        "p1",
         {
-            "fingerprint": fingerprint_input_text("resume"),
-            "at": "2026-04-07T00:10:05Z",
-            "source": "a_control_agent",
-            "kind": "resume_summary",
-        }
-    ]
+            "last_progress_at": "2026-04-07T00:00:00Z",
+            "recent_service_inputs": [],
+        },
+    )
+    handoff = c.post("/api/v1/tasks/p1/handoff", json={"reason": "ctx"}, headers=h)
+    assert handoff.status_code == 200
+
+    resumed = c.post(
+        "/api/v1/tasks/p1/resume",
+        json={"mode": "resume_or_new_thread", "handoff_summary": "resume"},
+        headers=h,
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["data"]["resume_outcome"] == "new_child_session"
+
+    resumed_task = c.app.state.task_store.get("p1")
+
+    assert resumed_task is not None
+    assert len(resumed_task["recent_service_inputs"]) == 1
+    assert resumed_task["recent_service_inputs"][0]["source"] == "a_control_agent"
+    assert resumed_task["recent_service_inputs"][0]["kind"] == "resume_summary"
+    assert resumed_task["recent_service_inputs"][0]["fingerprint"] == fingerprint_input_text(
+        "resume"
+    )
+    assert resumed_task["last_progress_at"] != "2026-04-07T00:00:00Z"
 
 
 def test_child_resume_preserves_stuck_and_failure_counters(tmp_path: Path) -> None:

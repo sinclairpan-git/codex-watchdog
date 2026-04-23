@@ -7,12 +7,18 @@ from pathlib import Path
 import yaml
 
 from watchdog.services.resident_experts.models import (
+    ResidentExpertConsultationRecord,
+    ResidentExpertConsultationSynthesis,
     ResidentExpertDefinition,
+    ResidentExpertOpinion,
     ResidentExpertRuntimeBinding,
     ResidentExpertRuntimeStatus,
     ResidentExpertRuntimeView,
 )
-from watchdog.services.resident_experts.store import ResidentExpertRuntimeStore
+from watchdog.services.resident_experts.store import (
+    ResidentExpertConsultationStore,
+    ResidentExpertRuntimeStore,
+)
 
 _REGISTRY_PATH = Path("docs/operations/resident-expert-agents.yaml")
 _CHARTER_PATH = Path("docs/operations/resident-expert-agents.zh-CN.md")
@@ -63,12 +69,14 @@ class ResidentExpertRuntimeService:
         self,
         *,
         store: ResidentExpertRuntimeStore,
+        consultation_store: ResidentExpertConsultationStore | None = None,
         repo_root: Path | None = None,
         registry_path: Path | None = None,
         charter_path: Path | None = None,
         stale_after_seconds: float = 900.0,
     ) -> None:
         self._store = store
+        self._consultation_store = consultation_store
         self._repo_root = repo_root or _repo_root()
         self._registry_path = registry_path or (self._repo_root / _REGISTRY_PATH)
         self._charter_path = charter_path or (self._repo_root / _CHARTER_PATH)
@@ -119,6 +127,9 @@ class ResidentExpertRuntimeService:
     ) -> ResidentExpertRuntimeService:
         return cls(
             store=ResidentExpertRuntimeStore(Path(data_dir) / "resident_experts.json"),
+            consultation_store=ResidentExpertConsultationStore(
+                Path(data_dir) / "resident_expert_consultations.json"
+            ),
             repo_root=repo_root,
             registry_path=registry_path,
             charter_path=charter_path,
@@ -258,6 +269,32 @@ class ResidentExpertRuntimeService:
             )
             for definition in self._definitions
         ]
+
+    def record_consultation_payload(
+        self,
+        *,
+        consultation_ref: str,
+        consulted_at: str,
+        opinions: list[ResidentExpertOpinion] | None = None,
+        synthesis: ResidentExpertConsultationSynthesis | None = None,
+    ) -> ResidentExpertConsultationRecord:
+        if self._consultation_store is None:
+            raise RuntimeError("resident expert consultation store is not configured")
+        record = ResidentExpertConsultationRecord(
+            consultation_ref=consultation_ref,
+            consulted_at=consulted_at,
+            opinions=list(opinions or []),
+            synthesis=synthesis,
+        )
+        return self._consultation_store.upsert_consultation(record)
+
+    def get_consultation_payload(
+        self,
+        consultation_ref: str,
+    ) -> ResidentExpertConsultationRecord | None:
+        if self._consultation_store is None:
+            return None
+        return self._consultation_store.get_consultation(consultation_ref)
 
     def _require_binding(self, expert_id: str) -> ResidentExpertRuntimeBinding:
         binding = self._store.get_binding(expert_id)

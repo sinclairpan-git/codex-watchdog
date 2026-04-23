@@ -241,7 +241,7 @@ def test_collect_constraint_violations_includes_completed_review_gate_mirror_dri
         "validate_completed_review_gate_mirror_drift",
         lambda _repo_root: [
             "completed work-item review gate mirror "
-            "(049-feishu-and-openclaw-entrypoint-closure): "
+            "(049-feishu-entrypoint-closure): "
             "runtime.yaml: review_approval_status must be removed once current_stage=completed"
         ],
     )
@@ -250,7 +250,7 @@ def test_collect_constraint_violations_includes_completed_review_gate_mirror_dri
 
     assert violations == [
         "completed work-item review gate mirror "
-        "(049-feishu-and-openclaw-entrypoint-closure): "
+        "(049-feishu-entrypoint-closure): "
         "runtime.yaml: review_approval_status must be removed once current_stage=completed"
     ]
 

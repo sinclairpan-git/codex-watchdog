@@ -18,7 +18,7 @@ def test_post_steer_ignores_proxy_environment() -> None:
             "token",
             "project-1",
             message="continue",
-            reason="openclaw_continue_session",
+            reason="watchdog_continue_session",
         )
 
         _, kwargs = client_cls.call_args
@@ -38,7 +38,7 @@ def test_post_steer_keeps_proxy_environment_for_non_local_base_url() -> None:
             "token",
             "project-1",
             message="continue",
-            reason="openclaw_continue_session",
+            reason="watchdog_continue_session",
         )
 
         _, kwargs = client_cls.call_args

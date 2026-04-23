@@ -142,8 +142,8 @@ class FakeAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
     )
 
@@ -251,9 +251,52 @@ def _seed_delivery_context(
     )
 
 
+def _seed_approval_delivery_binding(
+    app,
+    approval,
+    *,
+    actor_id: str,
+    interaction_context_id: str,
+    interaction_family_id: str,
+    receive_id: str | None = None,
+    receive_id_type: str | None = None,
+    updated_at: str = "2026-04-07T00:10:00Z",
+) -> None:
+    payload = {
+        "envelope_type": "approval",
+        "interaction_context_id": interaction_context_id,
+        "interaction_family_id": interaction_family_id,
+        "actor_id": actor_id,
+        "channel_kind": "dm",
+        "action_window_expires_at": "2026-04-07T00:30:00Z",
+    }
+    if receive_id and receive_id_type:
+        payload["receive_id"] = receive_id
+        payload["receive_id_type"] = receive_id_type
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id=approval.envelope_id,
+            envelope_type="approval",
+            correlation_id=f"corr:{approval.approval_id}:{interaction_context_id}",
+            session_id=approval.session_id,
+            project_id=approval.project_id,
+            native_thread_id=approval.effective_native_thread_id,
+            policy_version=approval.policy_version,
+            fact_snapshot_version=approval.fact_snapshot_version,
+            idempotency_key=f"idem:{approval.approval_id}:{interaction_context_id}",
+            audit_ref=approval.decision.decision_id,
+            created_at=approval.created_at,
+            updated_at=updated_at,
+            outbox_seq=app.state.delivery_outbox_store.reserve_outbox_seq(),
+            delivery_status="delivered",
+            envelope_payload=payload,
+        )
+    )
+
+
 def test_feishu_control_requires_dm_for_approval_responses(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
@@ -279,7 +322,7 @@ def test_feishu_control_requires_dm_for_approval_responses(tmp_path: Path) -> No
 
 def test_feishu_control_records_receipt_before_approval_side_effects(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
@@ -315,7 +358,7 @@ def test_feishu_control_approval_response_uses_effective_native_thread_from_lega
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
@@ -343,11 +386,14 @@ def test_feishu_control_approval_response_uses_effective_native_thread_from_lega
 
 def test_feishu_control_records_interaction_window_expired_and_rejects(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
         session_service=app.state.session_service,
+    )
+    approval = app.state.canonical_approval_store.update(
+        approval.model_copy(update={"expires_at": "2026-04-07T00:30:00Z"})
     )
 
     with TestClient(app) as client:
@@ -378,9 +424,86 @@ def test_feishu_control_records_interaction_window_expired_and_rejects(tmp_path:
     ) == []
 
 
+def test_feishu_control_does_not_use_request_local_window_when_lifecycle_expiry_is_absent(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, runtime_client=FakeAClient())
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json=_control_body(
+                approval,
+                occurred_at="2026-04-07T00:40:00Z",
+                action_window_expires_at="2026-04-07T00:30:00Z",
+                client_request_id="req-feishu-request-window-only",
+            ),
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="interaction_window_expired",
+    ) == []
+    recorded = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="human_override_recorded",
+    )
+    assert len(recorded) == 1
+
+
+def test_feishu_control_rejects_expired_pending_approval_from_canonical_lifecycle(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"approval_expiration_seconds": 60.0})
+    app = create_app(settings=settings, runtime_client=FakeAClient())
+    approval = materialize_canonical_approval(
+        _decision(),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    approval = app.state.canonical_approval_store.update(
+        approval.model_copy(update={"created_at": "2026-04-07T00:00:00Z"})
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json=_control_body(
+                approval,
+                occurred_at="2026-04-07T00:10:00Z",
+                action_window_expires_at="2026-04-07T00:30:00Z",
+                client_request_id="req-feishu-expired-lifecycle",
+            ),
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    events = app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="interaction_window_expired",
+    )
+    assert len(events) == 1
+    assert events[0].payload["expired_at"] == "2026-04-07T00:01:00Z"
+    assert app.state.session_service.list_events(
+        session_id=approval.session_id,
+        event_type="human_override_recorded",
+    ) == []
+
+
 def test_feishu_control_rejects_superseded_context_and_audits_it(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
@@ -436,7 +559,7 @@ def test_feishu_control_command_request_routes_progress_query_to_canonical_reply
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
 
     with TestClient(app) as client:
         response = client.post(
@@ -468,7 +591,7 @@ def test_feishu_control_command_request_maps_plain_approval_reply_to_latest_pend
 ) -> None:
     settings = _settings(tmp_path)
     a_client = FakeAClient()
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     approval = materialize_canonical_approval(
         _decision(),
         approval_store=app.state.canonical_approval_store,
@@ -508,12 +631,430 @@ def test_feishu_control_command_request_maps_plain_approval_reply_to_latest_pend
     ]
 
 
+def test_feishu_control_command_request_maps_plain_approval_reply_to_deferred_policy_auto_approval(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    a_client.list_approvals = lambda **_: [
+        {
+            "approval_id": "appr_deferred",
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "risk_level": "L1",
+            "command": "pytest -q",
+            "reason": "callback replay still needs explicit confirmation",
+            "alternative": "",
+            "status": "approved",
+            "decided_by": "policy-auto",
+            "callback_status": "deferred",
+            "requested_at": "2026-04-07T00:09:00Z",
+        }
+    ]
+    app = create_app(settings=settings, runtime_client=a_client)
+    approval = materialize_canonical_approval(
+        _decision().model_copy(update={"approval_id": "appr_deferred"}),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(
+            update={
+                "status": "approved",
+                "decided_by": "policy-auto",
+                "decided_at": "2026-04-07T00:09:30Z",
+            }
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-deferred-1",
+                "interaction_family_id": "family-command-approval-deferred-1",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-deferred-1",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["approval_id"] == "appr_deferred"
+    assert response.json()["data"]["response_action"] == "approve"
+    assert a_client.decision_calls == [("appr_deferred", "approve", "user:carol", "")]
+
+
+def test_feishu_control_command_request_binds_plain_approval_reply_to_matching_delivery_route(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, runtime_client=a_client)
+    approval_a = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-a",
+                "decision_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001a"
+                ),
+                "approval_id": "appr_001a",
+                "idempotency_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001a"
+                ),
+                "native_thread_id": "thr_native_1",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_001a",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    approval_b = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-b",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001b"
+                ),
+                "approval_id": "appr_001b",
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_001b"
+                ),
+                "native_thread_id": "thr_native_2",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_001b",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_a,
+        actor_id="user:alice",
+        receive_id="chat-a",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-a",
+        interaction_family_id="family-approval-a",
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_b,
+        actor_id="user:carol",
+        receive_id="chat-b",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-b",
+        interaction_family_id="family-approval-b",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-bound",
+                "interaction_family_id": "family-command-approval-bound",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-bound",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+                "receive_id": "chat-b",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["approval_id"] == approval_b.approval_id
+    assert a_client.decision_calls == [(approval_b.approval_id, "approve", "user:carol", "")]
+
+
+def test_feishu_control_command_request_ignores_default_project_for_bound_plain_reply(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"default_project_id": "repo-a"})
+    a_client = FakeAClient()
+    app = create_app(settings=settings, runtime_client=a_client)
+    approval = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-default-project-bound",
+                "decision_key": (
+                    "session:repo-b|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_repo_b"
+                ),
+                "approval_id": "appr_repo_b",
+                "idempotency_key": (
+                    "session:repo-b|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_repo_b"
+                ),
+                "project_id": "repo-b",
+                "session_id": "session:repo-b",
+                "thread_id": "session:repo-b",
+                "native_thread_id": "thr_native_repo_b",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_repo_b",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval,
+        actor_id="user:carol",
+        receive_id="chat-b",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-default-project-bound",
+        interaction_family_id="family-approval-default-project-bound",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-default-project-bound",
+                "interaction_family_id": "family-command-approval-default-project-bound",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-default-project-bound",
+                "command_text": "批准",
+                "receive_id": "chat-b",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["data"]["approval_id"] == approval.approval_id
+    assert a_client.decision_calls == [(approval.approval_id, "approve", "user:carol", "")]
+
+
+def test_feishu_control_command_request_uses_bound_approval_interaction_metadata(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    a_client = FakeAClient()
+    app = create_app(settings=settings, runtime_client=a_client)
+    approval = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-bound-meta",
+                "decision_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_bound_meta"
+                ),
+                "approval_id": "appr_bound_meta",
+                "idempotency_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_bound_meta"
+                ),
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval,
+        actor_id="user:carol",
+        interaction_context_id="ctx-approval-bound-meta",
+        interaction_family_id="family-approval-bound-meta",
+    )
+    _seed_delivery_context(
+        app,
+        envelope_id="other-envelope",
+        interaction_context_id="ctx-approval-newer",
+        interaction_family_id="family-approval-bound-meta",
+        delivery_status="delivered",
+        updated_at="2026-04-07T00:20:00Z",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-bound-meta",
+                "interaction_family_id": "family-command-approval-bound-meta",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:25:00Z",
+                "action_window_expires_at": "2026-04-07T01:30:00Z",
+                "client_request_id": "req-feishu-command-approval-bound-meta",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert "superseded" in response.json()["error"]["message"]
+    assert a_client.decision_calls == []
+
+
+def test_feishu_control_command_request_rejects_ambiguous_plain_approval_reply(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, runtime_client=FakeAClient())
+    approval_a = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-ambiguous-a",
+                "decision_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_a"
+                ),
+                "approval_id": "appr_ambiguous_a",
+                "idempotency_key": (
+                    "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_a"
+                ),
+                "native_thread_id": "thr_native_1",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_ambiguous_a",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    approval_b = materialize_canonical_approval(
+        _decision().model_copy(
+            update={
+                "decision_id": "decision:feishu-control-ambiguous-b",
+                "decision_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_b"
+                ),
+                "approval_id": "appr_ambiguous_b",
+                "fact_snapshot_version": "fact-v8",
+                "idempotency_key": (
+                    "session:repo-a|fact-v8|policy-v1|require_user_decision|"
+                    "execute_recovery|appr_ambiguous_b"
+                ),
+                "native_thread_id": "thr_native_2",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["human_gate"],
+                    "decision": {
+                        "decision_result": "require_user_decision",
+                        "action_ref": "execute_recovery",
+                        "approval_id": "appr_ambiguous_b",
+                    },
+                },
+            }
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_a,
+        actor_id="user:carol",
+        receive_id="chat-shared",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-shared-a",
+        interaction_family_id="family-approval-shared-a",
+    )
+    _seed_approval_delivery_binding(
+        app,
+        approval_b,
+        actor_id="user:carol",
+        receive_id="chat-shared",
+        receive_id_type="chat_id",
+        interaction_context_id="ctx-approval-shared-b",
+        interaction_family_id="family-approval-shared-b",
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-approval-ambiguous",
+                "interaction_family_id": "family-command-approval-ambiguous",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-approval-ambiguous",
+                "project_id": "repo-a",
+                "session_id": "session:repo-a",
+                "command_text": "批准",
+                "receive_id": "chat-shared",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert response.json()["error"]["code"] == "INVALID_ARGUMENT"
+    assert "specific pending approval" in response.json()["error"]["message"]
+
+
+
 def test_feishu_control_command_request_routes_pause_and_persists_receipt(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
     a_client = FakeAClient()
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -549,11 +1090,51 @@ def test_feishu_control_command_request_routes_pause_and_persists_receipt(
     assert stored.effect == "session_paused"
 
 
+def test_feishu_control_command_request_persists_feishu_route_binding(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    app = create_app(settings=settings, runtime_client=FakeAClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/watchdog/feishu/control",
+            json={
+                "event_type": "command_request",
+                "interaction_context_id": "ctx-command-route-bind",
+                "interaction_family_id": "family-command-route-bind",
+                "actor_id": "user:carol",
+                "channel_kind": "dm",
+                "occurred_at": "2026-04-07T00:10:00Z",
+                "action_window_expires_at": "2026-04-07T00:30:00Z",
+                "client_request_id": "req-feishu-command-route-bind",
+                "project_id": "repo-a",
+                "command_text": "暂停",
+                "receive_id": "chat-command-route",
+                "receive_id_type": "chat_id",
+            },
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="feishu_command_route_bound",
+    )
+    assert len(events) == 1
+    assert events[0].related_ids["feishu_actor_id"] == "user:carol"
+    assert events[0].related_ids["feishu_receive_id"] == "chat-command-route"
+    assert events[0].related_ids["feishu_receive_id_type"] == "chat_id"
+    assert events[0].related_ids["feishu_chat_id"] == "chat-command-route"
+    assert events[0].payload["intent_code"] == "pause_session"
+
+
 def test_feishu_control_command_request_can_route_by_native_thread(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
 
     with TestClient(app) as client:
         response = client.post(
@@ -602,7 +1183,7 @@ def test_feishu_control_command_request_surfaces_active_recovery_suppression(
         },
         occurred_at="2026-04-07T00:11:00Z",
     )
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
 
     with TestClient(app) as client:
         response = client.post(
@@ -642,7 +1223,7 @@ def test_feishu_control_command_request_surfaces_goal_contract_context(tmp_path:
     from watchdog.services.goal_contract.service import GoalContractService
 
     settings = _settings(tmp_path)
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
     goal_contracts = GoalContractService(app.state.session_service)
     goal_contracts.bootstrap_contract(
         project_id="repo-a",
@@ -715,7 +1296,7 @@ def test_feishu_control_command_request_surfaces_goal_context_for_why_stuck(
                 },
             }
 
-    app = create_app(settings=settings, a_client=StuckAClient())
+    app = create_app(settings=settings, runtime_client=StuckAClient())
     GoalContractService(app.state.session_service).bootstrap_contract(
         project_id="repo-a",
         session_id="session:repo-a",
@@ -760,7 +1341,7 @@ def test_feishu_control_command_request_surfaces_goal_context_for_why_stuck(
 def test_feishu_control_goal_bootstrap_syncs_goal_metadata_to_a_task(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     a_client = FakeAClient()
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -819,7 +1400,7 @@ def test_feishu_control_command_request_renders_recovery_cooldown_suppression(
         },
         occurred_at="2026-04-07T00:11:00Z",
     )
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
 
     with TestClient(app) as client:
         response = client.post(
@@ -866,7 +1447,7 @@ def test_feishu_control_command_request_renders_recovery_in_flight_suppression(
         },
         occurred_at="2026-04-07T00:11:00Z",
     )
-    app = create_app(settings=settings, a_client=FakeAClient())
+    app = create_app(settings=settings, runtime_client=FakeAClient())
 
     with TestClient(app) as client:
         response = client.post(
@@ -901,7 +1482,7 @@ def test_feishu_control_goal_bootstrap_revise_syncs_latest_goal_metadata_to_a_ta
 
     settings = _settings(tmp_path)
     a_client = FakeAClient()
-    app = create_app(settings=settings, a_client=a_client)
+    app = create_app(settings=settings, runtime_client=a_client)
     service = GoalContractService(app.state.session_service)
     created = service.bootstrap_contract(
         project_id="repo-a",

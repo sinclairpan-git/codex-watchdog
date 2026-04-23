@@ -26,8 +26,8 @@ class FakeAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
 
@@ -53,7 +53,7 @@ def test_execute_supervision_evaluation_posts_steer_and_returns_stable_result(tm
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-1",
         arguments={},
     )
@@ -99,7 +99,7 @@ def test_execute_supervision_evaluation_suppresses_steer_when_repo_activity_rece
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-2",
         arguments={},
     )
@@ -141,7 +141,7 @@ def test_execute_supervision_evaluation_skips_done_terminal_session(
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-done",
         arguments={},
     )
@@ -180,7 +180,7 @@ def test_execute_supervision_evaluation_prefers_explicit_native_thread_id(
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-native-thread",
         arguments={},
     )

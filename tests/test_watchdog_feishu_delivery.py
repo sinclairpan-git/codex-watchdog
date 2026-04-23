@@ -7,8 +7,8 @@ import httpx
 import pytest
 
 from watchdog.main import create_app
-from watchdog.services.delivery.http_client import OpenClawDeliveryClient
-from watchdog.services.delivery.envelopes import NotificationEnvelope, build_envelopes_for_decision
+from watchdog.services.delivery.store import DeliveryOutboxRecord
+from watchdog.services.delivery.envelopes import DecisionEnvelope, NotificationEnvelope, build_envelopes_for_decision
 from watchdog.services.delivery.feishu_client import FeishuAppDeliveryClient
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.settings import Settings
@@ -153,6 +153,42 @@ def test_feishu_app_delivery_client_uses_envelope_receive_target_when_static_tar
     assert len(calls) == 2
 
 
+def test_feishu_app_delivery_client_marks_invalid_persisted_payload_as_failed(
+    tmp_path: Path,
+) -> None:
+    client = FeishuAppDeliveryClient(
+        settings=_settings(tmp_path),
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+    malformed = DeliveryOutboxRecord(
+        envelope_id="approval-envelope:legacy-invalid",
+        envelope_type="approval",
+        correlation_id="corr:approval:legacy-invalid",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key="approval:legacy-invalid",
+        audit_ref="audit:legacy-invalid",
+        created_at="2026-04-16T12:20:00Z",
+        updated_at="2026-04-16T12:20:00Z",
+        outbox_seq=1,
+        envelope_payload={
+            "envelope_type": "approval",
+            "envelope_id": "approval-envelope:legacy-invalid",
+            "project_id": "repo-a",
+            "session_id": "session:repo-a",
+        },
+    )
+
+    result = client.deliver_record(malformed)
+
+    assert result.delivery_status == "delivery_failed"
+    assert result.accepted is False
+    assert result.failure_code == "invalid_envelope_payload"
+
+
 def test_create_app_uses_feishu_delivery_client_when_transport_configured(tmp_path: Path) -> None:
     app = create_app(settings=_settings(tmp_path))
 
@@ -176,7 +212,7 @@ def test_create_app_accepts_documented_feishu_transport_alias(tmp_path: Path) ->
     assert isinstance(app.state.delivery_client, FeishuAppDeliveryClient)
 
 
-def test_create_app_keeps_openclaw_delivery_client_by_default(tmp_path: Path) -> None:
+def test_create_app_uses_feishu_delivery_client_by_default(tmp_path: Path) -> None:
     app = create_app(
         settings=Settings(
             api_token="watchdog-token",
@@ -184,7 +220,7 @@ def test_create_app_keeps_openclaw_delivery_client_by_default(tmp_path: Path) ->
         )
     )
 
-    assert isinstance(app.state.delivery_client, OpenClawDeliveryClient)
+    assert isinstance(app.state.delivery_client, FeishuAppDeliveryClient)
 
 
 def test_feishu_app_delivery_client_classifies_token_503_as_retryable_failure(
@@ -209,7 +245,7 @@ def test_feishu_app_delivery_client_classifies_token_503_as_retryable_failure(
 
 
 def test_create_app_rejects_unknown_delivery_transport(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="unsupported delivery_transport"):
+    with pytest.raises(ValueError, match="Input should be 'feishu' or 'feishu-app'"):
         create_app(
             settings=Settings(
                 api_token="watchdog-token",
@@ -369,7 +405,7 @@ def test_feishu_render_text_includes_next_step_and_key_facts_for_approval(tmp_pa
 
     text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
 
-    assert "建议下一步：补齐飞书控制链路；回写验证结果。" in text
+    assert "建议下一步：补齐飞书控制链路；回写验证结果" in text
     assert "关键依据：飞书控制链路未闭环；验证结果尚未回写" in text
 
 
@@ -422,7 +458,7 @@ def test_feishu_render_text_includes_next_step_and_key_facts_for_decision_update
 
     text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
 
-    assert "建议下一步：补齐飞书控制链路；回写验证结果。" in text
+    assert "建议下一步：补齐飞书控制链路；回写验证结果" in text
     assert "关键依据：飞书控制链路未闭环；验证结果尚未回写" in text
 
 
@@ -455,3 +491,87 @@ def test_feishu_render_text_humanizes_progress_reason_key_values(tmp_path: Path)
     assert "phase=" not in text
     assert "context=" not in text
     assert "stuck=" not in text
+
+
+def test_feishu_render_text_formats_session_directory_summary_for_human_reading(
+    tmp_path: Path,
+) -> None:
+    envelope = NotificationEnvelope(
+        envelope_id="notification-envelope:directory-summary",
+        correlation_id="corr:directory-summary",
+        session_id="session:directory",
+        project_id="portfolio",
+        native_thread_id=None,
+        policy_version="policy-v1",
+        fact_snapshot_version="directory-summary",
+        idempotency_key="idem:directory-summary",
+        audit_ref="audit:directory-summary",
+        created_at="2026-04-22T10:00:00Z",
+        event_id="event:directory-summary",
+        severity="info",
+        notification_kind="session_directory_summary",
+        occurred_at="2026-04-22T10:00:00Z",
+        title="session directory summary",
+        summary=(
+            "多项目进展（2） | 监督=未就绪2 | 最近合议=decision:abc | 状态=进行中2 | 先处理=repo-a:卡住\n"
+            "- repo-a | editing_source | [steer:rule_based_continue] 下一步建议：继续推进 repo-a editing "
+            "| 当前目标=fix failing tests | 关注=卡住 | 下一步=卡在哪里 | 上下文=low\n"
+            "- repo-b | running_tests | repo-b testing，并优先验证最近改动。 | 决策=provider降级(schema:provider-decision-v2) | 上下文=medium"
+        ),
+        reason="2 projects tracked",
+    )
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "Watchdog 多项目目录更新" in text
+    assert "多项目进展（2） | 状态=进行中2 | 先处理=repo-a:卡住" in text
+    assert "监督=" not in text
+    assert "最近合议=" not in text
+    assert "- repo-a：editing_source；repo-a editing；卡住；目标=fix failing tests；下一步=卡在哪里；上下文=low" in text
+    assert "- repo-b：running_tests；repo-b testing；provider降级(" in text
+    assert "上下文=medium" in text
+    assert "并优先验证最近改动" not in text
+    assert "[steer:" not in text
+    assert "项目：portfolio" not in text
+    assert "会话：directory" not in text
+
+
+def test_feishu_render_text_sanitizes_recursive_rule_based_next_step_message(
+    tmp_path: Path,
+) -> None:
+    envelope = DecisionEnvelope(
+        envelope_id="decision-envelope:recursive-next-step",
+        correlation_id="decision:recursive-next-step",
+        session_id="session:codex-watchdog",
+        project_id="codex-watchdog",
+        native_thread_id="thr_native_recursive",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="idem:recursive-next-step",
+        audit_ref="audit:recursive-next-step",
+        created_at="2026-04-22T12:20:00Z",
+        occurred_at="2026-04-22T12:20:00Z",
+        decision_id="decision:recursive-next-step",
+        decision_result="auto_execute_and_notify",
+        action_name="continue_session",
+        action_args={
+            "message": (
+                "[steer:rule_based_continue] 下一步建议：继续推进 "
+                "[steer:rule_based_continue] 下一步建议：继续推进 "
+                "[steer:rule_based_continue] 下一步建议：继续推进 codex开发进度，"
+                "并优先验证最近改动。，并优先验证最近改动。"
+            )
+        },
+        risk_class="none",
+        decision_reason="registered action and complete evidence",
+        facts=[],
+        matched_policy_rules=["registered_action"],
+        why_not_escalated="policy_allows_auto_execution",
+    )
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "建议下一步：继续推进 codex开发进度，并优先验证最近改动" in text
+    assert text.count("建议下一步：") == 1
+    assert text.count("并优先验证最近改动") == 1
+    assert "[steer:" not in text

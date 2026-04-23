@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from watchdog.services.delivery.envelopes import NotificationEnvelope
-from watchdog.services.delivery.http_client import DeliveryAttemptResult
+from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.delivery.worker import DeliveryWorker
 from watchdog.services.session_service import SessionService, SessionServiceStore

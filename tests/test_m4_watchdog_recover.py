@@ -26,14 +26,14 @@ def test_recover_noop_when_not_critical(tmp_path) -> None:
     app = create_app(
         Settings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path / "wd"),
         )
     )
-    app.state.a_client.get_envelope = lambda _project_id: {"success": True, "data": dict(task_data)}  # type: ignore[method-assign]
-    app.state.a_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
-    app.state.a_client.trigger_handoff = MagicMock()  # type: ignore[method-assign]
+    app.state.runtime_client.get_envelope = lambda _project_id: {"success": True, "data": dict(task_data)}  # type: ignore[method-assign]
+    app.state.runtime_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
+    app.state.runtime_client.trigger_handoff = MagicMock()  # type: ignore[method-assign]
     c = TestClient(app)
     r = c.post(
         "/api/v1/watchdog/tasks/p1/recover",
@@ -43,7 +43,7 @@ def test_recover_noop_when_not_critical(tmp_path) -> None:
     b = r.json()
     assert b["success"] is True
     assert b["data"]["action"] == "noop"
-    app.state.a_client.trigger_handoff.assert_not_called()  # type: ignore[union-attr]
+    app.state.runtime_client.trigger_handoff.assert_not_called()  # type: ignore[union-attr]
 
 
 def test_recover_handoff_on_critical(tmp_path) -> None:
@@ -64,14 +64,14 @@ def test_recover_handoff_on_critical(tmp_path) -> None:
     app = create_app(
         Settings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path / "wd"),
         )
     )
-    app.state.a_client.get_envelope = lambda _project_id: {"success": True, "data": dict(task_data)}  # type: ignore[method-assign]
-    app.state.a_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
-    app.state.a_client.trigger_handoff = MagicMock(  # type: ignore[method-assign]
+    app.state.runtime_client.get_envelope = lambda _project_id: {"success": True, "data": dict(task_data)}  # type: ignore[method-assign]
+    app.state.runtime_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
+    app.state.runtime_client.trigger_handoff = MagicMock(  # type: ignore[method-assign]
         return_value={
             "success": True,
             "data": {"handoff_file": "/tmp/h.md"},
@@ -86,13 +86,13 @@ def test_recover_handoff_on_critical(tmp_path) -> None:
     b = r.json()
     assert b["success"] is True
     assert b["data"]["action"] == "handoff_triggered"
-    app.state.a_client.trigger_handoff.assert_called_once_with(  # type: ignore[union-attr]
+    app.state.runtime_client.trigger_handoff.assert_called_once_with(  # type: ignore[union-attr]
         "p1",
         reason="context_critical",
-        continuation_packet=app.state.a_client.trigger_handoff.call_args.kwargs["continuation_packet"],  # type: ignore[union-attr]
+        continuation_packet=app.state.runtime_client.trigger_handoff.call_args.kwargs["continuation_packet"],  # type: ignore[union-attr]
     )
     assert (
-        app.state.a_client.trigger_handoff.call_args.kwargs["continuation_packet"]["decision_class"]  # type: ignore[union-attr]
+        app.state.runtime_client.trigger_handoff.call_args.kwargs["continuation_packet"]["decision_class"]  # type: ignore[union-attr]
         == "recover_current_branch"
     )
 
@@ -101,13 +101,13 @@ def test_recover_get_error(tmp_path) -> None:
     app = create_app(
         Settings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://127.0.0.1:9",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://127.0.0.1:9",
             data_dir=str(tmp_path / "wd"),
         )
     )
     c = TestClient(app)
-    with patch("watchdog.services.a_client.client.httpx.Client") as mcli:
+    with patch("watchdog.services.runtime_client.client.httpx.Client") as mcli:
         mock_inst = MagicMock()
         mcli.return_value.__enter__.return_value = mock_inst
         import httpx

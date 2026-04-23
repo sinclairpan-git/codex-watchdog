@@ -40,8 +40,8 @@ class _BootstrapAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -53,7 +53,7 @@ def test_feishu_dm_bootstrap_starts_goal_contract_to_release_gate_chain(
     settings = _settings(tmp_path)
     app = create_app(
         settings=settings,
-        a_client=_BootstrapAClient(),
+        runtime_client=_BootstrapAClient(),
         start_background_workers=False,
     )
 

@@ -13,12 +13,12 @@ from watchdog.contracts.session_spine.models import (
     WatchdogAction,
 )
 from watchdog.services.approvals.service import CanonicalApprovalStore
-from watchdog.services.a_client.client import AControlAgentClient
-from watchdog.services.adapters.openclaw.intents import (
+from watchdog.services.runtime_client.client import CodexRuntimeClient
+from watchdog.services.entrypoints.intents import (
     READ_INTENTS,
     WRITE_INTENT_TO_ACTION,
 )
-from watchdog.services.adapters.openclaw.reply_model import (
+from watchdog.services.entrypoints.reply_model import (
     build_action_not_available_reply,
     build_action_reply,
     build_approval_inbox_reply,
@@ -61,24 +61,25 @@ from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
 
-class OpenClawAdapter:
-    """Compatibility-only OpenClaw adapter preserved alongside the primary Feishu control plane."""
+class WatchdogCommandAdapter:
+    """Primary command adapter used by the Feishu control plane."""
 
     def __init__(
         self,
         *,
         settings: Settings,
-        client: AControlAgentClient,
+        client: CodexRuntimeClient,
         receipt_store: ActionReceiptStore,
+        session_service: SessionService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._receipt_store = receipt_store
         data_dir = Path(self._settings.data_dir)
-        self._session_service = SessionService.from_data_dir(data_dir)
+        self._session_service = session_service or SessionService.from_data_dir(data_dir)
         self._session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
         self._resident_orchestration_state_store = ResidentOrchestrationStateStore(
-            data_dir / "resident_orchestration_state.json"
+            data_dir / "resident_orchestrator.json"
         )
         self._approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
         self._decision_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
@@ -93,7 +94,7 @@ class OpenClawAdapter:
         intent_code: str,
         *,
         project_id: str | None = None,
-        operator: str = "openclaw",
+        operator: str = "watchdog",
         idempotency_key: str | None = None,
         approval_id: str | None = None,
         note: str = "",
@@ -247,7 +248,7 @@ class OpenClawAdapter:
         *,
         project_id: str | None = None,
         native_thread_id: str | None = None,
-        operator: str = "openclaw",
+        operator: str = "watchdog",
         idempotency_key: str | None = None,
         approval_id: str | None = None,
         note: str = "",

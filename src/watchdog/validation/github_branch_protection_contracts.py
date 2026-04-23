@@ -13,7 +13,7 @@ BRANCH_PROTECTION_AUDIT_WORKFLOW_REL = Path(".github/workflows/branch-protection
 
 _EXPECTED_BRANCH_PROTECTION_CONTRACT: dict[str, Any] = {
     "owner": "sinclairpan-git",
-    "repo": "openclaw-codex-watchdog",
+    "repo": "codex-watchdog",
     "branch": "main",
     "required_status_checks": {
         "strict": True,

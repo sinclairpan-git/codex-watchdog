@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from watchdog.services.a_client.client import AControlAgentClient
-from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
-from watchdog.services.adapters.openclaw.intents import GLOBAL_READ_INTENTS
+from watchdog.services.runtime_client.client import CodexRuntimeClient
+from watchdog.services.entrypoints.command_adapter import WatchdogCommandAdapter
+from watchdog.services.entrypoints.intents import GLOBAL_READ_INTENTS
 from watchdog.services.entrypoints.command_routing import resolve_entry_message
 from watchdog.services.approvals.service import (
     ApprovalResponseStore,
@@ -20,6 +20,7 @@ from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutbo
 from watchdog.services.goal_contract.models import GoalContractSnapshot
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.session_service.service import SessionService
+from watchdog.services.session_spine.approval_visibility import is_actionable_approval
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -30,6 +31,20 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _maybe_parse_timestamp(value: str | None) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        return _parse_timestamp(normalized)
+    except ValueError:
+        return None
+
+
+def _format_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _fact_snapshot_order(value: str) -> tuple[int, str]:
@@ -92,7 +107,7 @@ class FeishuControlService:
         self,
         *,
         settings: Settings,
-        client: AControlAgentClient,
+        client: CodexRuntimeClient,
         receipt_store: ActionReceiptStore,
         approval_store: CanonicalApprovalStore,
         response_store: ApprovalResponseStore,
@@ -283,27 +298,36 @@ class FeishuControlService:
         session_id = str(request.session_id or "").strip() or None
         approval_response_action = self._approval_response_action_from_text(command_text)
         if approval_response_action is not None:
-            approval = self._find_latest_pending_approval(
+            approval = self._resolve_pending_approval_for_text_reply(
+                request=request,
                 project_id=project_id,
                 session_id=session_id,
                 native_thread_id=native_thread_id,
             )
-            if approval is None:
-                raise FeishuControlError("no pending approval matches this reply")
+            binding = self._latest_delivery_binding_for_envelope(approval.envelope_id)
+            update = {
+                "event_type": "approval_response",
+                "envelope_id": approval.envelope_id,
+                "approval_id": approval.approval_id,
+                "decision_id": approval.decision.decision_id,
+                "response_action": approval_response_action,
+                "response_token": approval.approval_token,
+                "project_id": approval.project_id,
+                "session_id": approval.session_id,
+                "native_thread_id": approval.effective_native_thread_id,
+            }
+            if binding is not None:
+                for field in (
+                    "interaction_context_id",
+                    "interaction_family_id",
+                    "action_window_expires_at",
+                    "channel_kind",
+                ):
+                    value = str(binding.get(field) or "").strip()
+                    if value:
+                        update[field] = value
             return self.handle_approval_response(
-                request.model_copy(
-                    update={
-                        "event_type": "approval_response",
-                        "envelope_id": approval.envelope_id,
-                        "approval_id": approval.approval_id,
-                        "decision_id": approval.decision.decision_id,
-                        "response_action": approval_response_action,
-                        "response_token": approval.approval_token,
-                        "project_id": approval.project_id,
-                        "session_id": approval.session_id,
-                        "native_thread_id": approval.effective_native_thread_id,
-                    }
-                )
+                request.model_copy(update=update)
             )
         intent_code = resolve_entry_message(command_text)
         if (
@@ -312,17 +336,81 @@ class FeishuControlService:
             and intent_code not in GLOBAL_READ_INTENTS
         ):
             raise FeishuControlError("project_id or native_thread_id is required")
-        adapter = OpenClawAdapter(
+        adapter = WatchdogCommandAdapter(
             settings=self._settings,
             client=self._client,
             receipt_store=self._receipt_store,
+            session_service=self._session_service,
         )
-        return adapter.handle_message(
+        reply = adapter.handle_message(
             command_text,
             project_id=project_id,
             native_thread_id=native_thread_id,
             operator="feishu",
             idempotency_key=f"feishu:{request.client_request_id}",
+        )
+        self._record_command_route_binding(
+            request=request,
+            reply=reply,
+            project_id=project_id,
+            session_id=session_id,
+            native_thread_id=native_thread_id,
+            command_text=command_text,
+        )
+        return reply
+
+    def _record_command_route_binding(
+        self,
+        *,
+        request: FeishuControlRequest,
+        reply,
+        project_id: str | None,
+        session_id: str | None,
+        native_thread_id: str | None,
+        command_text: str,
+    ) -> None:
+        resolved_project_id = str(
+            project_id
+            or getattr(getattr(reply, "action_result", None), "project_id", None)
+            or getattr(getattr(reply, "session", None), "project_id", None)
+            or getattr(getattr(reply, "progress", None), "project_id", None)
+            or ""
+        ).strip()
+        if not resolved_project_id:
+            return
+
+        resolved_session_id = str(
+            session_id
+            or getattr(getattr(reply, "session", None), "session_id", None)
+            or f"session:{resolved_project_id}"
+        ).strip()
+        if not resolved_session_id:
+            return
+
+        resolved_native_thread_id = str(
+            native_thread_id
+            or getattr(getattr(reply, "session", None), "native_thread_id", None)
+            or getattr(getattr(reply, "progress", None), "native_thread_id", None)
+            or ""
+        ).strip()
+
+        related_ids = self._goal_bootstrap_related_ids(request)
+        if resolved_native_thread_id:
+            related_ids["native_thread_id"] = resolved_native_thread_id
+
+        self._session_service.record_event_once(
+            event_type="feishu_command_route_bound",
+            project_id=resolved_project_id,
+            session_id=resolved_session_id,
+            correlation_id=f"corr:feishu-command-route:{request.client_request_id}",
+            causation_id=request.client_request_id,
+            related_ids=related_ids,
+            occurred_at=request.occurred_at,
+            payload={
+                "channel_kind": request.channel_kind,
+                "command_text": command_text,
+                "intent_code": str(getattr(reply, "intent_code", "") or "").strip(),
+            },
         )
 
     @classmethod
@@ -339,7 +427,7 @@ class FeishuControlService:
         created_at = _parse_timestamp(record.created_at)
         return (_fact_snapshot_order(record.fact_snapshot_version), created_at, record.approval_id)
 
-    def _find_latest_pending_approval(
+    def _pending_approval_candidates(
         self,
         *,
         project_id: str | None,
@@ -349,11 +437,16 @@ class FeishuControlService:
         normalized_project_id = str(project_id or "").strip() or None
         normalized_session_id = str(session_id or "").strip() or None
         normalized_native_thread_id = str(native_thread_id or "").strip() or None
-        if normalized_project_id is None:
-            normalized_project_id = str(self._settings.default_project_id or "").strip() or None
+        runtime_actionable_ids = self._runtime_actionable_approval_ids(
+            project_id=normalized_project_id,
+            session_id=normalized_session_id,
+            native_thread_id=normalized_native_thread_id,
+        )
         candidates: list[CanonicalApprovalRecord] = []
         for record in self._approval_store.list_records():
-            if record.status != "pending":
+            if record.status != "pending" and (
+                runtime_actionable_ids is None or record.approval_id not in runtime_actionable_ids
+            ):
                 continue
             if normalized_project_id is not None and record.project_id != normalized_project_id:
                 continue
@@ -366,9 +459,151 @@ class FeishuControlService:
             ):
                 continue
             candidates.append(record)
+        return sorted(candidates, key=self._approval_recency_key, reverse=True)
+
+    def _runtime_actionable_approval_ids(
+        self,
+        *,
+        project_id: str | None,
+        session_id: str | None,
+        native_thread_id: str | None,
+    ) -> set[str] | None:
+        if project_id is None:
+            return None
+        try:
+            approval_slices = [
+                self._client.list_approvals(status="pending", project_id=project_id),
+                self._client.list_approvals(
+                    project_id=project_id,
+                    decided_by="policy-auto",
+                    callback_status="deferred",
+                ),
+            ]
+        except Exception:
+            return None
+        candidates: set[str] = set()
+        thread_candidates = {session_id or "", native_thread_id or ""}
+        for approval_slice in approval_slices:
+            for approval in approval_slice:
+                if not is_actionable_approval(approval):
+                    continue
+                approval_thread_id = str(
+                    approval.get("thread_id") or approval.get("session_id") or ""
+                ).strip()
+                if any(thread_candidates) and approval_thread_id not in thread_candidates:
+                    continue
+                approval_id = str(approval.get("approval_id") or "").strip()
+                if approval_id:
+                    candidates.add(approval_id)
+        return candidates
+
+    @staticmethod
+    def _approval_reply_binding_error() -> FeishuControlError:
+        return FeishuControlError("approval reply is ambiguous; reply to a specific pending approval")
+
+    def _resolve_pending_approval_for_text_reply(
+        self,
+        *,
+        request: FeishuControlRequest,
+        project_id: str | None,
+        session_id: str | None,
+        native_thread_id: str | None,
+    ) -> CanonicalApprovalRecord:
+        candidates = self._pending_approval_candidates(
+            project_id=project_id,
+            session_id=session_id,
+            native_thread_id=native_thread_id,
+        )
+        if not candidates:
+            raise FeishuControlError("no pending approval matches this reply")
+
+        bound_matches: list[CanonicalApprovalRecord] = []
+        unbound_candidates: list[CanonicalApprovalRecord] = []
+        has_delivery_bound_candidates = False
+        for approval in candidates:
+            binding = self._latest_delivery_binding_for_envelope(approval.envelope_id)
+            if binding is None:
+                unbound_candidates.append(approval)
+                continue
+            has_delivery_bound_candidates = True
+            if self._delivery_binding_matches_request(binding=binding, request=request):
+                bound_matches.append(approval)
+
+        if len(bound_matches) == 1:
+            return bound_matches[0]
+        if len(bound_matches) > 1:
+            raise self._approval_reply_binding_error()
+        if has_delivery_bound_candidates:
+            raise FeishuControlError("no pending approval matches this reply")
+        if len(unbound_candidates) == 1:
+            return unbound_candidates[0]
+        raise self._approval_reply_binding_error()
+
+    def _latest_delivery_binding_for_envelope(
+        self,
+        envelope_id: str,
+    ) -> dict[str, str] | None:
+        candidates: list[DeliveryOutboxRecord] = []
+        for record in self._delivery_outbox_store.list_records():
+            if record.envelope_id != envelope_id:
+                continue
+            if record.delivery_status in {"superseded", "delivery_failed"}:
+                continue
+            payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+            actor_id = str(payload.get("actor_id") or "").strip()
+            receive_id = str(payload.get("receive_id") or "").strip()
+            receive_id_type = str(payload.get("receive_id_type") or "").strip()
+            if not actor_id and not (receive_id and receive_id_type):
+                continue
+            candidates.append(record)
         if not candidates:
             return None
-        return max(candidates, key=self._approval_recency_key)
+        latest = max(
+            candidates,
+            key=lambda record: (
+                record.updated_at or record.created_at,
+                record.outbox_seq,
+            ),
+        )
+        payload = latest.envelope_payload if isinstance(latest.envelope_payload, dict) else {}
+        binding = {
+            "actor_id": str(payload.get("actor_id") or "").strip(),
+            "receive_id": str(payload.get("receive_id") or "").strip(),
+            "receive_id_type": str(payload.get("receive_id_type") or "").strip(),
+            "interaction_context_id": str(payload.get("interaction_context_id") or "").strip(),
+            "interaction_family_id": str(payload.get("interaction_family_id") or "").strip(),
+            "action_window_expires_at": str(payload.get("action_window_expires_at") or "").strip(),
+            "channel_kind": str(payload.get("channel_kind") or "").strip(),
+        }
+        if not binding["actor_id"] and not (
+            binding["receive_id"] and binding["receive_id_type"]
+        ):
+            return None
+        return binding
+
+    @staticmethod
+    def _delivery_binding_matches_request(
+        *,
+        binding: dict[str, str],
+        request: FeishuControlRequest,
+    ) -> bool:
+        request_actor_id = str(request.actor_id or "").strip()
+        if binding.get("actor_id") and binding["actor_id"] != request_actor_id:
+            return False
+        request_receive_id = str(request.receive_id or "").strip()
+        request_receive_id_type = str(request.receive_id_type or "").strip()
+        if (
+            binding.get("receive_id")
+            and binding.get("receive_id_type")
+            and request_receive_id
+            and request_receive_id_type
+            and (
+                binding["receive_id"] != request_receive_id
+                or binding["receive_id_type"] != request_receive_id_type
+            )
+        ):
+            return False
+        return True
 
     @staticmethod
     def _goal_bootstrap_related_ids(request: FeishuControlRequest) -> dict[str, str]:
@@ -523,7 +758,17 @@ class FeishuControlService:
         request: FeishuControlRequest,
     ) -> None:
         occurred_at = _parse_timestamp(request.occurred_at)
-        expires_at = _parse_timestamp(request.action_window_expires_at)
+        expires_at_raw = str(approval.expires_at or "").strip()
+        expires_at = _maybe_parse_timestamp(approval.expires_at)
+        if expires_at is None and self._settings.approval_expiration_seconds > 0:
+            created_at = _maybe_parse_timestamp(approval.created_at)
+            if created_at is not None:
+                expires_at = created_at + timedelta(
+                    seconds=float(self._settings.approval_expiration_seconds)
+                )
+                expires_at_raw = _format_timestamp(expires_at)
+        if expires_at is None:
+            return
         if occurred_at < expires_at:
             return
         self._session_service.record_event(
@@ -544,7 +789,7 @@ class FeishuControlService:
             occurred_at=request.occurred_at,
             payload={
                 "channel_kind": request.channel_kind,
-                "expired_at": request.action_window_expires_at,
+                "expired_at": expires_at_raw,
                 "received_at": request.occurred_at,
             },
         )

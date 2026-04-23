@@ -38,7 +38,7 @@ def build_watchdog_metrics_text(
     data_dir: Path | None = None,
     settings: Settings | None = None,
 ) -> str:
-    """B 侧：仅统计 audit 中 source=watchdog 的记录。"""
+    """只统计 audit 中 source=watchdog 的记录。"""
     counts = aggregate_watchdog_audit_actions(audit_path)
     label_vals = {k: float(v) for k, v in sorted(counts.items())}
     alert_vals: dict[str, float] = {}

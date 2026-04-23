@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-OpenClaw 侧调用 Watchdog 的最小模板（仅 HTTP，无飞书/OpenClaw runtime）。
+Codex Watchdog HTTP 调用模板。
 
 部署时设置环境变量：
   WATCHDOG_BASE_URL  例如 https://watchdog.internal:8720
   WATCHDOG_API_TOKEN  与 Watchdog 配置的 token 一致
   WATCHDOG_DEFAULT_PROJECT_ID  默认 project_id；显式传参优先
-  WATCHDOG_OPERATOR  默认操作人；缺省为 openclaw
+  WATCHDOG_OPERATOR  默认操作人；缺省为 watchdog
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class WatchdogTemplateClient:
             if default_project_id is not None
             else os.environ.get("WATCHDOG_DEFAULT_PROJECT_ID")
         )
-        self._operator = operator if operator is not None else os.environ.get("WATCHDOG_OPERATOR", "openclaw")
+        self._operator = operator if operator is not None else os.environ.get("WATCHDOG_OPERATOR", "watchdog")
         self._timeout = timeout
         self._transport = transport
 
@@ -138,40 +138,6 @@ class WatchdogTemplateClient:
                 "note": note,
             },
         )
-
-    def post_openclaw_response(
-        self,
-        *,
-        envelope_id: str,
-        envelope_type: str,
-        approval_id: str,
-        decision_id: str,
-        response_action: str,
-        response_token: str,
-        user_ref: str,
-        channel_ref: str,
-        client_request_id: str,
-        operator: str | None = None,
-        note: str = "",
-    ) -> dict:
-        return self._request_json(
-            "POST",
-            "/api/v1/watchdog/openclaw/responses",
-            body={
-                "envelope_id": envelope_id,
-                "envelope_type": envelope_type,
-                "approval_id": approval_id,
-                "decision_id": decision_id,
-                "response_action": response_action,
-                "response_token": response_token,
-                "user_ref": user_ref,
-                "channel_ref": channel_ref,
-                "client_request_id": client_request_id,
-                "operator": operator or self._operator,
-                "note": note,
-            },
-        )
-
 
 def fetch_progress(project_id: str | None = None) -> dict:
     return WatchdogTemplateClient().query_progress(project_id)

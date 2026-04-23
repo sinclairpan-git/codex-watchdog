@@ -17,6 +17,7 @@ from watchdog.services.session_spine.approval_visibility import (
     has_rejectable_approval,
 )
 from watchdog.services.session_spine.task_state import is_terminal_task
+from watchdog.services.session_spine.text import sanitize_session_summary
 
 
 def stable_thread_id_for_project(project_id: str) -> str:
@@ -294,12 +295,13 @@ def build_task_progress_view(
     continuation_control_plane: ContinuationControlPlaneView | None = None,
 ) -> TaskProgressView:
     stable_thread_id = stable_thread_id_for_project(project_id)
+    sanitized_summary = sanitize_session_summary(str(_task_value(task, "last_summary", "")))
     return TaskProgressView(
         project_id=project_id,
         thread_id=stable_thread_id,
         native_thread_id=task_native_thread_id(task),
         activity_phase=str(_task_value(task, "phase", "unknown")),
-        summary=str(_task_value(task, "last_summary", "")),
+        summary=sanitized_summary,
         goal_contract_version=str((goal_context or {}).get("goal_contract_version") or "") or None,
         current_phase_goal=str((goal_context or {}).get("current_phase_goal") or "") or None,
         last_user_instruction=str((goal_context or {}).get("last_user_instruction") or "") or None,
@@ -405,7 +407,7 @@ def build_session_projection(
 
     session_state = SessionState.ACTIVE
     attention_state = AttentionState.NORMAL
-    headline = str(_task_value(task, "last_summary", "session active"))
+    headline = sanitize_session_summary(str(_task_value(task, "last_summary", "session active")))
 
     if "control_link_error" in fact_codes:
         session_state = SessionState.UNAVAILABLE
@@ -414,15 +416,19 @@ def build_session_projection(
     elif fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
         session_state = SessionState.AWAITING_APPROVAL
         attention_state = AttentionState.NEEDS_HUMAN
-        headline = str(_task_value(task, "last_summary", "waiting for approval"))
+        headline = sanitize_session_summary(
+            str(_task_value(task, "last_summary", "waiting for approval"))
+        )
     elif "project_not_active" in fact_codes:
         session_state = SessionState.BLOCKED
         attention_state = AttentionState.CRITICAL
-        headline = str(_task_value(task, "last_summary", "project is not active"))
+        headline = sanitize_session_summary(
+            str(_task_value(task, "last_summary", "project is not active"))
+        )
     elif fact_codes.intersection({"stuck_no_progress", "repeat_failure", "context_critical"}):
         session_state = SessionState.BLOCKED
         attention_state = AttentionState.CRITICAL
-        headline = str(_task_value(task, "last_summary", "session blocked"))
+        headline = sanitize_session_summary(str(_task_value(task, "last_summary", "session blocked")))
 
     return SessionProjection(
         project_id=project_id,

@@ -98,8 +98,8 @@ class FakeAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
 
@@ -215,6 +215,47 @@ def test_execute_canonical_decision_is_idempotent_for_same_decision_record(
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
 
 
+def test_execute_registered_action_for_continue_preserves_injected_session_service(
+    tmp_path: Path,
+) -> None:
+    from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
+    from watchdog.contracts.session_spine.models import WatchdogActionResult
+    from watchdog.services.actions.executor import execute_registered_action_for_decision
+
+    session_service = object()
+    store = object()
+    approval_store = object()
+    decision_store = object()
+    with patch("watchdog.services.actions.executor.execute_watchdog_action") as execute_mock:
+        execute_mock.return_value = WatchdogActionResult(
+            action_code=ActionCode.CONTINUE_SESSION,
+            project_id="repo-a",
+            approval_id=None,
+            idempotency_key="idemp:test",
+            action_status=ActionStatus.COMPLETED,
+            effect=Effect.NOOP,
+            reply_code=ReplyCode.ACTION_RESULT,
+            message="ok",
+            facts=[],
+        )
+        execute_registered_action_for_decision(
+            _decision(action_ref="continue_session"),
+            settings=_settings(tmp_path),
+            client=FakeAClient(context_pressure="low"),
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+            store=store,
+            approval_store=approval_store,
+            decision_store=decision_store,
+        )
+
+    _, kwargs = execute_mock.call_args
+    assert kwargs["session_service"] is session_service
+    assert kwargs["store"] is store
+    assert kwargs["approval_store"] is approval_store
+    assert kwargs["decision_store"] is decision_store
+
+
 def test_execute_canonical_decision_is_atomic_under_concurrent_retries(
     tmp_path: Path,
 ) -> None:
@@ -278,20 +319,20 @@ def test_create_app_recovery_execution_records_canonical_truth_once(
             "session_id": "session:repo-a:child-v9",
         },
     )
-    app = create_app(settings, a_client=client, start_background_workers=False)
+    app = create_app(settings, runtime_client=client, start_background_workers=False)
     decision = _decision(action_ref="execute_recovery")
 
     first = execute_canonical_decision(
         decision,
         settings=app.state.settings,
-        client=app.state.a_client,
+        client=app.state.runtime_client,
         receipt_store=app.state.action_receipt_store,
         session_service=app.state.session_service,
     )
     second = execute_canonical_decision(
         decision,
         settings=app.state.settings,
-        client=app.state.a_client,
+        client=app.state.runtime_client,
         receipt_store=app.state.action_receipt_store,
         session_service=app.state.session_service,
     )
@@ -375,6 +416,135 @@ def test_execute_watchdog_continue_records_continuation_gate_verdict(
     assert len(consumed_events) == 1
     assert consumed_events[0].payload["state"] == "consumed"
     assert "consumed_at" in consumed_events[0].payload
+
+
+def test_execute_watchdog_continue_handles_taskless_session_bundle(
+    tmp_path: Path,
+) -> None:
+    from watchdog.contracts.session_spine.enums import (
+        ActionCode,
+        AttentionState,
+        SessionState,
+    )
+    from watchdog.contracts.session_spine.models import (
+        SessionProjection,
+        SnapshotReadSemantics,
+        TaskProgressView,
+        WatchdogAction,
+    )
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+    from watchdog.services.session_spine.actions import execute_watchdog_action
+    from watchdog.services.session_spine.service import SessionReadBundle
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    bundle = SessionReadBundle(
+        project_id="repo-a",
+        task=None,
+        approvals=[],
+        facts=[],
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state=SessionState.ACTIVE,
+            activity_phase="executing",
+            attention_state=AttentionState.NORMAL,
+            headline="working",
+            pending_approval_count=0,
+            available_intents=["continue_session"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="executing",
+            summary="working",
+            context_pressure="low",
+            stuck_level=0,
+            last_progress_at="2026-04-05T05:20:00Z",
+        ),
+        approval_queue=[],
+        snapshot=SnapshotReadSemantics(
+            read_source="persisted_spine",
+            is_persisted=True,
+            is_fresh=True,
+            is_stale=False,
+            session_seq=7,
+            fact_snapshot_version="fact-v7",
+        ),
+    )
+
+    with (
+        patch(
+            "watchdog.services.session_spine.actions._build_action_read_bundle",
+            return_value=bundle,
+        ),
+        patch("watchdog.services.session_spine.actions.post_steer") as steer_mock,
+    ):
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        result = execute_watchdog_action(
+            WatchdogAction(
+                action_code=ActionCode.CONTINUE_SESSION,
+                project_id="repo-a",
+                operator="operator",
+                idempotency_key="idem:taskless-continue",
+                arguments={"message": "继续推进当前任务"},
+            ),
+            settings=_settings(tmp_path),
+            client=FakeAClient(context_pressure="low"),
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+        )
+
+    assert result.action_status == "completed"
+    assert steer_mock.call_count == 1
+    assert steer_mock.call_args.kwargs["stuck_level"] == 0
+
+
+def test_execute_watchdog_continue_rejects_paused_session(
+    tmp_path: Path,
+) -> None:
+    from watchdog.contracts.session_spine.enums import ActionCode
+    from watchdog.contracts.session_spine.models import WatchdogAction
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+    from watchdog.services.session_spine.actions import execute_watchdog_action
+
+    class PausedClient(FakeAClient):
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            envelope = super().get_envelope(project_id)
+            envelope["data"]["status"] = "paused"
+            return envelope
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    client = PausedClient(context_pressure="low")
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        result = execute_watchdog_action(
+            WatchdogAction(
+                action_code=ActionCode.CONTINUE_SESSION,
+                project_id="repo-a",
+                operator="operator",
+                idempotency_key="idem:paused-continue",
+                arguments={"message": "继续推进当前任务"},
+            ),
+            settings=_settings(tmp_path),
+            client=client,
+            receipt_store=_receipt_store(tmp_path),
+            session_service=session_service,
+        )
+
+    assert result.action_status == "rejected"
+    assert result.reply_code == "action_not_available"
+    assert result.message == "continue is not allowed from current state"
+    assert steer_mock.call_count == 0
+    gate_events = session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+    assert len(gate_events) == 1
+    assert gate_events[0].payload["gate_status"] == "suppressed"
+    assert gate_events[0].payload["suppression_reason"] == "continue_not_allowed"
 
 
 def test_execute_watchdog_resume_records_continuation_identity_lifecycle(
@@ -662,12 +832,12 @@ def test_create_app_recovery_execution_preserves_handoff_provenance(
         },
         resume_data={"session_id": "session:repo-a:child-v9"},
     )
-    app = create_app(settings, a_client=client, start_background_workers=False)
+    app = create_app(settings, runtime_client=client, start_background_workers=False)
 
     execute_canonical_decision(
         _decision(action_ref="execute_recovery"),
         settings=app.state.settings,
-        client=app.state.a_client,
+        client=app.state.runtime_client,
         receipt_store=app.state.action_receipt_store,
         session_service=app.state.session_service,
     )
@@ -705,12 +875,12 @@ def test_create_app_recovery_execution_accepts_current_child_session_id_resume_s
             "native_thread_id": "thr_child_v9",
         },
     )
-    app = create_app(settings, a_client=client, start_background_workers=False)
+    app = create_app(settings, runtime_client=client, start_background_workers=False)
 
     execute_canonical_decision(
         _decision(action_ref="execute_recovery"),
         settings=app.state.settings,
-        client=app.state.a_client,
+        client=app.state.runtime_client,
         receipt_store=app.state.action_receipt_store,
         session_service=app.state.session_service,
     )

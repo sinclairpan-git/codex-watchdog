@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 import httpx
 
@@ -14,7 +15,7 @@ from watchdog.contracts.session_spine.enums import ActionCode
 from watchdog.contracts.session_spine.models import SupervisionEvaluation, WatchdogAction
 from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
 from watchdog.services.audit import append_watchdog_audit
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_spine.projection import task_native_thread_id
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
 from watchdog.services.session_spine.supervision import execute_supervision_evaluation
@@ -28,8 +29,8 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def _repo_recent_change_count(task: dict[str, object]) -> int | None:
@@ -55,6 +56,7 @@ def post_steer_thread(
     message: str,
     reason: str,
     stuck_level: int | None = None,
+    timeout: float = 10.0,
 ) -> dict[str, object]:
     _ = thread_id
     return post_steer(
@@ -64,6 +66,7 @@ def post_steer_thread(
         message=message,
         reason=reason,
         stuck_level=stuck_level,
+        timeout=timeout,
     )
 
 
@@ -76,20 +79,33 @@ def _legacy_evaluation_payload(evaluation: SupervisionEvaluation) -> dict[str, o
     }
 
 
-def run_background_supervision(settings: Settings, client: AControlAgentClient) -> None:
+def run_background_supervision(settings: Settings, client: CodexRuntimeClient) -> None:
     try:
         tasks = client.list_tasks()
     except (httpx.RequestError, RuntimeError, OSError):
         return
 
+    request_timeout = max(float(settings.http_timeout_s), 0.05)
+    deadline = monotonic() + request_timeout
+
     for task in tasks:
         status = task.get("status")
         project_id = task.get("project_id")
         thread_id = task_native_thread_id(task)
-        if status not in {"running", "waiting_human"}:
+        if status not in {
+            "created",
+            "running",
+            "resuming",
+            "waiting_human",
+            "waiting_for_direction",
+        }:
             continue
         if not isinstance(project_id, str) or not project_id:
             continue
+        if not isinstance(thread_id, str) or not thread_id:
+            fallback_thread_id = task.get("thread_id")
+            if isinstance(fallback_thread_id, str) and fallback_thread_id:
+                thread_id = fallback_thread_id
         if not isinstance(thread_id, str) or not thread_id:
             continue
         ev = evaluate_stuck(task, repo_recent_change_count=_repo_recent_change_count(task))
@@ -97,15 +113,19 @@ def run_background_supervision(settings: Settings, client: AControlAgentClient) 
             continue
         next_level = ev.get("next_stuck_level")
         stuck_level = int(next_level) if isinstance(next_level, int) else None
+        remaining_timeout = deadline - monotonic()
+        if remaining_timeout <= 0:
+            break
         try:
             body = post_steer_thread(
-                settings.a_agent_base_url,
-                settings.a_agent_token,
+                settings.codex_runtime_base_url,
+                settings.codex_runtime_token,
                 thread_id,
                 project_id,
                 message=SOFT_STEER_MESSAGE,
                 reason=str(ev.get("reason", "stuck_soft")),
                 stuck_level=stuck_level,
+                timeout=remaining_timeout,
             )
         except (httpx.HTTPError, RuntimeError):
             continue
@@ -128,10 +148,10 @@ def evaluate_task(
     project_id: str,
     request: Request,
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
-    """拉取 A 侧任务 → stuck 分析 → 满足阈值则注入 soft steer。"""
+    """拉取 runtime 任务 → stuck 分析 → 满足阈值则注入 soft steer。"""
     rid = request.headers.get("x-request-id")
 
     action = WatchdogAction(

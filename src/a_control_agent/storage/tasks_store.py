@@ -9,6 +9,10 @@ from typing import Any
 
 from a_control_agent.audit import append_jsonl
 from a_control_agent.services.codex_input import fingerprint_input_text
+from watchdog.services.project_aliases import (
+    canonicalize_project_id,
+    rewrite_legacy_project_aliases,
+)
 from watchdog.services.session_spine.task_state import (
     is_canonical_task_phase,
     is_canonical_task_status,
@@ -44,13 +48,13 @@ def _parse_iso(value: Any) -> datetime | None:
 
 def _derive_project_id(raw: Any, cwd: str, *, fallback: str = "") -> str:
     if isinstance(raw, str) and raw.strip():
-        return raw.strip()
+        return canonicalize_project_id(raw.strip())
     if cwd.strip():
         name = Path(cwd).name.strip()
         if name:
-            return name
+            return canonicalize_project_id(name)
     if fallback.strip():
-        return fallback.strip()
+        return canonicalize_project_id(fallback.strip())
     return "unknown-project"
 
 
@@ -87,6 +91,17 @@ def _normalize_optional_text(value: Any) -> str | None:
     return normalized
 
 
+def _normalize_files_touched(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
 def _canonicalize_task_record(
     rec: dict[str, Any],
     *,
@@ -104,7 +119,7 @@ def _canonicalize_task_record(
     )
     rec["stuck_level"] = _safe_int(rec.get("stuck_level", 0), default=0, minimum=0, maximum=4)
     rec["failure_count"] = _safe_int(rec.get("failure_count", 0), default=0, minimum=0)
-    rec["files_touched"] = list(rec.get("files_touched", []))
+    rec["files_touched"] = _normalize_files_touched(rec.get("files_touched"))
     rec["approval_risk"] = rec.get("approval_risk")
     rec["last_error_signature"] = rec.get("last_error_signature")
     rec["task_title"] = str(rec.get("task_title", ""))
@@ -152,6 +167,7 @@ class TaskStore:
     def _normalize(self, data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(data, dict):
             return self._empty_payload()
+        data = rewrite_legacy_project_aliases(data)
 
         if isinstance(data.get("tasks"), dict):
             raw_tasks = data.get("tasks", {})
@@ -271,6 +287,8 @@ class TaskStore:
         *,
         now: str,
     ) -> dict[str, Any]:
+        body = rewrite_legacy_project_aliases(body)
+        project_id = canonicalize_project_id(project_id)
         return _canonicalize_task_record({
             "project_id": project_id,
             "thread_id": thread_id,
@@ -448,6 +466,8 @@ class TaskStore:
             return [TaskRecord(row) for row in ordered]
 
     def upsert_from_create(self, project_id: str, body: dict[str, Any]) -> TaskRecord:
+        body = rewrite_legacy_project_aliases(body)
+        project_id = canonicalize_project_id(project_id)
         with self._lock:
             data = self._read()
             thread_id = f"thr_{uuid.uuid4().hex[:16]}"
@@ -469,6 +489,7 @@ class TaskStore:
         return TaskRecord(dict(rec))
 
     def upsert_native_thread(self, thread: dict[str, Any]) -> TaskRecord:
+        thread = rewrite_legacy_project_aliases(thread)
         cwd = str(thread.get("cwd", ""))
         project_id = _derive_project_id(thread.get("project_id"), cwd)
         thread_id = str(thread.get("thread_id") or f"thr_{uuid.uuid4().hex[:16]}")

@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "A-Control-Agent",
+    "title": "Codex runtime service",
     "version": "0.1.0"
   },
   "paths": {

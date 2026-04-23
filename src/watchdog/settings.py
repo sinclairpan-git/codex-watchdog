@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     api_token: str = "dev-token-change-me"
     host: str = "127.0.0.1"
     port: int = 8720
-    a_agent_base_url: str = "http://127.0.0.1:8710"
-    a_agent_token: str = "dev-token-change-me"
+    codex_runtime_base_url: str = "http://127.0.0.1:8710"
+    codex_runtime_token: str = "dev-token-change-me"
     http_timeout_s: float = 3.0
     data_dir: str = ".data/watchdog"
     recover_auto_resume: bool = False
@@ -47,11 +47,10 @@ class Settings(BaseSettings):
     progress_summary_max_age_seconds: float = 600.0
     auto_execute_notification_max_age_seconds: float = 600.0
     local_manual_activity_quiet_window_seconds: float = 600.0
-    openclaw_webhook_base_url: str = "http://127.0.0.1:8740"
-    openclaw_webhook_token: str = "dev-token-change-me"
+    local_manual_activity_auto_execute_quiet_window_seconds: float = 600.0
+    local_manual_activity_recently_idle_window_seconds: float = 1800.0
     default_project_id: str | None = None
-    openclaw_webhook_endpoint_state_file: str | None = None
-    delivery_transport: str = "openclaw"
+    delivery_transport: Literal["feishu", "feishu-app"] = "feishu"
     feishu_base_url: str = "https://open.feishu.cn"
     feishu_event_ingress_mode: Literal["callback", "long_connection"] = "callback"
     feishu_callback_ingress_mode: Literal["callback", "long_connection"] = "callback"

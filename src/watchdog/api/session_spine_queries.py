@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.models import ActionReceiptQuery
 from watchdog.envelope import err, ok
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
 from watchdog.services.session_service import SessionService
 from watchdog.services.session_spine.receipts import lookup_action_receipt
@@ -41,8 +41,8 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 router = APIRouter(prefix="/watchdog", tags=["session-spine"])
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def get_receipt_store(request: Request) -> ActionReceiptStore:
@@ -106,7 +106,7 @@ def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuer
 def get_approval_inbox(
     request: Request,
     project_id: str | None = None,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -132,12 +132,12 @@ def get_approval_inbox(
     description=(
         "Stable read surface for cross-project session discovery. Returns a "
         "versioned ReplyModel carrying SessionProjection rows instead of the "
-        "raw A-Control-Agent task list."
+        "raw runtime task list."
     ),
 )
 def list_sessions(
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -180,7 +180,7 @@ def list_sessions(
 def get_session_by_native_thread(
     native_thread_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -221,14 +221,14 @@ def get_session_by_native_thread(
     "/sessions/{project_id}",
     summary="Get stable session projection",
     description=(
-        "Stable read surface for OpenClaw and other callers. Returns a "
+        "Stable read surface for external callers. Returns a "
         "versioned ReplyModel carrying SessionProjection and FactRecord data."
     ),
 )
 def get_session(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -270,7 +270,7 @@ def get_session(
 def get_progress(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -305,7 +305,7 @@ def get_progress(
     "/sessions/{project_id}/facts",
     summary="Get stable session facts truth source",
     description=(
-        "Canonical stable facts read surface for OpenClaw and other callers. "
+        "Canonical stable facts read surface for external callers. "
         "Returns a versioned ReplyModel carrying FactRecord rows without "
         "changing the explanation surfaces."
     ),
@@ -313,7 +313,7 @@ def get_progress(
 def get_session_facts(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -350,14 +350,14 @@ def get_session_facts(
     description=(
         "Stable read surface for workspace activity inspection. Returns a "
         "versioned ReplyModel carrying WorkspaceActivityView instead of the "
-        "raw A-Control-Agent workspace activity envelope."
+        "raw runtime workspace activity envelope."
     ),
 )
 def get_workspace_activity(
     project_id: str,
     request: Request,
     recent_minutes: int = Query(default=15, ge=1, le=24 * 60),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -383,7 +383,7 @@ def get_workspace_activity(
 def get_pending_approvals(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -428,7 +428,7 @@ def get_pending_approvals(
 def get_session_event_snapshot(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
@@ -455,7 +455,7 @@ def get_session_event_snapshot(
 def get_stuck_explanation(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),
@@ -497,7 +497,7 @@ def get_stuck_explanation(
 def get_blocker_explanation(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     session_service: SessionService = Depends(get_session_service),
     store: SessionSpineStore = Depends(get_session_spine_store),
     approval_store: Any = Depends(get_canonical_approval_store),

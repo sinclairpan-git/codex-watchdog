@@ -23,7 +23,11 @@ from watchdog.services.policy.rules import (
     RISK_CLASS_HUMAN_GATE,
     RISK_CLASS_NONE,
 )
+from watchdog.services.session_spine.service import SessionDirectoryReadBundle
 from watchdog.services.session_spine.store import PersistedSessionRecord
+
+SESSION_DIRECTORY_PROJECT_ID = "__portfolio__"
+SESSION_DIRECTORY_SESSION_ID = "session:directory"
 
 
 def _short_hash(value: str) -> str:
@@ -118,6 +122,54 @@ def progress_summary_fingerprint(record: PersistedSessionRecord) -> str:
     return _short_hash(repr(payload))
 
 
+def session_directory_summary_fingerprint(bundle: SessionDirectoryReadBundle) -> str:
+    session_payload = sorted(
+        [
+            {
+                "project_id": session.project_id,
+                "session_state": session.session_state,
+                "attention_state": session.attention_state,
+                "headline": session.headline,
+            }
+            for session in bundle.sessions
+        ],
+        key=lambda item: str(item["project_id"]),
+    )
+    progress_payload = sorted(
+        [
+            {
+                "project_id": progress.project_id,
+                "activity_phase": progress.activity_phase,
+                "summary": progress.summary,
+                "context_pressure": progress.context_pressure,
+                "stuck_level": progress.stuck_level,
+                "last_progress_at": progress.last_progress_at,
+            }
+            for progress in bundle.progresses
+        ],
+        key=lambda item: str(item["project_id"]),
+    )
+    coverage = bundle.resident_expert_coverage
+    coverage_payload = (
+        {
+            "available_expert_count": coverage.available_expert_count,
+            "bound_expert_count": coverage.bound_expert_count,
+            "restoring_expert_count": coverage.restoring_expert_count,
+            "stale_expert_count": coverage.stale_expert_count,
+            "unavailable_expert_count": coverage.unavailable_expert_count,
+            "latest_consultation_ref": coverage.latest_consultation_ref,
+        }
+        if coverage is not None
+        else None
+    )
+    payload = {
+        "sessions": session_payload,
+        "progresses": progress_payload,
+        "coverage": coverage_payload,
+    }
+    return _short_hash(repr(payload))
+
+
 def build_progress_summary_envelope(
     record: PersistedSessionRecord,
     *,
@@ -158,6 +210,54 @@ def build_progress_summary_envelope(
         summary=summary,
         reason="; ".join(reason_parts),
         facts=[fact.model_dump(mode="json") for fact in record.facts],
+        recommended_actions=[],
+    )
+
+
+def build_session_directory_summary_envelope(
+    bundle: SessionDirectoryReadBundle,
+    *,
+    created_at: str,
+    summary_fingerprint: str | None = None,
+) -> NotificationEnvelope:
+    from watchdog.services.entrypoints.reply_model import (
+        build_session_directory_reply,
+    )
+
+    fingerprint = summary_fingerprint or session_directory_summary_fingerprint(bundle)
+    reply = build_session_directory_reply(bundle)
+    progress_timestamps = [
+        timestamp
+        for timestamp in (
+            _canonical_timestamp(progress.last_progress_at)
+            for progress in bundle.progresses
+        )
+        if timestamp is not None
+    ]
+    occurred_at = max(progress_timestamps, default=None)
+    return NotificationEnvelope(
+        envelope_id=_envelope_id(
+            f"{SESSION_DIRECTORY_SESSION_ID}|{fingerprint}",
+            "notification",
+            "session_directory_summary",
+        ),
+        correlation_id=f"session-directory-summary:{fingerprint}",
+        session_id=SESSION_DIRECTORY_SESSION_ID,
+        project_id=SESSION_DIRECTORY_PROJECT_ID,
+        native_thread_id=None,
+        policy_version=POLICY_VERSION,
+        fact_snapshot_version="directory-summary",
+        idempotency_key=f"{SESSION_DIRECTORY_SESSION_ID}|directory-summary|{fingerprint}",
+        audit_ref="session-directory-summary",
+        created_at=created_at,
+        event_id=f"event:{_short_hash('session_directory_summary|' + fingerprint)}",
+        severity="info",
+        notification_kind="session_directory_summary",
+        occurred_at=occurred_at,
+        title="session directory summary",
+        summary=reply.message,
+        reason=f"{len(bundle.sessions)} projects tracked",
+        facts=[],
         recommended_actions=[],
     )
 
@@ -244,7 +344,7 @@ class ApprovalEnvelope(EnvelopeBase):
     matched_policy_rules: list[str] = Field(default_factory=list)
     why_escalated: str | None = None
     approval_token: str
-    callback_action_ref: str = "/api/v1/watchdog/openclaw/responses"
+    callback_action_ref: str = "/api/v1/watchdog/feishu/control"
 
 
 def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvelope:
@@ -346,7 +446,7 @@ def _build_approval_envelope(decision: CanonicalDecisionRecord) -> ApprovalEnvel
 
 def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> ApprovalEnvelope:
     decision = approval.decision
-    occurred_at = _canonical_timestamp(decision.created_at)
+    occurred_at = _canonical_timestamp(approval.created_at)
     requested_action_args = dict(approval.requested_action_args)
     return ApprovalEnvelope(
         envelope_id=approval.envelope_id,
@@ -358,7 +458,7 @@ def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> App
         fact_snapshot_version=approval.fact_snapshot_version,
         idempotency_key=approval.idempotency_key,
         audit_ref=decision.decision_id,
-        created_at=occurred_at or decision.created_at,
+        created_at=occurred_at or approval.created_at,
         approval_id=approval.approval_id,
         approval_kind=approval.approval_kind,
         requested_action=approval.requested_action,
@@ -369,7 +469,7 @@ def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> App
         reason=decision.decision_reason,
         alternative="",
         status=approval.status,
-        requested_at=occurred_at or decision.created_at,
+        requested_at=occurred_at or approval.created_at,
         title=f"approval required for {approval.requested_action}",
         summary=decision.decision_reason,
         facts=_facts_from_decision(decision),

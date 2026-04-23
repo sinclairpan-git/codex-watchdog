@@ -33,7 +33,7 @@ OWNER_LEDGER_OUTPUT = Path(
 )
 HISTORICAL_MISSING_WORK_ITEMS = (
     "006-m5-hardening",
-    "010-openclaw-integration-spine",
+    "010-runtime-integration-spine",
     "011-stable-session-events",
     "012-stable-recovery-execution",
     "013-stable-action-receipts",
@@ -49,12 +49,12 @@ HISTORICAL_MISSING_WORK_ITEMS = (
     "025-policy-engine-decision-evidence",
     "026-canonical-action-approval-response-loop",
     "027-outbox-delivery-retry-receipt",
-    "028-openclaw-webhook-response-api-reference-runtime",
+    "028-webhook-response-api-reference-runtime",
     "029-audit-replay-ops-production-deployment",
 )
 HISTORICAL_STALE_POINTERS = (
-    ".ai-sdlc/state/checkpoint.yml points to 023-codex-client-openclaw-route-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair",
-    ".ai-sdlc/state/checkpoint.yml points to 023-codex-client-openclaw-route-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair",
+    ".ai-sdlc/state/checkpoint.yml points to 023-codex-client-routing-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair",
+    ".ai-sdlc/state/checkpoint.yml points to 023-codex-client-routing-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair",
     ".ai-sdlc/project/config/project-state.yaml next_work_item_seq=24, expected 48",
 )
 ISO_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -256,7 +256,7 @@ def _repair_project_state(
     existing = _read_text(path)
     payload = {
         "status": _extract_scalar(existing, "status") or "initialized",
-        "project_name": _extract_scalar(existing, "project_name") or "openclaw-codex-watchdog",
+        "project_name": _extract_scalar(existing, "project_name") or "codex-watchdog",
         "initialized_at": _extract_scalar(existing, "initialized_at") or timestamp,
         "last_updated": timestamp,
         "next_work_item_seq": next_work_item_seq,
@@ -292,7 +292,7 @@ def _repair_checkpoint(
             "max_parallel": 1,
             "tool_capability": "",
         },
-        "prd_source": _extract_scalar(existing, "prd_source") or "openclaw-codex-watchdog-prd.md",
+        "prd_source": _extract_scalar(existing, "prd_source") or "codex-watchdog-prd.md",
         "completed_stages": [
             {
                 "stage": "init",

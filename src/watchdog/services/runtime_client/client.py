@@ -9,14 +9,14 @@ import httpx
 from watchdog.settings import Settings
 
 
-class AControlAgentClient:
-    """通过 HTTP 调用 A-Control-Agent，返回完整 envelope JSON。"""
+class CodexRuntimeClient:
+    """通过 HTTP 调用 Codex Runtime，返回完整 envelope JSON。"""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
     def _auth_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._settings.a_agent_token}"}
+        return {"Authorization": f"Bearer {self._settings.codex_runtime_token}"}
 
     def _client_kwargs(self, *, timeout: float | httpx.Timeout | None = None) -> dict[str, Any]:
         return {
@@ -25,7 +25,7 @@ class AControlAgentClient:
         }
 
     def get_envelope(self, project_id: str) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}"
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers())
@@ -34,13 +34,13 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
 
     def get_envelope_by_thread(self, thread_id: str) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/by-thread/{thread_id}"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/by-thread/{thread_id}"
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers())
@@ -49,13 +49,13 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
 
     def list_tasks(self) -> list[dict[str, Any]]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks"
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.get(url, headers=self._auth_headers())
@@ -64,7 +64,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if not isinstance(body, dict):
                 raise RuntimeError("invalid_envelope_shape")
             if not body.get("success"):
@@ -78,7 +78,7 @@ class AControlAgentClient:
             return [dict(task) for task in tasks if isinstance(task, dict)]
 
     def register_native_thread(self, payload: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/native-threads"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/native-threads"
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(url, headers=self._auth_headers(), json=payload)
@@ -90,7 +90,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
@@ -103,7 +103,7 @@ class AControlAgentClient:
         decided_by: str | None = None,
         callback_status: str | None = None,
     ) -> list[dict[str, Any]]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/approvals"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/approvals"
         params: dict[str, str] = {}
         if status:
             params["status"] = status
@@ -121,7 +121,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if not isinstance(body, dict):
                 raise RuntimeError("invalid_envelope_shape")
             if not body.get("success"):
@@ -142,7 +142,7 @@ class AControlAgentClient:
         operator: str,
         note: str = "",
     ) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
         payload: dict[str, Any] = {
             "decision": decision,
             "operator": operator,
@@ -157,7 +157,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
@@ -169,7 +169,7 @@ class AControlAgentClient:
         reason: str,
         continuation_packet: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/handoff"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}/handoff"
         payload: dict[str, Any] = {"reason": reason}
         if continuation_packet is not None:
             payload["continuation_packet"] = continuation_packet
@@ -188,13 +188,13 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
 
     def trigger_pause(self, project_id: str) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/pause"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}/pause"
         with httpx.Client(**self._client_kwargs()) as client:
             try:
                 resp = client.post(
@@ -210,7 +210,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
@@ -223,7 +223,7 @@ class AControlAgentClient:
         handoff_summary: str,
         continuation_packet: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/resume"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}/resume"
         payload: dict[str, Any] = {
             "mode": mode,
             "handoff_summary": handoff_summary,
@@ -241,7 +241,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
@@ -252,7 +252,7 @@ class AControlAgentClient:
         *,
         poll_interval: float = 0.5,
     ) -> tuple[str, str] | dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
         params = {"follow": "false", "poll_interval": str(poll_interval)}
         with httpx.Client(**self._client_kwargs()) as client:
             try:
@@ -265,7 +265,7 @@ class AControlAgentClient:
         try:
             body = resp.json()
         except ValueError as exc:
-            raise RuntimeError("invalid_json_from_a_agent") from exc
+            raise RuntimeError("invalid_json_from_runtime") from exc
         if isinstance(body, dict):
             return body
         raise RuntimeError("invalid_envelope_shape")
@@ -276,7 +276,7 @@ class AControlAgentClient:
         *,
         recent_minutes: int = 15,
     ) -> dict[str, Any]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/workspace-activity"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}/workspace-activity"
         params = {"recent_minutes": str(recent_minutes)}
         with httpx.Client(**self._client_kwargs()) as client:
             try:
@@ -286,7 +286,7 @@ class AControlAgentClient:
             try:
                 body = resp.json()
             except ValueError as exc:
-                raise RuntimeError("invalid_json_from_a_agent") from exc
+                raise RuntimeError("invalid_json_from_runtime") from exc
             if isinstance(body, dict):
                 return body
             raise RuntimeError("invalid_envelope_shape")
@@ -297,7 +297,7 @@ class AControlAgentClient:
         *,
         poll_interval: float = 0.5,
     ) -> Iterator[str]:
-        url = f"{self._settings.a_agent_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
+        url = f"{self._settings.codex_runtime_base_url.rstrip('/')}/api/v1/tasks/{project_id}/events"
         params = {"follow": "true", "poll_interval": str(poll_interval)}
         timeout = httpx.Timeout(self._settings.http_timeout_s, read=None)
         stack = ExitStack()
@@ -308,7 +308,7 @@ class AControlAgentClient:
             )
             content_type = str(resp.headers.get("content-type", ""))
             if not content_type.startswith("text/event-stream"):
-                raise RuntimeError("invalid_event_stream_from_a_agent")
+                raise RuntimeError("invalid_event_stream_from_runtime")
         except Exception:
             stack.close()
             raise

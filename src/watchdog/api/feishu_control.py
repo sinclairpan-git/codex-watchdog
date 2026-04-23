@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from watchdog.api.deps import require_token
 from watchdog.envelope import err, ok
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.approvals.service import ApprovalResponseStore, CanonicalApprovalStore
 from watchdog.services.delivery.store import DeliveryOutboxStore
 from watchdog.services.feishu_control import (
@@ -26,8 +26,8 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def get_receipt_store(request: Request) -> ActionReceiptStore:
@@ -74,7 +74,7 @@ def post_feishu_control(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
     approval_store: CanonicalApprovalStore = Depends(get_approval_store),
     response_store: ApprovalResponseStore = Depends(get_response_store),

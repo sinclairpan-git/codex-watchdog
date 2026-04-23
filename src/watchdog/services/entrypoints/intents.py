@@ -59,7 +59,7 @@ NATURAL_LANGUAGE_TO_INTENT = {
     "事件快照": "list_session_events",
     "为什么卡住": "why_stuck",
     "卡在哪里": "explain_blocker",
-    "审批列表": "list_pending_approvals",
+    "审批列表": "list_approval_inbox",
     "继续": "continue_session",
     "继续做": "continue_session",
     "暂停": "pause_session",

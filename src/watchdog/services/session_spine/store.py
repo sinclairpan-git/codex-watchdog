@@ -18,6 +18,7 @@ from watchdog.contracts.session_spine.models import (
     SessionProjection,
     TaskProgressView,
 )
+from watchdog.services.session_spine.text import sanitize_session_summary
 
 
 def _utc_now_iso() -> str:
@@ -102,7 +103,26 @@ class SessionSpineStore:
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
             return PersistedSessionSpineFile()
-        return PersistedSessionSpineFile.model_validate_json(raw)
+        data = PersistedSessionSpineFile.model_validate_json(raw)
+        changed = False
+        for project_id, record in list(data.sessions.items()):
+            sanitized_headline = sanitize_session_summary(record.session.headline)
+            sanitized_summary = sanitize_session_summary(record.progress.summary)
+            if (
+                sanitized_headline == record.session.headline
+                and sanitized_summary == record.progress.summary
+            ):
+                continue
+            changed = True
+            data.sessions[project_id] = record.model_copy(
+                update={
+                    "session": record.session.model_copy(update={"headline": sanitized_headline}),
+                    "progress": record.progress.model_copy(update={"summary": sanitized_summary}),
+                }
+            )
+        if changed:
+            self._write(data)
+        return data
 
     def _write(self, data: PersistedSessionSpineFile) -> None:
         tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")

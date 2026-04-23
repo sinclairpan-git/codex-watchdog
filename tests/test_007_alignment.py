@@ -65,13 +65,13 @@ def test_evaluate_suppressed_when_repo_activity(tmp_path: Path) -> None:
     app = create_watchdog_app(
         WSettings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path / "wd"),
         )
     )
     c = TestClient(app)
-    with patch("watchdog.services.a_client.client.httpx.Client") as mcli:
+    with patch("watchdog.services.runtime_client.client.httpx.Client") as mcli:
         mock_inst = MagicMock()
         mcli.return_value.__enter__.return_value = mock_inst
         mock_inst.get.return_value.json.return_value = {"success": True, "data": task_data}
@@ -93,8 +93,8 @@ def test_recover_handoff_and_resume_when_enabled(tmp_path: Path) -> None:
     app = create_watchdog_app(
         WSettings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path / "wd"),
             recover_auto_resume=True,
         )
@@ -119,8 +119,8 @@ def test_recover_handoff_and_resume_when_enabled(tmp_path: Path) -> None:
             },
         }
 
-    app.state.a_client.get_envelope = _env  # type: ignore[method-assign]
-    app.state.a_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
+    app.state.runtime_client.get_envelope = _env  # type: ignore[method-assign]
+    app.state.runtime_client.list_approvals = lambda **_: []  # type: ignore[method-assign]
     handoff_calls: list[tuple[str, str, dict[str, object] | None]] = []
     resume_calls: list[tuple[str, str, str, dict[str, object] | None]] = []
 
@@ -143,8 +143,8 @@ def test_recover_handoff_and_resume_when_enabled(tmp_path: Path) -> None:
         resume_calls.append((project_id, mode, handoff_summary, continuation_packet))
         return {"success": True, "data": {"status": "running", "resume_outcome": "same_thread_resume"}}
 
-    app.state.a_client.trigger_handoff = _trigger_handoff  # type: ignore[method-assign]
-    app.state.a_client.trigger_resume = _trigger_resume  # type: ignore[method-assign]
+    app.state.runtime_client.trigger_handoff = _trigger_handoff  # type: ignore[method-assign]
+    app.state.runtime_client.trigger_resume = _trigger_resume  # type: ignore[method-assign]
     c = TestClient(app)
     r = c.post(
         "/api/v1/watchdog/tasks/p1/recover",

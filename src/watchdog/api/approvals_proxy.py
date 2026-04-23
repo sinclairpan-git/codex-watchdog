@@ -17,7 +17,7 @@ def get_settings(request: Request) -> Settings:
 
 
 def _a_headers(settings: Settings) -> dict[str, str]:
-    return {"Authorization": f"Bearer {settings.a_agent_token}"}
+    return {"Authorization": f"Bearer {settings.codex_runtime_token}"}
 
 
 def _a_client(settings: Settings) -> httpx.Client:
@@ -32,7 +32,7 @@ def list_approvals_watchdog(
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
     rid = request.headers.get("x-request-id")
-    url = f"{settings.a_agent_base_url.rstrip('/')}/api/v1/approvals"
+    url = f"{settings.codex_runtime_base_url.rstrip('/')}/api/v1/approvals"
     params = {}
     if status:
         params["status"] = status
@@ -45,11 +45,11 @@ def list_approvals_watchdog(
             rid,
             {
                 "code": "CONTROL_LINK_ERROR",
-                "message": "无法连接 A-Control-Agent",
+                "message": "无法连接 Codex runtime 控制链路",
             },
         )
     except ValueError:
-        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "A 侧响应非 JSON"})
+        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "runtime 响应非 JSON"})
     if isinstance(body, dict):
         return body
     return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "响应格式异常"})
@@ -64,7 +64,7 @@ def decision_watchdog(
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
     rid = request.headers.get("x-request-id")
-    url = f"{settings.a_agent_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
+    url = f"{settings.codex_runtime_base_url.rstrip('/')}/api/v1/approvals/{approval_id}/decision"
     try:
         with _a_client(settings) as client:
             r = client.post(url, json=body, headers=_a_headers(settings))
@@ -74,11 +74,11 @@ def decision_watchdog(
             rid,
             {
                 "code": "CONTROL_LINK_ERROR",
-                "message": "无法连接 A-Control-Agent",
+                "message": "无法连接 Codex runtime 控制链路",
             },
         )
     except ValueError:
-        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "A 侧响应非 JSON"})
+        return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "runtime 响应非 JSON"})
     if isinstance(out, dict):
         return out
     return err(rid, {"code": "CONTROL_LINK_ERROR", "message": "响应格式异常"})

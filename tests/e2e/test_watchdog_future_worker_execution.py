@@ -15,8 +15,8 @@ from watchdog.settings import Settings
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="watchdog-token",
-        a_agent_token="a-agent-token",
-        a_agent_base_url="http://a-control.test",
+        codex_runtime_token="a-agent-token",
+        codex_runtime_base_url="http://a-control.test",
         data_dir=str(tmp_path),
         auto_continue_cooldown_seconds=0.0,
     )
@@ -208,7 +208,7 @@ def test_resident_orchestrator_materializes_and_consumes_future_worker_chain(
 ) -> None:
     app = create_app(
         _settings(tmp_path),
-        a_client=_ResidentAClient(
+        runtime_client=_ResidentAClient(
             task={
                 "project_id": "repo-a",
                 "thread_id": "thr_native_1",

@@ -5,17 +5,23 @@ import json
 import logging
 import warnings
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI
 from pydantic import ValidationError
 
+from watchdog.services.delivery.envelopes import (
+    SESSION_DIRECTORY_PROJECT_ID,
+    SESSION_DIRECTORY_SESSION_ID,
+)
 from watchdog.services.feishu_control import FeishuControlError, FeishuControlService
 from watchdog.services.feishu_ingress.service import (
     FeishuIngressError,
     FeishuIngressNormalizationService,
     FeishuMessageCallback,
 )
+from watchdog.services.session_service import SessionService
 from watchdog.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -48,10 +54,12 @@ class FeishuLongConnectionGateway:
         settings: Settings,
         ingress: FeishuIngressNormalizationService,
         control_service: FeishuControlService,
+        session_service: SessionService,
     ) -> None:
         self._settings = settings
         self._ingress = ingress
         self._control_service = control_service
+        self._session_service = session_service
 
     @classmethod
     def from_app(cls, app: FastAPI) -> "FeishuLongConnectionGateway":
@@ -59,18 +67,19 @@ class FeishuLongConnectionGateway:
             settings=app.state.settings,
             ingress=FeishuIngressNormalizationService(
                 settings=app.state.settings,
-                client=app.state.a_client,
+                client=app.state.runtime_client,
                 session_spine_store=app.state.session_spine_store,
             ),
             control_service=FeishuControlService(
                 settings=app.state.settings,
-                client=app.state.a_client,
+                client=app.state.runtime_client,
                 receipt_store=app.state.action_receipt_store,
                 approval_store=app.state.canonical_approval_store,
                 response_store=app.state.approval_response_store,
                 delivery_outbox_store=app.state.delivery_outbox_store,
                 session_service=app.state.session_service,
             ),
+            session_service=app.state.session_service,
         )
 
     def handle_message_event(self, payload: object) -> dict[str, object]:
@@ -95,9 +104,13 @@ class FeishuLongConnectionGateway:
     def handle_bot_p2p_chat_entered_event(self, payload: object) -> dict[str, str]:
         body = self._canonicalize_payload_for_long_connection(payload)
         self._validate_callback_token(body)
+        header = body.get("header")
+        event_id = ""
         event = body.get("event")
         chat_id = ""
         operator_open_id = ""
+        if isinstance(header, dict):
+            event_id = str(header.get("event_id") or "").strip()
         if isinstance(event, dict):
             chat_id = str(event.get("chat_id") or "").strip()
             operator = event.get("operator_id")
@@ -107,6 +120,30 @@ class FeishuLongConnectionGateway:
             "feishu long-connection p2p chat entered: chat_id=%s operator_open_id=%s",
             chat_id,
             operator_open_id,
+        )
+        related_ids: dict[str, str] = {}
+        if event_id:
+            related_ids["feishu_event_id"] = event_id
+        if chat_id:
+            related_ids["feishu_receive_id"] = chat_id
+            related_ids["feishu_receive_id_type"] = "chat_id"
+            related_ids["feishu_chat_id"] = chat_id
+        if operator_open_id:
+            related_ids["feishu_actor_id"] = operator_open_id
+        correlation_seed = event_id or chat_id or operator_open_id or "feishu-p2p-entered"
+        self._session_service.record_event_once(
+            event_type="feishu_command_route_bound",
+            project_id=SESSION_DIRECTORY_PROJECT_ID,
+            session_id=SESSION_DIRECTORY_SESSION_ID,
+            correlation_id=f"corr:feishu-portfolio-route:{correlation_seed}",
+            causation_id=event_id or None,
+            related_ids=related_ids,
+            occurred_at=self._event_occurred_at(body),
+            payload={
+                "channel_kind": "feishu_long_connection",
+                "command_text": "",
+                "intent_code": "portfolio_route_binding",
+            },
         )
         return {
             "accepted": "true",
@@ -142,10 +179,11 @@ class FeishuLongConnectionGateway:
 
     def _canonicalize_payload_for_long_connection(self, payload: object) -> dict[str, Any]:
         body = self._sdk_payload_to_mapping(payload)
-        expected = str(self._settings.feishu_verification_token or "").strip()
         header = body.get("header")
-        if expected and isinstance(header, dict):
-            header["token"] = expected
+        if isinstance(header, dict) and not str(header.get("token") or "").strip():
+            expected = str(self._settings.feishu_verification_token or "").strip()
+            if expected:
+                header["token"] = expected
         return body
 
     @staticmethod
@@ -162,6 +200,23 @@ class FeishuLongConnectionGateway:
                 str(sender_id.get("open_id") or "").strip() if isinstance(sender_id, dict) else ""
             ),
         }
+
+    @staticmethod
+    def _event_occurred_at(payload: dict[str, Any]) -> str | None:
+        header = payload.get("header")
+        if not isinstance(header, dict):
+            return None
+        raw_create_time = str(header.get("create_time") or "").strip()
+        if not raw_create_time:
+            return None
+        try:
+            if len(raw_create_time) >= 13:
+                parsed = datetime.fromtimestamp(int(raw_create_time) / 1000, tz=UTC)
+            else:
+                parsed = datetime.fromtimestamp(int(raw_create_time), tz=UTC)
+        except (TypeError, ValueError, OSError):
+            return None
+        return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def sdk_available() -> bool:
@@ -265,6 +320,7 @@ class FeishuLongConnectionRuntime:
         )
         if self._settings.feishu_event_ingress_mode == "long_connection":
             builder.register_p2_im_message_receive_v1(self._handle_message_event)
+            builder.register_p2_im_message_message_read_v1(self._handle_message_read_event)
             builder.register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
                 self._handle_bot_p2p_chat_entered_event
             )
@@ -296,6 +352,19 @@ class FeishuLongConnectionRuntime:
             "feishu long-connection p2p chat entered accepted: chat_id=%s operator_open_id=%s",
             result["chat_id"],
             result["operator_open_id"],
+        )
+
+    def _handle_message_read_event(self, payload: object) -> None:
+        try:
+            body = self._gateway._canonicalize_payload_for_long_connection(payload)
+        except (FeishuIngressError, ValidationError, ValueError, KeyError) as exc:
+            logger.warning("feishu long-connection message_read ignored after parse failure: %s", exc)
+            return
+        refs = self._gateway._extract_message_actor_refs(body)
+        logger.debug(
+            "feishu long-connection message_read ignored: chat_id=%s sender_open_id=%s",
+            refs["chat_id"],
+            refs["sender_open_id"],
         )
 
     def _handle_card_action_callback(self, payload: object):

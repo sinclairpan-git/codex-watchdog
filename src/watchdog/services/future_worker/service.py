@@ -21,6 +21,10 @@ _WORKER_STATE_BY_EVENT_TYPE = {
 }
 
 _TERMINAL_WORKER_STATES = {"failed", "cancelled", "consumed", "rejected"}
+_REPEATABLE_LIFECYCLE_EVENT_TYPES = {
+    "future_worker_heartbeat",
+    "future_worker_summary_published",
+}
 
 _ALLOWED_NEXT_WORKER_EVENTS: dict[str | None, set[str]] = {
     None: {"future_worker_requested"},
@@ -55,6 +59,19 @@ class FutureWorkerExecutionService:
     @staticmethod
     def _correlation_id(worker_task_ref: str) -> str:
         return f"corr:future-worker:{worker_task_ref}"
+
+    @classmethod
+    def _lifecycle_correlation_id(
+        cls,
+        *,
+        worker_task_ref: str,
+        event_type: str,
+        occurred_at: str,
+    ) -> str:
+        correlation_id = cls._correlation_id(worker_task_ref)
+        if event_type in _REPEATABLE_LIFECYCLE_EVENT_TYPES:
+            return f"{correlation_id}:{event_type}:{occurred_at}"
+        return correlation_id
 
     def _decision_trace_ref_for_worker(
         self,
@@ -593,7 +610,11 @@ class FutureWorkerExecutionService:
             project_id=project_id,
             session_id=parent_session_id,
             occurred_at=occurred_at,
-            correlation_id=self._correlation_id(worker_task_ref),
+            correlation_id=self._lifecycle_correlation_id(
+                worker_task_ref=worker_task_ref,
+                event_type=event_type,
+                occurred_at=occurred_at,
+            ),
             related_ids=lifecycle_related_ids,
             payload=lifecycle_payload,
         )

@@ -8,8 +8,12 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
-from watchdog.contracts.session_spine.models import WatchdogActionResult
-from watchdog.api.ops import build_ops_summary
+from watchdog.contracts.session_spine.models import ApprovalProjection, WatchdogActionResult
+from watchdog.api.ops import (
+    _decision_diagnostic_rows,
+    build_ops_health_summary,
+    build_ops_summary,
+)
 from watchdog.main import create_app
 from watchdog.services.approvals.service import (
     CanonicalApprovalRecord,
@@ -35,6 +39,7 @@ from watchdog.services.session_spine.projection import (
     build_session_projection,
     build_task_progress_view,
 )
+from watchdog.contracts.session_spine.models import SessionProjection, TaskProgressView
 from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
@@ -235,6 +240,7 @@ def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) 
     )
     assert updated is not None
     assert updated.delivery_status == "pending"
+    assert updated.delivery_attempt == 0
     assert updated.failure_code is None
     assert updated.operator_notes[-1].startswith(
         "delivery_requeued reason=manual_transport_recovered"
@@ -257,6 +263,82 @@ def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) 
         decision_store=app.state.policy_decision_store,
     )
     assert summary.active_alerts == 0
+
+
+def test_watchdog_ops_can_record_repeated_notification_requeue_events(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:historical-failed-repeat",
+            envelope_type="notification",
+            correlation_id="corr:historical-failed-repeat",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:historical-failed-repeat",
+            audit_ref="audit:historical-failed-repeat",
+            created_at="2099-01-01T00:20:00Z",
+            updated_at="2099-01-01T00:21:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            failure_code="transport_error",
+            operator_notes=["delivery_failed failure_code=transport_error attempts=3"],
+            envelope_payload={
+                "envelope_type": "notification",
+                "event_id": "event:historical-failed-repeat",
+                "notification_kind": "decision_result",
+                "severity": "warning",
+                "title": "decision update",
+                "summary": "historical failed notification",
+                "occurred_at": "2099-01-01T00:20:00Z",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    first = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+    assert first.status_code == 200
+
+    updated = app.state.delivery_outbox_store.get_delivery_record(
+        "notification-envelope:historical-failed-repeat"
+    )
+    assert updated is not None
+    app.state.delivery_outbox_store.update_delivery_record(
+        updated.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "delivery_attempt": 4,
+                "failure_code": "transport_error",
+                "updated_at": "2099-01-01T00:23:00Z",
+                "operator_notes": list(updated.operator_notes)
+                + ["delivery_failed failure_code=transport_error attempts=4"],
+            }
+        )
+    )
+
+    second = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert second.status_code == 200
+    events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        related_id_key="envelope_id",
+        related_id_value="notification-envelope:historical-failed-repeat",
+    )
+    assert [event.event_type for event in events] == [
+        "notification_requeued",
+        "notification_requeued",
+    ]
+    assert [event.payload["delivery_attempt"] for event in events] == [0, 0]
+    assert events[0].event_id != events[1].event_id
 
 
 def test_watchdog_metrics_exports_critical_ops_alert_gauges(tmp_path: Path) -> None:
@@ -321,6 +403,66 @@ def test_watchdog_ops_can_mark_resident_expert_consult_restore_state(tmp_path: P
     assert experts["managed-agent-expert"]["last_consultation_ref"] == "decision:resident:1"
     assert experts["managed-agent-expert"]["last_seen_at"] == "2026-04-18T06:10:00Z"
     assert experts["hermes-agent-expert"]["status"] == "unavailable"
+
+
+def test_watchdog_ops_can_record_resident_expert_consultation_payload(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/watchdog/ops/resident-experts/consult",
+        headers={"Authorization": "Bearer wt"},
+        json={
+            "expert_ids": ["managed-agent-expert", "hermes-agent-expert"],
+            "consultation_ref": "decision:resident:payload-1",
+            "observed_runtime_handles": {
+                "managed-agent-expert": "agent:managed:1",
+                "hermes-agent-expert": "agent:hermes:1",
+            },
+            "consulted_at": "2026-04-18T06:10:00Z",
+            "opinions": [
+                {
+                    "expert_id": "managed-agent-expert",
+                    "next_slice_recommendation": "tighten recovery lineage",
+                    "rationale": "recovery closure still needs clearer audit boundaries",
+                    "risks_to_avoid": ["implicit state transitions"],
+                },
+                {
+                    "expert_id": "hermes-agent-expert",
+                    "next_slice_recommendation": "reduce operator triage noise",
+                    "rationale": "directory signal is still too dense during incident review",
+                    "risks_to_avoid": ["burying next action in long summaries"],
+                },
+            ],
+            "synthesis": {
+                "summary": "prioritize a narrow recovery+triage slice before broader automation",
+                "chosen_next_slice": "stabilize recovery lineage and operator triage summary",
+                "dissent_summary": "managed favors lineage first while hermes wants triage clarity first",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    consultation = payload["data"]["consultation"]
+    assert consultation["consultation_ref"] == "decision:resident:payload-1"
+    assert [item["expert_id"] for item in consultation["opinions"]] == [
+        "managed-agent-expert",
+        "hermes-agent-expert",
+    ]
+    assert consultation["synthesis"]["chosen_next_slice"] == (
+        "stabilize recovery lineage and operator triage summary"
+    )
+
+    stored = app.state.resident_expert_runtime_service.get_consultation_payload(
+        "decision:resident:payload-1"
+    )
+    assert stored is not None
+    assert stored.synthesis is not None
+    assert stored.synthesis.summary == (
+        "prioritize a narrow recovery+triage slice before broader automation"
+    )
 
 
 def test_watchdog_ops_can_bind_fixed_resident_expert_runtime_handles(tmp_path: Path) -> None:
@@ -459,6 +601,25 @@ def test_watchdog_ops_exposes_resident_expert_decision_audit_rows(tmp_path: Path
                 "resident_expert_consultation": {
                     "consultation_ref": "decision:repo-a:recorded",
                     "consulted_at": "2026-04-18T06:10:00Z",
+                    "opinions": [
+                        {
+                            "expert_id": "managed-agent-expert",
+                            "next_slice_recommendation": "tighten recovery lineage",
+                            "rationale": "managed execution needs clearer closure evidence",
+                            "risks_to_avoid": ["implicit recovery state transitions"],
+                        },
+                        {
+                            "expert_id": "hermes-agent-expert",
+                            "next_slice_recommendation": "reduce operator triage noise",
+                            "rationale": "the current status surface is too dense during incidents",
+                            "risks_to_avoid": ["burying the next operator action"],
+                        },
+                    ],
+                    "synthesis": {
+                        "summary": "take the narrow slice that improves lineage and triage together",
+                        "chosen_next_slice": "lineage plus concise triage summary",
+                        "dissent_summary": "managed favors lineage first while hermes favors triage first",
+                    },
                     "experts": [
                         {
                             "expert_id": "managed-agent-expert",
@@ -527,6 +688,10 @@ def test_watchdog_ops_exposes_resident_expert_decision_audit_rows(tmp_path: Path
     assert rows[1]["consultation_status"] == "recorded"
     assert rows[1]["consultation_ref"] == "decision:repo-a:recorded"
     assert rows[1]["consulted_at"] == "2026-04-18T06:10:00Z"
+    assert rows[1]["opinion_count"] == 2
+    assert rows[1]["synthesis_summary"] == (
+        "take the narrow slice that improves lineage and triage together"
+    )
     assert [item["expert_id"] for item in rows[1]["experts"]] == [
         "managed-agent-expert",
         "hermes-agent-expert",
@@ -594,6 +759,442 @@ def test_watchdog_ops_can_filter_resident_expert_decision_audit_rows(tmp_path: P
     assert rows[0]["session_id"] == "session:repo-b"
 
 
+def test_build_decision_diagnostic_rows_surfaces_latest_project_state(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    session_spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+
+    session_spine_store.put(
+        project_id="repo-a",
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state="active",
+            activity_phase="editing_source",
+            attention_state="normal",
+            headline="editing files",
+            pending_approval_count=0,
+            available_intents=["continue"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="editing_source",
+            summary="Continue the export audit implementation.",
+            files_touched=["src/example.py"],
+            context_pressure="medium",
+            stuck_level=1,
+            primary_fact_codes=["stuck_no_progress"],
+            blocker_fact_codes=["context_critical"],
+            last_progress_at="2026-04-18T06:15:00Z",
+        ),
+        facts=[],
+        approval_queue=[],
+        last_refreshed_at="2026-04-18T06:16:00Z",
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:diag",
+            decision_key="decision-key:repo-a:diag",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="observe_only",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="brain observed state without proposing execution",
+            matched_policy_rules=["brain_observe_only"],
+            why_not_escalated=None,
+            why_escalated="brain intent is observe_only",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:repo-a:diag",
+            created_at="2026-04-18T06:17:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:repo-a:diag",
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "goal_contract_version": "goal-v1",
+                    "degrade_reason": "provider_output_invalid",
+                },
+                "brain_output": {
+                    "evidence_codes": ["goal_contract_not_ready"],
+                    "remaining_work_hypothesis": ["refresh goal contract"],
+                },
+                "decision_input": {
+                    "current_progress_summary": "当前分支目标：Refresh the export audit surface；当前阶段：editing_source；阻塞信号：context_critical"
+                },
+                "continuation_governance": {
+                    "human_presence_state": "human_absent",
+                },
+            },
+        )
+    )
+
+    rows = _decision_diagnostic_rows(
+        decision_store.list_records(),
+        session_spine_store=session_spine_store,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.project_id == "repo-a"
+    assert row.provider == "openai-compatible"
+    assert row.model == "MiniMax-M2.7"
+    assert row.human_presence_state == "human_absent"
+    assert row.provider_input_summary == (
+        "当前分支目标：Refresh the export audit surface；当前阶段：editing_source；阻塞信号：context_critical"
+    )
+    assert row.current_summary == "Continue the export audit implementation."
+    assert row.blocker_fact_codes == ["context_critical"]
+    assert row.evidence_codes == ["goal_contract_not_ready"]
+    assert row.remaining_work_hypothesis == ["refresh goal contract"]
+
+
+def test_watchdog_ops_exposes_decision_diagnostics_route(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state="active",
+            activity_phase="editing_source",
+            attention_state="normal",
+            headline="editing files",
+            pending_approval_count=1,
+            available_intents=["continue", "approve_approval"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="editing_source",
+            summary="Need approval before continuing the export audit refresh.",
+            files_touched=[],
+            context_pressure="low",
+            stuck_level=0,
+            primary_fact_codes=[],
+            blocker_fact_codes=["approval_pending"],
+            last_progress_at="2026-04-18T06:20:00Z",
+        ),
+        facts=[],
+        approval_queue=[],
+        last_refreshed_at="2026-04-18T06:21:00Z",
+    )
+    app.state.policy_decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:approval",
+            decision_key="decision-key:repo-a:approval",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_1",
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="require_approval",
+            runtime_disposition="require_user_decision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="brain requested explicit human approval",
+            matched_policy_rules=["brain_requires_approval"],
+            why_not_escalated=None,
+            why_escalated="brain intent requires explicit human approval",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:repo-a:approval",
+            created_at="2026-04-18T06:22:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:repo-a:approval",
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "goal_contract_version": "goal-v1",
+                },
+                "decision_input": {
+                    "current_progress_summary": "当前分支目标：Refresh the export audit surface；当前阶段：editing_source；当前存在待审批项"
+                },
+                "brain_output": {
+                    "evidence_codes": ["approval_pending"],
+                    "remaining_work_hypothesis": ["review the pending approval and decide approve or reject"],
+                },
+                "continuation_governance": {
+                    "human_presence_state": "human_absent",
+                },
+            },
+        )
+    )
+
+    response = client.get(
+        "/api/v1/watchdog/ops/decision-diagnostics",
+        headers={"Authorization": "Bearer wt"},
+        params={"project_id": "repo-a"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    rows = payload["data"]["decisions"]
+    assert len(rows) == 1
+    assert rows[0]["project_id"] == "repo-a"
+    assert rows[0]["decision_result"] == "require_user_decision"
+    assert rows[0]["provider"] == "openai-compatible"
+    assert rows[0]["pending_approval_count"] == 1
+    assert rows[0]["provider_input_summary"] == (
+        "当前分支目标：Refresh the export audit surface；当前阶段：editing_source；当前存在待审批项"
+    )
+    assert rows[0]["evidence_codes"] == ["approval_pending"]
+
+
+def test_watchdog_ops_decision_diagnostics_normalizes_pending_approval_count_from_visible_queue(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state="active",
+            activity_phase="approval",
+            attention_state="normal",
+            headline="approval callback replay pending",
+            pending_approval_count=0,
+            available_intents=["approve_approval"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="approval",
+            summary="Deferred policy-auto approval still needs operator confirmation.",
+            files_touched=[],
+            context_pressure="low",
+            stuck_level=0,
+            primary_fact_codes=[],
+            blocker_fact_codes=["approval_pending"],
+            last_progress_at="2026-04-18T06:20:00Z",
+        ),
+        facts=[],
+        approval_queue=[
+            ApprovalProjection(
+                approval_id="appr_deferred",
+                project_id="repo-a",
+                thread_id="session:repo-a",
+                native_thread_id="thr_native_1",
+                risk_level="L1",
+                command="pytest -q",
+                reason="callback replay",
+                alternative="",
+                status="approved",
+                requested_at="2026-04-18T06:19:00Z",
+                decided_at="2026-04-18T06:19:30Z",
+                decided_by="policy-auto",
+            )
+        ],
+        last_refreshed_at="2026-04-18T06:21:00Z",
+    )
+    app.state.policy_decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:deferred",
+            decision_key="decision-key:repo-a:deferred",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_deferred",
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="require_approval",
+            runtime_disposition="require_user_decision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="brain requested explicit human approval",
+            matched_policy_rules=["brain_requires_approval"],
+            why_not_escalated=None,
+            why_escalated="brain intent requires explicit human approval",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v9",
+            idempotency_key="idem:repo-a:deferred",
+            created_at="2026-04-18T06:22:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:repo-a:deferred",
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                },
+                "brain_output": {
+                    "evidence_codes": ["approval_pending"],
+                    "remaining_work_hypothesis": [
+                        "review the pending approval and decide approve or reject"
+                    ],
+                },
+            },
+        )
+    )
+
+    rows = _decision_diagnostic_rows(
+        app.state.policy_decision_store.list_records(),
+        session_spine_store=app.state.session_spine_store,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].pending_approval_count == 1
+
+
+def test_watchdog_ops_decision_diagnostics_ignores_stale_shadow_approval_latest(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=SessionProjection(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            session_state="blocked",
+            activity_phase="planning",
+            attention_state="critical",
+            headline="recovery approval already superseded",
+            pending_approval_count=0,
+            available_intents=["get_session", "continue_session", "request_recovery"],
+        ),
+        progress=TaskProgressView(
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            activity_phase="planning",
+            summary="still blocked on the current branch",
+            files_touched=[],
+            context_pressure="medium",
+            stuck_level=4,
+            primary_fact_codes=["stuck_no_progress", "recovery_available"],
+            blocker_fact_codes=["stuck_no_progress"],
+            last_progress_at="2026-04-18T06:20:00Z",
+        ),
+        facts=[],
+        approval_queue=[],
+        last_refreshed_at="2026-04-18T06:21:00Z",
+    )
+    app.state.policy_decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:recovery-approval",
+            decision_key="decision-key:repo-a:recovery-approval",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_recovery",
+            action_ref="request_recovery",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="require_user_decision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="resident expert dual gate requires explicit human decision",
+            matched_policy_rules=["resident_expert_dual_gate"],
+            why_not_escalated=None,
+            why_escalated=(
+                "dual resident expert oversight is required before autonomous "
+                "external-model execution"
+            ),
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v9",
+            idempotency_key="idem:repo-a:recovery-approval",
+            created_at="2026-04-18T06:22:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:repo-a:recovery-approval",
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                },
+                "brain_output": {
+                    "evidence_codes": ["stuck_no_progress", "recovery_available"],
+                    "remaining_work_hypothesis": ["recover current blocker before continuing"],
+                },
+                "continuation_governance": {
+                    "human_presence_state": "human_absent",
+                },
+            },
+        )
+    )
+    app.state.policy_decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:approval-shadow",
+            decision_key="decision-key:repo-a:approval-shadow",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="require_approval",
+            runtime_disposition="require_user_decision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="brain requested explicit human approval",
+            matched_policy_rules=["brain_requires_approval"],
+            why_not_escalated=None,
+            why_escalated="brain intent requires explicit human approval",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v9",
+            idempotency_key="idem:repo-a:approval-shadow",
+            created_at="2026-04-18T06:23:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:repo-a:approval-shadow",
+                    "provider": "resident_orchestrator",
+                    "model": "rule-based-brain",
+                },
+                "brain_output": {
+                    "evidence_codes": ["approval_pending"],
+                    "remaining_work_hypothesis": [
+                        "review the pending approval and decide approve or reject"
+                    ],
+                },
+                "continuation_governance": {
+                    "human_presence_state": "human_absent",
+                },
+            },
+        )
+    )
+
+    rows = _decision_diagnostic_rows(
+        app.state.policy_decision_store.list_records(),
+        session_spine_store=app.state.session_spine_store,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].decision_id == "decision:repo-a:recovery-approval"
+    assert rows[0].action_ref == "request_recovery"
+    assert rows[0].evidence_codes == ["stuck_no_progress", "recovery_available"]
+
+
 def test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_alert_bucket(
     tmp_path: Path,
 ) -> None:
@@ -652,6 +1253,126 @@ def test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_aler
     assert response.json()["status"] == "degraded"
     assert response.json()["active_alerts"] == 0
     assert response.json()["release_gate_blockers"] == 1
+
+
+def test_watchdog_healthz_ignores_not_applicable_release_gate_verdict(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:healthz-release-gate-na",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="recover_current_branch",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="observe_only",
+            decision_result="observe_only",
+            risk_class="runtime_gate",
+            decision_reason="release gate does not apply",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "not_applicable",
+                    "report_id": "report:not_applicable",
+                    "report_hash": "sha256:not_applicable",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:healthz-na",
+                    "approval_read_ref": "approval:none",
+                }
+            },
+        )
+    )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["active_alerts"] == 0
+    assert response.json()["release_gate_blockers"] == 0
+
+
+def test_watchdog_healthz_ignores_historical_release_gate_blocker_after_newer_pass(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    client = TestClient(app)
+
+    for decision_id, created_at, status in (
+        ("decision:healthz-release-gate-old", "2099-01-01T00:00:00Z", "degraded"),
+        ("decision:healthz-release-gate-new", "2099-01-01T00:10:00Z", "pass"),
+    ):
+        decision_store.put(
+            CanonicalDecisionRecord(
+                decision_id=decision_id,
+                decision_key=(
+                    f"session:repo-a|fact-v7|policy-v1|observe_only|"
+                    f"propose_execute|continue_session|{decision_id}"
+                ),
+                session_id="session:repo-a",
+                project_id="repo-a",
+                thread_id="session:repo-a",
+                native_thread_id="thr_native_1",
+                approval_id=None,
+                action_ref="continue_session",
+                trigger="resident_orchestrator",
+                brain_intent="propose_execute",
+                runtime_disposition="observe_only",
+                decision_result="observe_only",
+                risk_class="runtime_gate",
+                decision_reason="release gate evaluated",
+                matched_policy_rules=[],
+                why_not_escalated=None,
+                why_escalated=None,
+                uncertainty_reasons=[],
+                policy_version="policy-v1",
+                fact_snapshot_version="fact-v7",
+                idempotency_key=f"idem:{decision_id}",
+                created_at=created_at,
+                operator_notes=[],
+                evidence={
+                    "release_gate_verdict": {
+                        "status": status,
+                        "degrade_reason": "report_expired" if status != "pass" else None,
+                        "report_id": f"report:{decision_id}",
+                        "report_hash": "sha256:report",
+                        "input_hash": "sha256:input",
+                        "decision_trace_ref": f"trace:{decision_id}",
+                        "approval_read_ref": "approval:none",
+                    }
+                },
+            )
+        )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["release_gate_blockers"] == 0
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=Settings(api_token="wt", data_dir=str(tmp_path)))
+    assert summary.release_gate_blockers == []
 
 
 def test_watchdog_metrics_exports_task_approval_and_recovery_totals(tmp_path: Path) -> None:
@@ -862,6 +1583,83 @@ def test_build_ops_summary_ignores_delivery_skips_and_recovery_noops(tmp_path: P
     assert summary.alerts == []
 
 
+def test_build_ops_summary_ignores_feishu_route_not_yet_bound_failures(tmp_path: Path) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:feishu-not-configured",
+            envelope_type="notification",
+            correlation_id="decision:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|decision_result|feishu-not-configured",
+            audit_ref="decision:repo-a",
+            created_at="2099-01-01T00:00:00Z",
+            updated_at="2099-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="feishu_not_configured",
+            operator_notes=["delivery_failed failure_code=feishu_not_configured attempts=3"],
+            envelope_payload={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_ignores_suppressed_notification_policy_failures(
+    tmp_path: Path,
+) -> None:
+    delivery_store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    delivery_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:suppressed-notification-policy",
+            envelope_type="notification",
+            correlation_id="decision:repo-a",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|decision_result|suppressed-notification-policy",
+            audit_ref="decision:repo-a",
+            created_at="2099-01-01T00:00:00Z",
+            updated_at="2099-01-01T00:00:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=0,
+            receipt_id=None,
+            next_retry_at=None,
+            failure_code="suppressed_notification_policy",
+            operator_notes=["delivery_failed failure_code=suppressed_notification_policy attempts=0"],
+            envelope_payload={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+    health = build_ops_health_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+    assert health["status"] == "ok"
+    assert health["active_alerts"] == 0
+
+
 def test_watchdog_ops_requeue_transport_failures_uses_effective_native_thread_from_legacy_delivery_record(
     tmp_path: Path,
 ) -> None:
@@ -912,6 +1710,57 @@ def test_watchdog_ops_requeue_transport_failures_uses_effective_native_thread_fr
     )
     assert [event.event_type for event in events] == ["notification_requeued"]
     assert events[0].related_ids["native_thread_id"] == "thr_native_1"
+
+
+def test_watchdog_ops_can_requeue_retryable_http_transport_failures(tmp_path: Path) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    app.state.delivery_outbox_store.update_delivery_record(
+        DeliveryOutboxRecord(
+            envelope_id="notification-envelope:http-failed",
+            envelope_type="notification",
+            correlation_id="corr:http-failed",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            native_thread_id="thr_native_1",
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="idem:http-failed",
+            audit_ref="audit:http-failed",
+            created_at="2099-01-01T00:20:00Z",
+            updated_at="2099-01-01T00:21:00Z",
+            outbox_seq=1,
+            delivery_status="delivery_failed",
+            delivery_attempt=3,
+            failure_code="http_503",
+            operator_notes=["delivery_failed failure_code=http_503 attempts=3"],
+            envelope_payload={
+                "envelope_type": "notification",
+                "event_id": "event:http-failed",
+                "notification_kind": "decision_result",
+                "severity": "warning",
+                "title": "decision update",
+                "summary": "historical failed notification",
+                "occurred_at": "2099-01-01T00:20:00Z",
+            },
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/watchdog/ops/delivery/requeue-transport-failures",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["requeued"] == 1
+    assert payload["data"]["envelope_ids"] == ["notification-envelope:http-failed"]
+    updated = app.state.delivery_outbox_store.get_delivery_record("notification-envelope:http-failed")
+    assert updated is not None
+    assert updated.delivery_status == "pending"
+    assert updated.delivery_attempt == 0
+    assert updated.failure_code is None
 
 
 def test_build_ops_summary_surfaces_only_current_recovery_suppression_alerts(
@@ -1043,14 +1892,26 @@ def test_build_ops_summary_renders_recovery_cooldown_suppression_alert(
         "last_progress_at": "2026-04-07T00:00:00Z",
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    ).model_copy(
+        update={
+            "session_state": "blocked",
+            "attention_state": "critical",
+            "available_intents": [
+                "get_session",
+                "continue_session",
+                "why_stuck",
+                "request_recovery",
+            ],
+        }
+    )
     spine_store.put(
         project_id="repo-a",
-        session=build_session_projection(
-            project_id="repo-a",
-            task=task,
-            approvals=[],
-            facts=facts,
-        ),
+        session=session,
         progress=build_task_progress_view(
             project_id="repo-a",
             task=task,
@@ -1105,14 +1966,26 @@ def test_build_ops_summary_renders_recovery_in_flight_suppression_alert(
         "last_progress_at": "2026-04-07T00:00:00Z",
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    ).model_copy(
+        update={
+            "session_state": "blocked",
+            "attention_state": "critical",
+            "available_intents": [
+                "get_session",
+                "continue_session",
+                "why_stuck",
+                "request_recovery",
+            ],
+        }
+    )
     spine_store.put(
         project_id="repo-a",
-        session=build_session_projection(
-            project_id="repo-a",
-            task=task,
-            approvals=[],
-            facts=facts,
-        ),
+        session=session,
         progress=build_task_progress_view(
             project_id="repo-a",
             task=task,
@@ -1144,6 +2017,124 @@ def test_build_ops_summary_renders_recovery_in_flight_suppression_alert(
         "recovery_suppressed_recovery_in_flight"
     ]
     assert summary.alerts[0].summary == "recovery suppression active: recovery in flight"
+
+
+def test_build_ops_summary_ignores_stale_recovery_in_flight_after_session_recovers(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(data_dir=str(tmp_path))
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "handoff_in_progress",
+        "phase": "handoff",
+        "pending_approval": False,
+        "last_summary": "handoff drafted",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2026-04-07T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    ).model_copy(
+        update={
+            "session_state": "active",
+            "attention_state": "normal",
+            "available_intents": ["get_session", "continue_session"],
+        }
+    )
+    spine_store.put(
+        project_id="repo-a",
+        session=session,
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:01:00Z",
+    )
+    session_service.record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:recovery-suppressed:repo-a:in-flight:stale",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-a"},
+        payload={
+            "suppression_reason": "recovery_in_flight",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "handoff_in_progress",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:00:00Z",
+        },
+        occurred_at="2026-04-07T00:02:00Z",
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+    health = build_ops_health_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+    assert health["status"] == "ok"
+    assert health["active_alerts"] == 0
+
+
+def test_build_ops_summary_ignores_passive_brain_observe_only_blockers(tmp_path: Path) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:passive-observe-only-block",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|observe_only|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="observe_only",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="warning",
+            decision_reason="brain observed state without proposing execution",
+            matched_policy_rules=["brain_observe_only"],
+            why_not_escalated="observe only",
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|block_and_alert|observe_only|continue_session|"
+            ),
+            created_at="2000-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+    health = build_ops_health_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+    assert health["status"] == "ok"
+    assert health["active_alerts"] == 0
 
 
 def test_progress_summary_envelope_uses_effective_native_thread_id_from_legacy_persisted_record(
@@ -1606,6 +2597,71 @@ def test_build_ops_summary_counts_only_latest_pending_approval_per_session(tmp_p
     assert [item.alert_code for item in summary.alerts] == ["approval_pending_too_long"]
 
 
+def test_build_ops_summary_ignores_locally_pending_approvals_when_runtime_has_no_pending(
+    tmp_path: Path,
+) -> None:
+    approval_store = CanonicalApprovalStore(tmp_path / "canonical_approvals.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    template_decision = CanonicalDecisionRecord(
+        decision_id="decision:approval-template",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|approval-template",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="thr_native_1",
+        approval_id="approval:template",
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="needs approval",
+        matched_policy_rules=["human_gate"],
+        why_not_escalated=None,
+        why_escalated="human_gate matched persisted facts",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|approval-template",
+        created_at="2000-01-01T00:00:00Z",
+        operator_notes=[],
+        evidence={},
+    )
+
+    approval_store.put(
+        CanonicalApprovalRecord(
+            approval_id="approval:repo-a-old",
+            envelope_id="approval-envelope:repo-a-old",
+            approval_kind="canonical_user_decision",
+            requested_action="continue_session",
+            requested_action_args={},
+            approval_token="approval-token:repo-a-old",
+            decision_options=["approve", "reject", "execute_action"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v1",
+            idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|approval:repo-a-old|approval",
+            project_id="repo-a",
+            session_id="session:repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            status="pending",
+            created_at="2000-01-01T00:00:00Z",
+            operator_notes=[],
+            decision=template_decision,
+        )
+    )
+
+    summary = build_ops_summary(
+        data_dir=tmp_path,
+        settings=settings,
+        runtime_pending_approvals=[],
+    )
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
 def test_watchdog_metrics_pending_approval_total_uses_latest_pending_record_per_session(
     tmp_path: Path,
 ) -> None:
@@ -1867,7 +2923,7 @@ def test_build_ops_summary_breaks_runtime_gate_alerts_down_by_degrade_reason(
     }
 
 
-def test_build_ops_summary_surfaces_provider_output_schema_degradation(
+def test_build_ops_summary_ignores_rule_based_provider_output_fallback_degradation(
     tmp_path: Path,
 ) -> None:
     decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
@@ -1922,10 +2978,608 @@ def test_build_ops_summary_surfaces_provider_output_schema_degradation(
 
     summary = build_ops_summary(data_dir=tmp_path, settings=settings)
 
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_surfaces_external_provider_output_schema_degradation(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-output-invalid-external",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="allow",
+            risk_class="low",
+            decision_reason="external provider output degraded to local rule-based decision",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:provider-output-invalid-external",
+                    "goal_contract_version": "goal-contract:v1",
+                    "policy_ruleset_hash": "sha256:policy",
+                    "memory_packet_input_ids": [],
+                    "memory_packet_input_hashes": [],
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "prompt_schema_ref": "prompt:brain-continuation-decision-v3",
+                    "output_schema_ref": "schema:decision-trace-v1",
+                    "provider_output_schema_ref": "schema:provider-continuation-decision-v3",
+                    "degrade_reason": "provider_output_invalid",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
     assert summary.status == "degraded"
     assert summary.active_alerts == 1
     assert [item.alert_code for item in summary.alerts] == ["provider_output_invalid"]
     assert summary.alerts[0].count == 1
+
+
+def test_build_ops_summary_provider_degradation_only_counts_latest_decision_per_session(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-degrade-old",
+            decision_key=(
+                "session:repo-a|fact-v6|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="allow",
+            risk_class="low",
+            decision_reason="older degraded provider decision",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v6",
+            idempotency_key=(
+                "session:repo-a|fact-v6|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:provider-degrade-old",
+                    "goal_contract_version": "goal-contract:v1",
+                    "policy_ruleset_hash": "sha256:policy",
+                    "memory_packet_input_ids": [],
+                    "memory_packet_input_hashes": [],
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "prompt_schema_ref": "prompt:brain-continuation-decision-v3",
+                    "output_schema_ref": "schema:decision-trace-v1",
+                    "provider_output_schema_ref": "schema:provider-continuation-decision-v3",
+                    "degrade_reason": "provider_output_invalid",
+                }
+            },
+        )
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-degrade-latest",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="allow",
+            risk_class="low",
+            decision_reason="latest degraded provider decision",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            created_at="2099-01-02T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:provider-degrade-latest",
+                    "goal_contract_version": "goal-contract:v1",
+                    "policy_ruleset_hash": "sha256:policy",
+                    "memory_packet_input_ids": [],
+                    "memory_packet_input_hashes": [],
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "prompt_schema_ref": "prompt:brain-continuation-decision-v3",
+                    "output_schema_ref": "schema:decision-trace-v1",
+                    "provider_output_schema_ref": "schema:provider-continuation-decision-v3",
+                    "degrade_reason": "provider_unavailable",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "degraded"
+    assert [item.alert_code for item in summary.alerts] == ["provider_unavailable"]
+    assert summary.alerts[0].count == 1
+
+
+def test_build_ops_summary_ignores_provider_degradation_for_non_active_current_session(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "status": "running",
+        "phase": "planning",
+        "project_execution_state": "paused",
+        "pending_approval": False,
+        "last_summary": "paused zombie task",
+        "files_touched": [],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2099-01-01T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(project_id="repo-a", task=task, approvals=[], facts=facts),
+        progress=build_task_progress_view(project_id="repo-a", task=task, facts=facts),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2099-01-01T00:00:30Z",
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-degrade-non-active",
+            decision_key="session:repo-a|fact-v7|policy-v1|block_and_alert|continue_session|",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="observe_only",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="brain observed state without proposing execution",
+            matched_policy_rules=["brain_observe_only"],
+            why_not_escalated=None,
+            why_escalated="brain intent is observe_only",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|block_and_alert|continue_session|",
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "degrade_reason": "provider_output_invalid",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings, decision_store=decision_store)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_ignores_provider_degradation_after_newer_local_manual_activity(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "status": "running",
+        "phase": "planning",
+        "project_execution_state": "active",
+        "pending_approval": False,
+        "last_summary": "operator has manually taken over after the degraded decision",
+        "files_touched": [],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2099-01-01T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(project_id="repo-a", task=task, approvals=[], facts=facts),
+        progress=build_task_progress_view(project_id="repo-a", task=task, facts=facts),
+        facts=facts,
+        approval_queue=[],
+        last_local_manual_activity_at="2099-01-01T00:10:00Z",
+        last_refreshed_at="2099-01-01T00:10:30Z",
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-degrade-stale-after-manual-takeover",
+            decision_key="session:repo-a|fact-v7|policy-v1|block_and_alert|continue_session|",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="observe_only",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="brain observed state without proposing execution",
+            matched_policy_rules=["brain_observe_only"],
+            why_not_escalated=None,
+            why_escalated="brain intent is observe_only",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|block_and_alert|continue_session|",
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "degrade_reason": "provider_output_invalid",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings, decision_store=decision_store)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_ignores_blocked_too_long_for_stale_shadow_session(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    settings = Settings(data_dir=str(tmp_path), ops_blocked_too_long_seconds=900.0)
+
+    current_task = {
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a:current",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "current session is no longer blocked",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2099-01-01T00:00:00Z",
+    }
+    current_facts = build_fact_records(project_id="repo-a", task=current_task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=current_task,
+            approvals=[],
+            facts=current_facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=current_task,
+            facts=current_facts,
+        ),
+        facts=current_facts,
+        approval_queue=[],
+        last_refreshed_at="2099-01-01T00:00:30Z",
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:stale-blocked",
+            decision_key="session:repo-a:stale|fact-v7|policy-v1|block_and_alert|request_recovery|",
+            session_id="session:repo-a:stale",
+            project_id="repo-a",
+            thread_id="session:repo-a:stale",
+            native_thread_id="thr_native_stale",
+            approval_id=None,
+            action_ref="request_recovery",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="recovery blocked by stale state",
+            matched_policy_rules=["hard_block"],
+            why_not_escalated=None,
+            why_escalated="stale blocked session",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a:stale|fact-v7|policy-v1|block_and_alert|request_recovery|",
+            created_at="2000-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings, decision_store=decision_store)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_ignores_blocked_too_long_when_newer_decision_supersedes_block(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    settings = Settings(data_dir=str(tmp_path), ops_blocked_too_long_seconds=900.0)
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "stuck session awaiting human decision",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 2,
+        "failure_count": 3,
+        "last_progress_at": "2099-01-01T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(project_id="repo-a", task=task, approvals=[], facts=facts),
+        progress=build_task_progress_view(project_id="repo-a", task=task, facts=facts),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2099-01-01T00:00:30Z",
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:blocked-old",
+            decision_key="session:repo-a|fact-v6|policy-v1|block_and_alert|request_recovery|",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="request_recovery",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="action policy is not registered",
+            matched_policy_rules=["action_registration"],
+            why_not_escalated=None,
+            why_escalated="unregistered action cannot be auto executed",
+            uncertainty_reasons=["action_unregistered"],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v6",
+            idempotency_key="session:repo-a|fact-v6|policy-v1|block_and_alert|request_recovery|",
+            created_at="2000-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:repo-a:human-gate-new",
+            decision_key="session:repo-a|fact-v7|policy-v1|require_user_decision|request_recovery|",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="request_recovery",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="require_user_decision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="recovery execution requires explicit human decision",
+            matched_policy_rules=["recovery_human_gate"],
+            why_not_escalated=None,
+            why_escalated="recovery execution requires explicit human decision",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|require_user_decision|request_recovery|",
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings, decision_store=decision_store)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
+def test_build_ops_summary_ignores_not_applicable_release_gate_verdict(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:release-gate-na",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="recover_current_branch",
+            trigger="resident_orchestrator",
+            brain_intent="propose_recovery",
+            runtime_disposition="observe_only",
+            decision_result="observe_only",
+            risk_class="low",
+            decision_reason="release gate does not apply",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|observe_only|"
+                "propose_recovery|recover_current_branch|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "release_gate_verdict": {
+                    "status": "not_applicable",
+                    "report_id": "report:not_applicable",
+                    "report_hash": "sha256:not_applicable",
+                    "input_hash": "sha256:input",
+                    "decision_trace_ref": "trace:release-gate-na",
+                    "approval_read_ref": "approval:none",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.release_gate_blockers == []
+
+
+def test_build_ops_health_summary_ignores_rule_based_provider_output_fallback_degradation(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-output-invalid-health",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="allow",
+            risk_class="low",
+            decision_reason="provider output degraded to local rule-based decision",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|allow|propose_execute|continue_session|"
+            ),
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "trace_id": "trace:provider-output-invalid-health",
+                    "goal_contract_version": "goal-contract:v1",
+                    "policy_ruleset_hash": "sha256:policy",
+                    "memory_packet_input_ids": [],
+                    "memory_packet_input_hashes": [],
+                    "provider": "resident_orchestrator",
+                    "model": "rule-based-brain",
+                    "prompt_schema_ref": "prompt:none",
+                    "output_schema_ref": "schema:decision-trace-v1",
+                    "provider_output_schema_ref": "schema:provider-decision-v2",
+                    "degrade_reason": "provider_output_invalid",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_health_summary(
+        data_dir=tmp_path,
+        settings=settings,
+        decision_store=decision_store,
+    )
+
+    assert summary["status"] == "ok"
+    assert summary["active_alerts"] == 0
 
 
 def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path) -> None:
@@ -2005,6 +3659,52 @@ def test_watchdog_ops_alerts_expose_release_gate_blocker_metadata(tmp_path: Path
     assert blocker.get("label_manifest_ref") == "tests/fixtures/release_gate_label_manifest.json"
     assert blocker.get("generated_by") == "codex"
     assert blocker.get("report_approved_by") == "operator-a"
+
+
+def test_build_approval_envelope_for_record_uses_approval_timestamps(
+    tmp_path: Path,
+) -> None:
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    approval = materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:approval-envelope-timestamps",
+            decision_key=(
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                "continue_session|appr_003"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="appr_003",
+            action_ref="continue_session",
+            trigger="resident_supervision",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="explicit human confirmation required",
+            matched_policy_rules=["human_gate"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key=(
+                "session:repo-a|fact-v7|policy-v1|require_user_decision|"
+                "continue_session|appr_003"
+            ),
+            created_at="2026-04-07T00:00:00Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    updated = approval.model_copy(update={"created_at": "2026-04-07T00:05:00Z"})
+    app.state.canonical_approval_store.update(updated)
+
+    envelope = build_approval_envelope_for_record(updated)
+
+    assert envelope.created_at == "2026-04-07T00:05:00Z"
+    assert envelope.requested_at == "2026-04-07T00:05:00Z"
 
 
 def test_build_ops_summary_drops_partial_release_gate_bundle_metadata(tmp_path: Path) -> None:

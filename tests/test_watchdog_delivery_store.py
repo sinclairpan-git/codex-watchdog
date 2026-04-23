@@ -105,3 +105,52 @@ def test_delivery_outbox_store_reuses_cached_snapshot_until_file_changes(
 
     assert store.get_delivery_record(record.envelope_id) == record
     assert read_calls == 1
+
+
+def test_delivery_outbox_store_returns_defensive_copies_from_cached_reads(tmp_path: Path) -> None:
+    store_path = tmp_path / "delivery_outbox.json"
+    store = DeliveryOutboxStore(store_path)
+    record = _record(note="seed", attempt=0)
+    store.update_delivery_record(record)
+
+    fetched = store.get_delivery_record(record.envelope_id)
+    assert fetched is not None
+    fetched.delivery_status = "delivery_failed"
+    fetched.operator_notes.append("mutated")
+
+    pending = store.list_pending_delivery_records(session_id=record.session_id)
+    assert len(pending) == 1
+    pending[0].delivery_status = "superseded"
+    pending[0].operator_notes.append("mutated-again")
+
+    reparsed = store.get_delivery_record(record.envelope_id)
+    assert reparsed is not None
+    assert reparsed.delivery_status == "pending"
+    assert reparsed.operator_notes == ["seed"]
+
+
+def test_delivery_outbox_store_requeue_transport_failures_resets_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    store.update_delivery_record(
+        _record(note="delivery_failed failure_code=transport_error attempts=3", attempt=3).model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "transport_error",
+                "next_retry_at": "2026-04-10T00:05:00Z",
+            }
+        )
+    )
+
+    requeued = store.requeue_transport_failures(
+        reason="manual_transport_recovered",
+        updated_at="2026-04-10T00:06:00Z",
+    )
+
+    assert len(requeued) == 1
+    assert requeued[0].delivery_status == "pending"
+    assert requeued[0].delivery_attempt == 0
+    reparsed = store.get_delivery_record("decision-envelope:test")
+    assert reparsed is not None
+    assert reparsed.delivery_attempt == 0

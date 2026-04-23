@@ -3,19 +3,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
 import yaml
 
 from watchdog.services.goal_contract.service import GoalContractService
 from watchdog.services.brain.provider_runtime import (
     OpenAICompatibleBrainProvider,
+    PROVIDER_RATE_LIMITED_DEGRADE_REASON,
+    PROVIDER_UNAVAILABLE_DEGRADE_REASON,
     ProviderOutputSchemaError,
 )
 from watchdog.services.memory_hub.models import ContextQualitySnapshot
 from watchdog.services.memory_hub.service import MemoryHubService
+from watchdog.services.session_spine.approval_visibility import is_visible_projected_approval
 from watchdog.services.brain.models import (
     DecisionIntent,
+    PCDIApprovalRef,
     DecisionTrace,
     PCDIBranchRef,
+    PCDICompletionRef,
+    PCDIDecisionScopeRef,
+    PCDIErrorRef,
     PCDIFreshnessRef,
     PCDIGovernanceRef,
     PCDIProgressRef,
@@ -23,6 +31,7 @@ from watchdog.services.brain.models import (
     PCDISessionRef,
     ProjectContinuationDecisionInput,
 )
+from watchdog.services.session_spine.text import sanitize_session_summary
 from watchdog.settings import Settings
 
 if TYPE_CHECKING:
@@ -33,6 +42,12 @@ if TYPE_CHECKING:
 
 
 class BrainDecisionService:
+    _SUMMARY_PLACEHOLDER_FRAGMENTS = (
+        "当前进展待汇总",
+        "请汇总当前进展",
+        "需要先返回已完成内容、阻塞点和下一步动作",
+    )
+
     def __init__(
         self,
         *,
@@ -137,6 +152,133 @@ class BrainDecisionService:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _fact_codes(record: PersistedSessionRecord) -> list[str]:
+        return [
+            code
+            for code in (str(getattr(fact, "fact_code", "") or "").strip() for fact in record.facts)
+            if code
+        ]
+
+    @staticmethod
+    def _latest_error_summary(record: PersistedSessionRecord) -> str | None:
+        for fact in reversed(record.facts):
+            severity = str(getattr(fact, "severity", "") or "").strip().lower()
+            detail = str(getattr(fact, "detail", "") or "").strip()
+            summary = str(getattr(fact, "summary", "") or "").strip()
+            if severity in {"error", "critical"}:
+                return detail or summary or None
+        return None
+
+    @staticmethod
+    def _approval_actionable_commands(record: PersistedSessionRecord) -> list[str]:
+        actionable = {"list_pending_approvals", "approve_approval", "reject_approval"}
+        return [
+            intent
+            for intent in record.session.available_intents
+            if str(intent or "").strip() in actionable
+        ]
+
+    @staticmethod
+    def _latest_approval_reason(
+        record: PersistedSessionRecord,
+        *,
+        has_pending_approval: bool,
+    ) -> str | None:
+        if not has_pending_approval or not record.approval_queue:
+            return None
+        approval = next(
+            (item for item in record.approval_queue if is_visible_projected_approval(item)),
+            None,
+        )
+        if approval is None:
+            return None
+        reason = str(getattr(approval, "reason", "") or "").strip()
+        alternative = str(getattr(approval, "alternative", "") or "").strip()
+        return reason or alternative or None
+
+    def _decision_scope_ref(self, record: PersistedSessionRecord) -> PCDIDecisionScopeRef:
+        available_intents = {str(intent or "").strip() for intent in record.session.available_intents}
+        return PCDIDecisionScopeRef(
+            can_request_approval=bool(available_intents.intersection({"approve_approval", "reject_approval"})),
+            can_continue_current_branch="continue" in available_intents,
+            can_recover_current_branch=True,
+            can_switch_branch=self._int_or_none(
+                self._read_yaml_mapping(".ai-sdlc/project/config/project-state.yaml").get("next_work_item_seq")
+            )
+            is not None,
+            can_close_session="close" in available_intents or "done" in available_intents,
+        )
+
+    @classmethod
+    def _summary_is_placeholder(cls, summary: str) -> bool:
+        normalized = str(summary or "").strip()
+        if not normalized:
+            return True
+        return any(fragment in normalized for fragment in cls._SUMMARY_PLACEHOLDER_FRAGMENTS)
+
+    @staticmethod
+    def _join_unique(parts: list[str]) -> str:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for part in parts:
+            normalized = str(part or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+        return "；".join(ordered)
+
+    def _progress_summary_for_decision_context(
+        self,
+        *,
+        record: PersistedSessionRecord,
+        branch_goal: str,
+        completion_signals: list[str],
+    ) -> str:
+        summary = sanitize_session_summary(record.progress.summary)
+        if not self._summary_is_placeholder(summary):
+            return summary
+        blocker_codes = [str(item or "").strip() for item in record.progress.blocker_fact_codes if str(item or "").strip()]
+        primary_codes = [str(item or "").strip() for item in record.progress.primary_fact_codes if str(item or "").strip()]
+        phase = str(record.progress.activity_phase or record.session.activity_phase or "").strip()
+        synthesized_parts: list[str] = []
+        if branch_goal and branch_goal != "goal-contract:missing":
+            synthesized_parts.append(f"当前分支目标：{branch_goal}")
+        if phase:
+            synthesized_parts.append(f"当前阶段：{phase}")
+        if blocker_codes:
+            synthesized_parts.append(f"阻塞信号：{', '.join(blocker_codes[:3])}")
+        elif primary_codes:
+            synthesized_parts.append(f"当前信号：{', '.join(primary_codes[:3])}")
+        if completion_signals:
+            synthesized_parts.append(f"待完成：{', '.join(completion_signals[:2])}")
+        if int(record.session.pending_approval_count or 0) > 0:
+            synthesized_parts.append("当前存在待审批项")
+        synthesized = self._join_unique(synthesized_parts)
+        return synthesized or "当前进展待汇总；需先补齐阶段状态、阻塞点和下一步动作。"
+
+    def progress_summary_for_decision_context(
+        self,
+        record: PersistedSessionRecord,
+    ) -> str:
+        contract = None
+        if self._session_service is not None:
+            contract = GoalContractService(self._session_service).get_current_contract(
+                project_id=record.project_id,
+                session_id=record.thread_id,
+            )
+        branch_goal = "goal-contract:missing"
+        completion_signals: list[str] = []
+        if contract is not None:
+            branch_goal = contract.current_phase_goal
+            completion_signals = list(contract.completion_signals)
+        return self._progress_summary_for_decision_context(
+            record=record,
+            branch_goal=branch_goal,
+            completion_signals=completion_signals,
+        )
+
     def _build_decision_context(
         self,
         record: PersistedSessionRecord,
@@ -186,6 +328,15 @@ class BrainDecisionService:
             if next_work_item_seq is not None
             else None
         )
+        fact_codes = self._fact_codes(record)
+        blocker_fact_codes = list(record.progress.blocker_fact_codes)
+        latest_error_summary = self._latest_error_summary(record)
+        approval_commands = self._approval_actionable_commands(record)
+        pending_approval_count = max(int(record.session.pending_approval_count or 0), 0)
+        visible_projected_approvals = [
+            item for item in record.approval_queue if is_visible_projected_approval(item)
+        ]
+        has_pending_approval = pending_approval_count > 0 or bool(visible_projected_approvals)
 
         return ProjectContinuationDecisionInput(
             packet_version="pcdi:v1",
@@ -205,7 +356,11 @@ class BrainDecisionService:
             ),
             progress_ref=PCDIProgressRef(
                 current_phase=record.progress.activity_phase,
-                current_progress_summary=record.progress.summary,
+                current_progress_summary=self._progress_summary_for_decision_context(
+                    record=record,
+                    branch_goal=branch_goal,
+                    completion_signals=completion_signals,
+                ),
                 files_touched=list(record.progress.files_touched),
                 remaining_tasks=list(completion_signals),
                 next_recommended_tasks=[],
@@ -219,8 +374,31 @@ class BrainDecisionService:
             governance_ref=PCDIGovernanceRef(
                 goal_contract_version=goal_contract_version,
                 goal_contract_readiness=goal_contract_readiness,
-                pending_approval=bool(record.session.pending_approval_count or record.approval_queue),
+                pending_approval=has_pending_approval,
             ),
+            approval_ref=PCDIApprovalRef(
+                pending_approval_count=pending_approval_count,
+                actionable_commands=approval_commands,
+                latest_approval_reason=self._latest_approval_reason(
+                    record,
+                    has_pending_approval=has_pending_approval,
+                ),
+            ),
+            completion_ref=PCDICompletionRef(
+                task_completion_candidate="task_completed" in fact_codes,
+                branch_completion_candidate="branch_goal_complete" in fact_codes,
+                next_branch_available=next_work_item_seq is not None,
+                target_work_item_seq=next_work_item_seq,
+            ),
+            error_ref=PCDIErrorRef(
+                primary_fact_codes=list(record.progress.primary_fact_codes),
+                blocker_fact_codes=blocker_fact_codes,
+                latest_error_summary=latest_error_summary,
+                recovery_candidate=bool(
+                    {"context_critical", "repeat_failure", "stuck_no_progress"}.intersection(fact_codes)
+                ),
+            ),
+            decision_scope_ref=self._decision_scope_ref(record),
             freshness_ref=PCDIFreshnessRef(
                 snapshot_epoch=f"session-seq:{record.session_seq}",
                 snapshot_version=record.fact_snapshot_version,
@@ -262,11 +440,23 @@ class BrainDecisionService:
                 "completed",
                 "archived",
                 "close",
+                "closed",
             }:
+                if normalized == "close":
+                    return "closed"
                 return normalized
         for candidate in all_candidates:
             normalized = str(candidate or "").strip().lower()
-            if normalized in {"execute", "decompose", "design", "refine", "init", "initialized", "active"}:
+            if normalized in {
+                "execute",
+                "decompose",
+                "design",
+                "refine",
+                "init",
+                "initialized",
+                "active",
+                "running",
+            }:
                 return "active"
         return "unknown"
 
@@ -281,12 +471,16 @@ class BrainDecisionService:
                 record=record,
                 intent="observe_only",
                 rationale="project is not active for autonomous continuation",
+                evidence_codes=["project_execution_state_not_active"],
+                remaining_work_hypothesis=["wait until project execution state returns to active"],
             )
         if decision_context.governance_ref.pending_approval:
             return self._rule_based_intent(
                 record=record,
                 intent="require_approval",
                 rationale="pending approval blocks autonomous continuation",
+                evidence_codes=["approval_pending"],
+                remaining_work_hypothesis=["review the pending approval and decide approve or reject"],
             )
         if (
             decision_context.governance_ref.goal_contract_version == "goal-contract:unknown"
@@ -294,8 +488,9 @@ class BrainDecisionService:
         ):
             return self._rule_based_intent(
                 record=record,
-                intent="observe_only",
                 rationale="goal contract is not ready for autonomous continuation",
+                evidence_codes=["goal_contract_not_ready"],
+                remaining_work_hypothesis=["refresh goal and branch contract before autonomous continuation"],
             )
         return None
 
@@ -346,6 +541,11 @@ class BrainDecisionService:
         record: PersistedSessionRecord | None,
         intent: str | None = None,
         rationale: str | None = None,
+        goal_coverage: str | None = None,
+        remaining_work_hypothesis: list[str] | None = None,
+        evidence_codes: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
         provider_output_schema_ref: str | None = None,
         degrade_reason: str | None = None,
     ) -> DecisionIntent:
@@ -366,6 +566,25 @@ class BrainDecisionService:
             else:
                 intent = "observe_only"
                 rationale = rationale or "no executable action proposed"
+        if evidence_codes is None:
+            evidence_codes = []
+        if remaining_work_hypothesis is None:
+            remaining_work_hypothesis = []
+        if intent == "candidate_closure":
+            evidence_codes = list(dict.fromkeys([*evidence_codes, "task_completed"]))
+        elif intent == "require_approval":
+            evidence_codes = list(dict.fromkeys([*evidence_codes, "approval_pending"]))
+        elif intent == "propose_recovery":
+            evidence_codes = list(dict.fromkeys([*evidence_codes, "recovery_candidate"]))
+        elif intent == "propose_execute":
+            evidence_codes = list(dict.fromkeys([*evidence_codes, "autonomous_continue_candidate"]))
+        elif intent == "observe_only" and not evidence_codes:
+            evidence_codes = ["no_actionable_fact"]
+        progress_summary = (
+            self.progress_summary_for_decision_context(record)
+            if record is not None and intent == "propose_execute"
+            else None
+        )
         return DecisionIntent(
             intent=intent,
             rationale=rationale,
@@ -373,7 +592,13 @@ class BrainDecisionService:
                 record=record,
                 intent=intent,
                 rationale=rationale,
+                progress_summary=progress_summary,
             ),
+            goal_coverage=goal_coverage,
+            remaining_work_hypothesis=remaining_work_hypothesis,
+            evidence_codes=evidence_codes,
+            provider=provider or "resident_orchestrator",
+            model=model or "rule-based-brain",
             provider_output_schema_ref=provider_output_schema_ref,
             degrade_reason=degrade_reason,
         )
@@ -384,6 +609,7 @@ class BrainDecisionService:
         record: PersistedSessionRecord | None,
         intent: str,
         rationale: str | None,
+        progress_summary: str | None = None,
     ) -> dict[str, object]:
         if intent == "candidate_closure" and record is not None:
             summary = record.progress.summary or "session reached done state"
@@ -394,7 +620,8 @@ class BrainDecisionService:
             }
         if intent != "propose_execute" or record is None:
             return {}
-        summary = str(record.progress.summary or "current task").strip()
+        summary = str(progress_summary or record.progress.summary or "current task").strip()
+        summary = sanitize_session_summary(summary)
         if not summary:
             summary = "current task"
         stuck_level = int(record.progress.stuck_level or 0)
@@ -436,13 +663,47 @@ class BrainDecisionService:
                     decision_context=decision_context,
                 )
             except ProviderOutputSchemaError as exc:
+                profile = self._provider._active_profile()
                 return self._rule_based_intent(
                     record=record,
                     intent=intent,
                     rationale=rationale,
+                    evidence_codes=[
+                        "provider_output_invalid",
+                        f"provider_output_schema_ref:{exc.schema_ref}",
+                    ],
+                    provider=(profile.name if profile is not None else None),
+                    model=(str(profile.model or "") if profile is not None else None),
                     provider_output_schema_ref=exc.schema_ref,
                     degrade_reason=exc.degrade_reason,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                profile = self._provider._active_profile()
+                degrade_reason = PROVIDER_UNAVAILABLE_DEGRADE_REASON
+                evidence_codes = [
+                    "provider_unavailable",
+                    f"provider_error:{exc.__class__.__name__}",
+                ]
+                if isinstance(exc, httpx.HTTPStatusError):
+                    status_code = int(exc.response.status_code)
+                    degrade_reason = self._provider.degrade_reason_for_http_status(status_code)
+                    evidence_codes.extend(
+                        [
+                            f"provider_http_status:{status_code}",
+                            degrade_reason,
+                        ]
+                    )
+                    if degrade_reason == PROVIDER_RATE_LIMITED_DEGRADE_REASON:
+                        evidence_codes = [
+                            code for code in evidence_codes if code != "provider_unavailable"
+                        ]
+                return self._rule_based_intent(
+                    record=record,
+                    intent=intent,
+                    rationale=rationale,
+                    evidence_codes=evidence_codes,
+                    provider=(profile.name if profile is not None else None),
+                    model=(str(profile.model or "") if profile is not None else None),
+                    degrade_reason=degrade_reason,
+                )
         return self._rule_based_intent(record=record, intent=intent, rationale=rationale)

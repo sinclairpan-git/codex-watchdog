@@ -16,12 +16,27 @@ class ReplayResidentExpertConsultationExpert(BaseModel):
     last_consultation_ref: str | None = None
 
 
+class ReplayResidentExpertOpinion(BaseModel):
+    expert_id: str
+    next_slice_recommendation: str
+    rationale: str
+    risks_to_avoid: list[str] = Field(default_factory=list)
+
+
+class ReplayResidentExpertConsultationSynthesis(BaseModel):
+    summary: str
+    chosen_next_slice: str | None = None
+    dissent_summary: str | None = None
+
+
 class ReplayResidentExpertConsultation(BaseModel):
     consultation_ref: str
     consulted_at: str
     coverage_status: str | None = None
     degraded_expert_ids: list[str] = Field(default_factory=list)
     experts: list[ReplayResidentExpertConsultationExpert] = Field(default_factory=list)
+    opinions: list[ReplayResidentExpertOpinion] = Field(default_factory=list)
+    synthesis: ReplayResidentExpertConsultationSynthesis | None = None
 
 
 class ReplayTimelineEvent(BaseModel):
@@ -70,6 +85,8 @@ def _materialize_resident_expert_consultation(record) -> ReplayResidentExpertCon
         else []
     )
     degraded_expert_ids = raw_bundle.get("degraded_expert_ids")
+    raw_opinions = raw_bundle.get("opinions")
+    raw_synthesis = raw_bundle.get("synthesis")
     return ReplayResidentExpertConsultation(
         consultation_ref=consultation_ref,
         consulted_at=consulted_at,
@@ -80,6 +97,20 @@ def _materialize_resident_expert_consultation(record) -> ReplayResidentExpertCon
             else []
         ),
         experts=experts,
+        opinions=(
+            [
+                ReplayResidentExpertOpinion.model_validate(item)
+                for item in raw_opinions
+                if isinstance(item, dict)
+            ]
+            if isinstance(raw_opinions, list)
+            else []
+        ),
+        synthesis=(
+            ReplayResidentExpertConsultationSynthesis.model_validate(raw_synthesis)
+            if isinstance(raw_synthesis, dict)
+            else None
+        ),
     )
 
 

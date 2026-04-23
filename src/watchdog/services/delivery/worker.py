@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from watchdog.services.delivery.http_client import DeliveryAttemptResult, OpenClawDeliveryClient
+from watchdog.services.delivery.envelopes import (
+    SESSION_DIRECTORY_PROJECT_ID,
+    SESSION_DIRECTORY_SESSION_ID,
+)
+from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.store import SessionSpineStore
@@ -32,7 +38,7 @@ class DeliveryWorker:
         self,
         *,
         store: DeliveryOutboxStore,
-        delivery_client: OpenClawDeliveryClient,
+        delivery_client: Any,
         settings: Settings,
         session_spine_store: SessionSpineStore | None = None,
         session_service: SessionService | None = None,
@@ -186,13 +192,22 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         payload: dict[str, Any],
     ) -> None:
+        announce_payload = self._notification_announcement_payload_fields(record, payload)
+        announce_version = hashlib.sha256(
+            json.dumps(
+                announce_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:16]
         self._record_notification_event(
             event_type="notification_announced",
             record=record,
             payload=payload,
-            correlation_id=f"corr:notification:{record.envelope_id}:announce",
+            correlation_id=f"corr:notification:{record.envelope_id}:announce:{announce_version}",
             causation_id=str(payload.get("event_id") or record.envelope_id),
-            event_payload=self._notification_announcement_payload_fields(record, payload),
+            event_payload=announce_payload,
             replay_safe=True,
         )
 
@@ -425,6 +440,44 @@ class DeliveryWorker:
             return None
         return (occurred_at, age_seconds)
 
+    @staticmethod
+    def _suppressed_by_notification_policy(
+        *,
+        record: DeliveryOutboxRecord,
+    ) -> str | None:
+        payload = record.envelope_payload
+        envelope_type = str(payload.get("envelope_type") or "").strip()
+        if envelope_type == "decision":
+            return "suppressed_notification_policy"
+        if envelope_type != "notification":
+            return None
+        notification_kind = str(payload.get("notification_kind") or "").strip()
+        if notification_kind == "decision_result":
+            return "suppressed_notification_policy"
+        return None
+
+    def _apply_notification_policy_suppression(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        failure_code: str,
+        now: datetime,
+    ) -> DeliveryOutboxRecord:
+        notes = list(record.operator_notes)
+        notes.append(
+            f"delivery_skipped failure_code={failure_code} envelope_type={record.envelope_type}"
+        )
+        updated = record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": failure_code,
+                "next_retry_at": None,
+                "operator_notes": notes,
+                "updated_at": _iso_z(now),
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
     def _suppressed_for_local_manual_activity(
         self,
         *,
@@ -511,17 +564,52 @@ class DeliveryWorker:
         self,
         record: DeliveryOutboxRecord,
     ) -> tuple[str, str, str] | None:
-        if self._session_service is None:
+        if self._session_service is None or not hasattr(self._session_service, "list_events"):
             return None
+        global_route = self._resolve_global_delivery_route()
+        if (
+            record.project_id == SESSION_DIRECTORY_PROJECT_ID
+            and record.session_id == SESSION_DIRECTORY_SESSION_ID
+        ):
+            return global_route
         events = [
             event
             for event in self._session_service.list_events(session_id=record.session_id)
             if event.project_id == record.project_id
         ]
         if not events:
-            return None
+            return global_route
         scoped_events = self._scope_dynamic_route_candidate_events(events=events, record=record)
-        return self._resolve_dynamic_route_candidate_set(scoped_events)
+        scoped_route = self._resolve_dynamic_route_candidate_set(
+            scoped_events,
+            require_unique=scoped_events is events,
+        )
+        if scoped_route is not None:
+            return scoped_route
+        return global_route
+
+    def _resolve_global_delivery_route(self) -> tuple[str, str, str] | None:
+        if self._session_service is None or not hasattr(self._session_service, "list_events"):
+            return None
+        all_events = list(self._session_service.list_events())
+        if not all_events:
+            return None
+        portfolio_events = [
+            event
+            for event in all_events
+            if event.project_id == SESSION_DIRECTORY_PROJECT_ID
+            and event.session_id == SESSION_DIRECTORY_SESSION_ID
+        ]
+        for candidate_events in (portfolio_events, all_events):
+            if not candidate_events:
+                continue
+            candidate = self._resolve_dynamic_route_candidate_set(
+                candidate_events,
+                require_unique=False,
+            )
+            if candidate is not None:
+                return candidate
+        return None
 
     @staticmethod
     def _scope_dynamic_route_candidate_events(
@@ -565,6 +653,8 @@ class DeliveryWorker:
     @staticmethod
     def _resolve_dynamic_route_candidate_set(
         events: list,
+        *,
+        require_unique: bool = False,
     ) -> tuple[str, str, str] | None:
         for candidate in (
             DeliveryWorker._unique_route_candidate(
@@ -572,18 +662,21 @@ class DeliveryWorker:
                 value_key="feishu_receive_id",
                 type_key="feishu_receive_id_type",
                 default_type=None,
+                require_unique=require_unique,
             ),
             DeliveryWorker._unique_route_candidate(
                 events=events,
                 value_key="feishu_chat_id",
                 type_key=None,
                 default_type="chat_id",
+                require_unique=require_unique,
             ),
             DeliveryWorker._unique_route_candidate(
                 events=events,
                 value_key="feishu_actor_id",
                 type_key=None,
                 default_type="open_id",
+                require_unique=require_unique,
             ),
         ):
             if candidate is not None:
@@ -597,8 +690,9 @@ class DeliveryWorker:
         value_key: str,
         type_key: str | None,
         default_type: str | None,
+        require_unique: bool,
     ) -> tuple[str, str, str] | None:
-        candidate_by_route: dict[tuple[str, str], str] = {}
+        selected: tuple[str, str, str] | None = None
         for event in reversed(events):
             related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
             receive_id = str(related_ids.get(value_key) or "").strip()
@@ -611,11 +705,13 @@ class DeliveryWorker:
                 receive_id_type = str(default_type or "").strip()
             if not receive_id_type:
                 continue
-            candidate_by_route.setdefault((receive_id, receive_id_type), event.event_id)
-        if len(candidate_by_route) != 1:
-            return None
-        (receive_id, receive_id_type), source_event_id = next(iter(candidate_by_route.items()))
-        return (receive_id, receive_id_type, source_event_id)
+            candidate = (receive_id, receive_id_type, event.event_id)
+            if selected is None:
+                selected = candidate
+                continue
+            if require_unique and candidate[:2] != selected[:2]:
+                return None
+        return selected
 
     def process_next_ready(
         self,
@@ -634,6 +730,13 @@ class DeliveryWorker:
                 record=record,
                 occurred_at=occurred_at,
                 age_seconds=age_seconds,
+                now=now,
+            )
+        suppressed_by_policy = self._suppressed_by_notification_policy(record=record)
+        if suppressed_by_policy is not None:
+            return self._apply_notification_policy_suppression(
+                record=record,
+                failure_code=suppressed_by_policy,
                 now=now,
             )
         suppressed = self._suppressed_for_local_manual_activity(record=record, now=now)

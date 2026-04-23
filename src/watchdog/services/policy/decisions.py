@@ -344,7 +344,16 @@ class PolicyDecisionStore:
             data = self._read()
             existing = data.get(record.decision_key)
             if isinstance(existing, dict):
-                return CanonicalDecisionRecord.model_validate(existing)
+                existing_record = CanonicalDecisionRecord.model_validate(existing)
+                existing_payload = existing_record.model_dump(mode="json")
+                incoming_payload = record.model_dump(mode="json")
+                existing_payload.pop("created_at", None)
+                incoming_payload.pop("created_at", None)
+                if existing_payload == incoming_payload:
+                    return existing_record
+                data[record.decision_key] = record.model_dump(mode="json")
+                self._write(data)
+                return record
             data[record.decision_key] = record.model_dump(mode="json")
             self._write(data)
         return record

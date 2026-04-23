@@ -27,7 +27,7 @@ def aggregate_audit_actions(audit_path: Path) -> dict[str, int]:
 
 
 def aggregate_watchdog_audit_actions(audit_path: Path) -> dict[str, int]:
-    """仅统计 `source == watchdog` 的记录，避免与 A 侧同文件混写时重复（若分文件则等同全量）。"""
+    """仅统计 `source == watchdog` 的记录，避免与 runtime 侧同文件混写时重复（若分文件则等同全量）。"""
     if not audit_path.is_file():
         return {}
     counts: Counter[str] = Counter()

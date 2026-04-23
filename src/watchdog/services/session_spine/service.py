@@ -26,7 +26,7 @@ from watchdog.services.policy.decisions import (
     PolicyDecisionStore,
 )
 from watchdog.services.policy.engine import evaluate_persisted_session_policy
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_service.models import SessionEventRecord
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.facts import build_fact_records
@@ -48,6 +48,8 @@ from watchdog.services.session_spine.approval_visibility import (
     is_deferred_policy_auto_approval,
 )
 from watchdog.services.session_spine.task_state import (
+    DEFAULT_ACTIVE_SESSION_STALE_AFTER_SECONDS,
+    derive_project_execution_state_liveness_override,
     is_non_active_project_execution_state,
     normalize_project_execution_state,
 )
@@ -59,7 +61,7 @@ if TYPE_CHECKING:
 
 CONTROL_LINK_ERROR = {
     "code": "CONTROL_LINK_ERROR",
-    "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
+    "message": "无法连接 Codex runtime 控制链路；请检查网络与 runtime 服务状态。",
 }
 PERSISTED_SESSION_SPINE_REQUIRED_ERROR = {
     "code": "PERSISTED_SESSION_SPINE_REQUIRED",
@@ -83,37 +85,121 @@ def _read_yaml_mapping(relative_path: str, *, repo_root: Path | None = None) -> 
     return payload if isinstance(payload, dict) else {}
 
 
-def _authoritative_project_execution_state() -> str:
+def _normalized_scope_values(*values: object) -> set[str]:
+    normalized: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        normalized.add(text)
+        normalized.add(text.lower())
+        if "/" in text:
+            tail = text.rsplit("/", 1)[-1].strip()
+            if tail:
+                normalized.add(tail)
+                normalized.add(tail.lower())
+    return normalized
+
+
+def _task_targets_workspace_project(
+    task: dict[str, Any] | None,
+    *,
+    project_state: dict[str, object],
+    checkpoint: dict[str, object],
+    state_resume: dict[str, object],
+    repo_root: Path | None = None,
+) -> bool:
+    if not isinstance(task, dict):
+        return False
+    project_id = str(task.get("project_id") or "").strip()
+    if not project_id:
+        return False
+    feature = checkpoint.get("feature")
+    feature_mapping = feature if isinstance(feature, dict) else {}
+    root = repo_root or Path(__file__).resolve().parents[4]
+    workspace_scope = _normalized_scope_values(
+        project_state.get("project_id"),
+        project_state.get("project_name"),
+        checkpoint.get("project_id"),
+        checkpoint.get("project_name"),
+        checkpoint.get("linked_wi_id"),
+        state_resume.get("project_id"),
+        state_resume.get("project_name"),
+        feature_mapping.get("id"),
+        feature_mapping.get("current_branch"),
+        feature_mapping.get("feature_branch"),
+        root.name,
+    )
+    return project_id in workspace_scope or project_id.lower() in workspace_scope
+
+
+def _authoritative_project_execution_state(
+    task: dict[str, Any] | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> str:
     from watchdog.services.brain.service import BrainDecisionService
 
+    project_state = _read_yaml_mapping(".ai-sdlc/project/config/project-state.yaml", repo_root=repo_root)
+    checkpoint = _read_yaml_mapping(".ai-sdlc/state/checkpoint.yml", repo_root=repo_root)
+    state_resume = _read_yaml_mapping(".ai-sdlc/state/resume-pack.yaml", repo_root=repo_root)
+    if not _task_targets_workspace_project(
+        task,
+        project_state=project_state,
+        checkpoint=checkpoint,
+        state_resume=state_resume,
+        repo_root=repo_root,
+    ):
+        return "unknown"
     return BrainDecisionService._normalize_project_execution_state(
-        project_state=_read_yaml_mapping(".ai-sdlc/project/config/project-state.yaml"),
-        checkpoint=_read_yaml_mapping(".ai-sdlc/state/checkpoint.yml"),
-        state_resume=_read_yaml_mapping(".ai-sdlc/state/resume-pack.yaml"),
+        project_state=project_state,
+        checkpoint=checkpoint,
+        state_resume=state_resume,
     )
 
 
 def _task_with_authoritative_project_execution_state(
     task: dict[str, Any] | None,
+    *,
+    repo_root: Path | None = None,
+    now: datetime | None = None,
+    stale_active_session_after_seconds: float = DEFAULT_ACTIVE_SESSION_STALE_AFTER_SECONDS,
 ) -> dict[str, Any] | None:
     if not isinstance(task, dict):
         return task
-    authoritative_state = _authoritative_project_execution_state()
+    authoritative_state = _authoritative_project_execution_state(task, repo_root=repo_root)
     explicit_state = normalize_project_execution_state(task)
     updated = dict(task)
     if authoritative_state == "unknown":
-        updated["project_execution_state"] = "unknown"
-        updated["authoritative_project_execution_state_missing"] = True
+        updated.pop("authoritative_project_execution_state_missing", None)
+        updated["project_execution_state"] = derive_project_execution_state_liveness_override(
+            updated,
+            project_execution_state=explicit_state,
+            now=now,
+            stale_after_seconds=stale_active_session_after_seconds,
+        )
         return updated
     updated.pop("authoritative_project_execution_state_missing", None)
     if explicit_state == "unknown":
-        updated["project_execution_state"] = authoritative_state
+        updated["project_execution_state"] = derive_project_execution_state_liveness_override(
+            updated,
+            project_execution_state=authoritative_state,
+            now=now,
+            stale_after_seconds=stale_active_session_after_seconds,
+        )
         return updated
+    updated["project_execution_state"] = explicit_state
     if (
         is_non_active_project_execution_state(authoritative_state)
         and not is_non_active_project_execution_state(explicit_state)
     ):
         updated["project_execution_state"] = authoritative_state
+    updated["project_execution_state"] = derive_project_execution_state_liveness_override(
+        updated,
+        project_execution_state=str(updated.get("project_execution_state") or explicit_state),
+        now=now,
+        stale_after_seconds=stale_active_session_after_seconds,
+    )
     return updated
 SESSION_EVENT_APPROVAL_TYPES = frozenset(
     {
@@ -423,7 +509,12 @@ def _build_last_dispatch_result_projection(
         if created_event is None:
             continue
         action_ref = _event_payload_text(created_event, "action_ref")
-        if action_ref not in {"continue_session", "post_operator_guidance", "execute_recovery"}:
+        if action_ref not in {
+            "continue_session",
+            "request_recovery",
+            "post_operator_guidance",
+            "execute_recovery",
+        }:
             continue
         decision_id = _event_related_text(created_event, "decision_id") or str(
             created_event.causation_id or ""
@@ -477,7 +568,8 @@ def _build_last_dispatch_result_projection(
         record
         for record in decision_store.list_records()
         if record.project_id == project_id
-        and record.action_ref in {"continue_session", "post_operator_guidance", "execute_recovery"}
+        and record.action_ref
+        in {"continue_session", "request_recovery", "post_operator_guidance", "execute_recovery"}
     ]
     if not candidate_records:
         return event_projection
@@ -1105,7 +1197,14 @@ def _build_event_projection_task(
             else None
         )
     )
-    preserve_source_state = _has_event_only_fallback_events(events) and not _has_relevant_session_projection_events(events)
+    preserve_source_state = (
+        task is not None
+        or persisted_record is not None
+        or (
+            _has_event_only_fallback_events(events)
+            and not _has_relevant_session_projection_events(events)
+        )
+    )
     pending_approval = bool(approvals)
     summary = "waiting for approval" if pending_approval else "session active"
     status = "waiting_human" if pending_approval else "running"
@@ -1160,6 +1259,15 @@ def _build_event_projection_task(
         "project_id": project_id,
         "thread_id": stable_thread_id_for_project(project_id),
         "native_thread_id": native_thread_id or None,
+        "project_execution_state": (
+            str((task or {}).get("project_execution_state") or "").strip()
+            or (
+                "paused"
+                if persisted_record is not None
+                and any(fact.fact_code == "project_not_active" for fact in persisted_record.facts)
+                else None
+            )
+        ),
         "status": status,
         "phase": activity_phase,
         "pending_approval": pending_approval,
@@ -1169,6 +1277,15 @@ def _build_event_projection_task(
         "stuck_level": stuck_level,
         "failure_count": failure_count,
         "last_progress_at": last_progress_at,
+        "last_local_manual_activity_at": (
+            str((task or {}).get("last_local_manual_activity_at") or "").strip()
+            or (
+                persisted_record.last_local_manual_activity_at
+                if persisted_record is not None
+                else None
+            )
+        ),
+        "last_error_signature": str((task or {}).get("last_error_signature") or "").strip() or None,
         }
     ) or {}
 
@@ -1179,13 +1296,59 @@ def _build_session_read_bundle_from_session_events(
     events: list[SessionEventRecord],
     persisted_record: PersistedSessionRecord | None = None,
     task: dict[str, Any] | None = None,
+    approval_store: CanonicalApprovalStore | None = None,
     session_service: SessionService | None = None,
     decision_store: PolicyDecisionStore | None = None,
     receipt_store: ActionReceiptStore | None = None,
     orchestration_state_store: ResidentOrchestrationStateStore | None = None,
     dispatch_cooldown_seconds: float = 0.0,
 ) -> SessionReadBundle:
-    approvals = _build_approval_rows_from_session_events(events)
+    event_approvals = _build_approval_rows_from_session_events(events)
+    terminal_event_approval_ids: set[str] = set()
+    for event in events:
+        if event.event_type == "approval_requested":
+            continue
+        if event.event_type not in SESSION_EVENT_APPROVAL_TYPES:
+            continue
+        approval_id = str(event.related_ids.get("approval_id") or "").strip()
+        if approval_id:
+            terminal_event_approval_ids.add(approval_id)
+    canonical_rows = _list_actionable_canonical_approval_rows(
+        approval_store,
+        project_id=project_id,
+    )
+    known_canonical_ids: set[str] = set()
+    actionable_canonical_ids = {
+        str(row.get("approval_id") or "")
+        for row in canonical_rows
+        if str(row.get("approval_id") or "")
+    }
+    if approval_store is not None:
+        known_canonical_ids = {
+            record.approval_id
+            for record in approval_store.list_records()
+            if record.project_id == project_id
+        }
+    approvals_by_id: dict[str, dict[str, Any]] = {}
+    for row in event_approvals:
+        approval_id = str(row.get("approval_id") or "")
+        if not approval_id:
+            continue
+        if approval_id in known_canonical_ids and approval_id not in actionable_canonical_ids:
+            continue
+        approvals_by_id[approval_id] = dict(row)
+    for row in canonical_rows:
+        approval_id = str(row.get("approval_id") or "")
+        if approval_id and approval_id not in terminal_event_approval_ids:
+            approvals_by_id[approval_id] = dict(row)
+    approvals = sorted(
+        approvals_by_id.values(),
+        key=lambda row: (
+            str(row.get("requested_at") or row.get("created_at") or "") == "",
+            str(row.get("requested_at") or row.get("created_at") or ""),
+            str(row.get("approval_id") or ""),
+        ),
+    )
     projected_task = _build_event_projection_task(
         project_id=project_id,
         approvals=approvals,
@@ -1198,6 +1361,13 @@ def _build_session_read_bundle_from_session_events(
         task=projected_task,
         approvals=approvals,
     )
+    if any(fact.fact_code == "project_not_active" for fact in approval_facts):
+        approvals = []
+        approval_facts = build_fact_records(
+            project_id=project_id,
+            task=projected_task,
+            approvals=approvals,
+        )
     event_facts = build_session_service_fact_records(
         project_id=project_id,
         events=events,
@@ -1259,7 +1429,7 @@ def _build_session_read_bundle_from_session_events(
 
 
 def _load_task_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
 ) -> dict[str, Any] | None:
     try:
@@ -1274,13 +1444,13 @@ def _load_task_or_raise(
     data = body.get("data")
     if not isinstance(data, dict):
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 返回数据格式异常"}
         )
     return data
 
 
 def _load_task_by_native_thread_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     native_thread_id: str,
 ) -> dict[str, Any] | None:
     try:
@@ -1295,13 +1465,13 @@ def _load_task_by_native_thread_or_raise(
     data = body.get("data")
     if not isinstance(data, dict):
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 返回数据格式异常"}
         )
     return data
 
 
 def _load_approvals_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     try:
@@ -1330,7 +1500,7 @@ def _load_approvals_or_raise(
 
 
 def _load_deferred_approvals_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str | None,
 ) -> list[dict[str, Any]]:
     try:
@@ -1355,7 +1525,7 @@ def _load_deferred_approvals_or_raise(
         ]
 
 
-def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:
+def _load_tasks_or_raise(client: CodexRuntimeClient) -> list[dict[str, Any]]:
     try:
         return client.list_tasks()
     except (httpx.RequestError, RuntimeError, OSError) as exc:
@@ -1363,7 +1533,7 @@ def _load_tasks_or_raise(client: AControlAgentClient) -> list[dict[str, Any]]:
 
 
 def _load_workspace_activity_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     recent_minutes: int,
@@ -1383,14 +1553,42 @@ def _load_workspace_activity_or_raise(
     data = body.get("data")
     if not isinstance(data, dict):
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 返回数据格式异常"}
         )
     activity = data.get("activity")
     if not isinstance(activity, dict):
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 返回数据格式异常"}
         )
     return dict(activity)
+
+
+def _task_with_workspace_activity(
+    task: dict[str, Any] | None,
+    activity: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(task, dict) or not isinstance(activity, dict):
+        return task
+    updated = dict(task)
+    updated["workspace_cwd_exists"] = bool(activity.get("cwd_exists"))
+    updated["workspace_files_scanned"] = int(activity.get("files_scanned") or 0)
+    updated["workspace_recent_change_count"] = int(activity.get("recent_change_count") or 0)
+    latest_mtime_iso = str(activity.get("latest_mtime_iso") or "").strip()
+    updated["workspace_latest_mtime_iso"] = latest_mtime_iso or None
+    if not bool(activity.get("cwd_exists")) or not latest_mtime_iso:
+        return updated
+    latest_mtime = _parse_iso8601(latest_mtime_iso)
+    if latest_mtime is None:
+        return updated
+    recent_change_count = int(activity.get("recent_change_count") or 0)
+    last_progress = _parse_iso8601(str(updated.get("last_progress_at") or "").strip() or None)
+    if recent_change_count <= 0 and last_progress is not None and latest_mtime <= last_progress:
+        return updated
+    current_manual = str(updated.get("last_local_manual_activity_at") or "").strip()
+    current_manual_dt = _parse_iso8601(current_manual or None)
+    if current_manual_dt is None or latest_mtime > current_manual_dt:
+        updated["last_local_manual_activity_at"] = latest_mtime_iso
+    return updated
 
 
 def _build_session_read_bundle(
@@ -1406,6 +1604,9 @@ def _build_session_read_bundle(
 ) -> SessionReadBundle:
     task = _task_with_authoritative_project_execution_state(task)
     task_facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
+    if any(fact.fact_code == "project_not_active" for fact in task_facts):
+        approvals = []
+        task_facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     session_events = (
         _list_project_session_events(
             session_service,
@@ -1561,11 +1762,14 @@ def _task_from_persisted_record(
     native_thread_id: str | None = None,
 ) -> dict[str, Any]:
     fact_codes = {fact.fact_code for fact in record.facts}
-    status = "completed"
-    if approvals:
-        status = "waiting_human"
-    elif record.session.session_state == "blocked":
-        status = "running"
+    session_state = str(record.session.session_state or "").strip()
+    status_by_session_state = {
+        "active": "running",
+        "blocked": "running",
+        "awaiting_approval": "waiting_human",
+        "unavailable": "running",
+    }
+    status = "waiting_human" if approvals else status_by_session_state.get(session_state, "running")
     return {
         "project_id": record.project_id,
         "thread_id": record.thread_id,
@@ -1741,7 +1945,7 @@ def evaluate_session_policy_from_persisted_spine(
 
 
 def build_session_read_bundle(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     session_service: SessionService | None = None,
@@ -1766,6 +1970,7 @@ def build_session_read_bundle(
                 project_id=project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1793,6 +1998,7 @@ def build_session_read_bundle(
                 project_id=project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1800,6 +2006,13 @@ def build_session_read_bundle(
                 dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
         raise
+    try:
+        task = _task_with_workspace_activity(
+            task,
+            _load_workspace_activity_or_raise(client, project_id, recent_minutes=30),
+        )
+    except SessionSpineUpstreamError:
+        pass
     bundle = _build_session_read_bundle(
         project_id=project_id,
         task=task,
@@ -1823,7 +2036,7 @@ def build_session_read_bundle(
 
 
 def build_session_read_bundle_by_native_thread(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     native_thread_id: str,
     *,
     session_service: SessionService | None = None,
@@ -1854,6 +2067,7 @@ def build_session_read_bundle_by_native_thread(
                 project_id=persisted_record.project_id,
                 events=session_events,
                 persisted_record=persisted_record,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1893,6 +2107,7 @@ def build_session_read_bundle_by_native_thread(
                     project_id=fallback_project_id,
                     events=session_events,
                     persisted_record=persisted_record,
+                    approval_store=approval_store,
                     session_service=session_service,
                     decision_store=decision_store,
                     receipt_store=receipt_store,
@@ -1906,7 +2121,7 @@ def build_session_read_bundle_by_native_thread(
     project_id = str(task.get("project_id") or "")
     if not project_id:
         raise SessionSpineUpstreamError(
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"}
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 返回数据格式异常"}
         )
     if session_service is not None:
         session_events = _list_project_session_events(
@@ -1923,6 +2138,7 @@ def build_session_read_bundle_by_native_thread(
                 project_id=project_id,
                 events=session_events,
                 task=task,
+                approval_store=approval_store,
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
@@ -1953,13 +2169,21 @@ def build_session_read_bundle_by_native_thread(
 
 
 def build_workspace_activity_bundle(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
     *,
     recent_minutes: int = 15,
 ) -> WorkspaceActivityReadBundle:
-    task = _task_with_authoritative_project_execution_state(
-        _load_task_or_raise(client, project_id)
+    activity = _load_workspace_activity_or_raise(
+        client,
+        project_id,
+        recent_minutes=recent_minutes,
+    )
+    task = _task_with_workspace_activity(
+        _task_with_authoritative_project_execution_state(
+            _load_task_or_raise(client, project_id)
+        ),
+        activity,
     )
     approvals = _load_approvals_or_raise(client, project_id)
     facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
@@ -1977,17 +2201,13 @@ def build_workspace_activity_bundle(
         workspace_activity=build_workspace_activity_view(
             project_id=project_id,
             task=task,
-            activity=_load_workspace_activity_or_raise(
-                client,
-                project_id,
-                recent_minutes=recent_minutes,
-            ),
+            activity=activity,
         ),
     )
 
 
 def build_approval_inbox_bundle(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str | None = None,
     *,
     session_service: SessionService | None = None,
@@ -1998,7 +2218,14 @@ def build_approval_inbox_bundle(
         if project_id is not None:
             session_events = _list_project_session_events(session_service, project_id)
             if _has_relevant_approval_projection_events(session_events):
-                approvals = _build_approval_rows_from_session_events(session_events)
+                persisted_record = store.get(project_id) if store is not None else None
+                approvals = _build_session_read_bundle_from_session_events(
+                    project_id=project_id,
+                    events=session_events,
+                    persisted_record=persisted_record,
+                    approval_store=approval_store,
+                    session_service=session_service,
+                ).approvals
                 return ApprovalInboxReadBundle(
                     project_id=project_id,
                     approvals=approvals,
@@ -2012,8 +2239,17 @@ def build_approval_inbox_bundle(
             if grouped_events:
                 event_project_ids = set(grouped_events)
                 event_approvals: list[dict[str, Any]] = []
-                for events in grouped_events.values():
-                    event_approvals.extend(_build_approval_rows_from_session_events(events))
+                for grouped_project_id, events in grouped_events.items():
+                    persisted_record = store.get(grouped_project_id) if store is not None else None
+                    event_approvals.extend(
+                        _build_session_read_bundle_from_session_events(
+                            project_id=grouped_project_id,
+                            events=events,
+                            persisted_record=persisted_record,
+                            approval_store=approval_store,
+                            session_service=session_service,
+                        ).approvals
+                    )
 
                 canonical_rows = [
                     row
@@ -2082,7 +2318,7 @@ def build_approval_inbox_bundle(
 
 
 def build_session_directory_bundle(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     *,
     session_service: SessionService | None = None,
     store: SessionSpineStore | None = None,
@@ -2123,7 +2359,7 @@ def build_session_directory_bundle(
     try:
         tasks = _load_tasks_or_raise(client)
     except SessionSpineUpstreamError:
-        if persisted_by_project and merged_grouped_events and session_service is not None:
+        if merged_grouped_events and session_service is not None:
             sessions: list[SessionProjection] = []
             progresses: list[TaskProgressView] = []
             ordered_project_ids = list(
@@ -2255,6 +2491,8 @@ def build_session_directory_bundle(
                 session_service=session_service,
                 decision_store=decision_store,
                 receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
             sessions.append(bundle.session)
             progresses.append(bundle.progress)
@@ -2269,6 +2507,8 @@ def build_session_directory_bundle(
             session_service=session_service,
             decision_store=decision_store,
             receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=dispatch_cooldown_seconds,
         )
         sessions.append(bundle.session)
         progresses.append(bundle.progress)

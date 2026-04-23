@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import ValidationError
 
 from a_control_agent.api.deps import require_token
 from a_control_agent.audit import append_jsonl
@@ -24,6 +26,13 @@ from watchdog.services.session_spine.task_state import (
 router = APIRouter(prefix="/tasks", tags=["recovery"])
 _SAME_THREAD_RESUME = "same_thread_resume"
 _NEW_CHILD_SESSION = "new_child_session"
+_PAUSE_STEER_MESSAGE = (
+    "Pause execution now. Do not run more commands, edits, or analysis until an explicit resume request arrives."
+)
+
+
+class _InvalidContinuationPacket(ValueError):
+    pass
 
 
 def get_settings(request: Request) -> Settings:
@@ -68,15 +77,58 @@ def _resume_response_payload(
     }
     if resume_outcome == _NEW_CHILD_SESSION:
         payload["parent_thread_id"] = parent_thread_id
-        payload["child_session_id"] = f"session:{project_id}:{thread_id}"
+        payload["child_session_id"] = (
+            thread_id if thread_id.startswith("session:") else f"session:{project_id}:{thread_id}"
+        )
     return payload
+
+
+async def _await_if_needed(value: Any) -> Any:
+    if isawaitable(value):
+        return await value
+    return value
+
+
+async def _pause_runtime(bridge: Any, thread_id: str) -> Any:
+    if bridge is None or not thread_id:
+        return None
+    pause_thread = getattr(bridge, "pause_thread", None)
+    if callable(pause_thread):
+        return await _await_if_needed(pause_thread(thread_id))
+    active_turn_id = getattr(bridge, "active_turn_id", None)
+    steer_turn = getattr(bridge, "steer_turn", None)
+    read_thread = getattr(bridge, "read_thread", None)
+    active_turn = active_turn_id(thread_id) if callable(active_turn_id) else None
+    if not active_turn and callable(read_thread):
+        await _await_if_needed(read_thread(thread_id))
+        active_turn = active_turn_id(thread_id) if callable(active_turn_id) else None
+    if active_turn and callable(steer_turn):
+        return await _await_if_needed(steer_turn(thread_id, message=_PAUSE_STEER_MESSAGE))
+    return None
 
 
 def _continuation_packet_from_body(body: dict[str, Any]) -> dict[str, Any] | None:
     raw = body.get("continuation_packet")
-    if not isinstance(raw, dict):
+    if raw is None:
         return None
+    if not isinstance(raw, dict):
+        raise _InvalidContinuationPacket("continuation_packet must be an object")
     return model_validate_continuation_packet(raw).model_dump(mode="json", exclude_none=True)
+
+
+def _continuation_packet_validation_error(exc: ValidationError | _InvalidContinuationPacket) -> dict[str, str]:
+    if isinstance(exc, _InvalidContinuationPacket):
+        return {"code": "INVALID_ARGUMENT", "message": str(exc)}
+    fields = [
+        ".".join(str(part) for part in item["loc"])
+        for item in exc.errors()
+        if item.get("loc")
+    ]
+    if not fields:
+        message = "continuation_packet must satisfy ContinuationPacket"
+    else:
+        message = f"missing or invalid continuation_packet fields: {', '.join(fields)}"
+    return {"code": "INVALID_ARGUMENT", "message": message}
 
 
 def _resume_target_phase(task: dict[str, Any] | None) -> str:
@@ -92,7 +144,7 @@ def _resume_target_phase(task: dict[str, Any] | None) -> str:
 
 
 @router.post("/{project_id}/pause")
-def pause(
+async def pause(
     project_id: str,
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -105,6 +157,15 @@ def pause(
             request.headers.get("x-request-id"),
             {"code": "NOT_FOUND", "message": project_id},
         )
+    thread_id = str(rec.get("thread_id") or "")
+    bridge = get_bridge(request)
+    try:
+        await _pause_runtime(bridge, thread_id)
+    except Exception:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "CONTROL_LINK_ERROR", "message": "pause runtime request failed"},
+        )
     store.merge_update(
         project_id,
         {
@@ -113,7 +174,7 @@ def pause(
         },
     )
     rec2 = store.get(project_id)
-    thread_id = str((rec2 or rec).get("thread_id") or "")
+    thread_id = str((rec2 or rec).get("thread_id") or thread_id)
     store.append_event(
         project_id,
         thread_id=thread_id,
@@ -153,7 +214,13 @@ def handoff(
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
     reason = str(body.get("reason", "unspecified"))
-    continuation_packet = _continuation_packet_from_body(body)
+    try:
+        continuation_packet = _continuation_packet_from_body(body)
+    except (ValidationError, _InvalidContinuationPacket) as exc:
+        return err(
+            request.headers.get("x-request-id"),
+            _continuation_packet_validation_error(exc),
+        )
     rec = store.get(project_id)
     if rec is None:
         return err(
@@ -250,7 +317,13 @@ async def resume(
 ) -> dict[str, Any]:
     mode = str(body.get("mode", "resume_or_new_thread"))
     summary = str(body.get("handoff_summary", ""))
-    continuation_packet = _continuation_packet_from_body(body)
+    try:
+        continuation_packet = _continuation_packet_from_body(body)
+    except (ValidationError, _InvalidContinuationPacket) as exc:
+        return err(
+            request.headers.get("x-request-id"),
+            _continuation_packet_validation_error(exc),
+        )
     rendered_prompt = (
         render_continuation_packet_prompt(continuation_packet)
         if continuation_packet is not None
@@ -350,35 +423,48 @@ async def resume(
                 "mode": mode,
             },
         )
+    rec_latest = store.get(project_id) or rec
     next_state = {
         "project_id": project_id,
-        "cwd": str(rec.get("cwd") or ""),
-        "task_title": str(rec.get("task_title") or ""),
-        "task_prompt": str(rec.get("task_prompt") or ""),
-        "last_user_instruction": str(rec.get("last_user_instruction") or ""),
-        "current_phase_goal": str(rec.get("current_phase_goal") or ""),
-        "last_summary": str(rec.get("last_summary") or ""),
-        "files_touched": list(rec.get("files_touched") or []),
-        "approval_risk": rec.get("approval_risk"),
-        "last_error_signature": rec.get("last_error_signature"),
-        "last_substantive_user_input_at": rec.get("last_substantive_user_input_at"),
-        "last_substantive_user_input_fingerprint": rec.get(
+        "cwd": str(rec_latest.get("cwd") or ""),
+        "task_title": str(rec_latest.get("task_title") or ""),
+        "task_prompt": str(rec_latest.get("task_prompt") or ""),
+        "last_user_instruction": str(rec_latest.get("last_user_instruction") or ""),
+        "current_phase_goal": str(rec_latest.get("current_phase_goal") or ""),
+        "last_summary": str(rec_latest.get("last_summary") or ""),
+        "files_touched": list(rec_latest.get("files_touched") or []),
+        "approval_risk": rec_latest.get("approval_risk"),
+        "last_error_signature": rec_latest.get("last_error_signature"),
+        "last_substantive_user_input_at": rec_latest.get("last_substantive_user_input_at"),
+        "last_substantive_user_input_fingerprint": rec_latest.get(
             "last_substantive_user_input_fingerprint"
         ),
-        "last_local_manual_activity_at": rec.get("last_local_manual_activity_at"),
-        "recent_service_inputs": list(rec.get("recent_service_inputs") or []),
-        "model": str(rec.get("model") or ""),
-        "sandbox": str(rec.get("sandbox") or ""),
-        "approval_policy": str(rec.get("approval_policy") or ""),
-        "stuck_level": rec.get("stuck_level"),
-        "failure_count": rec.get("failure_count"),
+        "last_local_manual_activity_at": rec_latest.get("last_local_manual_activity_at"),
+        "recent_service_inputs": list(rec_latest.get("recent_service_inputs") or []),
+        "model": str(rec_latest.get("model") or ""),
+        "sandbox": str(rec_latest.get("sandbox") or ""),
+        "approval_policy": str(rec_latest.get("approval_policy") or ""),
+        "stuck_level": rec_latest.get("stuck_level"),
+        "failure_count": rec_latest.get("failure_count"),
         "status": "running",
+        "pending_approval": False,
         "context_pressure": "medium",
         "phase": resume_target_phase,
         "thread_id": resumed_thread_id or parent_thread_id,
-        "goal_contract_version": rec.get("goal_contract_version"),
+        "goal_contract_version": rec_latest.get("goal_contract_version"),
     }
     if resume_outcome == _NEW_CHILD_SESSION and resumed_thread_id:
+        if parent_thread_id:
+            store.upsert_native_thread(
+                {
+                    **rec_latest,
+                    "project_id": project_id,
+                    "thread_id": parent_thread_id,
+                    "status": "paused",
+                    "phase": "handoff",
+                    "pending_approval": False,
+                }
+            )
         rec3 = store.upsert_native_thread(next_state)
     else:
         store.merge_update(

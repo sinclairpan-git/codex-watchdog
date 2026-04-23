@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from watchdog.main import create_app
-from watchdog.services.adapters.openclaw.adapter import OpenClawAdapter
+from watchdog.services.entrypoints.command_adapter import WatchdogCommandAdapter
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -42,12 +42,12 @@ class FakeAClient:
         yield from self.stream
 
 
-def _adapter(tmp_path: Path, client: FakeAClient) -> OpenClawAdapter:
-    return OpenClawAdapter(
+def _adapter(tmp_path: Path, client: FakeAClient) -> WatchdogCommandAdapter:
+    return WatchdogCommandAdapter(
         settings=Settings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path),
         ),
         client=client,
@@ -58,8 +58,8 @@ def _adapter(tmp_path: Path, client: FakeAClient) -> OpenClawAdapter:
 def test_integration_stable_snapshot_matches_adapter_snapshot(tmp_path: Path) -> None:
     client = FakeAClient()
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=client,
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=client,
     )
     http = TestClient(app)
     adapter = _adapter(tmp_path, client)
@@ -87,8 +87,8 @@ def test_integration_stable_snapshot_matches_adapter_snapshot_when_raw_event_id_
         'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"resume","event_source":"a_control_agent","payload_json":{"mode":"resume_or_new_thread"},"created_at":"2026-04-05T10:00:00Z"}\n\n'
     )
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=client,
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=client,
     )
     http = TestClient(app)
     adapter = _adapter(tmp_path, client)
@@ -110,8 +110,8 @@ def test_integration_stable_snapshot_matches_adapter_snapshot_when_raw_event_id_
 def test_integration_stable_follow_stream_coexists_with_legacy_raw_proxy(tmp_path: Path) -> None:
     client = FakeAClient()
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=client,
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=client,
     )
     http = TestClient(app)
     adapter = _adapter(tmp_path, client)
@@ -151,8 +151,8 @@ def test_integration_stable_follow_stream_dedupes_missing_event_id_replays_acros
         'data: {"project_id":"repo-a","thread_id":"thr_native_1","event_type":"steer","event_source":"watchdog","payload_json":{"message":"stay focused","reason":"policy"},"created_at":"2026-04-05T10:01:00Z"}\n\n',
     ]
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=client,
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=client,
     )
     http = TestClient(app)
     adapter = _adapter(tmp_path, client)
@@ -180,8 +180,8 @@ def test_integration_stable_follow_stream_includes_canonical_child_adoption_befo
 
     client = FakeAClient()
     app = create_app(
-        Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a.test", data_dir=str(tmp_path)),
-        a_client=client,
+        Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a.test", data_dir=str(tmp_path)),
+        runtime_client=client,
     )
     contracts = GoalContractService(app.state.session_service)
     created = contracts.bootstrap_contract(

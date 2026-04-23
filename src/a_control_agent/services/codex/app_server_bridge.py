@@ -14,6 +14,9 @@ _APPROVAL_REQUEST_METHODS = {
     "item/fileChange/requestApproval",
     "item/permissions/requestApproval",
 }
+_PAUSE_STEER_MESSAGE = (
+    "Pause execution now. Do not run more commands, edits, or analysis until an explicit resume request arrives."
+)
 
 
 class CodexAppServerBridge:
@@ -42,7 +45,7 @@ class CodexAppServerBridge:
             "initialize",
             {
                 "clientInfo": {
-                    "name": "openclaw-codex-watchdog",
+                    "name": "codex-watchdog",
                     "version": "0.1.0",
                 },
                 "capabilities": None,
@@ -97,6 +100,17 @@ class CodexAppServerBridge:
             params["expectedTurnId"] = expected_turn_id
         payload = await self._transport.request("turn/steer", params)
         return self._remember_turn(thread_id, payload)
+
+    async def pause_thread(self, thread_id: str) -> dict[str, Any]:
+        snapshot = await self.read_thread(thread_id)
+        if self.active_turn_id(thread_id):
+            await self.steer_turn(thread_id, message=_PAUSE_STEER_MESSAGE)
+        remembered = self.thread_snapshot(thread_id) or snapshot or {"thread_id": thread_id}
+        paused_snapshot = dict(remembered)
+        paused_snapshot["status"] = "paused"
+        paused_snapshot["pause_requested"] = True
+        self._thread_snapshots[thread_id] = paused_snapshot
+        return paused_snapshot
 
     async def ingest_server_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
         if self._approvals_store is None or self._task_store is None:
@@ -352,13 +366,20 @@ class CodexAppServerBridge:
             snapshot["thread_id"] = str(thread_payload.get("id") or thread_id)
         else:
             snapshot.setdefault("thread_id", thread_id)
+        canonical_thread_id = str(snapshot.get("thread_id") or thread_id)
         self._thread_snapshots[thread_id] = snapshot
         active_turn_id = self._extract_active_turn_id(snapshot)
         if isinstance(active_turn_id, str) and active_turn_id:
             self._active_turn_ids[thread_id] = active_turn_id
+            if canonical_thread_id and canonical_thread_id != thread_id:
+                self._active_turn_ids[canonical_thread_id] = active_turn_id
             snapshot["active_turn_id"] = active_turn_id
         else:
             self._active_turn_ids.pop(thread_id, None)
+            if canonical_thread_id and canonical_thread_id != thread_id:
+                self._active_turn_ids.pop(canonical_thread_id, None)
+        if canonical_thread_id and canonical_thread_id != thread_id:
+            self._thread_snapshots[canonical_thread_id] = dict(snapshot)
         return snapshot
 
     def _remember_turn(self, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
