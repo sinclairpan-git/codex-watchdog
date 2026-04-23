@@ -434,6 +434,9 @@ class OpenAICompatibleBrainProvider:
         if not isinstance(payload, dict):
             raise ProviderOutputSchemaError()
         normalized = dict(payload)
+        forbidden_keys = {"action_ref", "action_arguments", "approval_id", "mode", "resume"}
+        if forbidden_keys.intersection(normalized):
+            raise ProviderOutputSchemaError()
         continuation_allowed_keys = {
             "continuation_decision",
             "routing_preference",

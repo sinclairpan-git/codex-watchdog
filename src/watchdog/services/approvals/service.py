@@ -16,7 +16,7 @@ from typing import Callable
 
 from pydantic import BaseModel, Field
 
-from watchdog.contracts.session_spine.enums import ActionCode
+from watchdog.contracts.session_spine.enums import ActionCode, ActionStatus, Effect, ReplyCode
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
 from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.actions.executor import execute_registered_action_for_decision
@@ -971,6 +971,52 @@ def _approval_action_result(
     )
 
 
+def _approved_callback_is_deferred(
+    approval: CanonicalApprovalRecord,
+    *,
+    client: CodexRuntimeClient,
+) -> bool:
+    if approval.status != "approved" or approval.decided_by != "policy-auto":
+        return False
+    try:
+        runtime_approvals = client.list_approvals(
+            project_id=approval.project_id,
+            decided_by="policy-auto",
+            callback_status="deferred",
+        )
+    except Exception:
+        return False
+    for runtime_approval in runtime_approvals:
+        if str(runtime_approval.get("approval_id") or "").strip() == approval.approval_id:
+            return True
+    return False
+
+
+def _deferred_policy_auto_approval_result(
+    approval: CanonicalApprovalRecord,
+    *,
+    operator: str,
+    note: str,
+    client: CodexRuntimeClient,
+) -> WatchdogActionResult:
+    client.decide_approval(
+        approval.approval_id,
+        decision="approve",
+        operator=operator,
+        note=note,
+    )
+    return WatchdogActionResult(
+        action_code=ActionCode.APPROVE_APPROVAL,
+        project_id=approval.project_id,
+        approval_id=approval.approval_id,
+        idempotency_key=f"{approval.idempotency_key}|approve|deferred-callback",
+        action_status=ActionStatus.COMPLETED,
+        effect=Effect.APPROVAL_DECIDED,
+        reply_code=ReplyCode.APPROVAL_RESULT,
+        message="deferred policy-auto approval callback confirmed",
+    )
+
+
 def _transition_approval(
     approval: CanonicalApprovalRecord,
     *,
@@ -1024,7 +1070,15 @@ def respond_to_canonical_approval(
             raise ValueError("rejected approval cannot be approved or executed")
         if approval.status == "approved" and response_action == "reject":
             raise ValueError("approved approval cannot be rejected")
-        if approval.status == "approved" and response_action in {"approve", "execute_action"}:
+        deferred_policy_auto_callback = (
+            response_action == "approve"
+            and _approved_callback_is_deferred(approval, client=client)
+        )
+        if (
+            approval.status == "approved"
+            and response_action in {"approve", "execute_action"}
+            and not deferred_policy_auto_callback
+        ):
             return CanonicalApprovalResponseRecord(
                 response_id=f"approval-response:{_short_hash(response_key)}",
                 envelope_id=envelope_id,
@@ -1064,7 +1118,14 @@ def respond_to_canonical_approval(
             )
             next_status = "rejected"
         else:
-            if approval.status != "approved":
+            if deferred_policy_auto_callback:
+                approval_result = _deferred_policy_auto_approval_result(
+                    approval,
+                    operator=operator,
+                    note=note,
+                    client=client,
+                )
+            elif approval.status != "approved":
                 approval_result = _approval_action_result(
                     approval,
                     response_action="approve",

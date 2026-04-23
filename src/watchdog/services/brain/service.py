@@ -333,9 +333,13 @@ class BrainDecisionService:
         latest_error_summary = self._latest_error_summary(record)
         approval_commands = self._approval_actionable_commands(record)
         pending_approval_count = max(int(record.session.pending_approval_count or 0), 0)
-        visible_projected_approvals = [
-            item for item in record.approval_queue if is_visible_projected_approval(item)
-        ]
+        visible_projected_approvals = (
+            [
+                item for item in record.approval_queue if is_visible_projected_approval(item)
+            ]
+            if pending_approval_count > 0
+            else []
+        )
         has_pending_approval = pending_approval_count > 0 or bool(visible_projected_approvals)
 
         return ProjectContinuationDecisionInput(
@@ -663,7 +667,6 @@ class BrainDecisionService:
                     decision_context=decision_context,
                 )
             except ProviderOutputSchemaError as exc:
-                profile = self._provider._active_profile()
                 return self._rule_based_intent(
                     record=record,
                     intent=intent,
@@ -672,8 +675,6 @@ class BrainDecisionService:
                         "provider_output_invalid",
                         f"provider_output_schema_ref:{exc.schema_ref}",
                     ],
-                    provider=(profile.name if profile is not None else None),
-                    model=(str(profile.model or "") if profile is not None else None),
                     provider_output_schema_ref=exc.schema_ref,
                     degrade_reason=exc.degrade_reason,
                 )
@@ -697,13 +698,30 @@ class BrainDecisionService:
                         evidence_codes = [
                             code for code in evidence_codes if code != "provider_unavailable"
                         ]
+                fact_codes = {
+                    str(getattr(fact, "fact_code", "") or "").strip()
+                    for fact in record.facts
+                }
+                fallback_to_resident = bool(
+                    isinstance(exc, httpx.TimeoutException)
+                    and "task_completed" not in fact_codes
+                    and not isinstance(exc, httpx.HTTPStatusError)
+                )
                 return self._rule_based_intent(
                     record=record,
                     intent=intent,
                     rationale=rationale,
                     evidence_codes=evidence_codes,
-                    provider=(profile.name if profile is not None else None),
-                    model=(str(profile.model or "") if profile is not None else None),
+                    provider=(
+                        None
+                        if fallback_to_resident
+                        else (profile.name if profile is not None else None)
+                    ),
+                    model=(
+                        None
+                        if fallback_to_resident
+                        else (str(profile.model or "") if profile is not None else None)
+                    ),
                     degrade_reason=degrade_reason,
                 )
         return self._rule_based_intent(record=record, intent=intent, rationale=rationale)
