@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from watchdog.contracts.session_spine.enums import ActionCode
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
 from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.actions.registry import get_registered_action

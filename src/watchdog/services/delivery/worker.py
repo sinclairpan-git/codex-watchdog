@@ -452,7 +452,9 @@ class DeliveryWorker:
         if envelope_type != "notification":
             return None
         notification_kind = str(payload.get("notification_kind") or "").strip()
-        if notification_kind == "decision_result":
+        if notification_kind == "decision_result" and not str(
+            payload.get("decision_result") or ""
+        ).strip():
             return "suppressed_notification_policy"
         return None
 

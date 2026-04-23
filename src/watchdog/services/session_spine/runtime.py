@@ -24,6 +24,7 @@ class SessionSpineRuntime:
         self._store = store
 
     def refresh_all(self) -> None:
+        liveness_now = datetime.now(UTC)
         try:
             tasks = self._client.list_tasks()
         except (httpx.RequestError, RuntimeError, OSError):
@@ -47,27 +48,38 @@ class SessionSpineRuntime:
                 approvals_by_project.setdefault(project_id, []).append(dict(approval))
 
         project_ids: list[str] = []
-        seen_project_ids: set[str] = set()
+        tasks_by_project: dict[str, dict[str, Any]] = {}
+        duplicate_project_ids: set[str] = set()
         for task in tasks:
             if not isinstance(task, dict):
                 continue
             project_id = str(task.get("project_id") or "")
-            if not project_id or project_id in seen_project_ids:
+            if not project_id:
                 continue
-            seen_project_ids.add(project_id)
-            project_ids.append(project_id)
+            existing_task = tasks_by_project.get(project_id)
+            if existing_task is None:
+                project_ids.append(project_id)
+                tasks_by_project[project_id] = task
+                continue
+            duplicate_project_ids.add(project_id)
+            if self._task_liveness_reference_time(task) >= self._task_liveness_reference_time(
+                existing_task
+            ):
+                tasks_by_project[project_id] = task
 
         for project_id in project_ids:
             self.refresh_project(
                 project_id,
+                task=None if project_id in duplicate_project_ids else tasks_by_project.get(project_id),
                 approvals=(
                     approvals_by_project.get(project_id, [])
                     if approvals_by_project is not None
                     else None
                 ),
+                liveness_now=liveness_now,
             )
         for project_id, record in existing_records.items():
-            if project_id in seen_project_ids:
+            if project_id in tasks_by_project:
                 continue
             self._refresh_missing_project(
                 record,
@@ -76,6 +88,7 @@ class SessionSpineRuntime:
                     if approvals_by_project is not None
                     else None
                 ),
+                liveness_now=liveness_now,
             )
 
     def refresh_project(
@@ -84,6 +97,7 @@ class SessionSpineRuntime:
         *,
         task: dict[str, Any] | None = None,
         approvals: list[dict[str, Any]] | None = None,
+        liveness_now: datetime | None = None,
     ) -> None:
         if task is None:
             try:
@@ -112,6 +126,7 @@ class SessionSpineRuntime:
             project_id=project_id,
             task=task,
             approvals=approvals,
+            liveness_now=liveness_now or self._task_liveness_reference_time(task),
         )
         self._store.put(
             project_id=project_id,
@@ -168,6 +183,7 @@ class SessionSpineRuntime:
         record: PersistedSessionRecord,
         *,
         approvals: list[dict[str, Any]] | None,
+        liveness_now: datetime | None = None,
     ) -> None:
         synthesized_task = _task_from_persisted_record(record, approvals=approvals or [])
         synthesized_task["runtime_task_missing"] = True
@@ -179,6 +195,7 @@ class SessionSpineRuntime:
             project_id=record.project_id,
             task=task,
             approvals=approvals or [],
+            liveness_now=liveness_now or self._task_liveness_reference_time(task),
         )
         self._store.put(
             project_id=record.project_id,
@@ -206,6 +223,20 @@ class SessionSpineRuntime:
                 best_dt = parsed
                 best_raw = normalized
         return best_raw
+
+    @classmethod
+    def _task_liveness_reference_time(cls, task: dict[str, Any]) -> datetime | None:
+        best: datetime | None = None
+        for key in (
+            "last_local_manual_activity_at",
+            "last_substantive_user_input_at",
+            "workspace_latest_mtime_iso",
+            "last_progress_at",
+        ):
+            parsed = cls._parse_iso(str(task.get(key) or "").strip() or None)
+            if parsed is not None and (best is None or parsed > best):
+                best = parsed
+        return best
 
     @staticmethod
     def _parse_iso(value: str | None) -> datetime | None:

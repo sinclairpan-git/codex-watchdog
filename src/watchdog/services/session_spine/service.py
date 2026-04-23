@@ -403,6 +403,22 @@ def _parse_iso8601(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _task_liveness_reference_time(task: dict[str, Any] | None) -> datetime | None:
+    if not isinstance(task, dict):
+        return None
+    best: datetime | None = None
+    for key in (
+        "last_local_manual_activity_at",
+        "last_substantive_user_input_at",
+        "workspace_latest_mtime_iso",
+        "last_progress_at",
+    ):
+        parsed = _parse_iso8601(str(task.get(key) or "").strip() or None)
+        if parsed is not None and (best is None or parsed > best):
+            best = parsed
+    return best
+
+
 def _event_payload_text(event: SessionEventRecord | None, key: str) -> str | None:
     if event is None:
         return None
@@ -1372,7 +1388,15 @@ def _build_session_read_bundle_from_session_events(
         project_id=project_id,
         events=events,
     )
-    facts = _merge_fact_records(approval_facts, event_facts)
+    has_blocking_persisted_facts = persisted_record is not None and any(
+        fact.fact_code in {"approval_pending", "awaiting_human_direction", "project_not_active"}
+        for fact in persisted_record.facts
+    )
+    facts = (
+        event_facts
+        if not approvals and event_facts and not has_blocking_persisted_facts
+        else _merge_fact_records(approval_facts, event_facts)
+    )
     native_thread_id = task_native_thread_id(projected_task)
     recovery = _build_recovery_projection(
         session_service=session_service,
@@ -1543,6 +1567,8 @@ def _load_workspace_activity_or_raise(
             project_id,
             recent_minutes=recent_minutes,
         )
+    except AttributeError:
+        return {}
     except (httpx.RequestError, RuntimeError, OSError) as exc:
         raise SessionSpineUpstreamError(dict(CONTROL_LINK_ERROR)) from exc
     if not body.get("success"):
@@ -1569,6 +1595,8 @@ def _task_with_workspace_activity(
 ) -> dict[str, Any] | None:
     if not isinstance(task, dict) or not isinstance(activity, dict):
         return task
+    if not activity:
+        return task
     updated = dict(task)
     updated["workspace_cwd_exists"] = bool(activity.get("cwd_exists"))
     updated["workspace_files_scanned"] = int(activity.get("files_scanned") or 0)
@@ -1586,6 +1614,10 @@ def _task_with_workspace_activity(
         return updated
     current_manual = str(updated.get("last_local_manual_activity_at") or "").strip()
     current_manual_dt = _parse_iso8601(current_manual or None)
+    last_progress = _parse_iso8601(str(updated.get("last_progress_at") or "").strip() or None)
+    if last_progress is not None and latest_mtime > last_progress:
+        updated["workspace_local_activity_at"] = latest_mtime_iso
+        return updated
     if current_manual_dt is None or latest_mtime > current_manual_dt:
         updated["last_local_manual_activity_at"] = latest_mtime_iso
     return updated
@@ -1601,8 +1633,11 @@ def _build_session_read_bundle(
     receipt_store: ActionReceiptStore | None = None,
     orchestration_state_store: ResidentOrchestrationStateStore | None = None,
     dispatch_cooldown_seconds: float = 0.0,
+    liveness_now: datetime | None = None,
 ) -> SessionReadBundle:
-    task = _task_with_authoritative_project_execution_state(task)
+    if liveness_now is None:
+        liveness_now = _task_liveness_reference_time(task)
+    task = _task_with_authoritative_project_execution_state(task, now=liveness_now)
     task_facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     if any(fact.fact_code == "project_not_active" for fact in task_facts):
         approvals = []
@@ -1834,11 +1869,25 @@ def _build_session_read_bundle_from_persisted_record(
             orchestration_state_store=orchestration_state_store,
             dispatch_cooldown_seconds=dispatch_cooldown_seconds,
         )
+        event_facts = (
+            build_session_service_fact_records(project_id=record.project_id, events=session_events)
+            if session_events
+            else []
+        )
+        has_blocking_persisted_facts = any(
+            fact.fact_code in {"approval_pending", "awaiting_human_direction", "project_not_active"}
+            for fact in record.facts
+        )
+        facts = (
+            event_facts
+            if not canonical_approvals and event_facts and not has_blocking_persisted_facts
+            else bundle.facts
+        )
         return SessionReadBundle(
             project_id=bundle.project_id,
             task=bundle.task,
             approvals=bundle.approvals,
-            facts=bundle.facts,
+            facts=facts,
             session=bundle.session,
             progress=bundle.progress,
             approval_queue=bundle.approval_queue,

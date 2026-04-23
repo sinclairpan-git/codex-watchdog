@@ -11,9 +11,9 @@ from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.events import (
     iter_session_events,
-    render_stable_sse_event,
-    render_stable_sse_events,
     list_session_events,
+    render_stable_sse_event,
+    render_stable_sse_event_snapshot,
 )
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
 
@@ -67,7 +67,7 @@ def get_session_events(
         except SessionSpineUpstreamError as exc:
             return err(rid, exc.error)
         return Response(
-            content=render_stable_sse_events(events),
+            content=render_stable_sse_event_snapshot(events),
             media_type="text/event-stream",
             headers=headers,
         )

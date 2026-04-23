@@ -216,7 +216,7 @@ def derive_project_execution_state_liveness_override(
 
     if latest_activity_at is not None:
         idle_seconds = max((current - latest_activity_at).total_seconds(), 0.0)
-        if idle_seconds > stale_after_seconds:
+        if normalized_state == "active" and idle_seconds > stale_after_seconds:
             return "paused"
 
     manual_idle_seconds = None

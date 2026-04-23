@@ -41,6 +41,22 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 router = APIRouter(prefix="/watchdog", tags=["session-spine"])
 
 
+def _disambiguate_synthetic_event_ids(events):
+    counts: dict[str, int] = {}
+    disambiguated = []
+    for event in events:
+        event_id = str(event.event_id or "").strip()
+        if not event_id.startswith("synthetic:"):
+            disambiguated.append(event)
+            continue
+        counts[event_id] = counts.get(event_id, 0) + 1
+        if counts[event_id] == 1:
+            disambiguated.append(event)
+            continue
+        disambiguated.append(event.model_copy(update={"event_id": f"{event_id}:{counts[event_id]}"}))
+    return disambiguated
+
+
 def get_client(request: Request) -> CodexRuntimeClient:
     return request.app.state.runtime_client
 
@@ -438,7 +454,9 @@ def get_session_event_snapshot(
             client,
             project_id,
             session_service=session_service,
+            dedupe_synthetic_ids=False,
         )
+        events = _disambiguate_synthetic_event_ids(events)
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
     return ok(rid, build_session_event_snapshot_reply(events).model_dump(mode="json"))

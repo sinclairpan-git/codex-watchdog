@@ -1185,7 +1185,6 @@ def build_ops_health_summary(
     session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
 
     decision_rows = decision_store.snapshot_rows()
-    approval_rows = approval_store.snapshot_rows()
     delivery_rows = delivery_store.snapshot_rows()
     receipt_rows = receipt_store.snapshot_rows()
     decision_records = decision_store.list_records()

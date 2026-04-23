@@ -1762,7 +1762,7 @@ def test_delivery_worker_delivers_deferred_notification_after_local_manual_activ
     assert client.calls == [record.envelope_id]
 
 
-def test_delivery_worker_suppresses_legacy_auto_execute_decision_and_notification_records(
+def test_delivery_worker_suppresses_legacy_decision_record_but_delivers_decision_result_notification(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1840,10 +1840,10 @@ def test_delivery_worker_suppresses_legacy_auto_execute_decision_and_notificatio
 
     assert delivered_notification is not None
     assert delivered_notification.envelope_id == notification_record.envelope_id
-    assert delivered_notification.delivery_status == "delivery_failed"
-    assert delivered_notification.failure_code == "suppressed_notification_policy"
-    assert delivered_notification.delivery_attempt == 0
-    assert client.calls == []
+    assert delivered_notification.delivery_status == "delivered"
+    assert delivered_notification.failure_code is None
+    assert delivered_notification.delivery_attempt == 1
+    assert client.calls == [notification_record.envelope_id]
 
 
 def test_delivery_worker_suppresses_legacy_auto_execute_notification_without_payload_decision_result(

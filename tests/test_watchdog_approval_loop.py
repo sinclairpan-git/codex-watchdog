@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import threading
 
-from fastapi.testclient import TestClient
 import pytest
 
 from watchdog.main import create_app

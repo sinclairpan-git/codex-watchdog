@@ -213,15 +213,55 @@ def _sort_projected_events(events: Iterable[SessionEvent]) -> list[SessionEvent]
     )
 
 
-def _sort_and_dedupe_projected_events(events: Iterable[SessionEvent]) -> list[SessionEvent]:
+def _sort_and_dedupe_projected_events(
+    events: Iterable[SessionEvent],
+    *,
+    dedupe_synthetic_ids: bool = True,
+) -> list[SessionEvent]:
     deduped: list[SessionEvent] = []
     seen_event_ids: set[str] = set()
     for event in _sort_projected_events(events):
         event_id = str(event.event_id or "").strip()
         if event_id:
+            if event_id.startswith("synthetic:") and not dedupe_synthetic_ids:
+                deduped.append(event)
+                continue
             if event_id in seen_event_ids:
                 continue
             seen_event_ids.add(event_id)
+        deduped.append(event)
+    return deduped
+
+
+def _event_content_key(event: SessionEvent) -> str:
+    return json.dumps(
+        {
+            "event_code": event.event_code,
+            "event_kind": event.event_kind,
+            "project_id": event.project_id,
+            "thread_id": event.thread_id,
+            "native_thread_id": event.native_thread_id,
+            "source": event.source,
+            "observed_at": event.observed_at,
+            "summary": event.summary,
+            "related_ids": event.related_ids,
+            "attributes": event.attributes,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _sort_and_dedupe_projected_events_by_content(
+    events: Iterable[SessionEvent],
+) -> list[SessionEvent]:
+    deduped: list[SessionEvent] = []
+    seen: set[str] = set()
+    for event in _sort_projected_events(events):
+        key = _event_content_key(event) if str(event.event_id or "").startswith("synthetic:") else event.event_id
+        if key in seen:
+            continue
+        seen.add(key)
         deduped.append(event)
     return deduped
 
@@ -339,7 +379,17 @@ def render_stable_sse_snapshot(raw_snapshot: str) -> str:
 
 
 def render_stable_sse_events(events: Iterable[SessionEvent]) -> str:
-    return "".join(render_stable_sse_event(event) for event in _sort_and_dedupe_projected_events(events))
+    return "".join(
+        render_stable_sse_event(event)
+        for event in _sort_and_dedupe_projected_events(events)
+    )
+
+
+def render_stable_sse_event_snapshot(events: Iterable[SessionEvent]) -> str:
+    return "".join(
+        render_stable_sse_event(event)
+        for event in _sort_and_dedupe_projected_events_by_content(events)
+    )
 
 
 def _iter_deduped_projected_events(events: Iterable[SessionEvent]) -> Iterator[SessionEvent]:
@@ -359,6 +409,7 @@ def _load_initial_session_events(
     *,
     poll_interval: float = 0.5,
     session_service_events: Iterable[SessionEvent] = (),
+    dedupe_synthetic_ids: bool = True,
 ) -> list[SessionEvent]:
     raw_snapshot = _load_raw_events_snapshot_or_raise(
         client,
@@ -366,7 +417,13 @@ def _load_initial_session_events(
         poll_interval=poll_interval,
     )
     raw_events = list(_iter_projected_events_from_snapshot(raw_snapshot))
-    return _sort_and_dedupe_projected_events([*raw_events, *session_service_events])
+    events = [*raw_events, *session_service_events]
+    if dedupe_synthetic_ids:
+        return _sort_and_dedupe_projected_events_by_content(events)
+    return _sort_and_dedupe_projected_events(
+        events,
+        dedupe_synthetic_ids=False,
+    )
 
 
 def iter_stable_sse_stream(raw_chunks: Iterable[str]) -> Iterator[str]:
@@ -401,6 +458,7 @@ def list_session_events(
     *,
     poll_interval: float = 0.5,
     session_service: SessionService | None = None,
+    dedupe_synthetic_ids: bool = True,
 ) -> list[SessionEvent]:
     session_service_events = _list_session_service_events(
         project_id=project_id,
@@ -412,6 +470,7 @@ def list_session_events(
             project_id,
             poll_interval=poll_interval,
             session_service_events=session_service_events,
+            dedupe_synthetic_ids=dedupe_synthetic_ids,
         )
     except SessionSpineUpstreamError:
         if session_service_events:

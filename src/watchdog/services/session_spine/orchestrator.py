@@ -183,6 +183,16 @@ def _should_emit_closing_summary(record: PersistedSessionRecord) -> bool:
     return any(signal in summary_text for signal in completion_signals)
 
 
+def _is_phantom_approval_wait(record: PersistedSessionRecord) -> bool:
+    phase = str(record.progress.activity_phase or "").strip().lower()
+    if phase != "approval":
+        return False
+    if record.session.pending_approval_count > 0 or record.approval_queue:
+        return False
+    fact_codes = {str(fact.fact_code or "").strip().lower() for fact in record.facts}
+    return not fact_codes.intersection({"approval_pending", "awaiting_human_direction"})
+
+
 @dataclass(frozen=True, slots=True)
 class AutoExecuteCommandPlan:
     command_id: str
@@ -1790,14 +1800,19 @@ class ResidentOrchestrator:
             if brain_intent == "observe_only" and not record.facts:
                 return None
             if brain_intent == "require_approval":
-                approval_read = self._approval_read_snapshot_for_session(record)
-                requested_action = (
-                    str(approval_read.requested_action or "").strip()
-                    if approval_read is not None
-                    else ""
-                )
-                if requested_action:
-                    return requested_action
+                for approval in sorted(record.approval_queue, key=self._approval_projection_order):
+                    requested_action = str(approval.command or "").strip()
+                    if not requested_action:
+                        continue
+                    if self._approval_projection_is_trustworthy_for_intent(
+                        approval,
+                        record=record,
+                        action_ref=requested_action,
+                        requested_action_args={},
+                        goal_contract_version=self._goal_contract_version_for_record(record),
+                        policy_version=POLICY_VERSION,
+                    ):
+                        return requested_action
             if brain_intent == "propose_execute" and "continue_session" not in available_intents:
                 return None
             return "continue_session"
@@ -2226,17 +2241,13 @@ class ResidentOrchestrator:
         session_id: str,
         project_id: str,
     ) -> bool:
-        if is_visible_projected_approval(approval) and (
-            str(approval.status or "").lower() != "pending"
-        ):
-            return True
         records = self._approval_store.records_for_approval_id(
             approval_id,
             session_id=session_id,
             project_id=project_id,
         )
         if not records:
-            return True
+            return is_visible_projected_approval(approval)
         return any(record.status == "pending" for record in records)
 
     def _active_projected_approvals(
@@ -2282,13 +2293,7 @@ class ResidentOrchestrator:
                 for approval in self._approval_store.list_records()
                 if approval.project_id == record.project_id
                 and approval.session_id == record.thread_id
-                and (
-                    approval.status == "pending"
-                    or (
-                        runtime_actionable_ids is not None
-                        and approval.approval_id in runtime_actionable_ids
-                    )
-                )
+                and approval.status == "pending"
             ),
             key=lambda approval: (
                 str(approval.created_at or "") == "",
@@ -2709,7 +2714,7 @@ class ResidentOrchestrator:
             approval_event_id=matching_event.event_id if matching_event is not None else approval.approval_id,
             approval_id=approval.approval_id,
             status=approval.status,
-            requested_action=str(payload.get("requested_action") or approval.command),
+            requested_action=str(approval.command or payload.get("requested_action") or ""),
             session_id=approval.thread_id,
             project_id=approval.project_id,
             native_thread_id=approval.native_thread_id or record.effective_native_thread_id,
@@ -2808,6 +2813,13 @@ class ResidentOrchestrator:
                 decision_result=None,
                 emitted_progress_summary=False,
             )
+        if _is_phantom_approval_wait(record):
+            return ResidentOrchestrationOutcome(
+                project_id=record.project_id,
+                action_ref=None,
+                decision_result=None,
+                emitted_progress_summary=False,
+            )
         overlay_record = record
         brain_intent = self._evaluate_brain_intent(record)
         action_ref = self._action_ref_for_brain_intent(record, brain_intent.intent)
@@ -2822,10 +2834,6 @@ class ResidentOrchestrator:
         )
         if local_manual_activity_details is not None:
             action_ref = None
-            self._record_local_manual_activity_suppressed(
-                record,
-                details=local_manual_activity_details,
-            )
         if brain_intent.intent in {"propose_execute", "branch_complete_switch"}:
             dispatch_cooldown_details = self._auto_dispatch_cooldown_details(
                 record,
