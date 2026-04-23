@@ -586,6 +586,8 @@ class DeliveryWorker:
         )
         if scoped_route is not None:
             return scoped_route
+        if scoped_events is events and self._has_dynamic_route_candidate(scoped_events):
+            return None
         return global_route
 
     def _resolve_global_delivery_route(self) -> tuple[str, str, str] | None:
@@ -682,6 +684,15 @@ class DeliveryWorker:
             if candidate is not None:
                 return candidate
         return None
+
+    @staticmethod
+    def _has_dynamic_route_candidate(events: list) -> bool:
+        for event in events:
+            related_ids = event.related_ids if isinstance(event.related_ids, dict) else {}
+            for key in ("feishu_receive_id", "feishu_chat_id", "feishu_actor_id"):
+                if str(related_ids.get(key) or "").strip():
+                    return True
+        return False
 
     @staticmethod
     def _unique_route_candidate(

@@ -25,6 +25,13 @@ dev = [
     "ruff>=0.15.9",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.15.9",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/a_control_agent", "src/watchdog", "ai_sdlc"]
 

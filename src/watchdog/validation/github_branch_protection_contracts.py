@@ -140,6 +140,18 @@ def validate_branch_protection_audit_workflow_surfaces(
         ]
 
     violations: list[str] = []
+    if set(payload.keys()) != {"name", "permissions", "on", "jobs"} and set(payload.keys()) != {
+        "name",
+        "permissions",
+        True,
+        "jobs",
+    }:
+        violations.append(
+            "github branch protection audit workflow "
+            f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} top-level keys must equal "
+            "['jobs', 'name', 'on', 'permissions']"
+        )
+
     if payload.get("name") != "Branch Protection Audit":
         violations.append(
             "github branch protection audit workflow "
