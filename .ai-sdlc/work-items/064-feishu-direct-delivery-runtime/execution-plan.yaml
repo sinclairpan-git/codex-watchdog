@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T641
+  title: 冻结 064 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T642
+  title: 写 failing tests 锁定 Feishu outbound transport
+  status: completed
+  phase: 2
+  depends_on:
+  - T641
+- task_id: T643
+  title: 实现 Feishu direct delivery client
+  status: completed
+  phase: 3
+  depends_on:
+  - T642
+- task_id: T644
+  title: 实现 app wiring 与 Feishu compatibility 共存
+  status: completed
+  phase: 4
+  depends_on:
+  - T643
+- task_id: T645
+  title: 完成 targeted 验证、ai_sdlc 状态同步与对抗评审
+  status: completed
+  phase: 5
+  depends_on:
+  - T644
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T641
+  status: completed
+  started_at: '2026-04-16T12:30:00Z'
+  completed_at: '2026-04-16T12:31:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T642
+  status: completed
+  started_at: '2026-04-16T12:31:00Z'
+  completed_at: '2026-04-16T12:34:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T643
+  status: completed
+  started_at: '2026-04-16T12:34:00Z'
+  completed_at: '2026-04-16T12:38:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T644
+  status: completed
+  started_at: '2026-04-16T12:38:00Z'
+  completed_at: '2026-04-16T12:40:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T645
+  status: completed
+  started_at: '2026-04-16T12:40:00Z'
+  completed_at: '2026-04-16T12:52:00Z'
+current_batch: 5

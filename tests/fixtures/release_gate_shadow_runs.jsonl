@@ -1,0 +1,2 @@
+{"packet_id":"packet:1","decision_trace_ref":"trace:1","shadow_decision":"propose_execute","human_label":"allow","shadow_override":false}
+{"packet_id":"packet:2","decision_trace_ref":"trace:2","shadow_decision":"propose_execute","human_label":"allow","shadow_override":false}

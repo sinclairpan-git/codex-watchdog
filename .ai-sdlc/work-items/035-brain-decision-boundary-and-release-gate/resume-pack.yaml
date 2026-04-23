@@ -1,0 +1,40 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T355
+working_set_snapshot:
+  prd_path: codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/035-brain-decision-boundary-and-release-gate/spec.md
+  plan_path: specs/035-brain-decision-boundary-and-release-gate/plan.md
+  tasks_path: specs/035-brain-decision-boundary-and-release-gate/tasks.md
+  active_files:
+  - '`specs/035-brain-decision-boundary-and-release-gate/tasks.md`'
+  - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-035` 已完成：`T351` 到 `T355` 全部收口，当前主线不再有未完成的 Brain / release gate runtime slicing。
+    - 核心实现已经冻结：
+      - `Settings.build_runtime_contract(...)` 是 shared runtime/config surface；
+      - `release_gate_report`、fixture、ops/read-side taxonomy 与 runtime load path 共用同一套治理 contract；
+      - `parse_release_gate_report(...)` 会对 raw JSON contract 做精确校验，拒绝 drifted metadata、默认值补全、非对象 JSON 与 Python 宽松相等导致的伪等价 payload；
+      - resident runtime 对所有 report load 异常统一 fail-closed 为 `report_load_failed`。
+    - 当前已完成验证：
+      - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'defaulted_governance_metadata or non_object_payload or python_equal_but_json_drifted_taxonomy or parse_release_gate_report_rejects_governance_contract_drift'` -> `4 passed, 8 deselected in 0.14s`
+      - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'runtime_contract_surface_and_reason_taxonomy or runtime_load_time_validation'` -> `2 passed, 4 deselected in 0.03s`
+      - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 4.22s`
+    - 后续 handoff：
+      - 下一 work item 只应评估是否把 `parse_release_gate_report(...)` 上提到 shared loading API / evidence bundle；
+      - Feishu/control-plane/e2e/worker work item 只消费已冻结的 Brain trace / replay / release gate / future worker contract，不能回退到 policy-only auto execute 或手写 report 直通 runtime。
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T16:10:35+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

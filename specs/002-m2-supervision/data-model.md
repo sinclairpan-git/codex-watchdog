@@ -16,7 +16,7 @@
 - `source`：`watchdog` | `a_control_agent`
 - `payload`：可选 JSON 对象（如 steer 文本摘要）
 
-## task_events（A 侧最小）
+## task_events（runtime 侧最小）
 
 - `event_id`：string
 - `project_id` / `thread_id`

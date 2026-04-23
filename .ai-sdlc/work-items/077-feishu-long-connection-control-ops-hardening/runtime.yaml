@@ -1,0 +1,15 @@
+work_item_id: 077-feishu-long-connection-control-ops-hardening
+spec_dir: specs/077-feishu-long-connection-control-ops-hardening
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T775
+current_branch: codex/077-feishu-long-connection-control-ops-hardening
+docs_baseline_ref: e790404e1ac3a8586f0c3c3d9506f718c31516b4
+docs_baseline_at: '2026-04-17T15:26:02Z'
+ai_decisions_count: 2
+execution_mode: auto
+started_at: '2026-04-17T15:10:00Z'
+last_updated: '2026-04-17T15:26:02Z'
+debug_rounds: {}
+consecutive_halts: 0

@@ -1,0 +1,393 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from watchdog.services.session_spine.command_leases import CommandLeaseStore
+
+
+def test_command_lease_store_records_canonical_claim_renew_expire_requeue_sequence(
+    tmp_path: Path,
+) -> None:
+    store = CommandLeaseStore(tmp_path / "command_leases.json")
+
+    claimed = store.claim_command(
+        command_id="command:repo-a:1",
+        session_id="session:repo-a",
+        worker_id="worker:a",
+        claimed_at="2026-04-12T00:00:00Z",
+        lease_expires_at="2026-04-12T00:05:00Z",
+    )
+    renewed = store.renew_lease(
+        command_id="command:repo-a:1",
+        worker_id="worker:a",
+        claim_seq=claimed.claim_seq,
+        renewed_at="2026-04-12T00:02:00Z",
+        lease_expires_at="2026-04-12T00:07:00Z",
+    )
+    expired = store.expire_and_requeue_expired(
+        now="2026-04-12T00:07:00Z",
+        reason="lease_timeout",
+    )
+
+    assert claimed.event_type == "command_claimed"
+    assert renewed.event_type == "command_lease_renewed"
+    assert [event.event_type for event in expired] == [
+        "command_claim_expired",
+        "command_requeued",
+    ]
+
+    events = store.list_events(command_id="command:repo-a:1")
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_lease_renewed",
+        "command_claim_expired",
+        "command_requeued",
+    ]
+    assert [event.claim_seq for event in events] == [1, 1, 1, 1]
+    assert [event.worker_id for event in events] == [
+        "worker:a",
+        "worker:a",
+        "worker:a",
+        "worker:a",
+    ]
+    assert [event.lease_expires_at for event in events] == [
+        "2026-04-12T00:05:00Z",
+        "2026-04-12T00:07:00Z",
+        "2026-04-12T00:07:00Z",
+        "2026-04-12T00:07:00Z",
+    ]
+
+    state = store.get_command("command:repo-a:1")
+    assert state is not None
+    assert state.status == "requeued"
+    assert state.claim_seq == 1
+    assert state.worker_id == "worker:a"
+    assert state.lease_expires_at == "2026-04-12T00:07:00Z"
+
+
+def test_command_lease_store_accepts_terminal_result_for_current_claim(
+    tmp_path: Path,
+) -> None:
+    store = CommandLeaseStore(tmp_path / "command_leases.json")
+
+    claimed = store.claim_command(
+        command_id="command:repo-a:2",
+        session_id="session:repo-a",
+        worker_id="worker:b",
+        claimed_at="2026-04-12T01:00:00Z",
+        lease_expires_at="2026-04-12T01:05:00Z",
+    )
+    executed = store.record_terminal_result(
+        command_id="command:repo-a:2",
+        worker_id="worker:b",
+        claim_seq=claimed.claim_seq,
+        result_type="command_executed",
+        occurred_at="2026-04-12T01:03:00Z",
+        payload={"completion_evidence_ref": "receipt:continue_session|repo-a||demo"},
+    )
+
+    assert executed.event_type == "command_executed"
+    assert executed.claim_seq == claimed.claim_seq
+    assert executed.payload["completion_evidence_ref"] == "receipt:continue_session|repo-a||demo"
+    state = store.get_command("command:repo-a:2")
+    assert state is not None
+    assert state.status == "executed"
+    assert state.claim_seq == 1
+
+
+def test_command_lease_store_rejects_late_result_from_stale_claim_generation(
+    tmp_path: Path,
+) -> None:
+    store = CommandLeaseStore(tmp_path / "command_leases.json")
+
+    first_claim = store.claim_command(
+        command_id="command:repo-a:3",
+        session_id="session:repo-a",
+        worker_id="worker:c",
+        claimed_at="2026-04-12T02:00:00Z",
+        lease_expires_at="2026-04-12T02:05:00Z",
+    )
+    store.expire_and_requeue_expired(
+        now="2026-04-12T02:05:00Z",
+        reason="lease_timeout",
+    )
+    second_claim = store.claim_command(
+        command_id="command:repo-a:3",
+        session_id="session:repo-a",
+        worker_id="worker:c",
+        claimed_at="2026-04-12T02:06:00Z",
+        lease_expires_at="2026-04-12T02:11:00Z",
+    )
+
+    with pytest.raises(ValueError, match="stale claim"):
+        store.record_terminal_result(
+            command_id="command:repo-a:3",
+            worker_id="worker:c",
+            claim_seq=first_claim.claim_seq,
+            result_type="command_executed",
+            occurred_at="2026-04-12T02:06:30Z",
+        )
+
+    state = store.get_command("command:repo-a:3")
+    assert state is not None
+    assert state.status == "claimed"
+    assert state.claim_seq == second_claim.claim_seq == 2
+    assert state.worker_id == "worker:c"
+
+    events = store.list_events(command_id="command:repo-a:3")
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_claim_expired",
+        "command_requeued",
+        "command_claimed",
+    ]
+
+
+def test_command_lease_store_mirrors_lifecycle_events_into_session_service(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    first_claim = store.claim_command(
+        command_id="command:repo-a:4",
+        session_id="session:repo-a",
+        worker_id="worker:d",
+        claimed_at="2026-04-12T03:00:00Z",
+        lease_expires_at="2026-04-12T03:05:00Z",
+    )
+    store.renew_lease(
+        command_id="command:repo-a:4",
+        worker_id="worker:d",
+        claim_seq=first_claim.claim_seq,
+        renewed_at="2026-04-12T03:02:00Z",
+        lease_expires_at="2026-04-12T03:07:00Z",
+    )
+    store.expire_and_requeue_expired(
+        now="2026-04-12T03:07:00Z",
+        reason="lease_timeout",
+    )
+    second_claim = store.claim_command(
+        command_id="command:repo-a:4",
+        session_id="session:repo-a",
+        worker_id="worker:d",
+        claimed_at="2026-04-12T03:08:00Z",
+        lease_expires_at="2026-04-12T03:13:00Z",
+    )
+    store.record_terminal_result(
+        command_id="command:repo-a:4",
+        worker_id="worker:d",
+        claim_seq=second_claim.claim_seq,
+        result_type="command_failed",
+        occurred_at="2026-04-12T03:09:00Z",
+    )
+
+    events = [
+        event
+        for event in session_service.list_events(
+            session_id="session:repo-a",
+            related_id_key="command_id",
+            related_id_value="command:repo-a:4",
+        )
+        if event.event_type != "command_created"
+    ]
+
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_lease_renewed",
+        "command_claim_expired",
+        "command_requeued",
+        "command_claimed",
+        "command_failed",
+    ]
+    assert [event.related_ids["claim_seq"] for event in events] == [
+        "1",
+        "1",
+        "1",
+        "1",
+        "2",
+        "2",
+    ]
+    assert events[0].correlation_id == "corr:command:command:repo-a:4:claim:1"
+    assert events[2].payload["reason"] == "lease_timeout"
+    assert events[-1].payload["worker_id"] == "worker:d"
+
+
+def test_command_lease_store_does_not_mirror_claim_when_persist_fails(tmp_path: Path) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    original_write = store._write
+
+    def raising_write(data):  # type: ignore[no-untyped-def]
+        if data.commands:
+            raise OSError("disk full")
+        original_write(data)
+
+    store._write = raising_write  # type: ignore[method-assign]
+
+    with pytest.raises(OSError, match="disk full"):
+        store.claim_command(
+            command_id="command:repo-a:ghost",
+            session_id="session:repo-a",
+            worker_id="worker:ghost",
+            claimed_at="2026-04-12T03:30:00Z",
+            lease_expires_at="2026-04-12T03:35:00Z",
+        )
+
+    assert store.get_command("command:repo-a:ghost") is None
+    assert store.list_events(command_id="command:repo-a:ghost") == []
+    assert session_service.list_events(
+        session_id="session:repo-a",
+        related_id_key="command_id",
+        related_id_value="command:repo-a:ghost",
+    ) == []
+
+
+def test_command_lease_store_mirrors_terminal_payload_into_session_service(tmp_path: Path) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    claimed = store.claim_command(
+        command_id="command:repo-a:5",
+        session_id="session:repo-a",
+        worker_id="worker:e",
+        claimed_at="2026-04-12T04:00:00Z",
+        lease_expires_at="2026-04-12T04:05:00Z",
+    )
+    store.record_terminal_result(
+        command_id="command:repo-a:5",
+        worker_id="worker:e",
+        claim_seq=claimed.claim_seq,
+        result_type="command_executed",
+        occurred_at="2026-04-12T04:01:00Z",
+        payload={
+            "completion_evidence_ref": "receipt:continue_session|repo-a||demo",
+            "replay_ref": "replay:decision:demo",
+            "metrics_ref": "metrics:decision:demo",
+        },
+    )
+
+    mirrored = [
+        event
+        for event in session_service.list_events(
+            session_id="session:repo-a",
+            related_id_key="command_id",
+            related_id_value="command:repo-a:5",
+        )
+        if event.event_type == "command_executed"
+    ]
+
+    assert len(mirrored) == 1
+    assert mirrored[0].payload["completion_evidence_ref"] == "receipt:continue_session|repo-a||demo"
+    assert mirrored[0].payload["replay_ref"] == "replay:decision:demo"
+    assert mirrored[0].payload["metrics_ref"] == "metrics:decision:demo"
+
+
+def test_command_lease_store_mirrors_multiple_renewals_into_session_service(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    first_claim = store.claim_command(
+        command_id="command:repo-a:5",
+        session_id="session:repo-a",
+        worker_id="worker:e",
+        claimed_at="2026-04-12T04:00:00Z",
+        lease_expires_at="2026-04-12T04:05:00Z",
+    )
+    store.renew_lease(
+        command_id="command:repo-a:5",
+        worker_id="worker:e",
+        claim_seq=first_claim.claim_seq,
+        renewed_at="2026-04-12T04:02:00Z",
+        lease_expires_at="2026-04-12T04:07:00Z",
+    )
+    store.renew_lease(
+        command_id="command:repo-a:5",
+        worker_id="worker:e",
+        claim_seq=first_claim.claim_seq,
+        renewed_at="2026-04-12T04:04:00Z",
+        lease_expires_at="2026-04-12T04:09:00Z",
+    )
+
+    events = [
+        event
+        for event in session_service.list_events(
+            session_id="session:repo-a",
+            related_id_key="command_id",
+            related_id_value="command:repo-a:5",
+        )
+        if event.event_type != "command_created"
+    ]
+
+    assert [event.event_type for event in events] == [
+        "command_claimed",
+        "command_lease_renewed",
+        "command_lease_renewed",
+    ]
+    assert [event.related_ids["claim_seq"] for event in events] == ["1", "1", "1"]
+    assert [event.payload["lease_expires_at"] for event in events] == [
+        "2026-04-12T04:05:00Z",
+        "2026-04-12T04:07:00Z",
+        "2026-04-12T04:09:00Z",
+    ]
+    assert events[1].correlation_id != events[2].correlation_id
+
+
+def test_command_lease_store_mirrors_child_session_events_with_project_only_id(
+    tmp_path: Path,
+) -> None:
+    from watchdog.services.session_service.service import SessionService
+    from watchdog.services.session_service.store import SessionServiceStore
+
+    session_service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    store = CommandLeaseStore(
+        tmp_path / "command_leases.json",
+        session_service=session_service,
+    )
+
+    store.claim_command(
+        command_id="command:repo-a:child:1",
+        session_id="session:repo-a:thr_child_1",
+        worker_id="worker:child",
+        claimed_at="2026-04-12T05:00:00Z",
+        lease_expires_at="2026-04-12T05:05:00Z",
+    )
+
+    events = session_service.list_events(
+        session_id="session:repo-a:thr_child_1",
+        related_id_key="command_id",
+        related_id_value="command:repo-a:child:1",
+    )
+
+    assert len(events) == 1
+    mirrored = events[0]
+    assert mirrored.project_id == "repo-a"

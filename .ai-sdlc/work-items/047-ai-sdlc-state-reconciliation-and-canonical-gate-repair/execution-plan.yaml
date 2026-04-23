@@ -1,0 +1,137 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T471
+  title: 冻结 047 formal docs 与 AI-SDLC reconciliation 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/architecture/coverage-audit-closeout-execution-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/spec.md`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/plan.md`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/tasks.md`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/runtime.yaml`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T472
+  title: 写失败测试锁定 reconciliation inventory、sequence rule 与 owner ledger contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/validation/ai_sdlc_reconciliation.py`'
+  - '`tests/test_ai_sdlc_reconciliation.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T471
+- task_id: T473
+  title: 实现最小 reconciliation helper、artifact generator 与 state repair
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/validation/ai_sdlc_reconciliation.py`'
+  - '`scripts/reconcile_ai_sdlc_state.py`'
+  - '`tests/test_ai_sdlc_reconciliation.py`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  - '`.ai-sdlc/work-items/*`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/reconciliation-inventory.yaml`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/matrix-owner-ledger.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T472
+- task_id: T474
+  title: 更新执行日志、summary 与 top-level handoff
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/runtime.yaml`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T473
+- task_id: T475
+  title: 完成 047 整体验证并交接 WI-048
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/latest-summary.md`'
+  - '`.ai-sdlc/work-items/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T474
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T471
+  status: completed
+  started_at: '2026-04-16T06:29:44Z'
+  completed_at: '2026-04-16T06:51:02Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T472
+  status: completed
+  started_at: '2026-04-16T06:51:02Z'
+  completed_at: '2026-04-16T07:04:03Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T473
+  status: completed
+  started_at: '2026-04-16T07:01:16Z'
+  completed_at: '2026-04-16T07:04:03Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T474
+  status: completed
+  started_at: '2026-04-16T07:03:23Z'
+  completed_at: '2026-04-16T07:04:03Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T475
+  status: completed
+  started_at: '2026-04-16T07:04:03Z'
+  completed_at: '2026-04-16T07:04:03Z'
+current_batch: 5

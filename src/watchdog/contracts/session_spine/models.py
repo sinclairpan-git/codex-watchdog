@@ -79,18 +79,84 @@ class ApprovalProjection(SessionSpineModel):
     decided_by: str | None = None
 
 
+class ContinuationDispatchResultView(SessionSpineModel):
+    command_id: str | None = None
+    decision_id: str | None = None
+    action_ref: str | None = None
+    status: str | None = None
+    action_status: str | None = None
+    reply_code: str | None = None
+    decision_result: str | None = None
+    observed_at: str | None = None
+    receipt_ref: str | None = None
+
+
+class ContinuationDispatchCooldownView(SessionSpineModel):
+    action_ref: str | None = None
+    checkpoint_state: str | None = None
+    last_dispatched_at: str | None = None
+    cooldown_seconds: float | None = None
+    remaining_seconds: float | None = None
+    active: bool = False
+
+
+class ContinuationControlPlaneView(SessionSpineModel):
+    continuation_identity: str | None = None
+    identity_state: str | None = None
+    branch_switch_token: str | None = None
+    token_state: str | None = None
+    consumed_at: str | None = None
+    route_key: str | None = None
+    packet_id: str | None = None
+    packet_hash: str | None = None
+    rendered_from_packet_id: str | None = None
+    rendered_from_packet_hash: str | None = None
+    last_dispatch_result: ContinuationDispatchResultView | None = None
+    suppression_reason: str | None = None
+    decision_source: str | None = None
+    snapshot_version: str | None = None
+    snapshot_epoch: str | None = None
+    dispatch_cooldown: ContinuationDispatchCooldownView | None = None
+
+
 class TaskProgressView(SessionSpineModel):
     project_id: str
     thread_id: str
     native_thread_id: str | None = None
     activity_phase: str
     summary: str
+    goal_contract_version: str | None = None
+    current_phase_goal: str | None = None
+    last_user_instruction: str | None = None
     files_touched: list[str] = Field(default_factory=list)
     context_pressure: str
     stuck_level: int
     primary_fact_codes: list[str] = Field(default_factory=list)
     blocker_fact_codes: list[str] = Field(default_factory=list)
     last_progress_at: str | None = None
+    recovery_outcome: str | None = None
+    recovery_status: str | None = None
+    recovery_updated_at: str | None = None
+    recovery_child_session_id: str | None = None
+    recovery_suppression_reason: str | None = None
+    recovery_suppression_source: str | None = None
+    recovery_suppression_observed_at: str | None = None
+    decision_trace_ref: str | None = None
+    decision_degrade_reason: str | None = None
+    provider_output_schema_ref: str | None = None
+    continuation_control_plane: ContinuationControlPlaneView | None = None
+
+
+class ResidentExpertCoverageView(SessionSpineModel):
+    coverage_status: str
+    available_expert_count: int = 0
+    bound_expert_count: int = 0
+    restoring_expert_count: int = 0
+    stale_expert_count: int = 0
+    unavailable_expert_count: int = 0
+    degraded_expert_ids: list[str] = Field(default_factory=list)
+    latest_consultation_ref: str | None = None
+    latest_consulted_at: str | None = None
 
 
 class WorkspaceActivityView(SessionSpineModel):
@@ -142,6 +208,8 @@ class ReplyModel(SessionSpineModel):
     session: SessionProjection | None = None
     sessions: list[SessionProjection] = Field(default_factory=list)
     progress: TaskProgressView | None = None
+    progresses: list[TaskProgressView] = Field(default_factory=list)
+    resident_expert_coverage: ResidentExpertCoverageView | None = None
     workspace_activity: WorkspaceActivityView | None = None
     action_result: WatchdogActionResult | None = None
     snapshot: SnapshotReadSemantics | None = None

@@ -7,6 +7,38 @@ from pydantic import BaseModel, Field
 from .service import CanonicalAuditQuery, query_canonical_audit
 
 
+class ReplayResidentExpertConsultationExpert(BaseModel):
+    expert_id: str
+    status: str
+    runtime_handle: str | None = None
+    last_seen_at: str | None = None
+    last_consulted_at: str | None = None
+    last_consultation_ref: str | None = None
+
+
+class ReplayResidentExpertOpinion(BaseModel):
+    expert_id: str
+    next_slice_recommendation: str
+    rationale: str
+    risks_to_avoid: list[str] = Field(default_factory=list)
+
+
+class ReplayResidentExpertConsultationSynthesis(BaseModel):
+    summary: str
+    chosen_next_slice: str | None = None
+    dissent_summary: str | None = None
+
+
+class ReplayResidentExpertConsultation(BaseModel):
+    consultation_ref: str
+    consulted_at: str
+    coverage_status: str | None = None
+    degraded_expert_ids: list[str] = Field(default_factory=list)
+    experts: list[ReplayResidentExpertConsultationExpert] = Field(default_factory=list)
+    opinions: list[ReplayResidentExpertOpinion] = Field(default_factory=list)
+    synthesis: ReplayResidentExpertConsultationSynthesis | None = None
+
+
 class ReplayTimelineEvent(BaseModel):
     event_kind: str
     ref_id: str
@@ -17,6 +49,7 @@ class ReplayTimelineEvent(BaseModel):
     approval_id: str | None = None
     envelope_id: str | None = None
     receipt_id: str | None = None
+    resident_expert_consultation: ReplayResidentExpertConsultation | None = None
 
 
 class CanonicalReplayTrace(BaseModel):
@@ -26,11 +59,59 @@ class CanonicalReplayTrace(BaseModel):
 
 _EVENT_PRIORITY = {
     "decision": 0,
-    "approval": 1,
-    "delivery": 2,
-    "response": 3,
-    "action_receipt": 4,
+    "resident_expert_consultation": 1,
+    "approval": 2,
+    "delivery": 3,
+    "response": 4,
+    "action_receipt": 5,
 }
+
+
+def _materialize_resident_expert_consultation(record) -> ReplayResidentExpertConsultation | None:
+    evidence = record.evidence if isinstance(record.evidence, dict) else {}
+    raw_bundle = evidence.get("resident_expert_consultation")
+    if not isinstance(raw_bundle, dict):
+        return None
+    consultation_ref = str(raw_bundle.get("consultation_ref") or "").strip() or record.decision_id
+    consulted_at = str(raw_bundle.get("consulted_at") or "").strip() or record.created_at
+    raw_experts = raw_bundle.get("experts")
+    experts = (
+        [
+            ReplayResidentExpertConsultationExpert.model_validate(item)
+            for item in raw_experts
+            if isinstance(item, dict)
+        ]
+        if isinstance(raw_experts, list)
+        else []
+    )
+    degraded_expert_ids = raw_bundle.get("degraded_expert_ids")
+    raw_opinions = raw_bundle.get("opinions")
+    raw_synthesis = raw_bundle.get("synthesis")
+    return ReplayResidentExpertConsultation(
+        consultation_ref=consultation_ref,
+        consulted_at=consulted_at,
+        coverage_status=str(raw_bundle.get("coverage_status") or "").strip() or None,
+        degraded_expert_ids=(
+            [str(item) for item in degraded_expert_ids if isinstance(item, str)]
+            if isinstance(degraded_expert_ids, list)
+            else []
+        ),
+        experts=experts,
+        opinions=(
+            [
+                ReplayResidentExpertOpinion.model_validate(item)
+                for item in raw_opinions
+                if isinstance(item, dict)
+            ]
+            if isinstance(raw_opinions, list)
+            else []
+        ),
+        synthesis=(
+            ReplayResidentExpertConsultationSynthesis.model_validate(raw_synthesis)
+            if isinstance(raw_synthesis, dict)
+            else None
+        ),
+    )
 
 
 def replay_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> CanonicalReplayTrace:
@@ -49,6 +130,23 @@ def replay_canonical_audit(data_dir: Path, query: CanonicalAuditQuery) -> Canoni
                 approval_id=record.approval_id,
             )
         )
+        consultation = _materialize_resident_expert_consultation(record)
+        if consultation is not None:
+            timeline.append(
+                ReplayTimelineEvent(
+                    event_kind="resident_expert_consultation",
+                    ref_id=consultation.consultation_ref,
+                    occurred_at=consultation.consulted_at,
+                    summary=(
+                        "resident expert consultation "
+                        f"{consultation.coverage_status or 'recorded'}"
+                    ),
+                    session_id=record.session_id,
+                    decision_id=record.decision_id,
+                    approval_id=record.approval_id,
+                    resident_expert_consultation=consultation,
+                )
+            )
     for record in audit.approvals:
         timeline.append(
             ReplayTimelineEvent(

@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/025-policy-engine-decision-evidence/spec.md"
 ---
 
@@ -46,12 +46,12 @@ related_doc:
   - 响应幂等
   - approve/reject 语义
   - 审批后执行与执行失败的 canonical 结果
-- **FR-2611**：026 不得实现 delivery retry、receipt 或 OpenClaw webhook。
+- **FR-2611**：026 不得实现 delivery retry、receipt 或 Feishu webhook。
 - **FR-2612**：026 不得实现飞书文案渲染，不得在 execution layer 持有渠道语义。
 
 ### 用户故事 1：服务能安全执行已注册动作，而不是让宿主自己决定怎么做
 
-场景 1：某个 canonical decision 为 `auto_execute_and_notify`，服务直接从 canonical action registry 解析动作并调用 A 侧执行。
+场景 1：某个 canonical decision 为 `auto_execute_and_notify`，服务直接从 canonical action registry 解析动作并调用 runtime 侧执行。
 
 场景 2：动作执行失败时，服务落 canonical execution result，供后续投递层生成告警。
 
@@ -63,7 +63,7 @@ related_doc:
 
 ## 非目标
 
-- 不实现 envelope delivery outbox、retry、receipt 或 OpenClaw webhook。
+- 不实现 envelope delivery outbox、retry、receipt 或 Feishu webhook。
 - 不实现飞书 UI、宿主渲染或消息投递。
 - 不重新运行策略判定。
 - 不实现运维告警与生产部署面。

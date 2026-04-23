@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T711
+  title: 冻结 071 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T712
+  title: 写 failing tests 锁定 app-level `ai-autosdlc-cursor` route contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T711
+- task_id: T713
+  title: 实现 setting、runtime wiring 与受控 route
+  status: completed
+  phase: 3
+  depends_on:
+  - T712
+- task_id: T714
+  title: 跑 targeted verification 并吸收对抗评审
+  status: completed
+  phase: 4
+  depends_on:
+  - T713
+- task_id: T715
+  title: 完成 ai_sdlc 状态同步与 closeout
+  status: completed
+  phase: 5
+  depends_on:
+  - T714
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T711
+  status: completed
+  started_at: '2026-04-17T00:00:00Z'
+  completed_at: '2026-04-17T00:05:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T712
+  status: completed
+  started_at: '2026-04-17T00:05:00Z'
+  completed_at: '2026-04-16T16:08:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T713
+  status: completed
+  started_at: '2026-04-16T16:08:00Z'
+  completed_at: '2026-04-16T16:10:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T714
+  status: completed
+  started_at: '2026-04-16T16:10:00Z'
+  completed_at: '2026-04-16T16:13:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T715
+  status: completed
+  started_at: '2026-04-16T16:13:00Z'
+  completed_at: '2026-04-16T16:14:52Z'
+current_batch: 5

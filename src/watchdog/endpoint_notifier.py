@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -37,7 +36,9 @@ class EndpointNotifierSettings(BaseSettings):
 
     bootstrap_webhook_base_url: str = "http://127.0.0.1:8740"
     bootstrap_webhook_token: str = "dev-token-change-me"
-    public_tunnel_log_path: str = str(Path.home() / "Library/Logs/openclaw-watchdog.public-tunnel.err.log")
+    public_tunnel_log_path: str = str(
+        Path.home() / "Library/Logs/openclaw-watchdog.public-tunnel.err.log"
+    )
     public_url_state_file: str = ".data/watchdog/public_endpoint_state.json"
     public_url_notify_interval_seconds: float = 10.0
     public_url_source: str = "a-host-watchdog"

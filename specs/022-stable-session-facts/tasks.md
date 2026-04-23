@@ -47,23 +47,23 @@
   4. 015 explanation route 不回归。
 - **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py -k facts`
 
-## Task 22.4 OpenClaw Adapter Intent
+## Task 22.4 Feishu Adapter Intent
 
 - **任务编号**：T224
 - **状态**：已完成（2026-04-06 回填）
-- **目标**：让 OpenClaw 通过主 `intent -> ReplyModel` 闭环消费 stable facts。
+- **目标**：让 Feishu 通过主 `intent -> ReplyModel` 闭环消费 stable facts。
 - **涉及文件**：
-  - `src/watchdog/services/adapters/openclaw/intents.py`
-  - `src/watchdog/services/adapters/openclaw/reply_model.py`
-  - `src/watchdog/services/adapters/openclaw/adapter.py`
-  - `tests/test_watchdog_openclaw_adapter.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `src/watchdog/services/adapters/feishu/intents.py`
+  - `src/watchdog/services/adapters/feishu/reply_model.py`
+  - `src/watchdog/services/adapters/feishu/adapter.py`
+  - `tests/test_watchdog_feishu_adapter.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **完成标准**：
   1. adapter 支持 `list_session_facts`；
   2. `handle_intent("list_session_facts")` 返回稳定 `ReplyModel(reply_code=session_facts)`；
   3. adapter 与 HTTP route 共用同一 facts reply builder；
   4. facts truth source 不旁路 raw/legacy route。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py -k facts`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py -k facts`
 
 ## Task 22.5 文档、OpenAPI 与项目状态收口
 
@@ -84,5 +84,5 @@
 ## 整体验收
 
 - 调用方已经可以通过稳定 `ReplyModel(facts=FactRecord[])` 直接读取 session 事实真值，而不必只能从 explanation 或 session/progress 的附带字段里拆取。
-- OpenClaw adapter 已将 `list_session_facts` 纳入主 `handle_intent -> ReplyModel` 闭环。
+- Feishu adapter 已将 `list_session_facts` 纳入主 `handle_intent -> ReplyModel` 闭环。
 - 022 只补 `FactRecord` stable read seam，不改变 explanation contract，也不扩成 history/filter 产品。

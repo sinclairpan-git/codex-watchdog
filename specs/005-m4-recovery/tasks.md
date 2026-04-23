@@ -4,7 +4,7 @@
 
 ## Batch 1：M4 实现
 
-### Task 4.1 A-Control-Agent：handoff / resume API
+### Task 4.1 Codex runtime service：handoff / resume API
 
 - **任务编号**：T41
 - **依赖**：无

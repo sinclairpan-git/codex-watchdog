@@ -13,7 +13,7 @@ BRANCH_PROTECTION_AUDIT_WORKFLOW_REL = Path(".github/workflows/branch-protection
 
 _EXPECTED_BRANCH_PROTECTION_CONTRACT: dict[str, Any] = {
     "owner": "sinclairpan-git",
-    "repo": "openclaw-codex-watchdog",
+    "repo": "codex-watchdog",
     "branch": "main",
     "required_status_checks": {
         "strict": True,
@@ -82,7 +82,9 @@ def validate_live_github_branch_protection(
     )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip() or f"gh api exited {completed.returncode}"
-        return [f"github branch protection live check failed for {owner}/{repo}@{branch}: {detail}"]
+        return [
+            f"github branch protection live check failed for {owner}/{repo}@{branch}: {detail}"
+        ]
 
     try:
         live_payload = json.loads(completed.stdout)
@@ -92,7 +94,9 @@ def validate_live_github_branch_protection(
         ]
 
     if not isinstance(live_payload, Mapping):
-        return [f"github branch protection live check returned non-object JSON for {owner}/{repo}@{branch}"]
+        return [
+            f"github branch protection live check returned non-object JSON for {owner}/{repo}@{branch}"
+        ]
 
     expected = _normalize_expected_contract(payload)
     actual = _normalize_live_branch_protection(live_payload)
@@ -147,11 +151,13 @@ def validate_branch_protection_audit_workflow_surfaces(
             f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} top-level keys must equal "
             "['jobs', 'name', 'on', 'permissions']"
         )
+
     if payload.get("name") != "Branch Protection Audit":
         violations.append(
             "github branch protection audit workflow "
             f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} name must equal 'Branch Protection Audit'"
         )
+
     if payload.get("permissions") != {"contents": "read"}:
         violations.append(
             "github branch protection audit workflow "
@@ -198,6 +204,7 @@ def _load_contract_payload(path: Path) -> tuple[Mapping[str, Any] | None, str | 
             None,
             f"github branch protection contract {BRANCH_PROTECTION_CONTRACT_REL.as_posix()} invalid JSON: {exc}",
         )
+
     if not isinstance(payload, Mapping):
         return (
             None,
@@ -234,6 +241,13 @@ def _validate_branch_protection_audit_job(payload: Mapping[str, Any]) -> list[st
             f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} branch-protection-audit job keys "
             "must equal ['runs-on', 'steps', 'timeout-minutes']"
         )
+    for key in ("if", "continue-on-error"):
+        if key in job:
+            violations.append(
+                "github branch protection audit workflow "
+                f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} branch-protection-audit job "
+                f"must not define {key}"
+            )
     if job.get("runs-on") != "ubuntu-latest":
         violations.append(
             "github branch protection audit workflow "
@@ -293,6 +307,13 @@ def _validate_branch_protection_audit_job(payload: Mapping[str, Any]) -> list[st
                 f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} step {index + 1} keys "
                 f"must equal {sorted(expected.keys())!r}"
             )
+        for key in ("if", "continue-on-error"):
+            if key in step:
+                violations.append(
+                    "github branch protection audit workflow "
+                    f"{BRANCH_PROTECTION_AUDIT_WORKFLOW_REL.as_posix()} step {index + 1} "
+                    f"must not define {key}"
+                )
         for key, expected_value in expected.items():
             if step.get(key) != expected_value:
                 violations.append(
@@ -427,6 +448,7 @@ def _normalize_contexts(value: Any) -> list[str] | None:
 def _normalize_required_checks(value: Any) -> list[tuple[str, Any]] | None:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return None
+
     normalized: list[tuple[str, Any]] = []
     for item in value:
         if not isinstance(item, Mapping):

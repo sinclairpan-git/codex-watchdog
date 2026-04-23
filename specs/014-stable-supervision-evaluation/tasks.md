@@ -2,7 +2,7 @@
 
 > 对应规格：`specs/014-stable-supervision-evaluation/spec.md`
 >
-> 对应总设计：`docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md`
+> 对应总设计：`docs/architecture/codex-watchdog-g0-and-v010-design.md`
 
 ## Batch 1
 
@@ -50,19 +50,19 @@
 
 ## Batch 2
 
-### Task 14.4 OpenClaw adapter 接入 evaluate_supervision
+### Task 14.4 Feishu adapter 接入 evaluate_supervision
 
 - **任务编号**：T144
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T143
-- **文件**：`src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_openclaw_adapter.py`
+- **文件**：`src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py`, `tests/test_watchdog_feishu_adapter.py`
 - **可并行**：否
 - **验收标准**：
   1. adapter 支持 `evaluate_supervision` intent；
   2. adapter 返回 `ReplyModel(reply_code=supervision_evaluation)`，且 `action_result.supervision_evaluation` 存在；
   3. adapter 不直连 legacy `/watchdog/tasks/{project_id}/evaluate`；
   4. adapter 对同一幂等键重试不会导致第二次 steer。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py`
 
 ### Task 14.5 文档与 OpenAPI 收口
 
@@ -83,11 +83,11 @@
 - **任务编号**：T146
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T144, T145
-- **文件**：`tests/integration/test_openclaw_integration_spine.py`, `tests/test_watchdog_action_receipts.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`
+- **文件**：`tests/integration/test_feishu_integration_spine.py`, `tests/test_watchdog_action_receipts.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`
 - **可并行**：否
 - **验收标准**：
   1. `evaluate_supervision` 执行后可通过 stable receipt query 读回相同结果；
   2. HTTP canonical route、adapter 与 receipt lookup 三者对同一 supervision result 一致；
   3. legacy `evaluate` 继续存在，且不会因 014 破坏既有 `progress / approvals / recover / events` 的基础兼容；
   4. `continue_session` 与 `execute_recovery` 既有 stable 行为不回归。
-- **验证**：`uv run pytest -q tests/integration/test_openclaw_integration_spine.py tests/test_watchdog_action_receipts.py tests/test_watchdog_action_idempotency.py tests/test_watchdog_session_spine_api.py`
+- **验证**：`uv run pytest -q tests/integration/test_feishu_integration_spine.py tests/test_watchdog_action_receipts.py tests/test_watchdog_action_idempotency.py tests/test_watchdog_session_spine_api.py`

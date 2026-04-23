@@ -140,7 +140,7 @@ def test_live_github_branch_protection_matches_contract(tmp_path: Path) -> None:
         assert args == [
             "gh",
             "api",
-            "repos/sinclairpan-git/openclaw-codex-watchdog/branches/main/protection",
+            "repos/sinclairpan-git/codex-watchdog/branches/main/protection",
         ]
         assert cwd == tmp_path
         assert capture_output is True
@@ -186,7 +186,7 @@ def _write_default_contract(tmp_path: Path) -> None:
         tmp_path,
         {
             "owner": "sinclairpan-git",
-            "repo": "openclaw-codex-watchdog",
+            "repo": "codex-watchdog",
             "branch": "main",
             "required_status_checks": {
                 "strict": True,

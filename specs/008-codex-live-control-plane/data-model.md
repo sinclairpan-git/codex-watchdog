@@ -1,11 +1,11 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 数据与行为补充：008-codex-live-control-plane
 
-## A-Control-Agent 配置增量
+## Codex runtime service 配置增量
 
 - `codex_bridge_enabled`：bool，默认 `true`；允许在不需要 live control plane 的环境中关闭 bridge。
 - `codex_app_server_command`：string，默认 `codex app-server --listen stdio://`；允许替换为包装脚本或显式二进制路径。

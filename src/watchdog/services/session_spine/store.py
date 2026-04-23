@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import threading
+import uuid
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +18,7 @@ from watchdog.contracts.session_spine.models import (
     SessionProjection,
     TaskProgressView,
 )
+from watchdog.services.session_spine.text import sanitize_session_summary
 
 
 def _utc_now_iso() -> str:
@@ -40,48 +45,112 @@ class PersistedSessionRecord(BaseModel):
     snapshot_fingerprint: str | None = None
     facts_fingerprint: str | None = None
 
+    @property
+    def effective_native_thread_id(self) -> str | None:
+        for candidate in (
+            self.native_thread_id,
+            self.session.native_thread_id,
+            self.progress.native_thread_id,
+        ):
+            normalized = str(candidate or "").strip()
+            if normalized:
+                return normalized
+        return None
+
 
 class PersistedSessionSpineFile(BaseModel):
     sessions: dict[str, PersistedSessionRecord] = Field(default_factory=dict)
 
 
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _path_lock(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _PATH_LOCKS_GUARD:
+        existing = _PATH_LOCKS.get(key)
+        if existing is not None:
+            return existing
+        created = threading.Lock()
+        _PATH_LOCKS[key] = created
+        return created
+
+
 class SessionSpineStore:
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._lock = threading.Lock()
+        self._lock = _path_lock(path)
+        self._lock_path = path.with_name(f".{path.name}.lock")
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists():
-            self._write(PersistedSessionSpineFile())
+        with self._guard_io():
+            if not self._path.exists():
+                self._write(PersistedSessionSpineFile())
+
+    @contextmanager
+    def _guard_io(self):
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
 
     def _read(self) -> PersistedSessionSpineFile:
         raw = self._path.read_text(encoding="utf-8")
         if not raw.strip():
             return PersistedSessionSpineFile()
-        return PersistedSessionSpineFile.model_validate_json(raw)
+        data = PersistedSessionSpineFile.model_validate_json(raw)
+        changed = False
+        for project_id, record in list(data.sessions.items()):
+            sanitized_headline = sanitize_session_summary(record.session.headline)
+            sanitized_summary = sanitize_session_summary(record.progress.summary)
+            if (
+                sanitized_headline == record.session.headline
+                and sanitized_summary == record.progress.summary
+            ):
+                continue
+            changed = True
+            data.sessions[project_id] = record.model_copy(
+                update={
+                    "session": record.session.model_copy(update={"headline": sanitized_headline}),
+                    "progress": record.progress.model_copy(update={"summary": sanitized_summary}),
+                }
+            )
+        if changed:
+            self._write(data)
+        return data
 
     def _write(self, data: PersistedSessionSpineFile) -> None:
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(
-            data.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
-        tmp.replace(self._path)
+        tmp = self._path.with_name(f"{self._path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(
+                data.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(self._path)
+        finally:
+            with suppress(FileNotFoundError):
+                tmp.unlink()
 
     def get(self, project_id: str) -> PersistedSessionRecord | None:
-        with self._lock:
+        with self._guard_io():
             data = self._read()
             return data.sessions.get(project_id)
 
     def get_by_native_thread(self, native_thread_id: str) -> PersistedSessionRecord | None:
-        with self._lock:
+        with self._guard_io():
             data = self._read()
             for record in data.sessions.values():
-                if record.native_thread_id == native_thread_id:
+                if record.effective_native_thread_id == native_thread_id:
                     return record
         return None
 
     def list_records(self) -> list[PersistedSessionRecord]:
-        with self._lock:
+        with self._guard_io():
             data = self._read()
             return list(data.sessions.values())
 
@@ -107,7 +176,7 @@ class SessionSpineStore:
         facts_fingerprint = _fingerprint(facts_payload)
         refreshed_at = last_refreshed_at or _utc_now_iso()
 
-        with self._lock:
+        with self._guard_io():
             data = self._read()
             existing = data.sessions.get(project_id)
 

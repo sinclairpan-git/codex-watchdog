@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from watchdog.contracts.session_spine.models import FactRecord
 from watchdog.services.session_spine.approval_visibility import is_actionable_approval
-from watchdog.services.session_spine.task_state import is_terminal_task
+from watchdog.services.session_spine.task_state import (
+    is_non_active_project_execution_state,
+    is_terminal_task,
+    normalize_project_execution_state,
+    normalize_task_status,
+)
 
 
 def _now_iso() -> str:
@@ -46,6 +51,40 @@ def _build_fact(
     )
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _auto_recovery_suppressed(task: dict[str, Any] | None) -> bool:
+    return normalize_task_status(task) in {
+        "handoff_in_progress",
+        "resuming",
+        "paused",
+        "waiting_for_direction",
+    }
+
+
+def _recent_local_activity_supersedes_stuck_signal(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    manual_activity_at = _parse_iso(task.get("last_local_manual_activity_at"))
+    if manual_activity_at is None:
+        return False
+    last_progress_at = _parse_iso(task.get("last_progress_at"))
+    if last_progress_at is None:
+        return True
+    return manual_activity_at > last_progress_at
+
+
 def build_fact_records(
     *,
     project_id: str,
@@ -55,7 +94,7 @@ def build_fact_records(
 ) -> list[FactRecord]:
     observed_at = _task_value(task, "last_progress_at", None)
     if observed_at is None and approvals:
-        observed_at = approvals[0].get("requested_at")
+        observed_at = approvals[0].get("requested_at") or approvals[0].get("created_at")
     if observed_at in (None, ""):
         observed_at = _now_iso()
     observed_at = str(observed_at)
@@ -119,7 +158,50 @@ def build_fact_records(
             )
         )
 
-    if int(_task_value(task, "stuck_level", 0)) >= 2:
+    project_execution_state = normalize_project_execution_state(task)
+    if bool(_task_value(task, "authoritative_project_execution_state_missing", False)):
+        facts.append(
+            _build_fact(
+                project_id,
+                fact_code="project_state_unavailable",
+                fact_kind="blocker",
+                severity="warning",
+                summary="authoritative project state unavailable",
+                detail=(
+                    "autonomous continuation is blocked because authoritative "
+                    "project execution state could not be resolved"
+                ),
+                source="watchdog_projection",
+                observed_at=observed_at,
+            )
+        )
+        return facts
+    if is_non_active_project_execution_state(project_execution_state):
+        facts.append(
+            _build_fact(
+                project_id,
+                fact_code="project_not_active",
+                fact_kind="blocker",
+                severity="info",
+                summary="project is not active",
+                detail=(
+                    "autonomous continuation is blocked because "
+                    f"project_execution_state={project_execution_state}"
+                ),
+                source="watchdog_projection",
+                observed_at=observed_at,
+                related_ids={"project_execution_state": project_execution_state},
+            )
+        )
+        return facts
+
+    if _auto_recovery_suppressed(task):
+        return facts
+
+    if (
+        int(_task_value(task, "stuck_level", 0)) >= 2
+        and not _recent_local_activity_supersedes_stuck_signal(task)
+    ):
         facts.append(
             _build_fact(
                 project_id,

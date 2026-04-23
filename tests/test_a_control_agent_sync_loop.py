@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from _polling import wait_until
 from a_control_agent.main import create_app
 from a_control_agent.settings import Settings
 
@@ -149,13 +149,19 @@ def test_background_sync_refreshes_native_threads_periodically(tmp_path: Path) -
         assert first.status_code == 200
         assert first.json()["data"]["phase"] == "planning"
 
-        time.sleep(0.05)
+        assert wait_until(
+            lambda: client.get("/api/v1/tasks/by-thread/thr_native_1", headers=headers).json()["data"][
+                "status"
+            ]
+            == "waiting_for_approval",
+            timeout_s=0.5,
+        )
 
         refreshed = client.get("/api/v1/tasks/by-thread/thr_native_1", headers=headers)
 
     body = refreshed.json()["data"]
-    assert body["status"] == "waiting_human"
-    assert body["phase"] == "approval"
+    assert body["status"] == "waiting_for_approval"
+    assert body["phase"] == "planning"
     assert body["pending_approval"] is True
     assert body["approval_risk"] == "L2"
     assert body["last_summary"] == "waiting for approval"

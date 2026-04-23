@@ -1,0 +1,56 @@
+total_tasks: 4
+total_batches: 4
+tasks:
+- task_id: T671
+  title: 冻结 067 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T672
+  title: 跑风险分类与 control observability targeted 验证
+  status: completed
+  phase: 2
+  depends_on:
+  - T671
+- task_id: T673
+  title: 吸收对抗评审的高优先级问题
+  status: completed
+  phase: 3
+  depends_on:
+  - T672
+- task_id: T674
+  title: 完成 ai_sdlc 状态同步与 closeout
+  status: completed
+  phase: 4
+  depends_on:
+  - T673
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T671
+  status: completed
+  started_at: '2026-04-16T13:00:00Z'
+  completed_at: '2026-04-16T13:05:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T672
+  status: completed
+  started_at: '2026-04-16T13:05:00Z'
+  completed_at: '2026-04-16T13:08:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T673
+  status: completed
+  started_at: '2026-04-16T13:08:00Z'
+  completed_at: '2026-04-16T13:27:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T674
+  status: completed
+  started_at: '2026-04-16T13:27:00Z'
+  completed_at: '2026-04-16T13:29:26Z'
+current_batch: 4

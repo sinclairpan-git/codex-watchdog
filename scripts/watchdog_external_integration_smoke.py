@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+from typing import Sequence
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from watchdog.validation.external_integration_smoke import (  # noqa: E402
+    ExternalIntegrationSmokeConfig,
+    exit_code_for_results,
+    render_markdown_report,
+    render_results,
+    run_smoke_checks,
+)
+from watchdog.secrets import resolve_secret_value  # noqa: E402
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Run watchdog external integration smoke checks."
+    )
+    parser.add_argument(
+        "--target",
+        action="append",
+        choices=("all", "health", "feishu", "feishu-control", "feishu-discovery", "provider", "memory"),
+        default=None,
+        help="Select a specific smoke target. May be passed multiple times.",
+    )
+    parser.add_argument(
+        "--markdown-report",
+        type=Path,
+        default=None,
+        help="Optional path to write a Markdown acceptance report artifact.",
+    )
+    args = parser.parse_args(argv)
+
+    config = ExternalIntegrationSmokeConfig(
+        brain_provider_name=os.getenv(
+            "WATCHDOG_BRAIN_PROVIDER_NAME",
+            "resident_orchestrator",
+        ).strip(),
+        brain_provider_base_url=_optional_env("WATCHDOG_BRAIN_PROVIDER_BASE_URL"),
+        brain_provider_api_key=resolve_secret_value(
+            explicit_value=_optional_env("WATCHDOG_BRAIN_PROVIDER_API_KEY"),
+            keychain_service=_optional_env(
+                "WATCHDOG_BRAIN_PROVIDER_API_KEY_KEYCHAIN_SERVICE"
+            ),
+            keychain_account=_optional_env(
+                "WATCHDOG_BRAIN_PROVIDER_API_KEY_KEYCHAIN_ACCOUNT"
+            ),
+        ),
+        brain_provider_model=_optional_env("WATCHDOG_BRAIN_PROVIDER_MODEL"),
+        brain_provider_profiles_json=_optional_env("WATCHDOG_BRAIN_PROVIDER_PROFILES_JSON"),
+        base_url=os.getenv("WATCHDOG_BASE_URL", "").strip(),
+        api_token=os.getenv("WATCHDOG_API_TOKEN", "").strip(),
+        data_dir=os.getenv("WATCHDOG_DATA_DIR", ".data/watchdog").strip(),
+        http_timeout_s=float(os.getenv("WATCHDOG_HTTP_TIMEOUT_S", "3.0")),
+        provider_http_timeout_s=float(
+            _optional_env("WATCHDOG_SMOKE_PROVIDER_HTTP_TIMEOUT_S")
+            or _optional_env("WATCHDOG_BRAIN_PROVIDER_HTTP_TIMEOUT_S")
+            or os.getenv("WATCHDOG_HTTP_TIMEOUT_S", "30.0")
+        ),
+        provider_live_mode=_parse_bool_env("WATCHDOG_SMOKE_PROVIDER_LIVE"),
+        feishu_control_http_timeout_s=float(
+            os.getenv("WATCHDOG_SMOKE_FEISHU_CONTROL_HTTP_TIMEOUT_S", "15.0")
+        ),
+        feishu_discovery_http_timeout_s=float(
+            os.getenv("WATCHDOG_SMOKE_FEISHU_DISCOVERY_HTTP_TIMEOUT_S", "30.0")
+        ),
+        feishu_event_ingress_mode=os.getenv(
+            "WATCHDOG_FEISHU_EVENT_INGRESS_MODE",
+            "callback",
+        ).strip(),
+        feishu_callback_ingress_mode=os.getenv(
+            "WATCHDOG_FEISHU_CALLBACK_INGRESS_MODE",
+            "callback",
+        ).strip(),
+        feishu_app_id=_optional_env("WATCHDOG_FEISHU_APP_ID"),
+        feishu_app_secret=_optional_env("WATCHDOG_FEISHU_APP_SECRET"),
+        feishu_verification_token=_optional_env("WATCHDOG_FEISHU_VERIFICATION_TOKEN"),
+        feishu_control_project_id=_optional_env("WATCHDOG_SMOKE_FEISHU_CONTROL_PROJECT_ID"),
+        feishu_control_goal_message=_optional_env("WATCHDOG_SMOKE_FEISHU_CONTROL_GOAL_MESSAGE"),
+        feishu_control_expected_session_id=_optional_env(
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_EXPECTED_SESSION_ID"
+        ),
+        feishu_control_actor_open_id=os.getenv(
+            "WATCHDOG_SMOKE_FEISHU_CONTROL_ACTOR_OPEN_ID",
+            "ou_watchdog_smoke",
+        ).strip(),
+        feishu_discovery_command_text=(
+            _optional_env("WATCHDOG_SMOKE_FEISHU_DISCOVERY_COMMAND_TEXT") or "项目列表"
+        ),
+        feishu_discovery_expected_project_ids=_parse_csv_env(
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS"
+        ),
+        feishu_discovery_actor_open_id=os.getenv(
+            "WATCHDOG_SMOKE_FEISHU_DISCOVERY_ACTOR_OPEN_ID",
+            "ou_watchdog_smoke",
+        ).strip(),
+        memory_preview_ai_autosdlc_cursor_enabled=_parse_bool_env(
+            "WATCHDOG_MEMORY_PREVIEW_AI_AUTOSDLC_CURSOR_ENABLED"
+        ),
+    )
+    selected_targets = tuple(args.target or ("all",))
+    results = run_smoke_checks(config=config, targets=selected_targets)
+    print(render_results(results))
+    if args.markdown_report is not None:
+        report_path = args.markdown_report
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            render_markdown_report(
+                results=results,
+                config=config,
+                targets=selected_targets,
+            ),
+            encoding="utf-8",
+        )
+    return exit_code_for_results(results)
+
+
+def _optional_env(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _parse_bool_env(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_csv_env(name: str) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return ()
+    return tuple(
+        item.strip()
+        for item in value.split(",")
+        if item.strip()
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

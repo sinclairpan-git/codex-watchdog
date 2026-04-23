@@ -1,0 +1,23 @@
+work_item:
+  id: 077-feishu-long-connection-control-ops-hardening
+  spec_dir: specs/077-feishu-long-connection-control-ops-hardening
+  branch: codex/077-feishu-long-connection-control-ops-hardening
+current_stage: completed
+current_batch: 5
+last_committed_task: T775
+current_branch: codex/077-feishu-long-connection-control-ops-hardening
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: advance to the next open work item after WI-077 closure
+docs_baseline_ref: e790404e1ac3a8586f0c3c3d9506f718c31516b4
+docs_baseline_at: '2026-04-17T15:26:02Z'
+artifacts:
+  - specs/077-feishu-long-connection-control-ops-hardening/spec.md
+  - specs/077-feishu-long-connection-control-ops-hardening/plan.md
+  - specs/077-feishu-long-connection-control-ops-hardening/tasks.md
+  - specs/077-feishu-long-connection-control-ops-hardening/task-execution-log.md
+  - .ai-sdlc/work-items/077-feishu-long-connection-control-ops-hardening/execution-plan.yaml
+  - .ai-sdlc/work-items/077-feishu-long-connection-control-ops-hardening/runtime.yaml
+  - .ai-sdlc/work-items/077-feishu-long-connection-control-ops-hardening/latest-summary.md
+timestamp: '2026-04-17T15:26:02Z'

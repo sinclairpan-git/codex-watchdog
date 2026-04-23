@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/014-stable-supervision-evaluation/spec.md"
 ---
 
@@ -17,7 +17,7 @@ related_doc:
 - **Canonical action-first**：稳定主面仍是 `POST /api/v1/watchdog/actions`；evaluation 不是新开平行写接口，而是新的 canonical action。
 - **Stable inner kernel**：L2 负责把 `evaluate_stuck(...)`、repo activity 信号、thread 身份与 steer side effect 统一收束成 `SupervisionEvaluation + WatchdogActionResult`；legacy route 只做 compatibility wrapper。
 - **Receipt-compatible**：014 继续复用 013 的 receipt/key 模型，使 `evaluate_supervision` 结果可以被既有 action receipt surface 查询。
-- **Adapter 不旁路 legacy**：L3 OpenClaw adapter 只消费稳定 action 语义，不直连 `supervision.py` legacy route。
+- **Adapter 不旁路 legacy**：L3 Feishu adapter 只消费稳定 action 语义，不直连 `supervision.py` legacy route。
 
 ## 模块边界与文件落点
 
@@ -26,8 +26,8 @@ related_doc:
 | Contract | `src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py` | 新增 action/reply/reason 枚举、`SupervisionEvaluation`、`WatchdogActionResult.supervision_evaluation`，并推进 schema version |
 | L2 Evaluation Kernel | `src/watchdog/services/session_spine/supervision.py`, `src/watchdog/services/session_spine/actions.py`, `src/watchdog/services/status_analyzer/stuck.py` | 统一生成稳定 supervision evaluation，并执行业务允许的最小 steer side effect |
 | Stable API Surface | `src/watchdog/api/session_spine_actions.py`, `src/watchdog/api/supervision.py` | 接入 canonical action、human-friendly alias，以及 legacy compatibility shell |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py` | 新增 `evaluate_supervision` intent，并映射稳定 reply |
-| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_supervision_evaluation.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/test_watchdog_action_receipts.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定 contract、内核、API、adapter、receipt 与 legacy 兼容边界 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py` | 新增 `evaluate_supervision` intent，并映射稳定 reply |
+| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_supervision_evaluation.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/test_watchdog_action_receipts.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定 contract、内核、API、adapter、receipt 与 legacy 兼容边界 |
 
 ## 依赖顺序
 
@@ -89,7 +89,7 @@ related_doc:
 - alias route 只包装 canonical action，不重复内核
 - legacy route 维持基础 envelope 兼容，不承担 stable contract 角色
 
-### Phase 4：接入 OpenClaw adapter 与文档
+### Phase 4：接入 Feishu adapter 与文档
 
 交付内容：
 
@@ -194,6 +194,6 @@ related_doc:
 1. `evaluate_supervision` 已成为 canonical stable action，而不是新的路径级主契约。
 2. `SupervisionEvaluation` 已冻结为版本化稳定对象，且字段集足够表达当前 supervision 结论。
 3. 相同幂等键不会重复发起 steer，且结果可被 013 receipt surface 查询。
-4. OpenClaw adapter 已支持 `evaluate_supervision`，并继续只消费 stable contract。
+4. Feishu adapter 已支持 `evaluate_supervision`，并继续只消费 stable contract。
 5. legacy `POST /watchdog/tasks/{project_id}/evaluate` 仍存在且基础兼容，但文档明确其不再承担 stable contract 角色。
 6. README、getting-started、OpenAPI 与测试口径都已同步到 014。

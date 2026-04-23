@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T551
+  title: 冻结 055 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T552
+  title: 写失败测试锁定 checkpoint 字符串兼容性与 serializer 约束
+  status: completed
+  phase: 2
+  depends_on:
+  - T551
+- task_id: T553
+  title: 实现最小 validator、serializer 修复与当前 checkpoint 兼容化
+  status: completed
+  phase: 3
+  depends_on:
+  - T552
+- task_id: T554
+  title: 完成 targeted / smoke 验证
+  status: completed
+  phase: 4
+  depends_on:
+  - T553
+- task_id: T555
+  title: 完成 055 整体验证并回写 formal memory
+  status: completed
+  phase: 5
+  depends_on:
+  - T554
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T551
+  status: completed
+  started_at: '2026-04-16T09:47:50Z'
+  completed_at: '2026-04-16T09:47:50Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T552
+  status: completed
+  started_at: '2026-04-16T09:47:50Z'
+  completed_at: '2026-04-16T09:49:50Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T553
+  status: completed
+  started_at: '2026-04-16T09:49:50Z'
+  completed_at: '2026-04-16T09:49:50Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T554
+  status: completed
+  started_at: '2026-04-16T09:49:50Z'
+  completed_at: '2026-04-16T09:49:50Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T555
+  status: completed
+  started_at: '2026-04-16T09:49:50Z'
+  completed_at: '2026-04-16T09:49:50Z'
+current_batch: 5

@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/022-stable-session-facts/spec.md"
 ---
 
@@ -9,14 +9,14 @@ related_doc:
 
 ## 目标
 
-把 `FactRecord` 从“稳定读模型中的附带字段”提升为一个独立的 stable read surface，让 OpenClaw 与其他上层调用方可以直接读取版本化 facts truth source，同时保持 explanation layer 与现有 session/progress route 不变。
+把 `FactRecord` 从“稳定读模型中的附带字段”提升为一个独立的 stable read surface，让 Feishu 与其他上层调用方可以直接读取版本化 facts truth source，同时保持 explanation layer 与现有 session/progress route 不变。
 
 ## 架构摘要
 
 - **Contract-first**：022 只扩 reply kind/code 与 route，不新增新的 facts DTO。
 - **Truth-source reuse**：facts route、adapter intent 与 explanation 继续共享同一份 `SessionReadBundle + FactRecord` 构建链路。
 - **Truth vs explanation split**：`facts` route 暴露事实真值；`why_stuck` / `explain_blocker` 继续负责解释表达。
-- **Adapter symmetry**：OpenClaw adapter 的 `list_session_facts` 必须进入主 `handle_intent -> ReplyModel` 闭环。
+- **Adapter symmetry**：Feishu adapter 的 `list_session_facts` 必须进入主 `handle_intent -> ReplyModel` 闭环。
 - **Schema bump scope**：只推进 session spine reply schema 到 `2026-04-05.022`；事件 schema version 保持 `2026-04-05.011`。
 
 ## 模块边界与文件落点
@@ -26,8 +26,8 @@ related_doc:
 | Contract | `src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/versioning.py`, `tests/test_watchdog_session_spine_contracts.py` | 新增 `ReplyKind.FACTS`、`ReplyCode.SESSION_FACTS`，推进 session spine schema version |
 | L2 Reply Builder | `src/watchdog/services/session_spine/replies.py` | 新增 stable facts reply builder，输入 `SessionReadBundle`，输出 `ReplyModel(facts=...)` |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 `GET /api/v1/watchdog/sessions/{project_id}/facts`，复用既有 session read bundle |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `src/watchdog/services/adapters/openclaw/adapter.py` | 把 `list_session_facts` 纳入 `handle_intent -> ReplyModel`，并复用同一 facts reply builder |
-| 验证与文档 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`, `tests/test_watchdog_session_spine_contracts.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、route、adapter、integration、015 explanation 非回归与对外口径 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/reply_model.py`, `src/watchdog/services/adapters/feishu/adapter.py` | 把 `list_session_facts` 纳入 `handle_intent -> ReplyModel`，并复用同一 facts reply builder |
+| 验证与文档 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`, `tests/test_watchdog_session_spine_contracts.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、route、adapter、integration、015 explanation 非回归与对外口径 |
 
 ## 依赖顺序
 
@@ -72,7 +72,7 @@ related_doc:
 - message 保持最小、可预测，例如 `N fact(s)`
 - 不在 builder 中重新读 raw 数据
 
-### Phase 3：接入 stable API route 与 OpenClaw intent
+### Phase 3：接入 stable API route 与 Feishu intent
 
 交付内容：
 
@@ -120,7 +120,7 @@ related_doc:
 
 ### Adapter / Integration 测试
 
-- OpenClaw adapter 支持 `list_session_facts`
+- Feishu adapter 支持 `list_session_facts`
 - `handle_intent("list_session_facts")` 返回与 HTTP route 同源的 stable reply
 - facts 列表与 session/progress/explanation 共用同一 truth source
 
@@ -158,7 +158,7 @@ related_doc:
 
 1. 存在稳定 reply `ReplyKind.FACTS / ReplyCode.SESSION_FACTS`。
 2. 存在 `GET /api/v1/watchdog/sessions/{project_id}/facts`。
-3. OpenClaw adapter 已支持 `handle_intent("list_session_facts") -> ReplyModel`。
+3. Feishu adapter 已支持 `handle_intent("list_session_facts") -> ReplyModel`。
 4. `facts[]` 与既有 explanation / session / progress 读模型同源。
 5. `SESSION_SPINE_SCHEMA_VERSION` 已推进到 `2026-04-05.022`，且 `SESSION_EVENTS_SCHEMA_VERSION` 未改变。
 6. 015 explanation route 已有显式非回归验证。

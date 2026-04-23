@@ -1,0 +1,47 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T315
+working_set_snapshot:
+  prd_path: codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/031-session-spine-events-projection-read-surface/spec.md
+  plan_path: specs/031-session-spine-events-projection-read-surface/plan.md
+  tasks_path: specs/031-session-spine-events-projection-read-surface/tasks.md
+  active_files:
+  - '`docs/architecture/codex-long-running-autonomy-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/024-resident-supervision-session-spine-persistence/spec.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/spec.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/plan.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/tasks.md`'
+  - '`specs/031-session-spine-events-projection-read-surface/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/runtime.yaml`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/031-session-spine-events-projection-read-surface/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    Status: completed
+    Total Tasks: 5
+    Completed Tasks: 5
+    Halted Tasks: 0
+    Total Batches: 5
+    Completed Batches: 5
+    Last Committed Task: T315
+
+    ## Notes
+    - `WI-031` 已完成：stable session queries、approval inbox 与 audit query 已优先消费 Session events projection。
+    - `session_spine` 对 `session / progress / facts / approval_queue` 采用 events-first 读取；persisted spine 仅在缺口时作为 fallback。
+    - 已验证 `tests/test_watchdog_session_spine_projection.py`、`tests/test_watchdog_session_spine_api.py`、`tests/test_watchdog_ops.py` 与 `tests/test_watchdog_audit.py`。
+    - 后续 work item 只消费 Session projection，不再回切 persisted spine 主读路径。
+    - 本次未改写 `.ai-sdlc/state/checkpoint.yml`。
+current_branch: main
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T15:58:38+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

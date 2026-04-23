@@ -181,6 +181,73 @@ def test_local_codex_client_lists_active_workspace_threads(tmp_path: Path) -> No
     assert session["last_summary"] == "editing repo-a files"
 
 
+def test_local_codex_client_does_not_fallback_to_all_threads_when_active_workspaces_are_stale(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo-a"
+    stale_active_root = tmp_path / "renamed-repo"
+    repo.mkdir()
+    codex_home = tmp_path / ".codex"
+    rollout = codex_home / "sessions/2026/04/05/rollout-stale-root.jsonl"
+    _seed_codex_home(
+        codex_home,
+        active_workspaces=[str(stale_active_root)],
+        threads=[
+            {
+                "thread_id": "thr_repo_a",
+                "cwd": str(repo),
+                "task_title": "Old repo-a task",
+                "updated_at": 200,
+                "rollout_path": rollout,
+                "events": [
+                    {
+                        "timestamp": "2026-04-05T00:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "thr_repo_a", "cwd": str(repo)},
+                    }
+                ],
+            }
+        ],
+    )
+
+    client = LocalCodexClient(codex_home=codex_home)
+
+    assert client.list_threads() == []
+
+
+def test_local_codex_client_does_not_use_home_directory_name_as_project_id(
+    tmp_path: Path,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    home = Path.home()
+    rollout = codex_home / "sessions/2026/04/05/rollout-home-cwd.jsonl"
+    _seed_codex_home(
+        codex_home,
+        threads=[
+            {
+                "thread_id": "thr_home_cwd",
+                "cwd": str(home),
+                "task_title": "cd /Users/sinclairpan/个人/project/ai_sdlc",
+                "updated_at": 200,
+                "rollout_path": rollout,
+                "events": [
+                    {
+                        "timestamp": "2026-04-05T00:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "thr_home_cwd", "cwd": str(home)},
+                    }
+                ],
+            }
+        ],
+    )
+
+    client = LocalCodexClient(codex_home=codex_home)
+    session = client.describe_thread("thr_home_cwd")
+
+    assert session["project_id"] == "unknown-project"
+    assert client.list_threads() == []
+
+
 def test_local_codex_client_marks_pending_approval_from_tool_calls(tmp_path: Path) -> None:
     repo = tmp_path / "repo-a"
     repo.mkdir()

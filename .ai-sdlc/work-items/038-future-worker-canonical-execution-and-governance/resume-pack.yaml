@@ -1,0 +1,65 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T385
+working_set_snapshot:
+  prd_path: codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/038-future-worker-canonical-execution-and-governance/spec.md
+  plan_path: specs/038-future-worker-canonical-execution-and-governance/plan.md
+  tasks_path: specs/038-future-worker-canonical-execution-and-governance/tasks.md
+  active_files:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/spec.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/plan.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/tasks.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/task-execution-log.md`'
+  - '`src/watchdog/main.py`'
+  - '`src/watchdog/services/future_worker/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/observability/metrics_export.py`'
+  - '`src/watchdog/services/session_spine/recovery.py`'
+  - '`tests/test_watchdog_future_worker_runtime.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`tests/test_watchdog_recovery_execution.py`'
+  - '`tests/e2e/test_watchdog_future_worker_execution.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-038` 已从 `WI-035` / `WI-037` 的 handoff 正式追加，目标是把 future worker / sub-agent 从声明式预留 schema 收口成 canonical execution contract。
+    - 当前 formal docs 已冻结的关键边界：
+      - worker requested/start/heartbeat/summary/completed/failed/cancelled/consumed/rejected 都必须进入 `Session Service`；
+      - worker 只消费冻结的 `DecisionTrace`、packet refs、retrieval handles 与 distilled summary；
+      - worker 不得直接修改 Goal Contract、approval、risk band、completion truth 或 release gate verdict；
+      - stale/late/duplicate/supersede/crash recovery 都必须 fail closed 并进入 canonical truth。
+    - `T381` 已完成：
+      - 已新增 `Task 9` 到总实施计划；
+      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/038-*` 基线；
+      - Anthropic Manager 专家与 Hermes Agent 专家复核均无 blocking/P1。
+    - `T382` 已完成：
+      - contract/runtime/e2e 三类红测都已建好并转绿；
+      - 首轮红测暴露的模块缺失、`Session Service` event 缺失、app wiring 缺失均已补齐。
+    - `T383` 已完成：
+      - `src/watchdog/services/future_worker/` models/service、transition gate、recovery supersede、trace inheritance、same-trace replay/consume 都已接入 canonical truth；
+      - orchestrator 现已会从 decision evidence 读取 declarative `future_worker_requests`，并在整批 schema + drift 预校验通过后再物化 canonical `future_worker_requested`；
+      - command 成功当下与 command 已 `executed` 的后续 tick，都会 canonical consume 同 trace 下已完成的 worker result。
+    - `T384` 已完成：
+      - `build_ops_summary()`、ops read-side、metrics 与 e2e 主链已经全部覆盖 future worker requested/running/completed/rejected/consumed 治理面；
+      - formal e2e 已固定 declarative request materialize -> worker run -> completed -> later-tick parent consume 的完整 golden path。
+    - `T385` 已完成：
+      - 执行日志、任务状态与 `.ai-sdlc` 元数据已同步到完成态；
+      - future worker 结果只有在 parent canonical consume 后才真正生效，后续工作不得回退到隐式共享状态。
+    - 最后一轮 Hermes Agent 专家 / Anthropic Manager 专家复核均无 blocking/P1。
+current_branch: codex/wi-038-future-worker-canonical-execution
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T16:10:35+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

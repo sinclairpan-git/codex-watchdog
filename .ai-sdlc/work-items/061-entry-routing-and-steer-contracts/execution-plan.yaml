@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T611
+  title: 冻结 061 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T612
+  title: 跑 targeted verification 锁定当前 dirty tree
+  status: completed
+  phase: 2
+  depends_on:
+  - T611
+- task_id: T613
+  title: 完成最小修补与 wiring
+  status: completed
+  phase: 3
+  depends_on:
+  - T612
+- task_id: T614
+  title: 完成 targeted / smoke 验证
+  status: completed
+  phase: 4
+  depends_on:
+  - T613
+- task_id: T615
+  title: 完成 061 整体验证并回写 formal memory
+  status: completed
+  phase: 5
+  depends_on:
+  - T614
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T611
+  status: completed
+  started_at: '2026-04-16T11:48:00Z'
+  completed_at: '2026-04-16T11:49:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T612
+  status: completed
+  started_at: '2026-04-16T11:49:00Z'
+  completed_at: '2026-04-16T11:50:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T613
+  status: completed
+  started_at: '2026-04-16T11:50:00Z'
+  completed_at: '2026-04-16T11:50:30Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T614
+  status: completed
+  started_at: '2026-04-16T11:50:30Z'
+  completed_at: '2026-04-16T11:51:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T615
+  status: completed
+  started_at: '2026-04-16T11:51:00Z'
+  completed_at: '2026-04-16T11:52:00Z'
+current_batch: 5

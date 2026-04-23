@@ -84,13 +84,13 @@ def test_chain_watchdog_evaluate_steer_mock(tmp_path: Path) -> None:
     app = create_watchdog_app(
         WSettings(
             api_token="wt",
-            a_agent_token="at",
-            a_agent_base_url="http://a.test",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
             data_dir=str(tmp_path / "wd"),
         )
     )
     c = TestClient(app)
-    with patch("watchdog.services.a_client.client.httpx.Client") as mcli:
+    with patch("watchdog.services.runtime_client.client.httpx.Client") as mcli:
         mock_inst = MagicMock()
         mcli.return_value.__enter__.return_value = mock_inst
         mock_inst.get.return_value.json.return_value = {"success": True, "data": task_data}

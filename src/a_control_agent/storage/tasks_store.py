@@ -9,6 +9,16 @@ from typing import Any
 
 from a_control_agent.audit import append_jsonl
 from a_control_agent.services.codex_input import fingerprint_input_text
+from watchdog.services.project_aliases import (
+    canonicalize_project_id,
+    rewrite_legacy_project_aliases,
+)
+from watchdog.services.session_spine.task_state import (
+    is_canonical_task_phase,
+    is_canonical_task_status,
+    normalize_task_phase,
+    normalize_task_status,
+)
 
 
 class TaskRecord(dict[str, Any]):
@@ -16,6 +26,7 @@ class TaskRecord(dict[str, Any]):
 
 
 _RECENT_SERVICE_INPUT_LIMIT = 8
+_CANONICAL_CONTEXT_PRESSURES = {"low", "medium", "high", "critical"}
 
 
 def _now_iso() -> str:
@@ -37,14 +48,87 @@ def _parse_iso(value: Any) -> datetime | None:
 
 def _derive_project_id(raw: Any, cwd: str, *, fallback: str = "") -> str:
     if isinstance(raw, str) and raw.strip():
-        return raw.strip()
+        return canonicalize_project_id(raw.strip())
     if cwd.strip():
         name = Path(cwd).name.strip()
         if name:
-            return name
+            return canonicalize_project_id(name)
     if fallback.strip():
-        return fallback.strip()
+        return canonicalize_project_id(fallback.strip())
     return "unknown-project"
+
+
+def _safe_int(value: Any, *, default: int = 0, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(parsed, minimum)
+    if maximum is not None:
+        parsed = min(parsed, maximum)
+    return parsed
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no", ""}:
+            return False
+    return default
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized or normalized.lower() in {"none", "null"}:
+        return None
+    return normalized
+
+
+def _normalize_files_touched(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _canonicalize_task_record(
+    rec: dict[str, Any],
+    *,
+    fallback_status: str = "created",
+    fallback_phase: str = "planning",
+) -> dict[str, Any]:
+    rec["pending_approval"] = _coerce_bool(rec.get("pending_approval", False), default=False)
+    status = normalize_task_status(rec)
+    phase = normalize_task_phase(rec)
+    rec["status"] = status if is_canonical_task_status(status) else fallback_status
+    rec["phase"] = phase if is_canonical_task_phase(phase) else fallback_phase
+    context_pressure = str(rec.get("context_pressure", "low") or "low")
+    rec["context_pressure"] = (
+        context_pressure if context_pressure in _CANONICAL_CONTEXT_PRESSURES else "low"
+    )
+    rec["stuck_level"] = _safe_int(rec.get("stuck_level", 0), default=0, minimum=0, maximum=4)
+    rec["failure_count"] = _safe_int(rec.get("failure_count", 0), default=0, minimum=0)
+    rec["files_touched"] = _normalize_files_touched(rec.get("files_touched"))
+    rec["approval_risk"] = rec.get("approval_risk")
+    rec["last_error_signature"] = rec.get("last_error_signature")
+    rec["task_title"] = str(rec.get("task_title", ""))
+    rec["task_prompt"] = str(rec.get("task_prompt", ""))
+    rec["last_user_instruction"] = str(rec.get("last_user_instruction", ""))
+    rec["current_phase_goal"] = str(rec.get("current_phase_goal", ""))
+    rec["last_summary"] = str(rec.get("last_summary", ""))
+    rec["goal_contract_version"] = _normalize_optional_text(rec.get("goal_contract_version"))
+    return rec
 
 
 class TaskStore:
@@ -83,6 +167,7 @@ class TaskStore:
     def _normalize(self, data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(data, dict):
             return self._empty_payload()
+        data = rewrite_legacy_project_aliases(data)
 
         if isinstance(data.get("tasks"), dict):
             raw_tasks = data.get("tasks", {})
@@ -118,6 +203,7 @@ class TaskStore:
             else:
                 rec.pop("last_substantive_user_input_fingerprint", None)
             self._reconcile_local_manual_activity(rec)
+            _canonicalize_task_record(rec)
             tasks[thread_id] = rec
 
         projects: dict[str, dict[str, Any]] = {}
@@ -201,32 +287,37 @@ class TaskStore:
         *,
         now: str,
     ) -> dict[str, Any]:
-        return {
+        body = rewrite_legacy_project_aliases(body)
+        project_id = canonicalize_project_id(project_id)
+        return _canonicalize_task_record({
             "project_id": project_id,
             "thread_id": thread_id,
             "cwd": str(body.get("cwd", "")),
             "task_title": str(body.get("task_title", "")),
             "task_prompt": str(body.get("task_prompt", "")),
+            "last_user_instruction": str(body.get("last_user_instruction", "")),
+            "current_phase_goal": str(body.get("current_phase_goal", "")),
             "model": str(body.get("model", "")),
             "sandbox": str(body.get("sandbox", "")),
             "approval_policy": str(body.get("approval_policy", "")),
             "status": str(body.get("status", "running") or "running"),
             "phase": str(body.get("phase", "planning") or "planning"),
             "context_pressure": str(body.get("context_pressure", "low") or "low"),
-            "stuck_level": int(body.get("stuck_level", 0) or 0),
-            "failure_count": int(body.get("failure_count", 0) or 0),
+            "stuck_level": body.get("stuck_level", 0),
+            "failure_count": body.get("failure_count", 0),
             "last_summary": str(body.get("last_summary", "")),
             "files_touched": list(body.get("files_touched", [])),
-            "pending_approval": bool(body.get("pending_approval", False)),
+            "pending_approval": body.get("pending_approval", False),
             "approval_risk": body.get("approval_risk"),
             "last_error_signature": body.get("last_error_signature"),
+            "goal_contract_version": str(body.get("goal_contract_version", "")).strip() or None,
             "last_progress_at": str(body.get("last_progress_at", now) or now),
             "created_at": str(body.get("created_at", now) or now),
             "last_local_manual_activity_at": body.get("last_local_manual_activity_at"),
             "recent_service_inputs": self._normalize_recent_service_inputs(
                 body.get("recent_service_inputs")
             ),
-        }
+        }, fallback_status="running", fallback_phase="planning")
 
     def _record_service_input_locked(
         self,
@@ -352,7 +443,8 @@ class TaskStore:
             return len(self._read().get("tasks", {}))
 
     def count_projects(self) -> int:
-        return self.count_tasks()
+        with self._lock:
+            return len(self._read().get("projects", {}))
 
     def get(self, project_id: str) -> TaskRecord | None:
         with self._lock:
@@ -374,6 +466,8 @@ class TaskStore:
             return [TaskRecord(row) for row in ordered]
 
     def upsert_from_create(self, project_id: str, body: dict[str, Any]) -> TaskRecord:
+        body = rewrite_legacy_project_aliases(body)
+        project_id = canonicalize_project_id(project_id)
         with self._lock:
             data = self._read()
             thread_id = f"thr_{uuid.uuid4().hex[:16]}"
@@ -395,6 +489,7 @@ class TaskStore:
         return TaskRecord(dict(rec))
 
     def upsert_native_thread(self, thread: dict[str, Any]) -> TaskRecord:
+        thread = rewrite_legacy_project_aliases(thread)
         cwd = str(thread.get("cwd", ""))
         project_id = _derive_project_id(thread.get("project_id"), cwd)
         thread_id = str(thread.get("thread_id") or f"thr_{uuid.uuid4().hex[:16]}")
@@ -403,12 +498,16 @@ class TaskStore:
             data = self._read()
             existing = data.get("tasks", {}).get(thread_id)
             rec = dict(existing) if isinstance(existing, dict) else self._new_record(project_id, thread_id, thread, now=now)
+            fallback_status = str(rec.get("status") or "running")
+            fallback_phase = str(rec.get("phase") or "planning")
             rec["project_id"] = project_id
             rec["thread_id"] = thread_id
             for key in (
                 "cwd",
                 "task_title",
                 "task_prompt",
+                "last_user_instruction",
+                "current_phase_goal",
                 "model",
                 "sandbox",
                 "approval_policy",
@@ -422,6 +521,7 @@ class TaskStore:
                 "pending_approval",
                 "approval_risk",
                 "last_error_signature",
+                "goal_contract_version",
                 "last_progress_at",
             ):
                 value = thread.get(key)
@@ -458,6 +558,11 @@ class TaskStore:
             rec.setdefault("last_local_manual_activity_at", None)
             if not rec.get("last_progress_at"):
                 rec["last_progress_at"] = now
+            _canonicalize_task_record(
+                rec,
+                fallback_status=fallback_status,
+                fallback_phase=fallback_phase,
+            )
             self._write_task(data, rec)
             self._write(data)
         self._append_event(
@@ -575,6 +680,7 @@ class TaskStore:
             rec["last_error_signature"] = signature
             now = _now_iso()
             rec["last_progress_at"] = now
+            _canonicalize_task_record(rec)
             self._write_task(data, rec)
             self._write(data)
 
@@ -597,8 +703,15 @@ class TaskStore:
             rec = self._get_current_task(data, project_id)
             if rec is None:
                 return None
+            fallback_status = str(rec.get("status") or "running")
+            fallback_phase = str(rec.get("phase") or "planning")
             rec.update(fields)
             rec["last_progress_at"] = _now_iso()
+            _canonicalize_task_record(
+                rec,
+                fallback_status=fallback_status,
+                fallback_phase=fallback_phase,
+            )
             self._write_task(data, rec)
             self._write(data)
             return TaskRecord(dict(rec))

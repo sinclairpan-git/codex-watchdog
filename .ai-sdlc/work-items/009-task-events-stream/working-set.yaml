@@ -1,4 +1,4 @@
-prd_path: openclaw-codex-watchdog-prd.md
+prd_path: codex-watchdog-prd.md
 constitution_path: .ai-sdlc/memory/constitution.md
 tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
 spec_path: specs/009-task-events-stream/spec.md
@@ -39,6 +39,6 @@ context_summary: '# Development Summary
 
   - 已为 `task_created`、`native_thread_registered`、`steer`、`handoff`、`resume`、`approval_decided` 落盘任务事件。
 
-  - 已提供 `GET /api/v1/watchdog/tasks/{project_id}/events` 代理 A 侧 SSE，覆盖快照、持续流与错误透传。
+  - 已提供 `GET /api/v1/watchdog/tasks/{project_id}/events` 代理 runtime 侧 SSE，覆盖快照、持续流与错误透传。
 
   - 已同步 README、接入文档、OpenAPI，并通过 Watchdog 代理测试、pytest 与 ruff。'

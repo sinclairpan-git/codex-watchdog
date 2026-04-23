@@ -1,8 +1,8 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
-  - "specs/010-openclaw-integration-spine/spec.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
+  - "specs/010-runtime-integration-spine/spec.md"
   - "specs/015-stable-session-explanations/spec.md"
   - "specs/021-stable-session-event-snapshot/spec.md"
 ---
@@ -15,11 +15,11 @@ related_doc:
 
 - `FactRecord` 在 `010` 就已经被冻结为核心稳定契约对象；
 - `why_stuck`、`explain_blocker`、`request_recovery` 都依赖它作为解释真值；
-- 但 OpenClaw 与其他上层调用方还没有一个独立、直接、稳定的 facts read surface，只能通过 session / progress / explanation 的附带字段间接读取。
+- 但 Feishu 与其他上层调用方还没有一个独立、直接、稳定的 facts read surface，只能通过 session / progress / explanation 的附带字段间接读取。
 
 022 的唯一目标固定为：
 
-> 建立 stable session-facts read surface，让 OpenClaw 与其他上层调用方可以通过 `list_session_facts -> ReplyModel(facts=FactRecord[])` 直接稳定消费事实真值，而不是继续从 explanation 或其他 read model 的附带字段里拆取。
+> 建立 stable session-facts read surface，让 Feishu 与其他上层调用方可以通过 `list_session_facts -> ReplyModel(facts=FactRecord[])` 直接稳定消费事实真值，而不是继续从 explanation 或其他 read model 的附带字段里拆取。
 
 ## 功能需求
 
@@ -36,7 +36,7 @@ related_doc:
   - `intent_code=list_session_facts`
   - `facts` 内元素必须继续使用 `010` 已冻结的 `FactRecord`
 - **FR-2206**：022 的 facts route 必须复用既有稳定 `SessionReadBundle + FactRecord` 构建链路，不得新增 raw `task / approvals / evaluate / recover / events` 旁路拼装。
-- **FR-2207**：OpenClaw adapter 必须正式支持 `list_session_facts` intent，并把它纳入 `handle_intent(...) -> ReplyModel` 主闭环。
+- **FR-2207**：Feishu adapter 必须正式支持 `list_session_facts` intent，并把它纳入 `handle_intent(...) -> ReplyModel` 主闭环。
 - **FR-2208**：adapter `handle_intent("list_session_facts", project_id=...)` 必须返回与 HTTP route 同源的 stable `ReplyModel(reply_code=session_facts)`。
 - **FR-2209**：022 必须保持 explanation contract 不变：
   - `why_stuck` 与 `explain_blocker` 继续复用既有 explanation builder
@@ -52,15 +52,15 @@ related_doc:
 
 ### 用户故事 1：上层可以直接读取事实真值
 
-OpenClaw 或其他上层系统需要独立读取某个 session 当前的稳定 facts，而不是只拿解释文案。
+Feishu 或其他上层系统需要独立读取某个 session 当前的稳定 facts，而不是只拿解释文案。
 
 场景 1：调用 `GET /api/v1/watchdog/sessions/{project_id}/facts`，返回 `ReplyModel(reply_code=session_facts, facts=FactRecord[])`。
 
 场景 2：返回的 `facts[]` 与 session / progress / explanation 已携带的 `FactRecord[]` 同源。
 
-### 用户故事 2：OpenClaw adapter 把 facts 纳入统一意图闭环
+### 用户故事 2：Feishu adapter 把 facts 纳入统一意图闭环
 
-OpenClaw 希望直接请求 `list_session_facts`，而不是先取 stuck explanation 再拆 supporting facts。
+Feishu 希望直接请求 `list_session_facts`，而不是先取 stuck explanation 再拆 supporting facts。
 
 场景 1：adapter `handle_intent("list_session_facts", project_id="repo-a")` 返回 `ReplyModel(reply_code=session_facts)`。
 

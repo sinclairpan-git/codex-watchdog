@@ -2,7 +2,7 @@
 
 > 对应规格：`specs/013-stable-action-receipts/spec.md`
 >
-> 对应总设计：`docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md`
+> 对应总设计：`docs/architecture/codex-watchdog-g0-and-v010-design.md`
 
 ## Batch 1
 
@@ -31,7 +31,7 @@
   1. receipt 查询复用既有幂等 key 语义；
   2. receipt 命中时返回稳定 `action_receipt` reply；
   3. receipt 缺失时返回稳定 `action_receipt_not_found` reply；
-  4. lookup 过程中不访问 A-Control-Agent，不执行 side effect。
+  4. lookup 过程中不访问 Codex runtime service，不执行 side effect。
 - **验证**：`uv run pytest -q tests/test_watchdog_action_receipts.py`
 
 ### Task 13.3 Stable Receipt API Surface
@@ -50,19 +50,19 @@
 
 ## Batch 2
 
-### Task 13.4 OpenClaw adapter 接入 receipt 查询
+### Task 13.4 Feishu adapter 接入 receipt 查询
 
 - **任务编号**：T134
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T133
-- **文件**：`src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_openclaw_adapter.py`
+- **文件**：`src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py`, `tests/test_watchdog_feishu_adapter.py`
 - **可并行**：否
 - **验收标准**：
   1. adapter 支持 `get_action_receipt` intent；
   2. adapter 返回 `ReplyModel(reply_code=action_receipt|action_receipt_not_found)`；
   3. adapter 不直读本地 receipt 文件；
   4. adapter 不重新执行对应动作。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py`
 
 ### Task 13.5 文档与 OpenAPI 收口
 
@@ -83,11 +83,11 @@
 - **任务编号**：T136
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T134, T135
-- **文件**：`tests/integration/test_openclaw_integration_spine.py`, `tests/test_watchdog_action_idempotency.py`
+- **文件**：`tests/integration/test_feishu_integration_spine.py`, `tests/test_watchdog_action_idempotency.py`
 - **可并行**：否
 - **验收标准**：
   1. stable action 执行后可通过 receipt query 读取相同结果；
   2. `execute_recovery` 的 receipt 可稳定查询；
   3. receipt 查询不会新增 side effect；
   4. 010-012 既有 stable action/write 行为不回归。
-- **验证**：`uv run pytest -q tests/integration/test_openclaw_integration_spine.py tests/test_watchdog_action_idempotency.py`
+- **验证**：`uv run pytest -q tests/integration/test_feishu_integration_spine.py tests/test_watchdog_action_idempotency.py`

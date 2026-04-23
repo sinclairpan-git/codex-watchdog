@@ -1,0 +1,13 @@
+work_item_id: 080-external-integration-live-acceptance-truth
+spec_dir: specs/080-external-integration-live-acceptance-truth
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T805
+current_branch: codex/080-external-integration-live-acceptance-truth
+ai_decisions_count: 3
+execution_mode: auto
+started_at: '2026-04-17T17:48:15Z'
+last_updated: '2026-04-17T18:00:00Z'
+debug_rounds: {}
+consecutive_halts: 0

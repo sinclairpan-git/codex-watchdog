@@ -32,12 +32,12 @@
 
 - **任务编号**：T53
 - **依赖**：T52
-- **文件**：`tests/integration/`, `scripts/export_openapi.py`, `examples/openclaw_watchdog_client.py`, `docs/openapi/`, `README.md`
+- **文件**：`tests/integration/`, `scripts/export_openapi.py`, `examples/codex_watchdog_client.py`, `docs/openapi/`, `README.md`
 - **可并行**：否
 - **验收标准**：
   1. `tests/integration/test_prd_chains.py` 覆盖多步链；
   2. `python scripts/export_openapi.py` 可生成 `docs/openapi/*.json`；
-  3. `examples/openclaw_watchdog_client.py` 演示 Watchdog progress 调用；
+  3. `examples/codex_watchdog_client.py` 演示 Watchdog progress 调用；
   4. `README.md` 含 M5、指标与 OpenAPI 说明；
   5. `pytest -q` 全绿。
 - **验证**：`pytest -q`

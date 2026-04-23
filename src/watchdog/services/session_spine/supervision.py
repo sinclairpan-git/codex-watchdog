@@ -19,9 +19,13 @@ from watchdog.contracts.session_spine.models import (
     WatchdogActionResult,
 )
 from watchdog.services.action_executor.steer import SOFT_STEER_MESSAGE, post_steer
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.audit import append_watchdog_audit
 from watchdog.services.session_spine.facts import build_fact_records
+from watchdog.services.session_spine.projection import (
+    stable_thread_id_for_project,
+    task_native_thread_id,
+)
 from watchdog.services.session_spine.service import (
     CONTROL_LINK_ERROR,
     SessionSpineUpstreamError,
@@ -73,8 +77,8 @@ def build_supervision_evaluation(
     next_stuck_level = int(evaluation.get("next_stuck_level", current_stuck_level) or current_stuck_level)
     return SupervisionEvaluation(
         project_id=project_id,
-        thread_id=thread_id or f"session:{project_id}",
-        native_thread_id=native_thread_id or str(task.get("thread_id") or "") or None,
+        thread_id=thread_id or stable_thread_id_for_project(project_id),
+        native_thread_id=native_thread_id or task_native_thread_id(task),
         evaluated_at=now.isoformat(),
         reason_code=_map_reason_code(evaluation.get("reason")),
         detail=str(evaluation.get("detail") or ""),
@@ -115,29 +119,29 @@ def _steer_error(message: str) -> SessionSpineUpstreamError:
 
 
 def _load_task_or_raise(
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     project_id: str,
 ) -> dict[str, Any]:
     try:
         body = client.get_envelope(project_id)
     except (httpx.RequestError, RuntimeError, OSError) as exc:
-        raise _steer_error("无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。") from exc
+        raise _steer_error("无法连接 Codex runtime 控制链路；请检查网络与 runtime 服务状态。") from exc
     if not body.get("success"):
         error = body.get("error")
         if isinstance(error, dict):
             raise SessionSpineUpstreamError(dict(error))
-        raise _steer_error("无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。")
+        raise _steer_error("无法连接 Codex runtime 控制链路；请检查网络与 runtime 服务状态。")
     data = body.get("data")
     if isinstance(data, dict):
         return dict(data)
-    raise _steer_error("A 侧返回数据格式异常")
+    raise _steer_error("runtime 返回数据格式异常")
 
 
 def execute_supervision_evaluation(
     action: WatchdogAction,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
 ) -> WatchdogActionResult:
     task = _load_task_or_raise(client, action.project_id)
     facts = build_fact_records(project_id=action.project_id, task=task, approvals=[])
@@ -153,8 +157,8 @@ def execute_supervision_evaluation(
     if evaluation.should_steer:
         try:
             steer_body = post_steer(
-                settings.a_agent_base_url,
-                settings.a_agent_token,
+                settings.codex_runtime_base_url,
+                settings.codex_runtime_token,
                 action.project_id,
                 message=SOFT_STEER_MESSAGE,
                 reason=str(evaluation.reason_code),
@@ -162,12 +166,12 @@ def execute_supervision_evaluation(
                 timeout=settings.http_timeout_s,
             )
         except (httpx.HTTPError, RuntimeError) as exc:
-            raise _steer_error("steer 调用失败：无法连接 A-Control-Agent") from exc
+            raise _steer_error("steer 调用失败：无法连接 Codex runtime") from exc
         if not steer_body.get("success"):
             error = steer_body.get("error")
             if isinstance(error, dict):
                 raise SessionSpineUpstreamError(dict(error))
-            raise _steer_error("A 侧拒绝 steer")
+            raise _steer_error("runtime 拒绝 steer")
         evaluation = evaluation.model_copy(update={"steer_sent": True})
         effect = Effect.STEER_POSTED
         message = "supervision evaluation completed; steer posted"

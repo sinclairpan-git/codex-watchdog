@@ -1,0 +1,56 @@
+total_tasks: 4
+total_batches: 4
+tasks:
+- task_id: T821
+  title: formalize WI-082 的 owner、state entry 与 branch handoff
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T822
+  title: 将 resident expert 证据链纳入 live acceptance docs contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T821
+- task_id: T823
+  title: 运行 targeted repo-local verification 并冻结 replay/coverage/health evidence
+  status: completed
+  phase: 3
+  depends_on:
+  - T822
+- task_id: T824
+  title: 执行真实环境 smoke bundle 并沉淀 fail-closed evidence bundle
+  status: completed
+  phase: 4
+  depends_on:
+  - T823
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T821
+  status: completed
+  started_at: '2026-04-18T13:07:29Z'
+  completed_at: '2026-04-18T13:07:29Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T822
+  status: completed
+  started_at: '2026-04-18T13:07:29Z'
+  completed_at: '2026-04-18T13:07:29Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T823
+  status: completed
+  started_at: '2026-04-18T13:07:29Z'
+  completed_at: '2026-04-18T13:28:57Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T824
+  status: completed
+  started_at: '2026-04-18T13:28:57Z'
+  completed_at: '2026-04-18T17:34:06Z'
+current_batch: 4

@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 数据与接口补充：006-m5-hardening

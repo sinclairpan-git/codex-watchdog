@@ -26,8 +26,8 @@ class FakeAClient:
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
         api_token="wt",
-        a_agent_token="at",
-        a_agent_base_url="http://a.test",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
         data_dir=str(tmp_path),
     )
 
@@ -53,7 +53,7 @@ def test_execute_supervision_evaluation_posts_steer_and_returns_stable_result(tm
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-1",
         arguments={},
     )
@@ -99,7 +99,7 @@ def test_execute_supervision_evaluation_suppresses_steer_when_repo_activity_rece
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-2",
         arguments={},
     )
@@ -141,7 +141,7 @@ def test_execute_supervision_evaluation_skips_done_terminal_session(
     action = WatchdogAction(
         action_code=ActionCode.EVALUATE_SUPERVISION,
         project_id="repo-a",
-        operator="openclaw",
+        operator="watchdog",
         idempotency_key="idem-supervision-done",
         arguments={},
     )
@@ -154,3 +154,42 @@ def test_execute_supervision_evaluation_skips_done_terminal_session(
     assert result.supervision_evaluation is not None
     assert result.supervision_evaluation.reason_code == "terminal_state"
     assert result.supervision_evaluation.steer_sent is False
+
+
+def test_execute_supervision_evaluation_prefers_explicit_native_thread_id(
+    tmp_path: Path,
+) -> None:
+    old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    client = FakeAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "session:repo-a",
+            "native_thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "cwd": "",
+            "pending_approval": False,
+            "last_summary": "editing files",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": old,
+        }
+    )
+    action = WatchdogAction(
+        action_code=ActionCode.EVALUATE_SUPERVISION,
+        project_id="repo-a",
+        operator="watchdog",
+        idempotency_key="idem-supervision-native-thread",
+        arguments={},
+    )
+
+    with patch("watchdog.services.session_spine.supervision.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        result = execute_supervision_evaluation(action, settings=_settings(tmp_path), client=client)
+
+    assert steer_mock.call_count == 1
+    assert result.supervision_evaluation is not None
+    assert result.supervision_evaluation.thread_id == "session:repo-a"
+    assert result.supervision_evaluation.native_thread_id == "thr_native_1"

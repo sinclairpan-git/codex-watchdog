@@ -1,0 +1,13 @@
+work_item_id: 082-external-integration-live-runtime-acceptance-closeout
+spec_dir: specs/082-external-integration-live-runtime-acceptance-closeout
+current_stage: completed
+current_batch: 4
+current_task: ''
+last_committed_task: ''
+current_branch: codex/083-feishu-discovery-session-directory-routing
+execution_mode: auto
+started_at: '2026-04-18T13:07:29Z'
+last_updated: '2026-04-18T17:34:06Z'
+ai_decisions_count: 6
+debug_rounds: {}
+consecutive_halts: 0

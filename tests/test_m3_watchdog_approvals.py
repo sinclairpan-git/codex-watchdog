@@ -10,7 +10,7 @@ from watchdog.settings import Settings
 
 
 def test_watchdog_approvals_proxy_error() -> None:
-    app = create_app(Settings(api_token="wt", a_agent_base_url="http://127.0.0.1:1"))
+    app = create_app(Settings(api_token="wt", codex_runtime_base_url="http://127.0.0.1:1"))
     c = TestClient(app)
     with patch("watchdog.api.approvals_proxy.httpx.Client") as m:
         mock_inst = MagicMock()
@@ -24,7 +24,7 @@ def test_watchdog_approvals_proxy_error() -> None:
 
 
 def test_watchdog_decision_proxy_ok() -> None:
-    app = create_app(Settings(api_token="wt", a_agent_token="at", a_agent_base_url="http://a"))
+    app = create_app(Settings(api_token="wt", codex_runtime_token="at", codex_runtime_base_url="http://a"))
     c = TestClient(app)
     with patch("watchdog.api.approvals_proxy.httpx.Client") as m:
         mock_inst = MagicMock()

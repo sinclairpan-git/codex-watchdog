@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T571
+  title: 冻结 057 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T572
+  title: 写失败测试锁定 completed task-doc status contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T571
+- task_id: T573
+  title: 实现最小 validator 并修正历史 tasks.md 漂移
+  status: completed
+  phase: 3
+  depends_on:
+  - T572
+- task_id: T574
+  title: 完成 targeted / smoke 验证
+  status: completed
+  phase: 4
+  depends_on:
+  - T573
+- task_id: T575
+  title: 完成 057 整体验证并回写 formal memory
+  status: completed
+  phase: 5
+  depends_on:
+  - T574
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T571
+  status: completed
+  started_at: '2026-04-16T10:34:00Z'
+  completed_at: '2026-04-16T10:36:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T572
+  status: completed
+  started_at: '2026-04-16T10:36:00Z'
+  completed_at: '2026-04-16T10:38:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T573
+  status: completed
+  started_at: '2026-04-16T10:38:00Z'
+  completed_at: '2026-04-16T10:40:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T574
+  status: completed
+  started_at: '2026-04-16T10:40:00Z'
+  completed_at: '2026-04-16T10:42:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T575
+  status: completed
+  started_at: '2026-04-16T10:42:00Z'
+  completed_at: '2026-04-16T10:46:00Z'
+current_batch: 5

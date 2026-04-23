@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Align the A-Control-Agent Codex bridge with the real `codex app-server` stdio protocol proven during A-side deployment.
+**Goal:** Align the Codex runtime service Codex bridge with the real `codex app-server` stdio protocol proven during runtime-side deployment.
 
 **Architecture:** Keep the bridge boundary intact, but update the transport to use newline-delimited JSON messages and update startup handshake to send `initialize` with `clientInfo` followed by an `initialized` notification. Lock the regression in focused transport and bridge tests so future deployments cannot silently drift back to the wrong protocol.
 
@@ -31,7 +31,7 @@ assert writer.buffer.endswith(b"\n")
 assert transport.calls[0] == (
     "initialize",
     {
-        "clientInfo": {"name": "openclaw-codex-watchdog", "version": "0.1.0"},
+        "clientInfo": {"name": "codex-watchdog", "version": "0.1.0"},
         "capabilities": None,
     },
 )
@@ -83,7 +83,7 @@ message = json.loads(line.decode("utf-8"))
 await self._transport.request(
     "initialize",
     {
-        "clientInfo": {"name": "openclaw-codex-watchdog", "version": "0.1.0"},
+        "clientInfo": {"name": "codex-watchdog", "version": "0.1.0"},
         "capabilities": None,
     },
 )

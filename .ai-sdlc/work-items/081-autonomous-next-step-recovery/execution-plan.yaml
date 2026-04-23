@@ -1,0 +1,56 @@
+total_tasks: 4
+total_batches: 4
+tasks:
+- task_id: T811
+  title: formalize WI-081 的 owner、state entry 与 branch handoff
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T812
+  title: 冻结 autonomous next-step 与 recovery auto-execute contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T811
+- task_id: T813
+  title: 冻结多项目 progress summary / Feishu delivery 聚合回归
+  status: completed
+  phase: 3
+  depends_on:
+  - T812
+- task_id: T814
+  title: 完成 targeted verification 并准备后续 live runtime acceptance
+  status: completed
+  phase: 4
+  depends_on:
+  - T813
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T811
+  status: completed
+  started_at: '2026-04-18T04:25:24Z'
+  completed_at: '2026-04-18T04:25:24Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T812
+  status: completed
+  started_at: '2026-04-18T04:25:24Z'
+  completed_at: '2026-04-18T11:55:02Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T813
+  status: completed
+  started_at: '2026-04-18T11:55:02Z'
+  completed_at: '2026-04-18T11:55:02Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T814
+  status: completed
+  started_at: '2026-04-18T11:55:02Z'
+  completed_at: '2026-04-18T11:55:02Z'
+current_batch: 4

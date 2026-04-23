@@ -1,0 +1,8 @@
+total_tasks: 0
+total_batches: 0
+tasks: []
+batches: []
+current_batch: 0
+mirror_status: spec_backfill
+source_spec_dir: specs/017-stable-session-directory
+backfilled_at: 2026-04-16T07:02:24Z
