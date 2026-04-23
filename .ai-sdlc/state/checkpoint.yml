@@ -1,12 +1,12 @@
 pipeline_started_at: '2026-04-20T15:20:03Z'
-pipeline_last_updated: '2026-04-21T02:15:30Z'
+pipeline_last_updated: '2026-04-23T11:17:26+00:00'
 current_stage: execute
 feature:
   id: 085-model-first-continuation-governance
   spec_dir: specs/085-model-first-continuation-governance
   design_branch: design/085-model-first-continuation-governance
   feature_branch: feature/085-model-first-continuation-governance
-  current_branch: codex/085-model-first-continuation-governance
+  current_branch: main
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
@@ -15,25 +15,27 @@ multi_agent:
   tool_capability: ''
 prd_source: codex-watchdog-prd.md
 completed_stages:
-  -
-    stage: init
-    completed_at: '2026-04-20T15:20:03Z'
-    artifacts: []
-  -
-    stage: refine
-    completed_at: '2026-04-20T15:20:03Z'
-    artifacts:
-      - spec.md
-  -
-    stage: design
-    completed_at: '2026-04-20T15:20:03Z'
-    artifacts:
-      - plan.md
-  -
-    stage: decompose
-    completed_at: '2026-04-20T15:20:03Z'
-    artifacts:
-      - tasks.md
+- stage: init
+  completed_at: '2026-04-23T11:17:26+00:00'
+  artifacts: []
+- stage: refine
+  completed_at: '2026-04-23T11:17:26+00:00'
+  artifacts:
+  - spec.md
+- stage: design
+  completed_at: '2026-04-23T11:17:26+00:00'
+  artifacts:
+  - plan.md
+- stage: decompose
+  completed_at: '2026-04-23T11:17:26+00:00'
+  artifacts:
+  - tasks.md
+- stage: verify
+  completed_at: '2026-04-23T11:17:26+00:00'
+  artifacts:
+  - task-execution-log.md
+  - tasks.md
+execute_progress: null
 ai_decisions_count: 0
 execution_mode: auto
 linked_wi_id: 085-model-first-continuation-governance

@@ -1,4 +1,4 @@
-current_stage: execute
+current_stage: completed
 current_batch: 8
 last_committed_task: ''
 working_set_snapshot:
@@ -8,27 +8,7 @@ working_set_snapshot:
   spec_path: specs/085-model-first-continuation-governance/spec.md
   plan_path: specs/085-model-first-continuation-governance/plan.md
   tasks_path: specs/085-model-first-continuation-governance/tasks.md
-  active_files:
-  - '`specs/085-model-first-continuation-governance/spec.md`'
-  - '`specs/085-model-first-continuation-governance/plan.md`'
-  - '`specs/085-model-first-continuation-governance/tasks.md`'
-  - '`specs/085-model-first-continuation-governance/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/runtime.yaml`'
-  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/resume-pack.yaml`'
-  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/latest-summary.md`'
-  - '`src/watchdog/services/brain/provider_runtime.py`'
-  - '`src/watchdog/services/brain/service.py`'
-  - '`src/watchdog/services/session_spine/orchestrator.py`'
-  - '`src/watchdog/services/session_spine/recovery.py`'
-  - '`src/watchdog/services/session_spine/facts.py`'
-  - '`src/watchdog/services/session_spine/task_state.py`'
-  - '`src/a_control_agent/storage/handoff_manager.py`'
-  - '`tests/test_watchdog_session_spine_runtime.py`'
-  - '`tests/integration/test_feishu_integration_spine.py`'
-  - '`.ai-sdlc/state/checkpoint.yml`'
-  - '`.ai-sdlc/state/resume-pack.yaml`'
-  - '`.ai-sdlc/project/config/project-state.yaml`'
+  active_files: []
   context_summary: '# Development Summary
 
 
@@ -49,26 +29,53 @@ working_set_snapshot:
 
     ## Notes
 
-    - `WI-085` 已正式承接重复 handoff summary、停止项目误续跑、以及 model-first continuation governance 缺口，不再继续回写 `WI-084`。
 
-    - 已完成两轮常驻专家对抗评审，当前 formal contract 已冻结为 `PCDI + eligibility/routing gates + ContinuationPacket` 三层结构。
+    - `WI-085` 已完成；`ContinuationPacket` 现正式成为 recovery / handoff / resume 的 source
+    of truth，runtime-side handoff markdown 与 recovery-resume prompt 都退化为 packet 的
+    deterministic render，不再把渲染文本回流成 authoritative continuation 输入。
 
-    - Batch 1 已完成：spec/plan/tasks/task-execution-log 与顶层 `.ai-sdlc` active state 已切到 `codex/085-model-first-continuation-governance`。
+    - 针对旧 recover/handoff 契约漂移，已把 `tests/test_007_alignment.py`、`tests/test_m4_watchdog_recover.py`、`tests/test_a_control_agent_control_flow.py`
+    收口到当前 recover 内核与 packet render contract，避免继续通过过期 `httpx.Client` patch 伪造绿灯。
 
-    - Batch 2 已完成：provider/runtime 已开始消费 `PCDI` 并支持 continuation decision v3，同时在 provider 前执行 goal-contract / approval / non-active fail-closed gate。
+    - provider external-integration smoke harness 已修复：synthetic probe 现会先种入 `autonomous_ready`
+    goal contract，再验证 provider success probe 与 resident_orchestrator fallback，确保 smoke
+    反映当前 goal-contract precondition，而不是被 precondition 直接短路。
 
-    - Batch 3 已完成：project-level execution state、approval hard gate、terminal suppression 与 fallback invalidation 已接入 `facts / projection / orchestrator / actions / recovery / session-events fallback`，两轮常驻专家评审已无 blocker。
+    - `T857` 已完成：`ContinuationPacket` hash / rendered-from-packet hash / source_packet_id
+    已在 `SessionService`、operator control-plane、Feishu adapter、recovery truth write
+    面贯通，`handoff_summary` 文本不再承担 route/dedupe/model truth 角色。
 
-    - Batch 4 已完成：已补齐 continuation governance 的 lineage / provenance 写面，包含 gate verdict、identity/token issuance/invalidation、failed-retryable replay closeout，以及 handoff summary 文本与 recovery transaction identity 的脱钩。
+    - `T858` 已完成：targeted runtime/integration suite、全量 `pytest`、`ruff check`、`ai_sdlc
+    verify constraints` 与 `ai_sdlc status` 已全部复核通过；本次 closeout 后，系统能稳定区分 continue
+    / recover / branch switch / project complete / await human / blocked，并保持停止项目 fail-closed。
 
-    - `T855` 已完成：`branch_complete_switch` 现正式落到 `post_operator_guidance` closeout，并在 success/failure 路径补齐 `branch_switch_token` 的 `consumed / invalidated` authoritative closeout。
 
-    - `T856` 已完成：operator control-plane 现正式投影 `continuation_identity / token / route / packet_id / suppression / decision_source / snapshot / last_dispatch_result / dispatch_cooldown`，shared auto-dispatch checkpoint 也已补齐 `claimed / completed / failed` 生命周期与 identity-first cooldown fallback。
-    - `T857/T858` 已完成：`ContinuationPacket` render contract、recover/handoff legacy test alignment、provider smoke harness repair 与全量验证已全部闭环；`WI-085` 现正式关闭，后续入口切到 `WI-086`。'
+    ## Verification
+
+
+    - `uv run pytest -q tests/test_watchdog_brain_provider_runtime.py tests/test_watchdog_policy_engine.py
+    tests/test_watchdog_policy_decisions.py tests/test_watchdog_session_spine_runtime.py
+    tests/test_watchdog_session_spine_api.py tests/test_watchdog_feishu_adapter.py
+    tests/integration/test_feishu_integration_spine.py` -> `336 passed`
+
+    - `uv run pytest -q` -> `1091 passed`
+
+    - `uv run ruff check`
+
+    - `uv run python -m ai_sdlc verify constraints`
+
+    - `uv run python -m ai_sdlc status`
+
+
+    ## Handoff
+
+
+    - `WI-085` 已闭环；后续若继续扩 continuation governance，请直接在 `WI-086` 或新的 follow-on work
+    item 上推进，不要再把新需求或新缺口回写到 `WI-085`。'
 current_branch: codex/085-model-first-continuation-governance
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-21T02:15:30Z'
+timestamp: '2026-04-23T11:17:26+00:00'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-21T02:15:30Z'
-checkpoint_fingerprint: ''
+checkpoint_last_updated: '2026-04-23T11:17:26+00:00'
+checkpoint_fingerprint: 065fcbec590db121fed58f8ee638070c2b57dea124f85b1d2c3d8cb794db9414

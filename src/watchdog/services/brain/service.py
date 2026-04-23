@@ -311,6 +311,7 @@ class BrainDecisionService:
             goal_contract_readiness = readiness.mode
 
         project_execution_state = self._normalize_project_execution_state(
+            record_project_id=record.project_id,
             project_state=project_state,
             checkpoint=checkpoint,
             state_resume=state_resume,
@@ -416,10 +417,17 @@ class BrainDecisionService:
     @staticmethod
     def _normalize_project_execution_state(
         *,
+        record_project_id: str,
         project_state: dict[str, object],
         checkpoint: dict[str, object],
         state_resume: dict[str, object],
     ) -> str:
+        repo_project_name = str(project_state.get("project_name") or "").strip()
+        repo_project_key = repo_project_name.lower()
+        record_project_key = str(record_project_id or "").strip().lower()
+        if repo_project_key and repo_project_key != record_project_key:
+            return "active"
+
         explicit_state_candidates = (
             state_resume.get("project_execution_state"),
             project_state.get("project_execution_state"),

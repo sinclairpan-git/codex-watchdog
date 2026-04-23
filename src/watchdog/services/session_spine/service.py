@@ -151,7 +151,9 @@ def _authoritative_project_execution_state(
         repo_root=repo_root,
     ):
         return "unknown"
+    record_project_id = str((task or {}).get("project_id") or "").strip()
     return BrainDecisionService._normalize_project_execution_state(
+        record_project_id=record_project_id,
         project_state=project_state,
         checkpoint=checkpoint,
         state_resume=state_resume,
