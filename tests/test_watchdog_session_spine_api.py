@@ -2364,6 +2364,41 @@ def test_session_directory_bundle_filters_inactive_projects_with_stale_runtime_a
     assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
 
 
+def test_session_directory_route_returns_empty_when_degraded_fallback_filters_every_project(
+    tmp_path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="approval_requested",
+        project_id="watchdog-smoke-degraded",
+        session_id="session:watchdog-smoke-degraded",
+        correlation_id="corr:watchdog-smoke-degraded:approval",
+        related_ids={"approval_id": "approval:watchdog-smoke-degraded"},
+        payload={
+            "approval_id": "approval:watchdog-smoke-degraded",
+            "status": "pending",
+            "requested_at": _fresh_iso_z(),
+        },
+        occurred_at=_fresh_iso_z(),
+    )
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=BrokenAClient(),
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["sessions"] == []
+    assert data["progresses"] == []
+
+
 def test_session_directory_bundle_ignores_recent_watchdog_handoff_as_project_activity(
     tmp_path,
 ) -> None:

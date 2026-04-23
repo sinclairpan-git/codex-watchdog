@@ -2627,14 +2627,13 @@ def build_session_directory_bundle(
                     progresses=progresses,
                     bundle=bundle,
                 )
-            if sessions:
-                return SessionDirectoryReadBundle(
-                    tasks=[],
-                    approvals=[],
-                    sessions=sessions,
-                    progresses=progresses,
-                    resident_expert_coverage=resident_expert_coverage,
-                )
+            return SessionDirectoryReadBundle(
+                tasks=[],
+                approvals=[],
+                sessions=sessions,
+                progresses=progresses,
+                resident_expert_coverage=resident_expert_coverage,
+            )
         if fallback_only_grouped_events and session_service is not None:
             bundles = [
                 _build_session_read_bundle_from_session_events(
