@@ -341,7 +341,9 @@ def create_app(
         finally:
             app.state.feishu_long_connection_thread = None
             if startup_supervision_task is not None:
-                startup_supervision_task.cancel()
+                # This is a bounded one-shot startup scan, not a loop. Let it
+                # finish on fast shutdowns so tests and short-lived processes do
+                # not race against task scheduling.
                 with suppress(asyncio.CancelledError):
                     await startup_supervision_task
             if startup_reconcile_task is not None:
