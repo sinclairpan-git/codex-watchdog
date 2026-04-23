@@ -1,64 +1,74 @@
-current_stage: verify
-current_batch: 4
-last_committed_task: T234
+current_stage: execute
+current_batch: 8
+last_committed_task: ''
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
+  prd_path: codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
-  spec_path: specs/023-codex-client-openclaw-route-template/spec.md
-  plan_path: specs/023-codex-client-openclaw-route-template/plan.md
-  tasks_path: specs/023-codex-client-openclaw-route-template/tasks.md
+  spec_path: specs/085-model-first-continuation-governance/spec.md
+  plan_path: specs/085-model-first-continuation-governance/plan.md
+  tasks_path: specs/085-model-first-continuation-governance/tasks.md
   active_files:
-  - '`examples/openclaw_watchdog_client.py`'
-  - '`README.md`'
-  - '`docs/getting-started.zh-CN.md`'
-  - '`config/examples/watchdog.env.example`'
-  - '`tests/integration/test_openclaw_integration_spine.py`'
-  - '`specs/023-codex-client-openclaw-route-template/tasks.md`'
-  - '`specs/023-codex-client-openclaw-route-template/task-execution-log.md`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/execution-plan.yaml`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/runtime.yaml`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/working-set.yaml`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/latest-summary.md`'
-  - '`.ai-sdlc/work-items/023-codex-client-openclaw-route-template/resume-pack.yaml`'
+  - '`specs/085-model-first-continuation-governance/spec.md`'
+  - '`specs/085-model-first-continuation-governance/plan.md`'
+  - '`specs/085-model-first-continuation-governance/tasks.md`'
+  - '`specs/085-model-first-continuation-governance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/085-model-first-continuation-governance/latest-summary.md`'
+  - '`src/watchdog/services/brain/provider_runtime.py`'
+  - '`src/watchdog/services/brain/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/session_spine/recovery.py`'
+  - '`src/watchdog/services/session_spine/facts.py`'
+  - '`src/watchdog/services/session_spine/task_state.py`'
+  - '`src/a_control_agent/storage/handoff_manager.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
   - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'
   context_summary: '# Development Summary
 
 
-    Status: active
+    Status: completed
 
-    Total Tasks: 4
+    Total Tasks: 8
 
-    Completed Tasks: 4
+    Completed Tasks: 8
 
     Halted Tasks: 0
 
-    Total Batches: 4
+    Total Batches: 8
 
-    Completed Batches: 4
+    Completed Batches: 8
 
-    Last Committed Task: T234
+    Last Committed Task: none
 
 
     ## Notes
 
-    - 已完成 `T234`，新增 `WatchdogTemplateClient`，把 OpenClaw 常见消息模板收敛到 stable Watchdog routes。
+    - `WI-085` 已正式承接重复 handoff summary、停止项目误续跑、以及 model-first continuation governance 缺口，不再继续回写 `WI-084`。
 
-    - 模板覆盖查询进展、查询卡点、继续推进、审批 inbox 与审批决策，并支持 `WATCHDOG_DEFAULT_PROJECT_ID` 的显式/缺省路由策略。
+    - 已完成两轮常驻专家对抗评审，当前 formal contract 已冻结为 `PCDI + eligibility/routing gates + ContinuationPacket` 三层结构。
 
-    - `README.md`、`docs/getting-started.zh-CN.md` 与 `config/examples/watchdog.env.example` 已写清模板输入项与“本仓库不包含飞书/OpenClaw runtime”的边界。
+    - Batch 1 已完成：spec/plan/tasks/task-execution-log 与顶层 `.ai-sdlc` active state 已切到 `codex/085-model-first-continuation-governance`。
 
-    - 已通过 `uv run pytest -q tests/integration/test_openclaw_integration_spine.py`。
+    - Batch 2 已完成：provider/runtime 已开始消费 `PCDI` 并支持 continuation decision v3，同时在 provider 前执行 goal-contract / approval / non-active fail-closed gate。
 
-    - 当前环境的 `ai-sdlc workitem init` 失败根因已复现：`WorkitemScaffolder` 把模板目录错误解析到 `.venv/lib/python3.11/templates`，随后报错
-    `template not found: /Users/sinclairpan/project/openclaw-codex-watchdog/.venv/lib/python3.11/templates/spec-template.md`。
+    - Batch 3 已完成：project-level execution state、approval hard gate、terminal suppression 与 fallback invalidation 已接入 `facts / projection / orchestrator / actions / recovery / session-events fallback`，两轮常驻专家评审已无 blocker。
 
-    - 因此 023 继续采用与 canonical direct-formal 一致的目录边界维护 formal docs 与状态文件，并把失败原因保留在本摘要与 `specs/023-codex-client-openclaw-route-template/task-execution-log.md`。'
-current_branch: codex/023-codex-client-openclaw-route-template
+    - Batch 4 已完成：已补齐 continuation governance 的 lineage / provenance 写面，包含 gate verdict、identity/token issuance/invalidation、failed-retryable replay closeout，以及 handoff summary 文本与 recovery transaction identity 的脱钩。
+
+    - `T855` 已完成：`branch_complete_switch` 现正式落到 `post_operator_guidance` closeout，并在 success/failure 路径补齐 `branch_switch_token` 的 `consumed / invalidated` authoritative closeout。
+
+    - `T856` 已完成：operator control-plane 现正式投影 `continuation_identity / token / route / packet_id / suppression / decision_source / snapshot / last_dispatch_result / dispatch_cooldown`，shared auto-dispatch checkpoint 也已补齐 `claimed / completed / failed` 生命周期与 identity-first cooldown fallback。
+    - `T857/T858` 已完成：`ContinuationPacket` render contract、recover/handoff legacy test alignment、provider smoke harness repair 与全量验证已全部闭环；`WI-085` 现正式关闭，后续入口切到 `WI-086`。'
+current_branch: codex/085-model-first-continuation-governance
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-05T21:01:26Z'
+timestamp: '2026-04-21T02:15:30Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-05T21:01:26Z'
-checkpoint_fingerprint: 2b413b36d1d8023cc6718de6159d82e7f6c312fa768899bedbffb3ef6891198b
+checkpoint_last_updated: '2026-04-21T02:15:30Z'
+checkpoint_fingerprint: ''

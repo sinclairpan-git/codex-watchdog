@@ -1,0 +1,19 @@
+work_item_id: 075-external-integration-smoke-harness-closeout
+spec_dir: specs/075-external-integration-smoke-harness-closeout
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T755
+current_branch: codex/075-external-integration-smoke-harness-closeout
+docs_baseline_ref: f714d313d44ea233f0d8eb2875f57aa0ffd35394
+docs_baseline_at: '2026-04-17T03:22:59Z'
+review_approval_status: approved
+review_approved_by:
+  - Anthropic Manager Expert
+  - Hermes Agent Expert
+ai_decisions_count: 2
+execution_mode: auto
+started_at: '2026-04-17T03:19:00Z'
+last_updated: '2026-04-17T03:24:46Z'
+debug_rounds: {}
+consecutive_halts: 0

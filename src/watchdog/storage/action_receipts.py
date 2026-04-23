@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
@@ -38,19 +39,33 @@ class ActionReceiptStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
+        self._cache: dict[str, dict[str, object]] | None = None
+        self._cache_signature: tuple[int, int] | None = None
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
             self._write({})
 
+    def _file_signature(self) -> tuple[int, int]:
+        stat = self._path.stat()
+        return (stat.st_mtime_ns, stat.st_size)
+
     def _read(self) -> dict[str, dict[str, object]]:
+        signature = self._file_signature()
+        if self._cache is not None and self._cache_signature == signature:
+            return deepcopy(self._cache)
         raw = self._path.read_text(encoding="utf-8")
         data = json.loads(raw) if raw.strip() else {}
-        return data if isinstance(data, dict) else {}
+        normalized = data if isinstance(data, dict) else {}
+        self._cache = deepcopy(normalized)
+        self._cache_signature = signature
+        return deepcopy(normalized)
 
     def _write(self, data: dict[str, dict[str, object]]) -> None:
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self._path)
+        self._cache = deepcopy(data)
+        self._cache_signature = self._file_signature()
 
     def get(self, key: str) -> WatchdogActionResult | None:
         with self._lock:
@@ -58,6 +73,10 @@ class ActionReceiptStore:
         if not isinstance(row, dict):
             return None
         return WatchdogActionResult.model_validate(row)
+
+    def snapshot_rows(self) -> list[tuple[str, dict[str, object]]]:
+        with self._lock:
+            return list(self._read().items())
 
     def create_or_get(
         self,

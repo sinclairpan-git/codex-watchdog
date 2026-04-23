@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, Request
 
 from a_control_agent.envelope import err, ok
 from watchdog.api.deps import require_token
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 router = APIRouter(prefix="/watchdog", tags=["watchdog"])
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def _to_progress(task: dict[str, object]) -> dict[str, object]:
@@ -30,7 +30,7 @@ def _to_progress(task: dict[str, object]) -> dict[str, object]:
 def get_progress(
     project_id: str,
     request: Request,
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
@@ -41,7 +41,7 @@ def get_progress(
             rid,
             {
                 "code": "CONTROL_LINK_ERROR",
-                "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
+                "message": "无法连接 Codex runtime 控制链路；请检查网络与 runtime 服务状态。",
             },
         )
     except (RuntimeError, OSError):
@@ -49,17 +49,17 @@ def get_progress(
             rid,
             {
                 "code": "CONTROL_LINK_ERROR",
-                "message": "无法连接 A-Control-Agent 或链路异常；请检查网络与 A 侧服务状态。",
+                "message": "无法连接 Codex runtime 控制链路；请检查网络与 runtime 服务状态。",
             },
         )
 
     if not body.get("success"):
-        return err(rid, body.get("error") or {"code": "A_AGENT_ERROR", "message": "unknown"})
+        return err(rid, body.get("error") or {"code": "RUNTIME_ERROR", "message": "unknown"})
 
     data = body.get("data")
     if not isinstance(data, dict):
         return err(
             rid,
-            {"code": "CONTROL_LINK_ERROR", "message": "A 侧返回数据格式异常"},
+            {"code": "CONTROL_LINK_ERROR", "message": "runtime 返回数据格式异常"},
         )
     return ok(rid, _to_progress(data))

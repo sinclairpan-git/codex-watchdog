@@ -17,6 +17,10 @@ _CANONICAL_ACTION_REGISTRY: dict[str, CanonicalActionRegistration] = {
         action_ref="continue_session",
         action_code=ActionCode.CONTINUE_SESSION,
     ),
+    "request_recovery": CanonicalActionRegistration(
+        action_ref="request_recovery",
+        action_code=ActionCode.REQUEST_RECOVERY,
+    ),
     "execute_recovery": CanonicalActionRegistration(
         action_ref="execute_recovery",
         action_code=ActionCode.EXECUTE_RECOVERY,

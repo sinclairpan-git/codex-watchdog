@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import hashlib
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from watchdog.services.approvals.service import (
     CanonicalApprovalRecord,
     CanonicalApprovalResponseRecord,
+    build_canonical_approval_identifiers,
+    requested_action_args_from_decision,
 )
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.policy.rules import POLICY_VERSION
@@ -16,8 +19,15 @@ from watchdog.services.policy.rules import (
     DECISION_AUTO_EXECUTE_AND_NOTIFY,
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
+    RISK_CLASS_HARD_BLOCK,
+    RISK_CLASS_HUMAN_GATE,
+    RISK_CLASS_NONE,
 )
+from watchdog.services.session_spine.service import SessionDirectoryReadBundle
 from watchdog.services.session_spine.store import PersistedSessionRecord
+
+SESSION_DIRECTORY_PROJECT_ID = "__portfolio__"
+SESSION_DIRECTORY_SESSION_ID = "session:directory"
 
 
 def _short_hash(value: str) -> str:
@@ -63,6 +73,30 @@ def _canonical_timestamp(value: str | None) -> str | None:
     return parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _compatibility_risk_level(risk_class: str) -> str:
+    return {
+        RISK_CLASS_NONE: "L0",
+        RISK_CLASS_HUMAN_GATE: "L2",
+        RISK_CLASS_HARD_BLOCK: "L3",
+    }.get(risk_class, risk_class)
+
+
+def _compatibility_command(action_ref: str, action_args: dict[str, Any]) -> str:
+    if not action_args:
+        return action_ref
+    return " ".join(
+        [
+            action_ref,
+            json.dumps(
+                action_args,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        ]
+    )
+
+
 def _progress_summary_severity(record: PersistedSessionRecord) -> str:
     fact_codes = {fact.fact_code for fact in record.facts}
     if "context_critical" in fact_codes or "control_link_error" in fact_codes:
@@ -84,6 +118,54 @@ def progress_summary_fingerprint(record: PersistedSessionRecord) -> str:
         "stuck_level": record.progress.stuck_level,
         "last_progress_at": record.progress.last_progress_at,
         "pending_approval_count": record.session.pending_approval_count,
+    }
+    return _short_hash(repr(payload))
+
+
+def session_directory_summary_fingerprint(bundle: SessionDirectoryReadBundle) -> str:
+    session_payload = sorted(
+        [
+            {
+                "project_id": session.project_id,
+                "session_state": session.session_state,
+                "attention_state": session.attention_state,
+                "headline": session.headline,
+            }
+            for session in bundle.sessions
+        ],
+        key=lambda item: str(item["project_id"]),
+    )
+    progress_payload = sorted(
+        [
+            {
+                "project_id": progress.project_id,
+                "activity_phase": progress.activity_phase,
+                "summary": progress.summary,
+                "context_pressure": progress.context_pressure,
+                "stuck_level": progress.stuck_level,
+                "last_progress_at": progress.last_progress_at,
+            }
+            for progress in bundle.progresses
+        ],
+        key=lambda item: str(item["project_id"]),
+    )
+    coverage = bundle.resident_expert_coverage
+    coverage_payload = (
+        {
+            "available_expert_count": coverage.available_expert_count,
+            "bound_expert_count": coverage.bound_expert_count,
+            "restoring_expert_count": coverage.restoring_expert_count,
+            "stale_expert_count": coverage.stale_expert_count,
+            "unavailable_expert_count": coverage.unavailable_expert_count,
+            "latest_consultation_ref": coverage.latest_consultation_ref,
+        }
+        if coverage is not None
+        else None
+    )
+    payload = {
+        "sessions": session_payload,
+        "progresses": progress_payload,
+        "coverage": coverage_payload,
     }
     return _short_hash(repr(payload))
 
@@ -114,7 +196,7 @@ def build_progress_summary_envelope(
         correlation_id=f"progress-summary:{record.project_id}:{fingerprint}",
         session_id=record.thread_id,
         project_id=record.project_id,
-        native_thread_id=record.native_thread_id,
+        native_thread_id=record.effective_native_thread_id,
         policy_version=POLICY_VERSION,
         fact_snapshot_version=record.fact_snapshot_version,
         idempotency_key=f"{record.thread_id}|{record.fact_snapshot_version}|progress_summary|{fingerprint}",
@@ -128,6 +210,54 @@ def build_progress_summary_envelope(
         summary=summary,
         reason="; ".join(reason_parts),
         facts=[fact.model_dump(mode="json") for fact in record.facts],
+        recommended_actions=[],
+    )
+
+
+def build_session_directory_summary_envelope(
+    bundle: SessionDirectoryReadBundle,
+    *,
+    created_at: str,
+    summary_fingerprint: str | None = None,
+) -> NotificationEnvelope:
+    from watchdog.services.entrypoints.reply_model import (
+        build_session_directory_reply,
+    )
+
+    fingerprint = summary_fingerprint or session_directory_summary_fingerprint(bundle)
+    reply = build_session_directory_reply(bundle)
+    progress_timestamps = [
+        timestamp
+        for timestamp in (
+            _canonical_timestamp(progress.last_progress_at)
+            for progress in bundle.progresses
+        )
+        if timestamp is not None
+    ]
+    occurred_at = max(progress_timestamps, default=None)
+    return NotificationEnvelope(
+        envelope_id=_envelope_id(
+            f"{SESSION_DIRECTORY_SESSION_ID}|{fingerprint}",
+            "notification",
+            "session_directory_summary",
+        ),
+        correlation_id=f"session-directory-summary:{fingerprint}",
+        session_id=SESSION_DIRECTORY_SESSION_ID,
+        project_id=SESSION_DIRECTORY_PROJECT_ID,
+        native_thread_id=None,
+        policy_version=POLICY_VERSION,
+        fact_snapshot_version="directory-summary",
+        idempotency_key=f"{SESSION_DIRECTORY_SESSION_ID}|directory-summary|{fingerprint}",
+        audit_ref="session-directory-summary",
+        created_at=created_at,
+        event_id=f"event:{_short_hash('session_directory_summary|' + fingerprint)}",
+        severity="info",
+        notification_kind="session_directory_summary",
+        occurred_at=occurred_at,
+        title="session directory summary",
+        summary=reply.message,
+        reason=f"{len(bundle.sessions)} projects tracked",
+        facts=[],
         recommended_actions=[],
     )
 
@@ -147,6 +277,13 @@ class EnvelopeBase(BaseModel):
     idempotency_key: str
     audit_ref: str
     created_at: str
+    interaction_context_id: str | None = None
+    interaction_family_id: str | None = None
+    actor_id: str | None = None
+    channel_kind: str | None = None
+    action_window_expires_at: str | None = None
+    receive_id: str | None = None
+    receive_id_type: str | None = None
 
 
 class DecisionEnvelope(EnvelopeBase):
@@ -159,6 +296,11 @@ class DecisionEnvelope(EnvelopeBase):
     action_args: dict[str, Any] = Field(default_factory=dict)
     approval_id: str | None = None
     risk_class: str
+    risk_level: str | None = None
+    command: str = ""
+    title: str = ""
+    summary: str = ""
+    reason: str = ""
     decision_reason: str
     facts: list[dict[str, Any]] = Field(default_factory=list)
     matched_policy_rules: list[str] = Field(default_factory=list)
@@ -174,6 +316,7 @@ class NotificationEnvelope(EnvelopeBase):
     occurred_at: str | None = None
     decision_result: str | None = None
     action_name: str | None = None
+    action_args: dict[str, Any] = Field(default_factory=dict)
     title: str
     summary: str
     reason: str
@@ -188,6 +331,12 @@ class ApprovalEnvelope(EnvelopeBase):
     requested_action: str
     requested_action_args: dict[str, Any] = Field(default_factory=dict)
     risk_class: str
+    risk_level: str | None = None
+    command: str = ""
+    reason: str = ""
+    alternative: str = ""
+    status: str = "pending"
+    requested_at: str
     title: str
     summary: str
     decision_options: list[str] = Field(default_factory=lambda: ["approve", "reject", "execute_action"])
@@ -195,17 +344,18 @@ class ApprovalEnvelope(EnvelopeBase):
     matched_policy_rules: list[str] = Field(default_factory=list)
     why_escalated: str | None = None
     approval_token: str
-    callback_action_ref: str = "/api/v1/watchdog/openclaw/responses"
+    callback_action_ref: str = "/api/v1/watchdog/feishu/control"
 
 
 def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvelope:
     occurred_at = _canonical_timestamp(decision.created_at)
+    action_args = requested_action_args_from_decision(decision)
     return DecisionEnvelope(
         envelope_id=_envelope_id(decision.decision_key, "decision"),
         correlation_id=decision.decision_id,
         session_id=decision.session_id,
         project_id=decision.project_id,
-        native_thread_id=decision.native_thread_id,
+        native_thread_id=decision.effective_native_thread_id,
         policy_version=decision.policy_version,
         fact_snapshot_version=decision.fact_snapshot_version,
         idempotency_key=decision.idempotency_key,
@@ -215,9 +365,14 @@ def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvel
         decision_id=decision.decision_id,
         decision_result=decision.decision_result,
         action_name=decision.action_ref,
-        action_args={},
+        action_args=action_args,
         approval_id=decision.approval_id,
         risk_class=decision.risk_class,
+        risk_level=_compatibility_risk_level(decision.risk_class),
+        command=_compatibility_command(decision.action_ref, action_args),
+        title=f"decision {decision.decision_result}",
+        summary=decision.decision_reason,
+        reason=decision.decision_reason,
         decision_reason=decision.decision_reason,
         facts=_facts_from_decision(decision),
         matched_policy_rules=_matched_rules(decision),
@@ -227,12 +382,13 @@ def _build_decision_envelope(decision: CanonicalDecisionRecord) -> DecisionEnvel
 
 def _build_decision_notification(decision: CanonicalDecisionRecord) -> NotificationEnvelope:
     occurred_at = _canonical_timestamp(decision.created_at)
+    action_args = requested_action_args_from_decision(decision)
     return NotificationEnvelope(
         envelope_id=_envelope_id(decision.decision_key, "notification", "decision_result"),
         correlation_id=decision.decision_id,
         session_id=decision.session_id,
         project_id=decision.project_id,
-        native_thread_id=decision.native_thread_id,
+        native_thread_id=decision.effective_native_thread_id,
         policy_version=decision.policy_version,
         fact_snapshot_version=decision.fact_snapshot_version,
         idempotency_key=f"{decision.idempotency_key}|decision_result",
@@ -244,6 +400,7 @@ def _build_decision_notification(decision: CanonicalDecisionRecord) -> Notificat
         occurred_at=occurred_at,
         decision_result=decision.decision_result,
         action_name=decision.action_ref,
+        action_args=action_args,
         title=f"decision {decision.decision_result}",
         summary=decision.decision_reason,
         reason=decision.decision_reason,
@@ -253,30 +410,72 @@ def _build_decision_notification(decision: CanonicalDecisionRecord) -> Notificat
 
 
 def _build_approval_envelope(decision: CanonicalDecisionRecord) -> ApprovalEnvelope:
-    digest = _short_hash(decision.decision_key)
     occurred_at = _canonical_timestamp(decision.created_at)
+    approval_id, envelope_id, approval_token = build_canonical_approval_identifiers(decision)
+    requested_action_args = requested_action_args_from_decision(decision)
     return ApprovalEnvelope(
-        envelope_id=_envelope_id(decision.decision_key, "approval"),
+        envelope_id=envelope_id,
         correlation_id=decision.decision_id,
         session_id=decision.session_id,
         project_id=decision.project_id,
-        native_thread_id=decision.native_thread_id,
+        native_thread_id=decision.effective_native_thread_id,
         policy_version=decision.policy_version,
         fact_snapshot_version=decision.fact_snapshot_version,
         idempotency_key=f"{decision.idempotency_key}|approval",
         audit_ref=decision.decision_id,
         created_at=occurred_at or decision.created_at,
-        approval_id=decision.approval_id or f"approval:{digest}",
+        approval_id=approval_id,
         approval_kind="canonical_user_decision",
         requested_action=decision.action_ref,
-        requested_action_args={},
+        requested_action_args=requested_action_args,
         risk_class=decision.risk_class,
+        risk_level=_compatibility_risk_level(decision.risk_class),
+        command=_compatibility_command(decision.action_ref, requested_action_args),
+        reason=decision.decision_reason,
+        alternative="",
+        status="pending",
+        requested_at=occurred_at or decision.created_at,
         title=f"approval required for {decision.action_ref}",
         summary=decision.decision_reason,
         facts=_facts_from_decision(decision),
         matched_policy_rules=_matched_rules(decision),
         why_escalated=decision.why_escalated,
-        approval_token=f"approval-token:{digest}",
+        approval_token=approval_token,
+    )
+
+
+def build_approval_envelope_for_record(approval: CanonicalApprovalRecord) -> ApprovalEnvelope:
+    decision = approval.decision
+    occurred_at = _canonical_timestamp(approval.created_at)
+    requested_action_args = dict(approval.requested_action_args)
+    return ApprovalEnvelope(
+        envelope_id=approval.envelope_id,
+        correlation_id=decision.decision_id,
+        session_id=approval.session_id,
+        project_id=approval.project_id,
+        native_thread_id=approval.effective_native_thread_id,
+        policy_version=approval.policy_version,
+        fact_snapshot_version=approval.fact_snapshot_version,
+        idempotency_key=approval.idempotency_key,
+        audit_ref=decision.decision_id,
+        created_at=occurred_at or approval.created_at,
+        approval_id=approval.approval_id,
+        approval_kind=approval.approval_kind,
+        requested_action=approval.requested_action,
+        requested_action_args=requested_action_args,
+        risk_class=decision.risk_class,
+        risk_level=_compatibility_risk_level(decision.risk_class),
+        command=_compatibility_command(approval.requested_action, requested_action_args),
+        reason=decision.decision_reason,
+        alternative="",
+        status=approval.status,
+        requested_at=occurred_at or approval.created_at,
+        title=f"approval required for {approval.requested_action}",
+        summary=decision.decision_reason,
+        facts=_facts_from_decision(decision),
+        matched_policy_rules=_matched_rules(decision),
+        why_escalated=decision.why_escalated,
+        approval_token=approval.approval_token,
     )
 
 
@@ -304,7 +503,7 @@ def build_envelopes_for_approval_response(
             correlation_id=approval.approval_id,
             session_id=approval.session_id,
             project_id=approval.project_id,
-            native_thread_id=approval.native_thread_id,
+            native_thread_id=approval.effective_native_thread_id,
             policy_version=approval.policy_version,
             fact_snapshot_version=approval.fact_snapshot_version,
             idempotency_key=response.idempotency_key,

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from watchdog.contracts.session_spine.enums import ActionCode
 from watchdog.contracts.session_spine.models import WatchdogAction, WatchdogActionResult
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.actions.registry import get_registered_action
 from watchdog.services.policy.decisions import CanonicalDecisionRecord
 from watchdog.services.policy.rules import DECISION_AUTO_EXECUTE_AND_NOTIFY
+from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
@@ -39,13 +41,18 @@ def _extract_action_arguments(
 def build_watchdog_action_from_decision(
     decision: CanonicalDecisionRecord,
     *,
-    operator: str = "openclaw",
+    operator: str = "watchdog",
 ) -> WatchdogAction:
     registration = get_registered_action(decision.action_ref)
     arguments = _extract_action_arguments(
         decision,
         required_argument_keys=registration.argument_keys,
     )
+    evidence = decision.evidence if isinstance(decision.evidence, dict) else {}
+    governance = evidence.get("continuation_governance")
+    if isinstance(governance, dict):
+        arguments["_continuation_gate_pre_recorded"] = True
+        arguments["_continuation_governance"] = dict(governance)
     return WatchdogAction(
         action_code=registration.action_code,
         project_id=decision.project_id,
@@ -60,9 +67,13 @@ def execute_canonical_decision(
     decision: CanonicalDecisionRecord,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
-    operator: str = "openclaw",
+    session_service: SessionService | None = None,
+    store: Any | None = None,
+    approval_store: Any | None = None,
+    decision_store: Any | None = None,
+    operator: str = "watchdog",
 ) -> WatchdogActionResult:
     if decision.decision_result != DECISION_AUTO_EXECUTE_AND_NOTIFY:
         raise ValueError(
@@ -73,6 +84,10 @@ def execute_canonical_decision(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
         operator=operator,
     )
 
@@ -81,9 +96,13 @@ def execute_registered_action_for_decision(
     decision: CanonicalDecisionRecord,
     *,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
-    operator: str = "openclaw",
+    session_service: SessionService | None = None,
+    store: Any | None = None,
+    approval_store: Any | None = None,
+    decision_store: Any | None = None,
+    operator: str = "watchdog",
 ) -> WatchdogActionResult:
     action = build_watchdog_action_from_decision(decision, operator=operator)
     return execute_watchdog_action(
@@ -91,4 +110,8 @@ def execute_registered_action_for_decision(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )

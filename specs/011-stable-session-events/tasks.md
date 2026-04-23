@@ -2,7 +2,7 @@
 
 > 对应规格：`specs/011-stable-session-events/spec.md`
 >
-> 对应总设计：`docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md`
+> 对应总设计：`docs/architecture/codex-watchdog-g0-and-v010-design.md`
 
 ## Batch 1
 
@@ -18,7 +18,7 @@
   2. `SessionEvent` 携带独立事件 `contract_version` 与 `schema_version`；
   3. `thread_id` 与 `native_thread_id` 继续正式区分；
   4. 事件 contract 不复用 raw `event_type` / `payload_json` 作为稳定字段；
-  5. contract 命名中不出现 `openclaw` 运行时语义。
+  5. contract 命名中不出现 `feishu` 运行时语义。
 - **验证**：`uv run pytest -q tests/test_watchdog_session_events_contracts.py`
 
 ### Task 11.2 L2 事件投影与 SSE codec
@@ -53,19 +53,19 @@
 
 ## Batch 2
 
-### Task 11.4 OpenClaw 只读事件 adapter
+### Task 11.4 Feishu 只读事件 adapter
 
 - **任务编号**：T114
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T113
-- **文件**：`src/watchdog/services/adapters/openclaw/adapter.py`, `tests/test_watchdog_openclaw_adapter.py`
+- **文件**：`src/watchdog/services/adapters/feishu/adapter.py`, `tests/test_watchdog_feishu_adapter.py`
 - **可并行**：否
 - **验收标准**：
   1. adapter 提供 stable event snapshot / stream 消费入口；
   2. adapter 只消费 `SessionEvent`，不读取 raw proxy route；
   3. adapter 不把 `SessionEvent` 伪装成 `ReplyModel`；
   4. adapter 不合成动作回执事件。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py`
 
 ### Task 11.5 文档与 OpenAPI 收口
 
@@ -91,13 +91,13 @@
 - **验收标准**：
   1. stable snapshot 可端到端返回稳定 `SessionEvent`；
   2. stable follow stream 可端到端输出连续 `SessionEvent`；
-  3. OpenClaw adapter snapshot / stream 行为与 stable route 一致；
+  3. Feishu adapter snapshot / stream 行为与 stable route 一致；
   4. raw `/watchdog/tasks/{project_id}/events` 与 stable `/watchdog/sessions/{project_id}/events` 可并存；
   5. action receipt 不会出现在 011 stable event stream 中。
-- **验证**：`uv run pytest -q tests/test_watchdog_session_events_contracts.py tests/test_watchdog_session_events_projection.py tests/test_watchdog_session_events_api.py tests/test_watchdog_openclaw_adapter.py tests/integration/test_stable_session_events.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_session_events_contracts.py tests/test_watchdog_session_events_projection.py tests/test_watchdog_session_events_api.py tests/test_watchdog_feishu_adapter.py tests/integration/test_stable_session_events.py`
 
 ## 预期结果
 
-- OpenClaw 与其他上层调用方获得独立于 raw SSE 的稳定 session event 面。
+- Feishu 与其他上层调用方获得独立于 raw SSE 的稳定 session event 面。
 - Watchdog 对外明确区分 stable event surface 与 legacy raw proxy。
 - 011 在不引入动作回执融合、cursor/backfill redesign、WebSocket 的前提下，为后续实时事件演进保留干净接缝。

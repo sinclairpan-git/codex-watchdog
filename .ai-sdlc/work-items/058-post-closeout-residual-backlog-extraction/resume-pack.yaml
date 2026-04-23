@@ -1,0 +1,14 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T585
+docs_baseline_ref: 0f6e1d0d4e8e8cbe5d62a4534fadc51651e06fc316715ca3772619fd9cd0f251
+docs_baseline_at: '2026-04-16T11:22:37Z'
+working_set_snapshot:
+  spec_path: specs/058-post-closeout-residual-backlog-extraction/spec.md
+  plan_path: specs/058-post-closeout-residual-backlog-extraction/plan.md
+  tasks_path: specs/058-post-closeout-residual-backlog-extraction/tasks.md
+current_branch: codex/058-post-closeout-residual-backlog-extraction
+timestamp: '2026-04-16T11:22:37Z'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: '2026-04-16T11:22:37Z'
+checkpoint_fingerprint: 0f6e1d0d4e8e8cbe5d62a4534fadc51651e06fc316715ca3772619fd9cd0f251

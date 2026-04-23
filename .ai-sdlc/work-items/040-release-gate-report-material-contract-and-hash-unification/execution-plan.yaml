@@ -1,0 +1,131 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T401
+  title: 冻结 040 formal docs 与 shared report material/hash 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/040-release-gate-report-material-contract-and-hash-unification/spec.md`'
+  - '`specs/040-release-gate-report-material-contract-and-hash-unification/plan.md`'
+  - '`specs/040-release-gate-report-material-contract-and-hash-unification/tasks.md`'
+  - '`specs/040-release-gate-report-material-contract-and-hash-unification/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/runtime.yaml`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T402
+  title: 写失败测试锁定 shared report material/hash contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_release_gate.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T401
+- task_id: T403
+  title: 实现最小 shared report material/hash helper
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/brain/release_gate_report_material.py`'
+  - '`src/watchdog/services/brain/release_gate_loading.py`'
+  - '`scripts/generate_release_gate_report.py`'
+  - '`tests/test_watchdog_release_gate.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T402
+- task_id: T404
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/040-release-gate-report-material-contract-and-hash-unification/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/runtime.yaml`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T403
+- task_id: T405
+  title: 完成 040 整体验证并交接下一 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/040-release-gate-report-material-contract-and-hash-unification/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/latest-summary.md`'
+  - '`.ai-sdlc/work-items/040-release-gate-report-material-contract-and-hash-unification/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T404
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T401
+  status: completed
+  started_at: '2026-04-14T11:50:00+08:00'
+  completed_at: '2026-04-14T11:50:00+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T402
+  status: completed
+  started_at: '2026-04-14T11:50:00+08:00'
+  completed_at: '2026-04-14T11:50:30+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T403
+  status: completed
+  started_at: '2026-04-14T11:50:30+08:00'
+  completed_at: '2026-04-14T11:52:09+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T404
+  status: completed
+  started_at: '2026-04-14T11:52:09+08:00'
+  completed_at: '2026-04-14T11:52:09+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T405
+  status: completed
+  started_at: '2026-04-14T11:52:09+08:00'
+  completed_at: '2026-04-14T11:52:09+08:00'
+current_batch: 5

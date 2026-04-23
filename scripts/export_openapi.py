@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""导出 A-Control-Agent 与 Watchdog 的 OpenAPI JSON（PRD §22 API 文档最低交付）。"""
+"""导出 Codex runtime service 与 codex-watchdog 的 OpenAPI JSON（PRD §22 API 文档最低交付）。"""
 
 from __future__ import annotations
 

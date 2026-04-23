@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/016-stable-approval-inbox/spec.md"
 ---
 
@@ -9,7 +9,7 @@ related_doc:
 
 ## 目标
 
-在不改写现有 approve / reject stable action、不破坏 legacy approvals proxy 的前提下，补齐一个面向跨项目 pending approvals 的 stable inbox read surface，使 OpenClaw 能在不知道 `project_id` 的情况下先拿到稳定审批队列，再决定后续跳转或执行动作。
+在不改写现有 approve / reject stable action、不破坏 legacy approvals proxy 的前提下，补齐一个面向跨项目 pending approvals 的 stable inbox read surface，使 Feishu 能在不知道 `project_id` 的情况下先拿到稳定审批队列，再决定后续跳转或执行动作。
 
 ## 架构摘要
 
@@ -25,8 +25,8 @@ related_doc:
 | Neutral Contract | `src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py` | 冻结 `approval_inbox` reply code、必要 query model 与 016 schema version |
 | L2 Approval Inbox | `src/watchdog/services/session_spine/service.py`, `src/watchdog/services/session_spine/projection.py`, `src/watchdog/services/session_spine/replies.py` | 加载全局 pending approvals、可选按 `project_id` 过滤，并构建稳定 inbox reply |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 `GET /api/v1/watchdog/approval-inbox`，保持与 legacy `/watchdog/approvals` 分离 |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py` | 新增 `list_approval_inbox` intent，并复用同一 stable inbox builder |
-| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/test_m3_watchdog_approvals.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、stable route、adapter 与 legacy 非回归 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py` | 新增 `list_approval_inbox` intent，并复用同一 stable inbox builder |
+| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/test_m3_watchdog_approvals.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、stable route、adapter 与 legacy 非回归 |
 
 ## 依赖顺序
 
@@ -35,7 +35,7 @@ related_doc:
 2. **再建立 L2 approval inbox builder**
    - 先让“全局 pending approvals -> stable reply”有单一来源，再接 route 与 adapter。
 3. **再接 stable API 与 adapter**
-   - HTTP 与 OpenClaw adapter 同时复用共享 builder，避免再出现双份 approvals list 逻辑。
+   - HTTP 与 Feishu adapter 同时复用共享 builder，避免再出现双份 approvals list 逻辑。
 4. **最后补 legacy 非回归与文档**
    - 确保 016 新增稳定入口不会误伤 `/watchdog/approvals` raw proxy 或 `/decision` 兼容写面。
 
@@ -157,6 +157,6 @@ related_doc:
 
 1. 存在独立 stable route `GET /api/v1/watchdog/approval-inbox`。
 2. 返回体是稳定 `ReplyModel(reply_code=approval_inbox)`，其 `approvals` 项为 `ApprovalProjection[]`。
-3. OpenClaw adapter 已支持 `list_approval_inbox`，且与 HTTP 复用同一 stable inbox builder。
+3. Feishu adapter 已支持 `list_approval_inbox`，且与 HTTP 复用同一 stable inbox builder。
 4. session spine `schema_version` 已推进到 `2026-04-05.016`。
 5. legacy `/watchdog/approvals` 与 `/decision` 已有显式非回归验证。

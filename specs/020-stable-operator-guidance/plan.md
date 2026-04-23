@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/020-stable-operator-guidance/spec.md"
 ---
 
@@ -9,13 +9,13 @@ related_doc:
 
 ## 目标
 
-把 raw `POST /api/v1/tasks/{project_id}/steer` 收敛为稳定、版本化、可幂等的 operator-guidance write surface，让 OpenClaw 与其他上层调用方通过 session spine canonical action 提交最小人工指导消息。
+把 raw `POST /api/v1/tasks/{project_id}/steer` 收敛为稳定、版本化、可幂等的 operator-guidance write surface，让 Feishu 与其他上层调用方通过 session spine canonical action 提交最小人工指导消息。
 
 ## 架构摘要
 
 - **Canonical action first**：020 不新增专用写模型，继续以 `WatchdogAction -> WatchdogActionResult` 为唯一 stable write contract，只扩展 `ActionCode.POST_OPERATOR_GUIDANCE`。
 - **Alias route is wrapper only**：`POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance` 只是人类友好的 alias wrapper，内部必须映射回 canonical `POST /api/v1/watchdog/actions` 语义。
-- **Executor reuse**：动作执行复用既有 `post_steer(...)`；不新增另一套 A-Control-Agent 直连逻辑。
+- **Executor reuse**：动作执行复用既有 `post_steer(...)`；不新增另一套 Codex runtime service 直连逻辑。
 - **Stable vs raw boundary**：stable 面负责版本化 action code、idempotency 与统一结果模型；A raw `/api/v1/tasks/{project_id}/steer` 继续存在，但只做 legacy compatibility。
 - **Schema bump required**：020 新增 stable action code，因此 session spine `schema_version` 推进到 `2026-04-05.020`。
 
@@ -26,8 +26,8 @@ related_doc:
 | Contract | `src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/versioning.py` | 新增 `ActionCode.POST_OPERATOR_GUIDANCE` 并推进 schema version |
 | L2 Action | `src/watchdog/services/session_spine/actions.py` | 校验 `arguments.message / reason_code / stuck_level`，复用 `post_steer(...)`，统一产出 `WatchdogActionResult` |
 | Stable API Surface | `src/watchdog/api/session_spine_actions.py` | 暴露 alias route，并把 top-level payload 映射回 canonical action arguments |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py` | 新增 `post_operator_guidance` intent，映射到新 action code |
-| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`, `tests/test_m2_steer.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、幂等、alias、adapter、integration、legacy 非回归与对外口径 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py` | 新增 `post_operator_guidance` intent，映射到新 action code |
+| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`, `tests/test_m2_steer.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、幂等、alias、adapter、integration、legacy 非回归与对外口径 |
 
 ## 依赖顺序
 
@@ -71,7 +71,7 @@ related_doc:
 - `reason_code` 默认 `operator_guidance`
 - `stuck_level` 范围与 raw `/steer` 保持一致
 
-### Phase 3：接入 stable API alias 与 OpenClaw intent
+### Phase 3：接入 stable API alias 与 Feishu intent
 
 交付内容：
 
@@ -122,7 +122,7 @@ related_doc:
 
 ### Adapter / Integration 测试
 
-- OpenClaw adapter 支持 `post_operator_guidance`
+- Feishu adapter 支持 `post_operator_guidance`
 - adapter、canonical route、alias route 对同一输入产出同源结果
 
 ### Legacy 非回归测试
@@ -160,7 +160,7 @@ related_doc:
 1. 存在稳定动作 `ActionCode.POST_OPERATOR_GUIDANCE`。
 2. canonical `POST /api/v1/watchdog/actions` 可执行 `post_operator_guidance`。
 3. 存在 alias route `POST /api/v1/watchdog/sessions/{project_id}/actions/post-guidance`，且只是 canonical wrapper。
-4. OpenClaw adapter 已支持 `post_operator_guidance`。
+4. Feishu adapter 已支持 `post_operator_guidance`。
 5. session spine `schema_version` 已推进到 `2026-04-05.020`。
 6. raw `/api/v1/tasks/{project_id}/steer` 已有显式非回归验证。
 7. README、getting-started、OpenAPI 与 `.ai-sdlc` 已同步到 020。

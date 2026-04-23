@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import ValidationError
 
 from a_control_agent.api.deps import require_token
 from a_control_agent.audit import append_jsonl
@@ -12,8 +14,25 @@ from a_control_agent.envelope import err, ok
 from a_control_agent.settings import Settings
 from a_control_agent.storage.handoff_manager import write_handoff_file
 from a_control_agent.storage.tasks_store import TaskStore
+from watchdog.services.session_spine.continuation_packet import (
+    model_validate_continuation_packet,
+    render_continuation_packet_prompt,
+)
+from watchdog.services.session_spine.task_state import (
+    is_canonical_task_phase,
+    normalize_task_phase,
+)
 
 router = APIRouter(prefix="/tasks", tags=["recovery"])
+_SAME_THREAD_RESUME = "same_thread_resume"
+_NEW_CHILD_SESSION = "new_child_session"
+_PAUSE_STEER_MESSAGE = (
+    "Pause execution now. Do not run more commands, edits, or analysis until an explicit resume request arrives."
+)
+
+
+class _InvalidContinuationPacket(ValueError):
+    pass
 
 
 def get_settings(request: Request) -> Settings:
@@ -28,6 +47,163 @@ def get_bridge(request: Request) -> Any:
     return getattr(request.app.state, "codex_bridge", None)
 
 
+def _resume_outcome_for_thread(
+    *,
+    parent_thread_id: str,
+    resumed_thread_id: str,
+) -> str:
+    if resumed_thread_id and resumed_thread_id != parent_thread_id:
+        return _NEW_CHILD_SESSION
+    return _SAME_THREAD_RESUME
+
+
+def _resume_response_payload(
+    *,
+    project_id: str,
+    status: str,
+    mode: str,
+    resume_outcome: str,
+    thread_id: str,
+    parent_thread_id: str,
+    resume_target_phase: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "project_id": project_id,
+        "status": status,
+        "mode": mode,
+        "resume_outcome": resume_outcome,
+        "thread_id": thread_id,
+        "resume_target_phase": resume_target_phase,
+    }
+    if resume_outcome == _NEW_CHILD_SESSION:
+        payload["parent_thread_id"] = parent_thread_id
+        payload["child_session_id"] = (
+            thread_id if thread_id.startswith("session:") else f"session:{project_id}:{thread_id}"
+        )
+    return payload
+
+
+async def _await_if_needed(value: Any) -> Any:
+    if isawaitable(value):
+        return await value
+    return value
+
+
+async def _pause_runtime(bridge: Any, thread_id: str) -> Any:
+    if bridge is None or not thread_id:
+        return None
+    pause_thread = getattr(bridge, "pause_thread", None)
+    if callable(pause_thread):
+        return await _await_if_needed(pause_thread(thread_id))
+    active_turn_id = getattr(bridge, "active_turn_id", None)
+    steer_turn = getattr(bridge, "steer_turn", None)
+    read_thread = getattr(bridge, "read_thread", None)
+    active_turn = active_turn_id(thread_id) if callable(active_turn_id) else None
+    if not active_turn and callable(read_thread):
+        await _await_if_needed(read_thread(thread_id))
+        active_turn = active_turn_id(thread_id) if callable(active_turn_id) else None
+    if active_turn and callable(steer_turn):
+        return await _await_if_needed(steer_turn(thread_id, message=_PAUSE_STEER_MESSAGE))
+    return None
+
+
+def _continuation_packet_from_body(body: dict[str, Any]) -> dict[str, Any] | None:
+    raw = body.get("continuation_packet")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise _InvalidContinuationPacket("continuation_packet must be an object")
+    return model_validate_continuation_packet(raw).model_dump(mode="json", exclude_none=True)
+
+
+def _continuation_packet_validation_error(exc: ValidationError | _InvalidContinuationPacket) -> dict[str, str]:
+    if isinstance(exc, _InvalidContinuationPacket):
+        return {"code": "INVALID_ARGUMENT", "message": str(exc)}
+    fields = [
+        ".".join(str(part) for part in item["loc"])
+        for item in exc.errors()
+        if item.get("loc")
+    ]
+    if not fields:
+        message = "continuation_packet must satisfy ContinuationPacket"
+    else:
+        message = f"missing or invalid continuation_packet fields: {', '.join(fields)}"
+    return {"code": "INVALID_ARGUMENT", "message": message}
+
+
+def _resume_target_phase(task: dict[str, Any] | None) -> str:
+    phase = normalize_task_phase(task)
+    if phase != "handoff":
+        return phase
+    if not isinstance(task, dict):
+        return "planning"
+    stored = normalize_task_phase({"phase": task.get("resume_target_phase")})
+    if is_canonical_task_phase(stored) and stored != "handoff":
+        return stored
+    return "planning"
+
+
+@router.post("/{project_id}/pause")
+async def pause(
+    project_id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    store: TaskStore = Depends(get_store),
+    _: None = Depends(require_token),
+) -> dict[str, Any]:
+    rec = store.get(project_id)
+    if rec is None:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "NOT_FOUND", "message": project_id},
+        )
+    thread_id = str(rec.get("thread_id") or "")
+    bridge = get_bridge(request)
+    try:
+        await _pause_runtime(bridge, thread_id)
+    except Exception:
+        return err(
+            request.headers.get("x-request-id"),
+            {"code": "CONTROL_LINK_ERROR", "message": "pause runtime request failed"},
+        )
+    store.merge_update(
+        project_id,
+        {
+            "status": "paused",
+            "phase": str(rec.get("phase", "planning")),
+        },
+    )
+    rec2 = store.get(project_id)
+    thread_id = str((rec2 or rec).get("thread_id") or thread_id)
+    store.append_event(
+        project_id,
+        thread_id=thread_id,
+        event_type="pause",
+        event_source="a_control_agent",
+        payload_json={
+            "status": "paused",
+            "phase": str((rec2 or rec).get("phase", "planning")),
+        },
+    )
+    append_jsonl(
+        Path(settings.data_dir) / "audit.jsonl",
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "project_id": project_id,
+            "action": "pause",
+            "source": "a_control_agent",
+            "payload": {"status": "paused"},
+        },
+    )
+    return ok(
+        request.headers.get("x-request-id"),
+        {
+            "project_id": project_id,
+            "status": "paused",
+        },
+    )
+
+
 @router.post("/{project_id}/handoff")
 def handoff(
     project_id: str,
@@ -38,20 +214,40 @@ def handoff(
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
     reason = str(body.get("reason", "unspecified"))
+    try:
+        continuation_packet = _continuation_packet_from_body(body)
+    except (ValidationError, _InvalidContinuationPacket) as exc:
+        return err(
+            request.headers.get("x-request-id"),
+            _continuation_packet_validation_error(exc),
+        )
     rec = store.get(project_id)
     if rec is None:
         return err(
             request.headers.get("x-request-id"),
             {"code": "NOT_FOUND", "message": project_id},
         )
+    resume_target_phase = _resume_target_phase(rec)
     store.merge_update(
         project_id,
-        {"status": "handoff_in_progress", "phase": "handoff", "stuck_level": 4},
+        {
+            "status": "handoff_in_progress",
+            "phase": "handoff",
+            "stuck_level": 4,
+            "resume_target_phase": resume_target_phase,
+        },
     )
     rec2 = store.get(project_id)
     assert rec2 is not None
     handoffs_dir = Path(settings.data_dir) / "handoffs"
-    hf_path, summary = write_handoff_file(handoffs_dir, project_id, reason, dict(rec2))
+    hf_path, summary, source_packet_id, resolved_packet = write_handoff_file(
+        handoffs_dir,
+        project_id,
+        reason,
+        dict(rec2),
+        continuation_packet=continuation_packet,
+    )
+    goal_contract_version = str(rec2.get("goal_contract_version") or "").strip() or None
     store.append_event(
         project_id,
         thread_id=str(rec2.get("thread_id") or ""),
@@ -60,8 +256,16 @@ def handoff(
         payload_json={
             "reason": reason,
             "handoff_file": hf_path,
+            "source_packet_id": source_packet_id,
             "status": rec2.get("status"),
             "phase": rec2.get("phase"),
+            "resume_target_phase": rec2.get("resume_target_phase"),
+            "continuation_packet_id": str(resolved_packet.get("packet_id") or source_packet_id),
+            **(
+                {"goal_contract_version": goal_contract_version}
+                if goal_contract_version is not None
+                else {}
+            ),
         },
     )
     now = datetime.now(timezone.utc).isoformat()
@@ -73,12 +277,31 @@ def handoff(
             "action": "handoff",
             "reason": reason,
             "source": "a_control_agent",
-            "payload": {"handoff_file": hf_path},
+            "payload": {
+                "handoff_file": hf_path,
+                "source_packet_id": source_packet_id,
+                "resume_target_phase": resume_target_phase,
+                "continuation_packet_id": str(resolved_packet.get("packet_id") or source_packet_id),
+                **(
+                    {"goal_contract_version": goal_contract_version}
+                    if goal_contract_version is not None
+                    else {}
+                ),
+            },
         },
     )
+    response_data = {
+        "handoff_file": hf_path,
+        "summary": summary,
+        "source_packet_id": source_packet_id,
+        "resume_target_phase": resume_target_phase,
+        "continuation_packet": resolved_packet,
+    }
+    if goal_contract_version is not None:
+        response_data["goal_contract_version"] = goal_contract_version
     return ok(
         request.headers.get("x-request-id"),
-        {"handoff_file": hf_path, "summary": summary},
+        response_data,
     )
 
 
@@ -94,18 +317,31 @@ async def resume(
 ) -> dict[str, Any]:
     mode = str(body.get("mode", "resume_or_new_thread"))
     summary = str(body.get("handoff_summary", ""))
+    try:
+        continuation_packet = _continuation_packet_from_body(body)
+    except (ValidationError, _InvalidContinuationPacket) as exc:
+        return err(
+            request.headers.get("x-request-id"),
+            _continuation_packet_validation_error(exc),
+        )
+    rendered_prompt = (
+        render_continuation_packet_prompt(continuation_packet)
+        if continuation_packet is not None
+        else summary
+    )
     rec = store.get(project_id)
     if rec is None:
         return err(
             request.headers.get("x-request-id"),
             {"code": "NOT_FOUND", "message": project_id},
         )
+    resume_target_phase = _resume_target_phase(rec)
     store.merge_update(
         project_id,
         {
             "status": "resuming",
             "context_pressure": str(rec.get("context_pressure", "low")),
-            "phase": str(rec.get("phase", "planning")),
+            "phase": resume_target_phase,
         },
     )
     now = datetime.now(timezone.utc).isoformat()
@@ -117,21 +353,40 @@ async def resume(
             "action": "resume_requested",
             "reason": mode,
             "source": "a_control_agent",
-            "payload": {"handoff_summary_len": len(summary)},
+            "payload": {
+                "handoff_summary_len": len(rendered_prompt),
+                "resume_target_phase": resume_target_phase,
+                **(
+                    {"source_packet_id": str(continuation_packet.get("packet_id") or "")}
+                    if continuation_packet is not None
+                    else {}
+                ),
+            },
         },
     )
-    thread_id = str(rec.get("thread_id") or "")
+    parent_thread_id = str(rec.get("thread_id") or "")
+    resumed_thread_id = parent_thread_id
+    resume_outcome = _SAME_THREAD_RESUME
     try:
-        if bridge is not None and thread_id:
-            await bridge.resume_thread(thread_id)
-            if summary:
-                if bridge.active_turn_id(thread_id):
-                    await bridge.steer_turn(thread_id, message=summary)
+        if bridge is not None and parent_thread_id:
+            resume_snapshot = await bridge.resume_thread(parent_thread_id)
+            if isinstance(resume_snapshot, dict):
+                resumed_thread_id = (
+                    str(resume_snapshot.get("thread_id") or "").strip()
+                    or parent_thread_id
+                )
+            resume_outcome = _resume_outcome_for_thread(
+                parent_thread_id=parent_thread_id,
+                resumed_thread_id=resumed_thread_id,
+            )
+            if rendered_prompt:
+                if bridge.active_turn_id(resumed_thread_id):
+                    await bridge.steer_turn(resumed_thread_id, message=rendered_prompt)
                 else:
-                    await bridge.start_turn(thread_id, prompt=summary)
+                    await bridge.start_turn(resumed_thread_id, prompt=rendered_prompt)
                 store.record_service_input(
                     project_id,
-                    message=summary,
+                    message=rendered_prompt,
                     source="a_control_agent",
                     kind="resume_summary",
                 )
@@ -139,8 +394,9 @@ async def resume(
         store.merge_update(
             project_id,
             {
-                "status": "resume_failed",
-                "phase": "recovery",
+                "status": "failed",
+                "phase": "handoff",
+                "last_error_signature": str(exc),
             },
         )
         append_jsonl(
@@ -151,7 +407,10 @@ async def resume(
                 "action": "resume_failed",
                 "reason": mode,
                 "source": "a_control_agent",
-                "payload": {"error": str(exc)},
+                "payload": {
+                    "error": str(exc),
+                    "resume_target_phase": resume_target_phase,
+                },
             },
         )
         rec_failed = store.get(project_id)
@@ -160,18 +419,63 @@ async def resume(
             {"code": "RESUME_FAILED", "message": str(exc)},
             {
                 "project_id": project_id,
-                "status": rec_failed.get("status") if rec_failed else "resume_failed",
+                "status": rec_failed.get("status") if rec_failed else "failed",
                 "mode": mode,
             },
         )
-    store.merge_update(
-        project_id,
-        {
-            "status": "running",
-            "context_pressure": "medium",
-            "phase": str(rec.get("phase", "planning")),
-        },
-    )
+    rec_latest = store.get(project_id) or rec
+    next_state = {
+        "project_id": project_id,
+        "cwd": str(rec_latest.get("cwd") or ""),
+        "task_title": str(rec_latest.get("task_title") or ""),
+        "task_prompt": str(rec_latest.get("task_prompt") or ""),
+        "last_user_instruction": str(rec_latest.get("last_user_instruction") or ""),
+        "current_phase_goal": str(rec_latest.get("current_phase_goal") or ""),
+        "last_summary": str(rec_latest.get("last_summary") or ""),
+        "files_touched": list(rec_latest.get("files_touched") or []),
+        "approval_risk": rec_latest.get("approval_risk"),
+        "last_error_signature": rec_latest.get("last_error_signature"),
+        "last_substantive_user_input_at": rec_latest.get("last_substantive_user_input_at"),
+        "last_substantive_user_input_fingerprint": rec_latest.get(
+            "last_substantive_user_input_fingerprint"
+        ),
+        "last_local_manual_activity_at": rec_latest.get("last_local_manual_activity_at"),
+        "recent_service_inputs": list(rec_latest.get("recent_service_inputs") or []),
+        "model": str(rec_latest.get("model") or ""),
+        "sandbox": str(rec_latest.get("sandbox") or ""),
+        "approval_policy": str(rec_latest.get("approval_policy") or ""),
+        "stuck_level": rec_latest.get("stuck_level"),
+        "failure_count": rec_latest.get("failure_count"),
+        "status": "running",
+        "pending_approval": False,
+        "context_pressure": "medium",
+        "phase": resume_target_phase,
+        "thread_id": resumed_thread_id or parent_thread_id,
+        "goal_contract_version": rec_latest.get("goal_contract_version"),
+    }
+    if resume_outcome == _NEW_CHILD_SESSION and resumed_thread_id:
+        if parent_thread_id:
+            store.upsert_native_thread(
+                {
+                    **rec_latest,
+                    "project_id": project_id,
+                    "thread_id": parent_thread_id,
+                    "status": "paused",
+                    "phase": "handoff",
+                    "pending_approval": False,
+                }
+            )
+        rec3 = store.upsert_native_thread(next_state)
+    else:
+        store.merge_update(
+            project_id,
+            {
+                "status": "running",
+                "context_pressure": "medium",
+                "phase": resume_target_phase,
+            },
+        )
+        rec3 = store.get(project_id)
     append_jsonl(
         Path(settings.data_dir) / "audit.jsonl",
         {
@@ -180,10 +484,24 @@ async def resume(
             "action": "resume",
             "reason": mode,
             "source": "a_control_agent",
-            "payload": {"handoff_summary_len": len(summary)},
+            "payload": {
+                "handoff_summary_len": len(rendered_prompt),
+                "resume_outcome": resume_outcome,
+                "thread_id": resumed_thread_id or parent_thread_id,
+                "resume_target_phase": resume_target_phase,
+                **(
+                    {"source_packet_id": str(continuation_packet.get("packet_id") or "")}
+                    if continuation_packet is not None
+                    else {}
+                ),
+                **(
+                    {"parent_thread_id": parent_thread_id}
+                    if resume_outcome == _NEW_CHILD_SESSION and parent_thread_id
+                    else {}
+                ),
+            },
         },
     )
-    rec3 = store.get(project_id)
     if rec3 is not None:
         store.append_event(
             project_id,
@@ -192,16 +510,37 @@ async def resume(
             event_source="a_control_agent",
             payload_json={
                 "mode": mode,
-                "handoff_summary_len": len(summary),
+                "handoff_summary_len": len(rendered_prompt),
                 "status": rec3.get("status"),
                 "phase": rec3.get("phase"),
+                "resume_outcome": resume_outcome,
+                "thread_id": str(rec3.get("thread_id") or ""),
+                "resume_target_phase": resume_target_phase,
+                **(
+                    {"source_packet_id": str(continuation_packet.get("packet_id") or "")}
+                    if continuation_packet is not None
+                    else {}
+                ),
+                **(
+                    {"parent_thread_id": parent_thread_id}
+                    if resume_outcome == _NEW_CHILD_SESSION and parent_thread_id
+                    else {}
+                ),
             },
         )
+    response_data = _resume_response_payload(
+        project_id=project_id,
+        status=rec3.get("status") if rec3 else "running",
+        mode=mode,
+        resume_outcome=resume_outcome,
+        thread_id=str((rec3 or {}).get("thread_id") or resumed_thread_id or parent_thread_id),
+        parent_thread_id=parent_thread_id,
+        resume_target_phase=resume_target_phase,
+    )
+    if continuation_packet is not None:
+        response_data["source_packet_id"] = str(continuation_packet.get("packet_id") or "")
+        response_data["continuation_packet"] = continuation_packet
     return ok(
         request.headers.get("x-request-id"),
-        {
-            "project_id": project_id,
-            "status": rec3.get("status") if rec3 else "running",
-            "mode": mode,
-        },
+        response_data,
     )

@@ -1,0 +1,155 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T481
+  title: 冻结 048 owner 行范围、边界与 formal docs
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/048-missing-runtime-semantics-and-action-surface/spec.md`'
+  - '`specs/048-missing-runtime-semantics-and-action-surface/plan.md`'
+  - '`specs/048-missing-runtime-semantics-and-action-surface/tasks.md`'
+  - '`specs/048-missing-runtime-semantics-and-action-surface/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/runtime.yaml`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T482
+  title: 写失败测试锁定 canonical state、action、risk 与 memory runtime contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/services/session_spine/task_state.py`'
+  - '`src/watchdog/services/action_executor/steer.py`'
+  - '`src/watchdog/contracts/session_spine/enums.py`'
+  - '`src/watchdog/services/session_spine/actions.py`'
+  - '`src/a_control_agent/risk/classifier.py`'
+  - '`src/watchdog/services/memory_hub/service.py`'
+  - '`tests/test_watchdog_runtime_semantics.py`'
+  - '`tests/test_watchdog_action_execution.py`'
+  - '`tests/test_watchdog_steer.py`'
+  - '`tests/test_a_control_agent.py`'
+  - '`tests/test_watchdog_memory_hub.py`'
+  - '`tests/test_watchdog_memory_degradation.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T481
+- task_id: T483
+  title: 实现 canonical state normalization、steer registry 与 stable action surface
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/session_spine/task_state.py`'
+  - '`src/a_control_agent/storage/tasks_store.py`'
+  - '`src/a_control_agent/services/codex/client.py`'
+  - '`src/watchdog/services/action_executor/steer.py`'
+  - '`src/watchdog/contracts/session_spine/enums.py`'
+  - '`src/watchdog/services/session_spine/actions.py`'
+  - '`src/watchdog/api/session_spine_actions.py`'
+  - '`tests/test_watchdog_runtime_semantics.py`'
+  - '`tests/test_watchdog_action_execution.py`'
+  - '`tests/test_watchdog_steer.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T482
+- task_id: T484
+  title: 实现 fail-closed approval boundary 与 Memory Hub hot-path semantics
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/a_control_agent/risk/classifier.py`'
+  - '`src/a_control_agent/services/codex/app_server_bridge.py`'
+  - '`src/watchdog/services/memory_hub/service.py`'
+  - '`src/watchdog/services/session_spine/recovery.py`'
+  - '`src/watchdog/services/brain/service.py`'
+  - '`tests/test_a_control_agent.py`'
+  - '`tests/test_watchdog_memory_hub.py`'
+  - '`tests/test_watchdog_memory_degradation.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T483
+- task_id: T485
+  title: 完成 048 整体验证并交接 WI-049
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/048-missing-runtime-semantics-and-action-surface/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/runtime.yaml`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T484
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T481
+  status: completed
+  started_at: '2026-04-16T07:07:14Z'
+  completed_at: '2026-04-16T07:28:53Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T482
+  status: completed
+  started_at: '2026-04-16T07:28:53Z'
+  completed_at: '2026-04-16T07:38:48Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T483
+  status: completed
+  started_at: '2026-04-16T07:38:48Z'
+  completed_at: '2026-04-16T08:04:49Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T484
+  status: completed
+  started_at: '2026-04-16T08:04:49Z'
+  completed_at: '2026-04-16T08:04:49Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T485
+  status: completed
+  started_at: '2026-04-16T08:04:49Z'
+  completed_at: '2026-04-16T08:04:49Z'
+current_batch: 5

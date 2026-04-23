@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T801
+  title: formalize WI-080 的 truth-boundary owner 与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T802
+  title: 强化 live acceptance runbook 真值边界并新增 docs contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T801
+- task_id: T803
+  title: 扩展 doc contract 回归测试锁定 truth-boundary check
+  status: completed
+  phase: 3
+  depends_on:
+  - T802
+- task_id: T804
+  title: 同步 FD-004 状态并完成 targeted verification
+  status: completed
+  phase: 4
+  depends_on:
+  - T803
+- task_id: T805
+  title: 回写 .ai-sdlc state 与 formal mirror 并关闭 WI-080
+  status: completed
+  phase: 5
+  depends_on:
+  - T804
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T801
+  status: completed
+  started_at: '2026-04-17T17:48:15Z'
+  completed_at: '2026-04-17T17:50:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T802
+  status: completed
+  started_at: '2026-04-17T17:50:00Z'
+  completed_at: '2026-04-17T17:54:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T803
+  status: completed
+  started_at: '2026-04-17T17:54:00Z'
+  completed_at: '2026-04-17T17:56:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T804
+  status: completed
+  started_at: '2026-04-17T17:56:00Z'
+  completed_at: '2026-04-17T17:58:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T805
+  status: completed
+  started_at: '2026-04-17T17:58:00Z'
+  completed_at: '2026-04-17T18:00:00Z'
+current_batch: 5

@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T651
+  title: 冻结 065 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T652
+  title: 写 failing tests 锁定 AI_AutoSDLC cursor preview contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T651
+- task_id: T653
+  title: 实现 stage-aware request/response models 与 cursor adapter
+  status: completed
+  phase: 3
+  depends_on:
+  - T652
+- task_id: T654
+  title: 跑 Memory Hub / Goal Contract targeted 验证
+  status: completed
+  phase: 4
+  depends_on:
+  - T653
+- task_id: T655
+  title: 完成 ai_sdlc 状态同步与对抗评审
+  status: completed
+  phase: 5
+  depends_on:
+  - T654
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T651
+  status: completed
+  started_at: '2026-04-16T12:24:00Z'
+  completed_at: '2026-04-16T12:26:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T652
+  status: completed
+  started_at: '2026-04-16T12:26:00Z'
+  completed_at: '2026-04-16T12:28:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T653
+  status: completed
+  started_at: '2026-04-16T12:28:00Z'
+  completed_at: '2026-04-16T12:31:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T654
+  status: completed
+  started_at: '2026-04-16T12:31:00Z'
+  completed_at: '2026-04-16T12:35:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T655
+  status: completed
+  started_at: '2026-04-16T12:35:00Z'
+  completed_at: '2026-04-16T12:41:00Z'
+current_batch: 5

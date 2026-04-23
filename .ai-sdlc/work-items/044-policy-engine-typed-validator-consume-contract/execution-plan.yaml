@@ -1,0 +1,133 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T441
+  title: 冻结 044 formal docs 与 validator seam 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/044-policy-engine-typed-validator-consume-contract/spec.md`'
+  - '`specs/044-policy-engine-typed-validator-consume-contract/plan.md`'
+  - '`specs/044-policy-engine-typed-validator-consume-contract/tasks.md`'
+  - '`specs/044-policy-engine-typed-validator-consume-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T442
+  title: 写失败测试锁定 typed validator consume contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T441
+- task_id: T443
+  title: 实现最小 typed validator helper 与 consumer 收口
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/brain/validator_read_contract.py`'
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T442
+- task_id: T444
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/044-policy-engine-typed-validator-consume-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T443
+- task_id: T445
+  title: 完成 044 整体验证并交接后续 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/044-policy-engine-typed-validator-consume-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/latest-summary.md`'
+  - '`.ai-sdlc/work-items/044-policy-engine-typed-validator-consume-contract/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T444
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T441
+  status: completed
+  started_at: '2026-04-14T14:46:09+08:00'
+  completed_at: '2026-04-14T15:04:31+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T442
+  status: completed
+  started_at: '2026-04-14T15:04:31+08:00'
+  completed_at: '2026-04-14T15:05:10+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T443
+  status: completed
+  started_at: '2026-04-14T15:05:10+08:00'
+  completed_at: '2026-04-14T15:05:50+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T444
+  status: completed
+  started_at: '2026-04-14T15:05:50+08:00'
+  completed_at: '2026-04-14T15:06:42+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T445
+  status: completed
+  started_at: '2026-04-14T15:06:42+08:00'
+  completed_at: '2026-04-14T15:08:22+08:00'
+current_batch: 5

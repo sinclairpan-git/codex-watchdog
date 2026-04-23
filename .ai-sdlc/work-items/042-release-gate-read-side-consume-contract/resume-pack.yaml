@@ -1,0 +1,62 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T425
+working_set_snapshot:
+  prd_path: codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/042-release-gate-read-side-consume-contract/spec.md
+  plan_path: specs/042-release-gate-read-side-consume-contract/plan.md
+  tasks_path: specs/042-release-gate-read-side-consume-contract/tasks.md
+  active_files:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/042-release-gate-read-side-consume-contract/spec.md`'
+  - '`specs/042-release-gate-read-side-consume-contract/plan.md`'
+  - '`specs/042-release-gate-read-side-consume-contract/tasks.md`'
+  - '`specs/042-release-gate-read-side-consume-contract/task-execution-log.md`'
+  - '`src/watchdog/services/brain/release_gate_read_contract.py`'
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_ops.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/e2e/test_watchdog_future_worker_execution.py`'
+  - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/042-release-gate-read-side-consume-contract/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    - `WI-042` 已从 `WI-041` handoff 后正式追加，目标是把 `release_gate_verdict + release_gate_evidence_bundle` 的 read-side consume path 收口到单一 typed contract。
+    - 新 work item 候选已先经过 Hermes Agent 专家与 Anthropic Manager 专家的对抗评估：
+      - 两位专家都推荐方案 A：shared typed read-side consume contract；
+      - 两位专家都认为方案 B（测试工厂整理）不是下一 canonical work item；
+      - 两位专家都反对方案 C（继续扩 refresh/platform 流程），认为存在 scope drift / P1 风险。
+    - 当前 formal docs 已冻结的关键边界：
+      - 042 只做 shared helper / typed model + 现有 consumer 收口；
+      - 首批 consumer 只覆盖 `src/watchdog/api/ops.py` 与 resident runtime 现有 read-side 路径；
+      - 042 不新增 policy、schema、persistence、manifest、archive metadata、query facade 或 read platform。
+    - `T421` 已完成：
+      - 已新增 `Task 13` 到总实施计划；
+      - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/042-*` 基线；
+      - Hermes Agent 专家与 Anthropic Manager 专家复核均无 blocking/P1；
+      - 当前下一执行入口固定为 `T422`。
+    - `T422` 已完成：
+      - 已新增 shared read contract module surface 红测；
+      - 已锁定 `ops.py` 对 partial / malformed bundle 的整包 fail-closed；
+      - 已锁定 resident runtime 不得把缺字段或缺 bundle 的 formal pass verdict 当作有效 runtime gate。
+    - `T423` 已完成：
+      - 已新增 `src/watchdog/services/brain/release_gate_read_contract.py`；
+      - `src/watchdog/api/ops.py` 与 resident runtime 读侧已改为只消费 shared helper；
+      - 已修掉两轮对抗复核指出的 P1，并把 future-worker patched evidence / e2e 一并对齐 formal bundle。
+    - `T424` 已完成：
+      - 执行日志、总实施计划 Task 13 与 `.ai-sdlc` 元数据已同步到 042 完成态。
+    - `T425` 已完成：
+      - `WI-042` 已完成：后续任何 read-side consumer 都必须复用 shared read contract。
+current_branch: codex/wi-038-future-worker-canonical-execution
+docs_baseline_ref: ''
+docs_baseline_at: ''
+timestamp: '2026-04-14T16:10:35+08:00'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: ''
+checkpoint_fingerprint: ''

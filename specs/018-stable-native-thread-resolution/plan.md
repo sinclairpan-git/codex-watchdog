@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/018-stable-native-thread-resolution/spec.md"
 ---
 
@@ -25,8 +25,8 @@ related_doc:
 | A Client | `src/watchdog/services/a_client/client.py` | 新增按 native thread 读取 task envelope 的最小 client 方法 |
 | L2 Session Projection | `src/watchdog/services/session_spine/service.py`, `src/watchdog/services/session_spine/replies.py` | 构建 `build_session_read_bundle_by_native_thread(...)` 并产出同源 session reply |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 canonical native-thread resolution route；注意静态路由顺序必须先于 `/sessions/{project_id}` |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py` | 新增 `get_session_by_native_thread` intent，要求 `arguments.native_thread_id` |
-| 验证与文档 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`, `tests/test_a_control_agent.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 stable route、adapter、raw `/by-thread` 非回归与对外口径 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py` | 新增 `get_session_by_native_thread` intent，要求 `arguments.native_thread_id` |
+| 验证与文档 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`, `tests/test_a_control_agent.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 stable route、adapter、raw `/by-thread` 非回归与对外口径 |
 
 ## 依赖顺序
 
@@ -35,7 +35,7 @@ related_doc:
 2. **再补 A-client 与共享 L2 builder**
    - 先把 `/by-thread` 读取收进 A-client，再形成单一 resolution builder，避免 API / adapter 各写一套 lookup。
 3. **再接 stable API route 与 adapter intent**
-   - HTTP 与 OpenClaw 共用同一 builder，不再绕行 session directory 或 raw body。
+   - HTTP 与 Feishu 共用同一 builder，不再绕行 session directory 或 raw body。
 4. **最后补 raw `/by-thread` 非回归、文档与状态**
    - 明确 stable vs raw 的角色边界，并推进 `.ai-sdlc`。
 
@@ -152,7 +152,7 @@ related_doc:
 
 1. 存在独立 stable route `GET /api/v1/watchdog/sessions/by-native-thread/{native_thread_id}`。
 2. 该 route 返回既有 `ReplyModel(reply_code=session_projection)`，不新增平行 DTO。
-3. OpenClaw adapter 已支持 `get_session_by_native_thread`，且与 HTTP route 复用同一共享 builder。
+3. Feishu adapter 已支持 `get_session_by_native_thread`，且与 HTTP route 复用同一共享 builder。
 4. session spine `schema_version` 保持不变，说明 018 只是 stable lookup surface completion。
 5. raw `/api/v1/tasks/by-thread/{thread_id}` 已有显式非回归验证。
 6. README、getting-started、OpenAPI 与 `.ai-sdlc` 口径都已同步到 018。

@@ -1,6 +1,6 @@
 status: initialized
-project_name: openclaw-codex-watchdog
-initialized_at: '2026-04-04T06:19:43+00:00'
-last_updated: '2026-04-05T21:01:26Z'
-next_work_item_seq: 24
-version: '1.0'
+project_name: codex-watchdog
+initialized_at: 2026-04-04T06:19:43+00:00
+last_updated: 2026-04-21T02:15:30Z
+next_work_item_seq: 86
+version: 1.0

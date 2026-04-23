@@ -12,14 +12,30 @@ class ProgressSummaryCheckpoint(BaseModel):
     last_progress_notification_at: str
 
 
+class DirectorySummaryCheckpoint(BaseModel):
+    summary_fingerprint: str
+    last_directory_notification_at: str
+
+
 class AutoContinueCheckpoint(BaseModel):
     project_id: str
     last_auto_continue_at: str
 
 
+class AutoDispatchCheckpoint(BaseModel):
+    project_id: str
+    continuation_identity: str
+    route_key: str
+    action_ref: str
+    status: str = "completed"
+    last_auto_dispatch_at: str
+
+
 class ResidentOrchestrationStateFile(BaseModel):
     progress_summaries: dict[str, ProgressSummaryCheckpoint] = Field(default_factory=dict)
+    directory_summary: DirectorySummaryCheckpoint | None = None
     auto_continue_checkpoints: dict[str, AutoContinueCheckpoint] = Field(default_factory=dict)
+    auto_dispatch_checkpoints: dict[str, AutoDispatchCheckpoint] = Field(default_factory=dict)
 
 
 class ResidentOrchestrationStateStore:
@@ -64,6 +80,27 @@ class ResidentOrchestrationStateStore:
             self._write(data)
         return checkpoint
 
+    def get_directory_summary_checkpoint(self) -> DirectorySummaryCheckpoint | None:
+        with self._lock:
+            data = self._read()
+            return data.directory_summary
+
+    def put_directory_summary_checkpoint(
+        self,
+        *,
+        summary_fingerprint: str,
+        last_directory_notification_at: str,
+    ) -> DirectorySummaryCheckpoint:
+        checkpoint = DirectorySummaryCheckpoint(
+            summary_fingerprint=summary_fingerprint,
+            last_directory_notification_at=last_directory_notification_at,
+        )
+        with self._lock:
+            data = self._read()
+            data.directory_summary = checkpoint
+            self._write(data)
+        return checkpoint
+
     def get_auto_continue_checkpoint(self, project_id: str) -> AutoContinueCheckpoint | None:
         with self._lock:
             data = self._read()
@@ -82,5 +119,83 @@ class ResidentOrchestrationStateStore:
         with self._lock:
             data = self._read()
             data.auto_continue_checkpoints[project_id] = checkpoint
+            self._write(data)
+        return checkpoint
+
+    @staticmethod
+    def _auto_dispatch_key(
+        *,
+        project_id: str,
+        continuation_identity: str,
+        route_key: str,
+    ) -> str:
+        return "|".join((project_id, continuation_identity, route_key))
+
+    def get_auto_dispatch_checkpoint(
+        self,
+        *,
+        project_id: str,
+        continuation_identity: str,
+        route_key: str,
+    ) -> AutoDispatchCheckpoint | None:
+        checkpoint_key = self._auto_dispatch_key(
+            project_id=project_id,
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+        )
+        with self._lock:
+            data = self._read()
+            return data.auto_dispatch_checkpoints.get(checkpoint_key)
+
+    def get_latest_auto_dispatch_checkpoint(
+        self,
+        *,
+        project_id: str,
+        continuation_identity: str,
+    ) -> AutoDispatchCheckpoint | None:
+        with self._lock:
+            data = self._read()
+            matches = [
+                checkpoint
+                for checkpoint in data.auto_dispatch_checkpoints.values()
+                if checkpoint.project_id == project_id
+                and checkpoint.continuation_identity == continuation_identity
+            ]
+        if not matches:
+            return None
+        return max(
+            matches,
+            key=lambda checkpoint: (
+                checkpoint.last_auto_dispatch_at,
+                checkpoint.route_key,
+            ),
+        )
+
+    def put_auto_dispatch_checkpoint(
+        self,
+        *,
+        project_id: str,
+        continuation_identity: str,
+        route_key: str,
+        action_ref: str,
+        status: str = "completed",
+        last_auto_dispatch_at: str,
+    ) -> AutoDispatchCheckpoint:
+        checkpoint = AutoDispatchCheckpoint(
+            project_id=project_id,
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+            action_ref=action_ref,
+            status=status,
+            last_auto_dispatch_at=last_auto_dispatch_at,
+        )
+        checkpoint_key = self._auto_dispatch_key(
+            project_id=project_id,
+            continuation_identity=continuation_identity,
+            route_key=route_key,
+        )
+        with self._lock:
+            data = self._read()
+            data.auto_dispatch_checkpoints[checkpoint_key] = checkpoint
             self._write(data)
         return checkpoint

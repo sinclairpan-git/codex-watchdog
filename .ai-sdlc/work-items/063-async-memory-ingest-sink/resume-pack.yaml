@@ -1,0 +1,15 @@
+work_item:
+  id: 063-async-memory-ingest-sink
+  spec_dir: specs/063-async-memory-ingest-sink
+  branch: codex/063-async-memory-ingest-sink
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: open next residual work item after adversarial review
+artifacts:
+  - specs/063-async-memory-ingest-sink/spec.md
+  - specs/063-async-memory-ingest-sink/plan.md
+  - specs/063-async-memory-ingest-sink/tasks.md
+  - .ai-sdlc/work-items/063-async-memory-ingest-sink/execution-plan.yaml
+docs_baseline_ref: 4a2403793b9d9380e96b7a1f83bbb5b76ddf946c37a8f0fb8c5ccfc25d02e349
+timestamp: '2026-04-16T12:11:12Z'

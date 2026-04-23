@@ -1,0 +1,18 @@
+{
+  "manifest_id": "label-manifest:fixture",
+  "generated_by": "codex",
+  "report_approved_by": "operator-a",
+  "expires_at": "2026-05-01T00:00:00Z",
+  "labels": [
+    {
+      "packet_id": "packet:1",
+      "approved_by": "operator-a",
+      "decision": "allow"
+    },
+    {
+      "packet_id": "packet:2",
+      "approved_by": "operator-a",
+      "decision": "allow"
+    }
+  ]
+}

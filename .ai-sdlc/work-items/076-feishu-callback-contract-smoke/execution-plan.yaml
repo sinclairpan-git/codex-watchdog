@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T761
+  title: Freeze repo-local callback smoke scope and optional-target semantics
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T762
+  title: Implement feishu-control smoke target and CLI env wiring
+  status: completed
+  phase: 2
+  depends_on:
+  - T761
+- task_id: T763
+  title: Lock docs, env example, architecture truth, and docs contracts
+  status: completed
+  phase: 3
+  depends_on:
+  - T762
+- task_id: T764
+  title: Fix feishu response compatibility receipt replay idempotency
+  status: completed
+  phase: 4
+  depends_on:
+  - T763
+- task_id: T765
+  title: Close out verification and dual-agent adversarial review
+  status: completed
+  phase: 5
+  depends_on:
+  - T764
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T761
+  status: completed
+  started_at: '2026-04-17T03:25:00Z'
+  completed_at: '2026-04-17T03:27:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T762
+  status: completed
+  started_at: '2026-04-17T03:27:00Z'
+  completed_at: '2026-04-17T03:30:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T763
+  status: completed
+  started_at: '2026-04-17T03:30:00Z'
+  completed_at: '2026-04-17T03:32:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T764
+  status: completed
+  started_at: '2026-04-17T03:32:00Z'
+  completed_at: '2026-04-17T03:35:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T765
+  status: completed
+  started_at: '2026-04-17T03:35:00Z'
+  completed_at: '2026-04-17T03:36:57Z'
+current_batch: 5

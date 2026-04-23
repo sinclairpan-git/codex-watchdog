@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 实施计划：009-task-events-stream

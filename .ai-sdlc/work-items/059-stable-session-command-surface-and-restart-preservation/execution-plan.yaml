@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T591
+  title: 冻结 059 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T592
+  title: 跑 targeted verification 锁定当前 dirty tree
+  status: completed
+  phase: 2
+  depends_on:
+  - T591
+- task_id: T593
+  title: 完成最小修补与 wiring
+  status: completed
+  phase: 3
+  depends_on:
+  - T592
+- task_id: T594
+  title: 完成 targeted / smoke 验证
+  status: completed
+  phase: 4
+  depends_on:
+  - T593
+- task_id: T595
+  title: 完成 059 整体验证并回写 formal memory
+  status: completed
+  phase: 5
+  depends_on:
+  - T594
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T591
+  status: completed
+  started_at: '2026-04-16T11:28:00Z'
+  completed_at: '2026-04-16T11:31:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T592
+  status: completed
+  started_at: '2026-04-16T11:31:00Z'
+  completed_at: '2026-04-16T11:34:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T593
+  status: completed
+  started_at: '2026-04-16T11:34:00Z'
+  completed_at: '2026-04-16T11:34:30Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T594
+  status: completed
+  started_at: '2026-04-16T11:34:30Z'
+  completed_at: '2026-04-16T11:35:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T595
+  status: completed
+  started_at: '2026-04-16T11:35:00Z'
+  completed_at: '2026-04-16T11:36:00Z'
+current_batch: 5

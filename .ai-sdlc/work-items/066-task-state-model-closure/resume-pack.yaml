@@ -1,0 +1,15 @@
+work_item:
+  id: 066-task-state-model-closure
+  spec_dir: specs/066-task-state-model-closure
+  branch: codex/066-task-state-model-closure
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: open next work item after task-state-model closeout
+artifacts:
+  - specs/066-task-state-model-closure/spec.md
+  - specs/066-task-state-model-closure/plan.md
+  - specs/066-task-state-model-closure/tasks.md
+  - .ai-sdlc/work-items/066-task-state-model-closure/execution-plan.yaml
+docs_baseline_ref: cba34ca58ef9642de3051510ee7f41e7ef5280a7319dd49d56b2b1d4f8857ff0
+timestamp: '2026-04-16T12:53:12Z'

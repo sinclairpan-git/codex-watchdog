@@ -8,7 +8,7 @@
 - **状态**：已完成
 - **目标**：把 `decision_outbox / delivery_outbox / outbox_seq` 与投递矩阵收敛成 formal boundary。
 - **涉及文件**：
-  - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+  - `docs/architecture/codex-watchdog-full-product-loop-design.md`
   - `specs/027-outbox-delivery-retry-receipt/spec.md`
   - `specs/027-outbox-delivery-retry-receipt/plan.md`
   - `specs/027-outbox-delivery-retry-receipt/tasks.md`
@@ -50,5 +50,5 @@
 ## 整体验收
 
 - `027` 是完整产品闭环中的 `WI-4`，只负责 outbox / delivery / retry / receipt。
-- `027` 完成后，OpenClaw 可稳定接收主动 envelope，不依赖内存直发。
+- `027` 完成后，Feishu 可稳定接收主动 envelope，不依赖内存直发。
 - `027` 不重跑 policy，不承担 action / approval business logic。

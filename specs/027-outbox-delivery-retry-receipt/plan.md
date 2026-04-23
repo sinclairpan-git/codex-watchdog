@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/027-outbox-delivery-retry-receipt/spec.md"
   - "specs/026-canonical-action-approval-response-loop/spec.md"
 ---
@@ -24,7 +24,7 @@ related_doc:
 | Envelope Builder | `src/watchdog/services/delivery/envelopes.py` | 从 canonical decision / result records 构造 envelope |
 | Outbox Store | `src/watchdog/services/delivery/store.py` | `decision_outbox` 保存待投递 envelope 真值，`delivery_outbox` 保存 attempt / retry / receipt，`outbox_seq` 提供稳定顺序 |
 | Delivery Worker | `src/watchdog/services/delivery/worker.py` | 排序、回调、retry、receipt 校验 |
-| Transport | `src/watchdog/services/delivery/http_client.py` | OpenClaw webhook HTTP 发送与响应解析 |
+| Transport | `src/watchdog/services/delivery/http_client.py` | Feishu webhook HTTP 发送与响应解析 |
 | 验证 | `tests/test_watchdog_delivery_worker.py`, `tests/test_watchdog_delivery_http.py` | 顺序、重试、receipt、失败升级 |
 
 ## 边界纪律

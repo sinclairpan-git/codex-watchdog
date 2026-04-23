@@ -8,7 +8,7 @@
 - **状态**：已完成
 - **目标**：把 resident projection runtime、persisted spine、`fact_snapshot_version` 与 `session_seq` 的边界收敛为可执行文档与模块职责。
 - **涉及文件**：
-  - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+  - `docs/architecture/codex-watchdog-full-product-loop-design.md`
   - `specs/024-resident-supervision-session-spine-persistence/spec.md`
   - `specs/024-resident-supervision-session-spine-persistence/plan.md`
   - `specs/024-resident-supervision-session-spine-persistence/tasks.md`
@@ -61,18 +61,18 @@
 - **状态**：已完成
 - **目标**：补齐最小 integration 回归与 operator notes，确认 resident runtime 引入后 stable route contract 不回归。
 - **涉及文件**：
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `tests/integration/test_feishu_integration_spine.py`
   - `docs/getting-started.zh-CN.md`
   - `README.md`
 - **完成标准**：
-  1. OpenClaw 模板继续复用 stable route，不受底层 persisted spine 切换影响；
+  1. Feishu 模板继续复用 stable route，不受底层 persisted spine 切换影响；
   2. 文档写清 fresh/stale/read semantics 与 resident runtime 的基本运维注意事项；
   3. 不引入 delivery / webhook / policy 运行时说明。
-- **验证**：`uv run pytest -q tests/integration/test_openclaw_integration_spine.py`
+- **验证**：`uv run pytest -q tests/integration/test_feishu_integration_spine.py`
 - **完成情况**：已补齐 integration 回归与最小运维说明，并保持 stable route contract 不回归。
 
 ## 整体验收
 
 - `024` 是完整产品闭环中的 `WI-1`，只负责 resident supervision 与 canonical session spine persistence。
 - `024` 完成后，后续 `WI-2` 可以直接基于 persisted snapshot 做策略判定，而不再依赖 query 时临时拼装。
-- `024` 不引入策略引擎、自动执行、ApprovalEnvelope/DecisionEnvelope/NotificationEnvelope 投递链，也不实现 OpenClaw runtime。
+- `024` 不引入策略引擎、自动执行、ApprovalEnvelope/DecisionEnvelope/NotificationEnvelope 投递链，也不实现 Feishu runtime。

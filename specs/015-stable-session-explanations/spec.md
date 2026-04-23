@@ -1,8 +1,8 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
-  - "specs/010-openclaw-integration-spine/spec.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
+  - "specs/010-runtime-integration-spine/spec.md"
   - "specs/011-stable-session-events/spec.md"
   - "specs/014-stable-supervision-evaluation/spec.md"
 ---
@@ -11,7 +11,7 @@ related_doc:
 
 ## 概述
 
-在 `010-openclaw-integration-spine` 冻结最小 stable read/write spine、`011-stable-session-events` 冻结稳定事件面、`012`/`014` 补齐稳定动作之后，当前仍存在一个明显不对称点：
+在 `010-runtime-integration-spine` 冻结最小 stable read/write spine、`011-stable-session-events` 冻结稳定事件面、`012`/`014` 补齐稳定动作之后，当前仍存在一个明显不对称点：
 
 - `why_stuck`
 - `explain_blocker`
@@ -24,15 +24,15 @@ related_doc:
 
 ## 功能需求
 
-- **FR-1501**：015 必须在现有中立 `session_spine` contract 上补齐 explanation read surface；不得把 explanation route 放回 `openclaw` 命名空间，也不得引入新的 legacy/raw explanation API。
+- **FR-1501**：015 必须在现有中立 `session_spine` contract 上补齐 explanation read surface；不得把 explanation route 放回 `feishu` 命名空间，也不得引入新的 legacy/raw explanation API。
 - **FR-1502**：015 必须至少提供以下 stable read routes：
   - `GET /api/v1/watchdog/sessions/{project_id}/stuck-explanation`
   - `GET /api/v1/watchdog/sessions/{project_id}/blocker-explanation`
 - **FR-1503**：上述两个 route 的语义返回值必须继续是已冻结的 `ReplyModel`；其中 `reply_code` 分别固定为 `stuck_explanation` 与 `blocker_explanation`，不得引入第二套 explanation DTO。
 - **FR-1504**：`stuck_explanation` 与 `blocker_explanation` 必须继续仅基于 stable read model 与 `FactRecord` 生成；不得新增 raw route 旁路、不得直接读取 legacy `progress / evaluate / approvals / recover / events` 返回体来拼 explanation。
-- **FR-1505**：HTTP stable route 与 OpenClaw adapter 必须复用同一 explanation builder；不得在 API 层和 adapter 层各自维护一套 explanation message / fact filter 规则。
+- **FR-1505**：HTTP stable route 与 Feishu adapter 必须复用同一 explanation builder；不得在 API 层和 adapter 层各自维护一套 explanation message / fact filter 规则。
 - **FR-1506**：015 不新增 `ReplyCode`、`ActionCode`、contract object 字段或 schema 字段；现有 `ReplyModel`、`FactRecord`、`SessionProjection`、`TaskProgressView` 已足以承载 explanation 结果，因此 session spine `contract_version` 与 `schema_version` 保持现状，不因 015 单独推进。
-- **FR-1507**：当 control-link 不可达或 A-Control-Agent 返回错误时，015 explanation route 必须继续复用当前 stable read error 语义；不得把 raw upstream envelope 或内部异常栈暴露为 stable explanation payload。
+- **FR-1507**：当 control-link 不可达或 Codex runtime service 返回错误时，015 explanation route 必须继续复用当前 stable read error 语义；不得把 raw upstream envelope 或内部异常栈暴露为 stable explanation payload。
 - **FR-1508**：README、getting-started 与 OpenAPI 必须明确把 explanation route 纳入 stable read surface，并说明它们与 adapter intent `why_stuck` / `explain_blocker` 一一对应。
 - **FR-1509**：015 必须补齐 explanation route API 测试、shared builder 测试、adapter 非回归测试，以及对既有 `get_session` / `get_progress` / `list_pending_approvals` stable read surface 的非回归验证。
 
@@ -54,7 +54,7 @@ related_doc:
 
 ### 用户故事 3：adapter 与 HTTP 不再漂移
 
-同一项目在 OpenClaw adapter 与 HTTP API 上看到的 explanation 语义应一致。
+同一项目在 Feishu adapter 与 HTTP API 上看到的 explanation 语义应一致。
 
 场景 1：对同一 `project_id`，adapter `why_stuck` 与 HTTP `stuck-explanation` 返回相同 `reply_code` 与同源事实集。
 

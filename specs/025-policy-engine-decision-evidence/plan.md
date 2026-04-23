@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/025-policy-engine-decision-evidence/spec.md"
   - "specs/024-resident-supervision-session-spine-persistence/spec.md"
 ---

@@ -1,0 +1,17 @@
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T485
+current_branch: codex/048-missing-runtime-semantics-and-action-surface
+docs_baseline_ref: abd78b82584714808dacd3cadda7412bbc2af064ddefe0c117226509ed6c8483
+docs_baseline_at: '2026-04-16T07:32:14Z'
+review_approval_status: approved
+review_approved_by:
+- Anthropic Manager Expert
+- Hermes Agent Expert
+ai_decisions_count: 0
+execution_mode: auto
+started_at: '2026-04-16T07:07:14Z'
+last_updated: '2026-04-16T08:04:49Z'
+debug_rounds: {}
+consecutive_halts: 0

@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/011-stable-session-events/spec.md"
 ---
 
@@ -9,14 +9,14 @@ related_doc:
 
 ## 目标
 
-在不改变 raw SSE 透传语义、不引入动作回执事件融合的前提下，交付一套 **稳定、版本化、只读** 的 session event surface，让 OpenClaw 与其他上层调用方消费 `SessionEvent`，而不是直接消费 A-Control-Agent raw SSE payload。
+在不改变 raw SSE 透传语义、不引入动作回执事件融合的前提下，交付一套 **稳定、版本化、只读** 的 session event surface，让 Feishu 与其他上层调用方消费 `SessionEvent`，而不是直接消费 Codex runtime service raw SSE payload。
 
 ## 架构摘要
 
 - **Contract-first**：先冻结 `SessionEvent`、`EventCode`、`EventKind` 与事件版本语义。
 - **Projection / Codec 分离**：L2 负责 raw event -> stable event projection 与 SSE parse/encode；API 层只负责 transport。
 - **Stable vs Legacy 明确分离**：`/watchdog/sessions/{project_id}/events` 是 canonical stable route；`/watchdog/tasks/{project_id}/events` 继续作为 legacy pass-through。
-- **Adapter 只读接入**：OpenClaw adapter 新增只读事件入口，不把事件面塞回 010 的 intent/reply write loop。
+- **Adapter 只读接入**：Feishu adapter 新增只读事件入口，不把事件面塞回 010 的 intent/reply write loop。
 
 ## 模块边界与文件落点
 
@@ -25,7 +25,7 @@ related_doc:
 | Contract | `src/watchdog/contracts/session_spine/enums.py`, `models.py`, `versioning.py`, `__init__.py` | 定义 `SessionEvent`、事件枚举、独立版本常量 |
 | L2 Event Projection | `src/watchdog/services/session_spine/events.py` | raw SSE block 解析、raw event -> `SessionEvent` 投影、stable SSE 编码 |
 | Stable API Surface | `src/watchdog/api/session_spine_events.py`, `src/watchdog/main.py` | 暴露 canonical stable event route |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/adapter.py` | 暴露 OpenClaw 只读事件消费入口 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/adapter.py` | 暴露 Feishu 只读事件消费入口 |
 | Legacy 保持不动为主 | `src/watchdog/api/events_proxy.py` | 原样保留 raw SSE proxy |
 | 验证与文档 | `tests/test_watchdog_session_events_*.py`, `tests/integration/test_stable_session_events.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定行为与接入文档 |
 
@@ -58,7 +58,7 @@ related_doc:
 
 关键原则：
 
-- 事件契约保持中立，不带 `openclaw` 命名
+- 事件契约保持中立，不带 `feishu` 命名
 - `thread_id` 继续表示 stable session id
 - `native_thread_id` 只表达底层原生线程
 - 011 事件版本独立于 010 session spine read/write schema 版本
@@ -104,7 +104,7 @@ related_doc:
 - `data:` 行是 `SessionEvent` JSON
 - raw proxy 路由继续保持 legacy 行为
 
-### Phase 4：接入 L3 OpenClaw adapter
+### Phase 4：接入 L3 Feishu adapter
 
 交付内容：
 
@@ -196,5 +196,5 @@ related_doc:
 1. 存在独立稳定 `SessionEvent` 契约与事件版本语义。
 2. canonical stable route 已是 `/api/v1/watchdog/sessions/{project_id}/events`。
 3. raw `/api/v1/watchdog/tasks/{project_id}/events` 仍存在且不承担 stable contract 角色。
-4. OpenClaw adapter 已具备只读稳定事件消费入口，但未把事件面混回动作 reply 模型。
+4. Feishu adapter 已具备只读稳定事件消费入口，但未把事件面混回动作 reply 模型。
 5. 文档、OpenAPI、测试都明确 011 是 read-only stable event stream，不含 action receipt events。

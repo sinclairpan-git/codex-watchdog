@@ -1,0 +1,332 @@
+# 执行日志：035-brain-decision-boundary-and-release-gate
+
+> 对应规格：`specs/035-brain-decision-boundary-and-release-gate/spec.md`
+>
+> 对应任务：`specs/035-brain-decision-boundary-and-release-gate/tasks.md`
+
+## 2026-04-13
+
+- 完成 `T351`：已把总实施计划中的 `Task 6` 正式拆为 `WI-035`，并补齐 `plan.md`、`tasks.md`、`task-execution-log.md` 与 `.ai-sdlc/work-items/035-*` 元数据。
+- 已确认 035 的实现断点来自当前仓库现状，而不是抽象 spec 复述：
+  - `src/watchdog/services/policy/engine.py` 仍直接从 persisted facts 生成 `CanonicalDecisionRecord`；
+  - `src/watchdog/services/session_spine/orchestrator.py` 仍直接根据 `decision_result` 进入 approval 或 auto execute；
+  - `src/watchdog/services/memory_hub/packets.py` 与 `service.py` 已提供 bounded `packet_inputs`、`quality`、`refs` 与 `expansion_handles` contract，可作为 035 的 decision input 下游依赖；
+  - `src/watchdog/services/session_service/service.py` 已具备 canonical event slice/query 与 recovery/memory anomaly writer，可作为 `DecisionTrace` 的 truth anchor。
+- 本轮 formal docs 已明确收口：
+  - 035 不把 `Brain` 做成新的 prompt/runtime 中枢；
+  - `DecisionInputBuilder` 只输出 versioned `decision_packet_input`，不接管最终 prompt/messages/tool schema；
+  - release gate 只约束低风险自动决策资格，没有有效 report 时必须退回 `suggest_only`、`require_approval` 或等价人工路径。
+- 已完成一轮对抗式文档评审并按意见收紧执行边界：
+  - 明确 `brain_intent -> runtime disposition` adapter 必须先冻结，不能直接拿旧 `decision_result` 假装 Brain intent；
+  - 明确 Brain 不再被旧 `_select_action_ref()` 的 action-first 入口短路，而是先跑 Brain 再决定是否生成 executable `action_ref`；
+  - 明确 `action approval` 与 `report_approved_by` 是两类不同语义，前者决定当前动作是否过 human gate，后者只是 release report 治理元数据；
+  - 明确 release gate verdict、degrade reason、report/input hash、approval read ref 必须先写入 canonical Session decision event，再允许 command 创建/执行；
+  - 明确 future worker schema 只冻结声明式 trace refs，不允许越权字段。
+- 当前下一执行入口固定为 `T352`：先写失败测试锁住 `DecisionIntent`、`DecisionTrace`、provider certification、replay 与 runtime enforced release gate contract，再进入实现。
+- 已启动 `T352/T353` 的第一轮 red-green：
+  - 新增 `tests/test_watchdog_brain_decision_loop.py`、`tests/test_watchdog_provider_certification.py`、`tests/test_watchdog_decision_replay.py`、`tests/test_watchdog_release_gate.py`、`tests/test_watchdog_release_gate_evidence.py`，先锁 `brain` 模块存在性、DecisionTrace/approval/future-worker schema、provider/runtime drift 字段、release gate verdict 字段与 evidence bundle contract；
+  - 初次 red 测试结果为：`uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 failed in 0.13s`，失败点全部集中在 `watchdog.services.brain` 模块缺失；
+  - 已补齐最小 `src/watchdog/services/brain/` contract 骨架：`models.py`、`decision_input_builder.py`、`service.py`、`validator.py`、`provider_certification.py`、`replay.py`、`release_gate.py`、`release_gate_evidence.py`；
+  - 已补上 `src/watchdog/services/policy/decisions.py` 中的 `brain_intent -> runtime disposition` 显式 adapter，与 `CanonicalDecisionRecord.brain_intent / runtime_disposition` 字段，避免 Brain intent 只停留在文档。
+- 当前已通过的局部验证：
+  - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `12 passed in 0.16s`
+  - `uv run pytest -q tests/test_watchdog_policy_decisions.py -k 'brain_intent_adapter or carries_brain_intent'` -> `2 passed, 3 deselected in 0.09s`
+  - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `17 passed in 0.15s`
+- 当前判断：
+  - `T352` 已完成第一批 contract 红测与最小 green，但还没覆盖 release verdict canonical event、approval freshness 旧 session/旧 snapshot 降级、以及替换旧 action-first 入口；
+  - `T353` 已开始落最小 contract skeleton，但还未接入 `policy.engine` / `ResidentOrchestrator` 的真实 runtime wiring。
+- 已继续推进第二轮 red-green：
+  - 在 `tests/test_watchdog_session_spine_runtime.py` 新增 runtime 红测，锁定 `decision_proposed / decision_validated` 必须携带 `brain_intent`、`validator_verdict` 与 `release_gate_verdict`，且 `SessionService.record_event()` 失败时 orchestrator 必须 fail-closed，不能继续创建 command 或执行；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 的 `_record_decision_lifecycle()` 中补齐上述 payload 字段，把 release/validator verdict 真正写进 canonical Session decision events；
+  - 在 `tests/test_watchdog_approval_loop.py` 新增 approval freshness 红测，锁定 canonical approval 至少要校验 `session_id / project_id / requested_action / fact_snapshot_version / goal_contract_version / expires_at / status`；
+  - 已在 `src/watchdog/services/approvals/service.py` 中给 `CanonicalApprovalRecord` 补入 `goal_contract_version` 与 `expires_at`，并新增 `is_canonical_approval_fresh(...)` helper。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_release_gate_and_validator_verdict or fails_closed_when_decision_event_write_fails'` -> `2 passed, 24 deselected in 0.71s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py -k 'freshness or reuses_same_record or refreshes_pending_record'` -> `4 passed, 15 deselected in 0.81s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py -k 'freshness or reuses_same_record or refreshes_pending_record or brain or release_gate or decision or fails_closed_when_decision_event_write_fails or records_release_gate_and_validator_verdict or carries_brain_intent or brain_intent_adapter'` -> `25 passed, 37 deselected in 0.95s`
+- 当前判断更新为：
+  - release gate verdict 写回 canonical Session event 与 approval freshness contract 已开始落到真实代码，而不是只停留在 docs；
+  - 下一硬边界仍是替换旧 `_select_action_ref()` 的 action-first 入口，让 Brain 不再被 runtime 预选动作短路。
+- 已继续推进第三轮 red-green，开始替换旧 action-first 入口：
+  - 先在 `tests/test_watchdog_session_spine_runtime.py` 把 done session 的旧行为打红，要求 runtime 不再把 `task_completed` 直接短路为 no-op，而是显式路由到 `candidate_closure -> require_user_decision`；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k candidate_closure_review` -> `1 failed, 25 deselected in 0.94s`，失败点是 `ResidentOrchestrator` 仍返回 `action_ref=None`；
+  - 已在 `src/watchdog/services/brain/service.py` 中补入最小 Brain 意图归纳：`task_completed -> candidate_closure`、`continue_session -> propose_execute`、`execute_recovery -> propose_recovery`、其他情况回退到 `observe_only`；
+  - 已在 `src/watchdog/services/policy/decisions.py` 中新增 `build_brain_intent_decision_record(...)`，强制 Brain intent 经由显式 adapter 物化成兼容的 runtime disposition，而不是在 orchestrator 分支里手写散落 mapping；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中接入默认 `BrainDecisionService`，并让 `task_completed` 在没有 legacy `action_ref` 时落成 `post_operator_guidance` 的 `candidate_closure` 审核请求，而不是被旧 `_select_action_ref()` 直接吞掉。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k candidate_closure_review` -> `1 passed, 25 deselected in 0.90s`
+  - `uv run pytest -q tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_session_spine_runtime.py` -> `34 passed in 2.56s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `62 passed in 2.81s`
+- 当前判断再次更新为：
+  - Brain 已不再被 done-session 的 legacy action-first 分支完全短路，`candidate_closure` 开始进入 canonical decision + approval 路径；
+  - 但 `policy.engine` 仍主要消费 legacy `action_ref`，后续还需要继续把 `observe_only / suggest_only / require_approval / propose_execute / propose_recovery` 收拢到完整的 Brain-first runtime wiring。
+- 已继续补强同一切片，避免 Brain 只是“被调用到”但未真正接线：
+  - 先在 `tests/test_watchdog_session_spine_runtime.py` 中把 `continue_session` 热路径打红，要求 auto-continue 的 `decision_proposed / decision_validated` 事件也必须显式携带 `brain_intent=propose_execute`；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k records_command_lease_for_auto_continue` -> `1 failed, 25 deselected in 1.20s`，失败点是 session event payload 中 `brain_intent` 仍为 `None`；
+  - 已在 `src/watchdog/services/policy/engine.py` 中给 `evaluate_persisted_session_policy(...)` 补入 `brain_intent` 参数，并在所有 `build_canonical_decision_record(...)` 分支里透传，使 legacy `continue_session / execute_recovery` 决策也开始携带显式 Brain intent；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 `brain_intent.intent` 传给 policy engine，确保 Brain 对 auto-continue / recovery 的判断不再停留在 orchestrator 局部变量里。
+- 当前已通过的补强验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or candidate_closure_review'` -> `2 passed, 24 deselected in 0.74s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `67 passed in 3.34s`
+- 当前判断最终更新为：
+  - done-session 的 `candidate_closure` 与 auto-continue 的 `propose_execute` 都已经真正进入 canonical decision/event 路径，而不只是旁路观测；
+  - 下一步应继续把 `observe_only / suggest_only / propose_recovery` 等剩余 Brain intent 的 runtime consume 收拢完整，并让 release gate/validator 更早参与这些分支的降级判断。
+- 已完成一轮对抗式代码评审并据此修正实现：
+  - Hermes Agent 专家与 Anthropic Manager 专家都指出同一个 P1：我上一版虽然把 Brain 接进 orchestrator，但 executable path 仍然由 legacy action-first 决定，`observe_only / require_approval` 无法真正阻断 auto-continue，且 `candidate_closure` 分支绕过了 policy gate；
+  - 另一个有效问题是 second-truth 风险：candidate_closure 分支把 decision 先写 `PolicyDecisionStore`，如果 canonical Session decision event 写失败，会留下 orphan projection。
+- 已按上述意见重新收口实现：
+  - `src/watchdog/services/brain/service.py` 不再从 legacy `action_ref` 反推出 Brain intent，而是直接从 persisted facts 归纳：`task_completed -> candidate_closure`、`approval_pending/awaiting_human_direction -> require_approval`、`context_critical -> propose_recovery`、`stuck_no_progress/repeat_failure -> propose_execute`，其他情况回退到 `observe_only`；
+  - `src/watchdog/services/session_spine/orchestrator.py` 已删除对 `_select_action_ref()` 的 runtime 依赖，改为先跑 Brain，再把 Brain intent 显式映射成 `action_ref`；
+  - `src/watchdog/services/policy/engine.py` 已新增 `brain_intent` 分支：`candidate_closure` 与 `require_approval` 都必须经 policy engine 落成 `require_user_decision`，不再由 orchestrator 私下生成第二套 policy；
+  - candidate-closure approval 现在会附带显式 `requested_action_args`，用于 `post_operator_guidance` 的人工复核提示，而不是留一个无法执行的空 action；
+  - orchestrator 现在先写 canonical Session decision events，再落 `PolicyDecisionStore`；若 event 写失败，不再留下 orphan canonical decision projection；
+  - auto-execute 新增硬门槛：只有 `brain_intent in (None, "propose_execute")` 的 decision 才能进入命令创建/claim/执行，既保证新路径 Brain-first，也兼容老格式已持久化 decision。
+- 针对 review 新增的红绿验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'does_not_execute_when_brain_observes_only or fails_closed_when_decision_event_write_fails'` 初次结果为 `2 failed, 25 deselected in 1.06s`，分别锁定 observe-only 仍被 auto-continue 穿透，以及 decision event 写失败后残留 orphan decision；
+  - 修复后，`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'does_not_execute_when_brain_observes_only or fails_closed_when_decision_event_write_fails or candidate_closure_review or records_command_lease_for_auto_continue'` -> `4 passed, 23 deselected in 0.72s`；
+  - 全量回归更新为：`uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `68 passed in 3.15s`
+- 当前判断最新更新为：
+  - 这一步已经把 Brain 从“旁路注释层”收紧成真正的 runtime gate：Brain 说 `observe_only` 时不会再 claim/execute，Brain 说 `candidate_closure` 时也必须走 policy engine；
+  - 035 仍未完成 release gate/validator 对所有 Brain intent 的统一 runtime 降级，因此下一步依旧是继续补齐 Brain-first runtime wiring，而不是扩写 control-plane 或 e2e。
+- 已完成第二轮对抗式复审，并继续收掉剩余 P1/P2：
+  - Hermes 复审已无 blocking/P1，只指出三个 P2：`decision_key` 未纳入 `brain_intent`、`candidate_closure / require_approval` 仍可能绕过 controlled uncertainty hard block、以及 Session event/decision store 之间仍有部分残余一致性风险；
+  - Anthropic Manager 复审额外指出两个 P1：`validator_verdict / release_gate_verdict` 尚未真正拦住 auto-execute，以及 candidate-closure approval 在没有 upstream `approval_id` 时仍可能复用旧已决记录、跳过新的人工复核。
+- 已按上述意见继续收口实现：
+  - `src/watchdog/services/policy/decisions.py` 的 `build_decision_key(...)` 现在把 `brain_intent` 纳入 canonical identity，避免 pre-fix legacy decision 与 Brain-annotated decision 复用同一 key；
+  - `src/watchdog/services/policy/engine.py` 已把 `candidate_closure / require_approval` 分支后移到 controlled uncertainty、action registration、explicit human gate 与 goal-contract readiness 之后，保证 Brain intent 不会覆盖 non-bypassable policy block；
+  - `src/watchdog/services/session_spine/orchestrator.py` 已新增 `_decision_allows_auto_execute(...)`，显式要求 `brain_intent` 为 `propose_execute`（兼容旧记录为 `None`）且 `validator_verdict.status == pass`、`release_gate_verdict.status == pass` 才允许命令创建/claim/执行；
+  - `src/watchdog/services/approvals/service.py` 的 approval identity seed 现在补入 `fact_snapshot_version` 与 `brain_intent`，避免 candidate-closure 在旧记录已 `approved/rejected` 后复用旧 envelope/approval；
+  - `tests/test_watchdog_policy_decisions.py`、`tests/test_watchdog_policy_engine.py`、`tests/test_watchdog_approval_loop.py` 与 `tests/test_watchdog_session_spine_runtime.py` 已补入对应红测，并同步修正旧格式 decision fixture。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_approval_loop.py tests/test_watchdog_session_spine_runtime.py -k 'brain_intent or candidate_closure_override or require_approval_override or resolved_candidate_closure_record or release_gate_or_validator_do_not_pass or stable_for_same_snapshot'` -> `8 passed, 53 deselected in 0.98s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `73 passed in 4.25s`
+- 当前判断再更新为：
+  - Brain-first runtime wiring 已从“可观测”推进到“可约束”：Brain identity、policy hard block、approval identity 与 release/validator gate 都开始在 runtime 上真实生效；
+  - 剩余未完成项仍集中在更完整的 release gate/validator 覆盖面与后续 control-plane/e2e 消费方，不在本次提交里扩面。
+- 已继续推进剩余 Brain intent 的 runtime consume，补齐 `require_approval / propose_recovery / suggest_only`：
+  - 在 `tests/test_watchdog_session_spine_runtime.py` 先补红测，要求 fake Brain 返回 `require_approval` 时必须落为 `continue_session -> require_user_decision`，返回 `propose_recovery` 时必须落为 `execute_recovery -> require_user_decision`，返回 `suggest_only` 时必须落为 `block_and_alert` notification，而不是被 runtime 静默吞掉；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `1 failed, 2 passed, 28 deselected in 1.45s`，失败点是 `suggest_only` 仍然得到 `action_ref=None` 且没有 canonical decision；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 `suggest_only` 显式映射为推荐 action `continue_session`，并在 `src/watchdog/services/policy/engine.py` 中新增 `brain_suggest_only` 分支，把它物化为 `block_and_alert` canonical decision，再经 delivery outbox 发 notification。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `3 passed, 28 deselected in 2.09s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `38 passed in 3.60s`
+- 当前判断继续更新为：
+  - 剩余 Brain intent 里，`require_approval / propose_recovery / suggest_only` 都已经有真实 runtime 语义，不再只有 `propose_execute` 一条路被 consume；
+  - 下一步更像是扩 validator/release gate 在这些分支上的 evidence/trace 一致性，而不是再补新的 intent 枚举。
+- 已完成这一小步的对抗式复审与修正：
+  - Hermes 复审指出一个新的 P1：`require_approval` 与 `suggest_only` 复用 `continue_session` 作为推荐 action，但 orchestrator 的 auto-continue cooldown 仍会在 policy 之前把任何 `continue_session` 都压成 `None`，导致这两类 intent 在 cooldown 窗口里被静默吞掉；
+  - 已先补红测 `test_resident_orchestrator_cooldown_only_suppresses_propose_execute(...)`，初次结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k cooldown_only_suppresses_propose_execute` -> `1 failed, 31 deselected in 0.94s`；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 cooldown 约束收窄到 `brain_intent == "propose_execute"`，不再影响 `require_approval / suggest_only` 的 decision/approval/notification 路径。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `4 passed, 28 deselected in 1.19s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `39 passed in 8.10s`
+- 已继续推进 `observe_only` 的显式 runtime consume：
+  - 先把现有 `test_resident_orchestrator_does_not_execute_when_brain_observes_only(...)` 改成红测，要求它不再是静默 no-op，而是落成带审计痕迹的 `block_and_alert` notification；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k does_not_execute_when_brain_observes_only` -> `1 failed, 31 deselected in 0.75s`，失败点是 orchestrator 仍返回 `action_ref=None`；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 中把 `observe_only` 映射成推荐 action `continue_session`，并在 `src/watchdog/services/policy/engine.py` 中新增 `brain_observe_only` 分支，把它物化为 `block_and_alert` canonical decision；
+  - 随后又发现一个真实回归：空事实集 session 会被错误地产生 observe-only decision。已继续把 `observe_only` 的 mapping 收窄为“有观察到的 facts 时才落 decision”，避免 phantom approval 场景被误写 notification。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'skips_phantom_approval_when_only_pending_flag_is_set or does_not_execute_when_brain_observes_only or cooldown_only_suppresses_propose_execute or brain_require_approval or brain_propose_recovery or brain_suggest_only'` -> `6 passed, 26 deselected in 0.63s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `39 passed in 2.49s`
+- 当前判断再更新为：
+  - 现在 `observe_only / suggest_only / require_approval / propose_recovery / propose_execute / candidate_closure` 都已拥有显式 runtime consume，不再存在只定义枚举但没有 canonical 运行时语义的 intent；
+  - 下一步更聚焦于给这些 intent 补齐 validator/release-gate trace/evidence 绑定，而不是继续扩 action mapping。
+- 已继续推进 validator/release-gate trace/evidence 绑定，并按两路对抗式复审先收掉当前最高优先级的 fail-open：
+  - Hermes Agent 专家与 Anthropic Manager 专家都指出同一个 blocking/P1：`propose_execute` 在缺失 `validator_verdict / release_gate_verdict` 时仍会沿 `auto_execute_and_notify` 热路径创建/claim/执行 command，且默认路径没有把 `DecisionTrace`、report/input hash、approval read ref 绑定到 canonical decision event；
+  - 先补红测锁住两个缺口：`tests/test_watchdog_policy_engine.py` 要求 `propose_execute` 缺 runtime gate evidence 时必须 fail-closed；`tests/test_watchdog_session_spine_runtime.py` 要求默认 auto-continue 必须带上 `decision_trace / validator_verdict / release_gate_verdict`，且缺失 evidence 时不能再执行；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_policy_engine.py -k 'fails_closed_when_propose_execute_lacks_runtime_gate_evidence or allows_auto_execution_when_goal_contract_is_ready'` -> `2 failed`；`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or fails_closed_when_auto_execute_decision_lacks_gate_evidence'` -> `2 failed`。
+- 已按上述红测把 runtime gate 改成显式绑定而不是隐式放行：
+  - `src/watchdog/services/brain/validator.py` 不再只是 pass-through，而是显式区分 `propose_execute` 与 non-executing intent，并对 `memory_conflict / memory_unavailable / goal_contract_not_ready` 给出 `degraded` verdict；
+  - `src/watchdog/services/brain/release_gate.py` 已开始基于 `DecisionTrace + DecisionValidationVerdict` 生成最小 `ReleaseGateVerdict`，把 `decision_trace_ref / approval_read_ref / report_id / report_hash / input_hash` 物化出来；non-executing intent 现在会显式得到 `not_applicable`，而不是完全没有 verdict；
+  - `src/watchdog/services/policy/engine.py` 现在显式接收 `validator_verdict / release_gate_verdict`，并对 `brain_intent=propose_execute` 执行 fail-closed：缺 verdict 或非 `pass` 时不再继续 `auto_execute_and_notify`，而是物化成 canonical `block_and_alert` / `require_user_decision`；
+  - `src/watchdog/services/session_spine/orchestrator.py` 现在会在 policy 之前先生成 `DecisionTrace`、validator verdict 与 release-gate verdict，再把这些 evidence 传给 policy；`decision_validated` event 也会携带完整 `decision_trace`，不再只有 `brain_intent`；
+  - 同时把旧的 ungated `PolicyDecisionStore` projection 视为可升级对象：若当前 runtime 重新计算出了带 gate evidence 的 decision，会先写 canonical Session decision events，再用带 evidence 的记录覆盖旧 projection，避免 legacy projection 长期绕开新的 gate。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py -k 'fails_closed_when_propose_execute_lacks_runtime_gate_evidence or allows_auto_execution_when_goal_contract_is_ready'` -> `2 passed, 6 deselected in 0.23s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'records_command_lease_for_auto_continue or fails_closed_when_auto_execute_decision_lacks_gate_evidence'` -> `2 passed, 31 deselected in 1.01s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py` -> `41 passed in 3.55s`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `38 passed in 1.09s`
+- 当前判断再更新为：
+  - `propose_execute` 的 runtime gate 已从“缺 verdict 也放行”收紧成“默认绑定 verdict，缺 verdict 就 fail-closed”，并且降级结果现在会落成 canonical decision，而不是只是在 orchestrator 里静默跳过执行；
+  - `DecisionTrace` 已开始进入真实 runtime decision/event 链路，但 release-gate 仍然只是最小 evaluator，还没有正式接入冻结 artifact、脚本化 report 生成、replay 输入完整性与 provider certification drift matrix；
+  - 下一步应继续补齐真正的 release-gate artifact/runbook/fixtures、把 replay/provider certification 从 schema 骨架推进到可验证逻辑，并继续收掉 review 提到的 second-truth 剩余边角，而不是回去扩 control-plane 或 e2e。
+- 已继续推进 release-gate artifact/runbook/fixtures，并把 evaluator 从 pass-through 推到最小可校验：
+  - 先补红测锁三个未落点：`scripts/generate_release_gate_report.py` 必须能从冻结 fixture 产出 deterministic `release_gate_report`；`tests/fixtures/release_gate_*` 必须真实存在；`docs/operations/release-gate-runbook.md` 必须明确 `label_manifest / generated_by / report_approved_by / artifact_ref` 与“禁止人工拼接”纪律；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py -k generate_release_gate_report_script_produces_expected_fixture` -> `1 failed`；`uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'fixtures_are_checked_in or runbook_documents_scripted_artifacts_and_manual_splicing_ban'` -> `2 failed`，失败点分别是脚本/fixtures/runbook 都尚未落库；
+  - 已新增 `scripts/generate_release_gate_report.py`、`docs/operations/release-gate-runbook.md`、`tests/fixtures/release_gate_packets.jsonl`、`tests/fixtures/release_gate_shadow_runs.jsonl`、`tests/fixtures/release_gate_label_manifest.json`、`tests/fixtures/release_gate_expected_report.json`，把 release-gate evidence 生产闭环先冻结成 deterministic repo artifact；
+  - 随后继续补 evaluator 红测：要求 `ReleaseGateEvaluator` 在报告有效时返回 `pass`，在报告过期时降级为 `report_expired`，在输入哈希漂移时降级为 `input_hash_mismatch`；初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py -k 'accepts_current_matching_report or degrades_expired_report or degrades_on_input_hash_drift'` -> `3 failed`，失败点是 evaluator 还不接受 `report/runtime_contract/now`；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 中补入最小 report 校验面：当显式提供 `ReleaseGateReport` 时，开始校验 `expires_at`、`input_hash`、`provider/model/prompt/output schema` 与 runtime contract 的版本字段；不匹配时返回带 `degrade_reason` 的 canonical verdict，而不是无条件透传。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k generate_release_gate_report_script_produces_expected_fixture` -> `1 passed, 3 deselected in 0.16s`
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k 'fixtures_are_checked_in or runbook_documents_scripted_artifacts_and_manual_splicing_ban'` -> `2 passed, 2 deselected in 0.02s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'accepts_current_matching_report or degrades_expired_report or degrades_on_input_hash_drift'` -> `3 passed, 4 deselected in 0.24s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py` -> `14 passed in 0.28s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `74 passed in 3.76s`
+- 当前判断再更新为：
+  - release gate 不再只有 schema 占位；repo 内已经具备最小的 deterministic report 生成脚本、冻结 fixture 与 runbook，evaluator 也开始真正校验 report 过期和漂移；
+  - 但 `replay.py` 与 `provider_certification.py` 仍主要停留在 schema 层，正式 `release_gate_report` 也还没有接回 runtime 默认路径；下一步应该继续把 replay/provider-certification 变成可验证逻辑，并把 runtime 改为优先消费正式 artifact report，而不是停留在 resident-default report。
+- 已继续推进 `replay.py / provider_certification.py` 的可验证逻辑，先收掉 schema-only 的剩余空壳：
+  - 先补红测锁住三个 replay/certification 缺口：`packet_replay` 缺 `decision_packet_input` 时必须显式 `replay_incomplete`；`packet_replay` 在 runtime contract 漂移时必须显式返回 mismatch；`session_semantic_replay` 缺 required event 时必须返回缺口，而不是默认成功；
+  - 同时给 provider certification 补红测，要求新增 `ProviderCompatibilityEvaluator`，并在 provider/model/schema/tool/risk/policy/memory-adapter 漂移时返回精确 mismatch 字段列表；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_decision_replay.py -k 'missing_packet_input_as_incomplete or detects_runtime_contract_drift or missing_required_events_as_incomplete'` -> `3 failed`；`uv run pytest -q tests/test_watchdog_provider_certification.py -k 'accepts_matching_runtime_contract or reports_runtime_drift_fields'` -> `2 failed`，失败点分别是 replay 方法签名仍为空壳、provider compatibility evaluator 尚不存在；
+  - 已在 `src/watchdog/services/brain/replay.py` 中补入最小 replay 逻辑：`packet_replay(...)` 现在会区分 `missing_packet_input` 与 runtime drift，`session_semantic_replay(...)` 现在会对 `required_event_ids` 缺口返回 `replay_incomplete + missing_context`；
+  - 已在 `src/watchdog/services/brain/provider_certification.py` 中新增 `ProviderCompatibilityEvaluator.compare(...)`，把 `ProviderCompatibilityMatrix` 真正用于比对 `provider/model/prompt/output/tool/risk/decision_input_builder/policy_engine/memory_provider_adapter` 漂移，而不是只保留数据模型。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_decision_replay.py -k 'missing_packet_input_as_incomplete or detects_runtime_contract_drift or missing_required_events_as_incomplete'` -> `3 passed, 2 deselected in 0.19s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py -k 'accepts_matching_runtime_contract or reports_runtime_drift_fields'` -> `2 passed, 2 deselected in 0.18s`
+  - `uv run pytest -q tests/test_watchdog_decision_replay.py tests/test_watchdog_provider_certification.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `20 passed in 0.34s`
+  - `uv run pytest -q tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_approval_loop.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_brain_decision_loop.py tests/test_long_running_autonomy_doc_contracts.py` -> `73 passed in 3.66s`
+- 当前判断再更新为：
+  - release gate artifact、replay、provider certification 现在都已经不是纯 schema 占位，至少开始对缺输入、过期、输入哈希漂移和 runtime contract 漂移给出显式结果；
+  - 但 runtime 默认放行路径仍优先使用 resident-default report，而不是 repo 内冻结的正式 `release_gate_report` artifact；下一步应继续把 artifact report 接回 orchestrator/release gate 默认链路，并让 runtime 真正消费而不是只在单元测试里校验。
+- 已继续推进 resident runtime 对正式 artifact report 的消费闭环，先收掉默认放行路径仍停在 `resident_default` 的缺口：
+  - 先在 `tests/test_watchdog_session_spine_runtime.py` 补两条红测：一条要求配置 `release_gate_report_path` 后，默认 auto-continue 必须把正式 `report_id/report_hash/input_hash` 绑定进 canonical decision evidence；另一条要求 report 过期时 runtime 必须从 `auto_execute_and_notify` 降级为 `block_and_alert`，且不得 claim/执行 command；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'uses_configured_release_gate_report_for_auto_execute or degrades_when_configured_release_gate_report_is_expired'` -> `2 failed in 0.92s`，失败点是 `Settings` 还没有 formal report/runtime contract 配置入口；
+  - 已在 `src/watchdog/settings.py` 新增 `release_gate_report_path` 及 `risk/policy/tool/memory-adapter` 版本字段，让 resident runtime 有正式的 runtime contract 来源，而不是在 orchestrator 里硬编码；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 接入 formal `ReleaseGateReport` 加载、runtime contract 透传与 `now` 参与校验；当设置了 report path 且 report 过期、漂移或加载失败时，release gate 会显式降级，默认 auto-execute 热路径不再回退到 `report:resident_default`；
+  - 同时补了配置了 report 但读取失败时的 fail-closed：runtime 会物化 `report_load_failed` verdict，而不是静默忽略配置继续放行。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py -k 'uses_configured_release_gate_report_for_auto_execute or degrades_when_configured_release_gate_report_is_expired'` -> `2 passed, 33 deselected in 0.84s`
+  - `uv run pytest -q tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `54 passed in 3.74s`
+- 当前判断再次更新为：
+  - resident runtime 的默认放行路径现在已经能正式消费冻结的 `release_gate_report` artifact，而不是一律回退到 `resident_default`；
+  - 下一步应继续把 provider certification / replay 的 runtime contract 来源收得更严，并评估是否要把 `report_load_failed` 等降级原因进一步暴露到 ops/read models，而不是继续扩新的行为分支。
+- 已继续推进 runtime contract source 对齐，先收掉 provider certification / replay 仍各自手写裸 dict 的第二真相：
+  - 先在 `tests/test_watchdog_provider_certification.py` 补红测，要求 provider compatibility 所依赖的 runtime contract 能直接从 `Settings` 构建，而不是在测试或调用方手拼 `risk/policy/tool/memory-adapter` 字段；
+  - 同时在 `tests/test_watchdog_decision_replay.py` 补红测，要求 `DecisionReplayService.packet_replay(...)` 能直接消费同一份 settings-driven runtime contract，并在 frozen/current 一致时保持无 drift；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `1 failed in 0.22s`，失败点是 `provider_certification` 还没有共享 `build_runtime_contract(...)` helper；
+  - 已在 `src/watchdog/services/brain/provider_certification.py` 新增共享 `build_runtime_contract(...)`，把 provider/model/prompt/output 与 `Settings` 中的 `risk_policy_version / decision_input_builder_version / policy_engine_version / tool_schema_hash / memory_provider_adapter_hash` 统一收口到同一 builder；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 把 release-gate runtime contract 接线切到同一 helper，避免 release gate、provider certification 与 replay 再各自维护一份版本来源。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'build_runtime_contract_reads_versions_from_settings or packet_replay_accepts_settings_built_runtime_contract'` -> `2 passed, 9 deselected in 0.17s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py` -> `57 passed in 3.93s`
+- 当前判断再更新为：
+  - provider certification / replay / release-gate runtime 现在至少共用同一套 settings-driven contract builder，减少了 drift matrix 只在局部测试里成立的风险；
+  - 下一步可以继续评估是否要把这份共享 contract 明确挂到更高层 runtime/config surface，或把 `report_load_failed` / runtime drift 的降级原因进一步暴露到 ops/read-side，而不是继续扩新的 gate 分支。
+- 已继续推进 ops/read-side surfacing，先收掉 runtime gate 降级只停在 canonical decision evidence 的缺口：
+  - 先在 `tests/test_watchdog_ops.py` 补红测，要求 `matched_policy_rules` 命中 `runtime_gate_missing / release_gate_degraded / validator_gate_degraded` 的 decision 能在 `build_ops_summary(...)` 中落成独立 alert，而不是只写在 decision evidence 里没人看见；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 failed in 0.86s`，失败点是 ops summary 当前完全不统计 runtime gate 降级；
+  - 已在 `src/watchdog/api/ops.py` 新增 `_RUNTIME_GATE_ALERT_RULES` 与 `runtime_gate_degraded` alert 统计，统一从 canonical decision 的 `matched_policy_rules` 读取，避免再从 verdict payload 临时解析第三套规则；
+  - 由于 `/healthz`、`/api/v1/watchdog/ops/alerts` 与 metrics 都复用 `build_ops_summary(...)`，这一步生效后 runtime gate 降级会自动进入现有 health/ops/metrics surface，而不需要额外新接口。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k runtime_gate_degradation_alert` -> `1 passed, 7 deselected in 0.69s`
+  - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `62 passed in 4.13s`
+- 当前判断再更新为：
+  - `report_load_failed`、`report_expired`、validator/release-gate 降级现在已经不只停留在 canonical decision evidence，至少会通过现有 ops summary 链路暴露成 `runtime_gate_degraded` 告警；
+  - 下一步可以继续评估是否要把具体 `degrade_reason` 做成更细粒度的 ops/read-side breakdown，或把共享 runtime contract 上提到更明确的 runtime/config surface，而不是继续扩新的控制流。
+- 已继续推进 ops/read-side 分辨率，先把 runtime gate 告警从总桶拆到具体 `degrade_reason`：
+  - 先在 `tests/test_watchdog_ops.py` 把上一版 `runtime_gate_degraded` 用例改成红测，要求 `report_load_failed` 直接落成 `runtime_gate_report_load_failed`；同时新增一条红测，要求 `report_expired` 与 `approval_stale` 被分别统计，而不是继续汇总成单一 alert；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_ops.py -k 'runtime_gate_degradation_alert or breaks_runtime_gate_alerts_down_by_degrade_reason'` -> `2 failed in 0.77s`，失败点是 ops summary 仍只输出 `runtime_gate_degraded` 总桶；
+  - 已在 `src/watchdog/api/ops.py` 中把 runtime gate 统计改为按 canonical decision 的 `uncertainty_reasons` 分桶，同时继续用 `matched_policy_rules` 作为“这是否属于 runtime gate 降级”的准入条件，避免从 verdict payload 再造第四套判断逻辑；
+  - 现在具体降级会直接暴露成 `runtime_gate_report_load_failed`、`runtime_gate_report_expired`、`runtime_gate_approval_stale` 等 alert code，healthz/ops/metrics 也会随 `build_ops_summary(...)` 自动继承这些细粒度标签。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k 'runtime_gate_degradation_alert or breaks_runtime_gate_alerts_down_by_degrade_reason'` -> `2 passed, 7 deselected in 0.66s`
+  - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py` -> `63 passed in 3.92s`
+- 当前判断再更新为：
+  - runtime gate 降级现在已经能在 ops/read-side 直接按 `degrade_reason` 粒度观察，而不是只有一个需要再翻 evidence 的总桶；
+  - 下一步更适合继续把共享 runtime contract 从 helper 提到更明确的 runtime/config surface，或者给 ops summary 增加更稳定的 reason taxonomy，而不是继续扩新的控制流。
+- 已继续推进 shared runtime contract surface，先收掉 contract builder 仍停在局部 helper 的缺口：
+  - 先在 `tests/test_watchdog_provider_certification.py` 把 `build_runtime_contract` 的 red test 改到 `Settings` 层，要求 runtime contract 能直接从 `Settings.build_runtime_contract(...)` 产出；同时新增一条 red test，要求 provider helper 退化成对 settings surface 的兼容委托；
+  - 在 `tests/test_watchdog_decision_replay.py` 也把 replay 用例改成直接调用 `Settings.build_runtime_contract(...)`，要求 replay/runtime contract 的主入口不再依赖 provider helper；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'settings_build_runtime_contract_reads_versions_from_settings or provider_certification_helper_delegates_to_settings_runtime_contract or packet_replay_accepts_settings_built_runtime_contract'` -> `3 failed in 0.23s`，失败点是 `Settings` 还没有显式 `build_runtime_contract(...)` surface；
+  - 已在 `src/watchdog/settings.py` 新增 `Settings.build_runtime_contract(...)`，把 provider/model/prompt/output 与 settings 中的 risk/policy/tool/memory-adapter 字段统一收口到配置对象本身；
+  - 已在 `src/watchdog/services/brain/provider_certification.py` 把旧 helper 改成对 `Settings.build_runtime_contract(...)` 的兼容委托；`src/watchdog/services/session_spine/orchestrator.py` 也已直接走 `self._settings.build_runtime_contract(...)`，不再依赖 helper 间接构建 release-gate runtime contract。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py -k 'settings_build_runtime_contract_reads_versions_from_settings or provider_certification_helper_delegates_to_settings_runtime_contract or packet_replay_accepts_settings_built_runtime_contract'` -> `3 passed, 9 deselected in 0.10s`
+  - `uv run pytest -q tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_ops.py` -> `67 passed in 3.78s`
+- 当前判断再更新为：
+  - shared runtime contract 现在已经有了显式的 runtime/config surface，provider helper 只剩兼容委托，后续不再需要靠局部 helper 才能维持 contract 一致；
+  - 下一步更适合给 runtime gate reason 建稳定 taxonomy，或继续收口 release-gate/provider/replay 对这份 config surface 的文档与 fixture 约束，而不是继续扩新的控制流。
+- 已继续推进 runtime gate reason taxonomy，先收掉 `degrade_reason` 直接外溢成 ops label 的缺口：
+  - 先在 `tests/test_watchdog_ops.py` 补红测，要求 `policy_engine_version_mismatch / tool_schema_hash_mismatch` 这类动态字段级原因归并为稳定的 `runtime_gate_contract_mismatch`，而 `memory_conflict / goal_contract_not_ready` 这类 validator 侧原因归并为 `runtime_gate_validator_degraded`；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_ops.py -k 'breaks_runtime_gate_alerts_down_by_degrade_reason or normalizes_runtime_gate_reason_taxonomy or runtime_gate_degradation_alert'` -> `1 failed, 2 passed in 0.70s`，失败点是 ops summary 仍把每个 reason 直接映射成 alert code；
+  - 已在 `src/watchdog/api/ops.py` 增加稳定 taxonomy：`report_load_failed / report_expired / approval_stale / input_hash_mismatch` 继续保留为独立桶，validator 侧原因统一归并为 `validator_degraded`，其余 `*_mismatch` 统一归并为 `contract_mismatch`；
+  - 现在 ops/read-side 暴露的 runtime gate label 数量被约束在受治理的稳定集合内，不会因为新增某个 contract 字段名就平白扩一个新的 metrics label。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k 'breaks_runtime_gate_alerts_down_by_degrade_reason or normalizes_runtime_gate_reason_taxonomy or runtime_gate_degradation_alert'` -> `3 passed, 7 deselected in 0.45s`
+  - `uv run pytest -q tests/test_watchdog_ops.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `76 passed in 3.86s`
+- 当前判断再更新为：
+  - runtime gate reason 现在已经被约束到稳定 taxonomy，ops label 不再直接跟随内部 reason 字符串膨胀；
+  - 下一步更适合把这套 taxonomy 与 shared runtime contract 一起补进 docs/fixtures/runbook，形成正式治理面，而不是继续扩新的控制流。
+- 已继续推进 docs/runbook 治理收口，把 shared runtime contract 与稳定 taxonomy 正式写入 release gate 运维面：
+  - 先在 `tests/test_watchdog_release_gate_evidence.py` 补红测，要求 `docs/operations/release-gate-runbook.md` 明确点名 `Settings.build_runtime_contract(...)` 是 runtime contract 的唯一入口，并且写出 `provider / replay / resident runtime` 必须共用同一份 contract surface；
+  - 同一条 red test 也锁定 runtime gate taxonomy 的治理文案：`approval_stale / report_expired / report_load_failed / input_hash_mismatch` 必须保留独立桶，validator 侧原因必须折叠到 `validator_degraded`，其余 `*_mismatch` 必须折叠到 `contract_mismatch`，未知值归到 `unknown`，并明确禁止直接把 raw `degrade_reason` 暴露成最终 alert/metric label；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k runtime_contract_surface_and_reason_taxonomy` -> `1 failed, 4 deselected in 0.04s`，失败点是 runbook 还没有正式承载这组治理约束；
+  - 已更新 `docs/operations/release-gate-runbook.md`，新增 `Runtime Contract Surface` 与 `Runtime Gate Reason Taxonomy` 两节，把 runtime contract 的 canonical source 与 ops/read-side 可暴露的稳定 label 集合写成显式 runbook 规则；
+  - 这一步之后，release-gate/provider/replay/resident runtime 对同一份 contract surface 与 taxonomy 的依赖，不再只靠测试和代码隐含维持，运维文档也拥有正式治理文本。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py -k runtime_contract_surface_and_reason_taxonomy` -> `1 passed, 4 deselected in 0.02s`
+  - `uv run pytest -q tests/test_watchdog_release_gate_evidence.py tests/test_long_running_autonomy_doc_contracts.py tests/test_watchdog_ops.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py` -> `30 passed in 1.01s`
+- 已按对抗评审规则完成两轮 reviewer 复核并顺手补齐剩余覆盖：
+  - Hermes Agent 专家与 Anthropic Manager 专家都未发现 blocking/P1 问题；
+  - Anthropic reviewer 指出 `unknown` fallback 仍缺独立 ops 断言，因此已在 `tests/test_watchdog_ops.py` 新增红绿覆盖，锁定空 `uncertainty_reasons` 的 runtime gate 决策必须落成 `runtime_gate_unknown`；
+  - Hermes reviewer 指出 `.ai-sdlc` resume 文案里“按 reason 分桶”的旧说法可能误导后续恢复，因此已把 `latest-summary.md` / `resume-pack.yaml` 统一改写为“按稳定 taxonomy 分桶，而不是直接暴露原始 reason”。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_ops.py -k unknown_runtime_gate_reason` -> `1 passed, 10 deselected in 0.73s`
+- 当前判断再更新为：
+  - runtime contract canonical source 与 runtime gate reason taxonomy 已经同时进入测试、代码、runbook 与 resume metadata 四层约束，035 这一段治理面基本闭环；
+  - 下一步更适合继续评估是否要把这套治理规则延伸进 fixture/report generation contract，或继续推进 T354 余下未落地的 release-gate 文档与流程边界，而不是再回头放宽 taxonomy。
+- 已继续推进 fixture/report generation contract，下沉 runbook 中的治理规则到 `release_gate_report` 本体：
+  - 先在 `tests/test_watchdog_release_gate.py` 补红测，要求 `ReleaseGateReport` 显式携带 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy`，并要求 `scripts/generate_release_gate_report.py` 生成的报告默认写入这组 governance metadata；
+  - 同时在 `tests/test_watchdog_release_gate_evidence.py` 补红测，要求冻结的 `tests/fixtures/release_gate_expected_report.json` 也必须持有同一组字段，避免 runbook/脚本/fixture 三方再漂移；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py -k 'runtime_governance_contract or runtime_invalidation_fields or fixtures_are_checked_in'` -> `3 failed, 10 deselected in 0.37s`，失败点分别是 `ReleaseGateReport` 仍 forbids extra fields、脚本未生成 governance metadata、fixture 也还没跟上；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `RuntimeGateReasonTaxonomy` 与默认 governance 常量，并把 `ReleaseGateReport` 扩成必须包含 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy`；
+  - 已在 `scripts/generate_release_gate_report.py` 复用同一组默认常量，让脚本产出的报告自动固化 `Settings.build_runtime_contract(...)` 作为 canonical source，并把稳定 taxonomy 一起归档到 report payload；
+  - 已用脚本重生成 `tests/fixtures/release_gate_expected_report.json`，并同步更新 `tests/test_watchdog_session_spine_runtime.py` 的本地 report helper，确保 runtime 载入路径与 fixture/report generation contract 保持单一真相；
+  - 已在 `docs/operations/release-gate-runbook.md` 明确把 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy` 列为必须归档字段，避免治理规则重新退回 runbook-only 口头约束。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_session_spine_runtime.py -k 'runtime_governance_contract or runtime_invalidation_fields or fixtures_are_checked_in or configured_release_gate_report'` -> `5 passed, 43 deselected in 1.27s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `59 passed in 4.60s`
+- 已按对抗评审规则对这一切片做复核并处理一条有效 P1：
+  - Hermes Agent 专家与 Anthropic Manager 专家都指出，我新加的 `runtime_gate_reason_taxonomy` 仍然是不完整的第二套定义：它只列了 passthrough reasons 和 bucket 名，没有把 validator reason set 与 `*_mismatch` 规则一并归档，而 `src/watchdog/api/ops.py` 也还保留自己的独立 normalizer；
+  - 已据此把 runtime gate taxonomy 真正收口到 `src/watchdog/services/brain/release_gate.py`：新增共享常量 `RUNTIME_GATE_PASSTHROUGH_REASONS / RUNTIME_GATE_VALIDATOR_REASONS / RUNTIME_GATE_CONTRACT_MISMATCH_SUFFIX` 与 `normalize_runtime_gate_reason(...)`；
+  - 已让 `src/watchdog/api/ops.py` 直接导入同一个 shared normalizer，不再维护独立 reason bucket 集合；
+  - 已扩展 `RuntimeGateReasonTaxonomy` 与脚本/fixture/report helper，使 `validator_reasons` 与 `contract_mismatch_suffix` 也成为 machine-readable report contract 的一部分，而不是只活在 runbook 文字里。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py -k 'runtime_governance_contract or runtime_invalidation_fields or fixtures_are_checked_in or normalizes_runtime_gate_reason_taxonomy or unknown_runtime_gate_reason'` -> `5 passed, 19 deselected in 1.14s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `70 passed in 5.38s`
+- 已完成 fix 后复核：
+  - Anthropic Manager 专家与 Hermes Agent 专家二次确认均已无 blocking/P1；
+  - 顺手把测试 helper 中重复的 taxonomy literal 也改成直接导入默认常量，避免 test-only 漂移。
+- 当前判断再更新为：
+  - runtime governance 现在已经从 code/runbook 进一步下沉到 generated report + checked-in fixture contract，并且 ops/read-side 与 report generation 复用同一份 taxonomy classifier，第二真相已收口；
+  - 下一步更适合继续评估是否要把这组 governance metadata 继续上提到 evidence bundle 或 report validation helper，或者收掉 `T354` 里剩余的流程文档引用，而不是再新增独立的口头规则。
+- 已继续推进 report validation helper，先收掉“shape 正确但治理 contract 漂移的手写 report”仍可被 runtime 接受的余量：
+  - 先在 `tests/test_watchdog_release_gate.py` 补红测，要求新增 `parse_release_gate_report(...)` helper；当 `runtime_contract_surface_ref` 或 `runtime_gate_reason_taxonomy` 偏离 canonical default 时必须直接抛错，而不是只做 shape validation；
+  - 同时在 `tests/test_watchdog_session_spine_runtime.py` 补红测，要求 resident runtime 遇到 governance-drifted 的 `release_gate_report` 时沿既有 fail-closed 路径降级为 `report_load_failed`，禁止继续 auto execute；
+  - 初次 red 结果为：`uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'parse_release_gate_report_rejects_governance_contract_drift or governance_drifts'` -> `2 failed, 43 deselected in 1.06s`，失败点分别是 helper 不存在、orchestrator 仍直接接受 drifted report；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `parse_release_gate_report(...)`，先做 `ReleaseGateReport.model_validate(...)`，再强制校验 `runtime_contract_surface_ref` 与 `runtime_gate_reason_taxonomy` 必须等于 canonical default；
+  - 已在 `src/watchdog/services/session_spine/orchestrator.py` 的 `_load_release_gate_report()` 切到该 helper，并把 governance drift 触发的 `ValueError` 纳入既有 `report_load_failed` fail-closed 分支；
+  - 这一步之后，release gate runtime 不再只相信“字段都在”，而是会显式拒绝治理 contract 漂移的 hand-authored report。
+- 当前已通过的新增验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'parse_release_gate_report_rejects_governance_contract_drift or governance_drifts'` -> `2 passed, 43 deselected in 0.51s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `72 passed in 4.18s`
+- 已按对抗评审规则对这一切片做复核并处理一条有效 P1：
+  - Anthropic Manager 专家指出，我新加的 `parse_release_gate_report(...)` 仍会在 Pydantic normalization 之后再比较 taxonomy，因此缺失 `raw_reason_labels_forbidden` 这类会被默认值补回的 hand-authored payload 仍可能被 runtime 接受；
+  - 已据此在 `tests/test_watchdog_release_gate.py` 补一条更尖的红测，锁定缺失 governance 字段也必须被视为 drift，而不是让默认值把它“修好”；
+  - 已把 `parse_release_gate_report(...)` 改成先比较原始 `payload["runtime_contract_surface_ref"]` 和 `payload["runtime_gate_reason_taxonomy"]` 是否与 canonical JSON contract 完全一致，再交给 `ReleaseGateReport.model_validate(...)` 做 shape 校验；
+  - 现在 runtime load path 不仅会拒绝显式改坏的治理元数据，也会拒绝靠默认值/类型宽松偷偷混过去的 drifted payload。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'parse_release_gate_report_rejects_governance_contract_drift or defaulted_governance_metadata'` -> `2 passed, 8 deselected in 0.10s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `73 passed in 3.44s`
+- 已按对抗评审规则继续复核并处理另一条有效 P1：
+  - Hermes Agent 专家指出，`parse_release_gate_report(...)` 直接对 `payload.get(...)` 做比较；当配置文件是合法但非对象 JSON（如 `[]`、`null`、`"{}"`）时会抛 `AttributeError`，从而绕过 orchestrator 现有的 `report_load_failed` fail-closed 处理；
+  - 已据此在 `tests/test_watchdog_release_gate.py` 补红测，锁定非对象 payload 必须被 helper 视为非法；同时在 `tests/test_watchdog_session_spine_runtime.py` 补运行时红测，锁定配置的 report 文件若是 `[]` 这类非对象 JSON，也必须降级为 `report_load_failed`；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 为 `parse_release_gate_report(...)` 增加显式 `dict` guard，非对象 JSON 一律抛 `ValueError("...JSON object")`，从而稳定落入 runtime 的 load-failure 分支。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_session_spine_runtime.py -k 'non_object_payload or not_json_object or defaulted_governance_metadata or governance_drifts'` -> `4 passed, 44 deselected in 0.58s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `75 passed in 4.33s`
+- 已按对抗评审规则继续复核并处理最后一条有效 P1：
+  - Hermes Agent 专家指出，我把 raw taxonomy 比较改成 Python dict equality 后，`raw_reason_labels_forbidden=1` 这类在 Python 中与 `True` 相等、但在 JSON contract 上并不等价的 payload 仍可能被误接收；
+  - 已据此在 `tests/test_watchdog_release_gate.py` 补红测，锁定 “Python 相等但 JSON contract 漂移” 的 taxonomy payload 也必须被拒绝；
+  - 已在 `src/watchdog/services/brain/release_gate.py` 新增 `_canonical_json(...)`，把 raw taxonomy 比较收紧为 canonical JSON 序列化后的精确相等，而不是继续依赖 Python 对象相等语义。
+- 当前已通过的附加验证：
+  - `uv run pytest -q tests/test_watchdog_release_gate.py -k 'defaulted_governance_metadata or non_object_payload or python_equal_but_json_drifted_taxonomy or parse_release_gate_report_rejects_governance_contract_drift'` -> `4 passed, 8 deselected in 0.14s`
+  - `uv run pytest -q tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py` -> `77 passed in 4.22s`
+- 当前判断再更新为：
+  - report-level governance 现在已经不仅能被脚本生成和 fixture 记录，还会按 canonical JSON contract 在 runtime load path 被强制校验；无论是 drifted metadata、非对象 JSON，还是 Python 宽松相等语义带来的伪等价 payload，都只能走 `report_load_failed` fail-closed；
+  - 下一步更适合评估是否把这条 parse/validate contract 再显式挂到 evidence bundle 或 runbook 的“加载规范”章节，而不是继续只靠代码路径暗含。
+- 035 完成态确认：
+  - `T352` 至 `T355` 的代码、文档、fixture、runtime consume、对抗评审与 handoff 元数据现已全部收口；
+  - 当前 `WI-035` 的正式 handoff 是：后续 work item 只能消费已冻结的 Brain trace / replay / release gate / future worker contract，而不能回退到 policy-only auto execute 或手写 report 直通 runtime；
+  - 下一潜在扩展点仅剩把 `parse_release_gate_report(...)` 上提到 shared loading API / evidence bundle，这属于后续 work item，不再阻塞 035 完成。

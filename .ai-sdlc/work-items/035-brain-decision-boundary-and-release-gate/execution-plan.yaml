@@ -1,0 +1,155 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T351
+  title: 冻结 035 formal docs 与 Brain / Release Gate 执行边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/035-brain-decision-boundary-and-release-gate/spec.md`'
+  - '`specs/035-brain-decision-boundary-and-release-gate/plan.md`'
+  - '`specs/035-brain-decision-boundary-and-release-gate/tasks.md`'
+  - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T352
+  title: 写失败测试锁定 Brain contract、DecisionTrace、provider certification 与 release gate
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_brain_decision_loop.py`'
+  - '`tests/test_watchdog_provider_certification.py`'
+  - '`tests/test_watchdog_decision_replay.py`'
+  - '`tests/test_watchdog_release_gate.py`'
+  - '`tests/test_watchdog_release_gate_evidence.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T351
+- task_id: T353
+  title: 实现最小 Brain contracts、decision input builder 与 validator/certification/replay
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/brain/__init__.py`'
+  - '`src/watchdog/services/brain/models.py`'
+  - '`src/watchdog/services/brain/decision_input_builder.py`'
+  - '`src/watchdog/services/brain/service.py`'
+  - '`src/watchdog/services/brain/validator.py`'
+  - '`src/watchdog/services/brain/provider_certification.py`'
+  - '`src/watchdog/services/brain/replay.py`'
+  - '`src/watchdog/services/policy/decisions.py`'
+  - '`src/watchdog/services/session_service/models.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T352
+- task_id: T354
+  title: 接入 release gate evidence/runtime consume，并锁定低风险自动决策资格门禁
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/services/brain/release_gate_evidence.py`'
+  - '`src/watchdog/services/brain/release_gate.py`'
+  - '`scripts/generate_release_gate_report.py`'
+  - '`docs/operations/release-gate-runbook.md`'
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/policy/decisions.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/session_service/models.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`tests/fixtures/release_gate_packets.jsonl`'
+  - '`tests/fixtures/release_gate_shadow_runs.jsonl`'
+  - '`tests/fixtures/release_gate_expected_report.json`'
+  - '`tests/fixtures/release_gate_label_manifest.json`'
+  - '`tests/test_watchdog_release_gate.py`'
+  - '`tests/test_watchdog_release_gate_evidence.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T353
+- task_id: T355
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/035-brain-decision-boundary-and-release-gate/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/runtime.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T354
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T351
+  status: completed
+  started_at: '2026-04-13T18:02:44+08:00'
+  completed_at: '2026-04-13T18:02:44+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T352
+  status: completed
+  started_at: '2026-04-13T18:03:00+08:00'
+  completed_at: '2026-04-14T00:04:51+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T353
+  status: completed
+  started_at: '2026-04-13T18:30:00+08:00'
+  completed_at: '2026-04-14T00:04:51+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T354
+  status: completed
+  started_at: '2026-04-13T19:00:00+08:00'
+  completed_at: '2026-04-14T00:04:51+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T355
+  status: completed
+  started_at: '2026-04-14T00:01:34+08:00'
+  completed_at: '2026-04-14T00:04:51+08:00'
+current_batch: 5

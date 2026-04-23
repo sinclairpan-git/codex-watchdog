@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
-  - "specs/028-openclaw-webhook-response-api-reference-runtime/spec.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
+  - "specs/028-webhook-response-api-reference-runtime/spec.md"
 ---
 
 # 审计、回放、运维与生产部署 — 功能规格说明
@@ -72,4 +72,4 @@ related_doc:
 - 不重写 `024-028` 的核心契约。
 - 不把运维面做成新的业务内核。
 - 不引入飞书业务语义或宿主策略逻辑。
-- 不把关键恢复责任转交给 OpenClaw 记忆或人工口头流程。
+- 不把关键恢复责任转交给 Feishu 记忆或人工口头流程。

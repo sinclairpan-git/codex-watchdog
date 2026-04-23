@@ -2,7 +2,7 @@
 
 > 对应规格：`specs/016-stable-approval-inbox/spec.md`
 >
-> 对应总设计：`docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md`
+> 对应总设计：`docs/architecture/codex-watchdog-g0-and-v010-design.md`
 
 ## Batch 1
 
@@ -24,14 +24,14 @@
 - **任务编号**：T162
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T161
-- **文件**：`src/watchdog/services/session_spine/service.py`, `src/watchdog/services/session_spine/replies.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`
+- **文件**：`src/watchdog/services/session_spine/service.py`, `src/watchdog/services/session_spine/replies.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`
 - **可并行**：否
 - **验收标准**：
   1. 存在共享 approval inbox builder；
   2. 默认仅返回全局 pending approvals；
   3. 可选 `project_id` 过滤生效；
   4. builder 输出稳定 `ReplyModel(reply_code=approval_inbox)`。
-- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_openclaw_adapter.py -k approval_inbox`
+- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_feishu_adapter.py -k approval_inbox`
 
 ## Batch 2
 
@@ -40,14 +40,14 @@
 - **任务编号**：T163
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T162
-- **文件**：`src/watchdog/api/session_spine_queries.py`, `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`
+- **文件**：`src/watchdog/api/session_spine_queries.py`, `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`
 - **可并行**：否
 - **验收标准**：
   1. 存在 `GET /api/v1/watchdog/approval-inbox`；
   2. adapter 支持 `list_approval_inbox`；
   3. HTTP 与 adapter 复用同一 stable inbox builder；
   4. session 级 `pending-approvals` 与 approve/reject 动作不回归。
-- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py -k approval`
+- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py -k approval`
 
 ### Task 16.4 Legacy 非回归、文档与项目状态收口
 
@@ -61,4 +61,4 @@
   2. README 与 getting-started 已写清 global inbox vs session queue 的区别；
   3. OpenAPI 暴露 stable inbox route；
   4. `.ai-sdlc` 推进到下一个 work item 序号。
-- **验证**：`uv run pytest -q tests/test_m3_watchdog_approvals.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_openclaw_adapter.py`
+- **验证**：`uv run pytest -q tests/test_m3_watchdog_approvals.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_feishu_adapter.py`

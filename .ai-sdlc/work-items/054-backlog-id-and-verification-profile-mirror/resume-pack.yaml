@@ -1,0 +1,14 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T545
+docs_baseline_ref: c9bd96d6a5363354e864f5a6544a80d862ce3d660d3ec7c2cc82d39f78337a36
+docs_baseline_at: '2026-04-16T09:40:44Z'
+working_set_snapshot:
+  spec_path: specs/054-backlog-id-and-verification-profile-mirror/spec.md
+  plan_path: specs/054-backlog-id-and-verification-profile-mirror/plan.md
+  tasks_path: specs/054-backlog-id-and-verification-profile-mirror/tasks.md
+current_branch: codex/054-backlog-id-and-verification-profile-mirror
+timestamp: '2026-04-16T09:40:44Z'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: '2026-04-16T09:40:44Z'
+checkpoint_fingerprint: c9bd96d6a5363354e864f5a6544a80d862ce3d660d3ec7c2cc82d39f78337a36

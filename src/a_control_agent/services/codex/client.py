@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from a_control_agent.services.codex_input import fingerprint_input_text
+from watchdog.services.project_aliases import canonicalize_project_id, rewrite_legacy_project_aliases
 
 
 @runtime_checkable
@@ -223,9 +224,11 @@ class LocalCodexClient:
         return visible or rows
 
     def _summarize_thread(self, row: dict[str, Any]) -> dict[str, Any]:
-        cwd = str(row.get("cwd") or "")
+        cwd = str(rewrite_legacy_project_aliases(str(row.get("cwd") or "")))
         rollout_path = Path(str(row.get("rollout_path") or ""))
-        project_id = Path(cwd).name if cwd.strip() else "unknown-project"
+        project_id = canonicalize_project_id(
+            Path(cwd).name if cwd.strip() else "unknown-project"
+        )
         session = {
             "thread_id": str(row.get("id") or ""),
             "project_id": project_id,

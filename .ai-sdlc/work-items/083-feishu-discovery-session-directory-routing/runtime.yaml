@@ -1,0 +1,13 @@
+work_item_id: 083-feishu-discovery-session-directory-routing
+spec_dir: specs/083-feishu-discovery-session-directory-routing
+current_stage: completed
+current_batch: 4
+current_task: ''
+last_committed_task: ''
+current_branch: codex/083-feishu-discovery-session-directory-routing
+ai_decisions_count: 3
+execution_mode: auto
+started_at: '2026-04-18T14:05:00Z'
+last_updated: '2026-04-19T00:40:00Z'
+debug_rounds: {}
+consecutive_halts: 0

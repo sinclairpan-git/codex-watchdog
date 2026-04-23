@@ -1,0 +1,21 @@
+work_item:
+  id: 078-completed-review-gate-drift
+  spec_dir: specs/078-completed-review-gate-drift
+  branch: codex/078-completed-review-gate-drift
+current_stage: completed
+current_batch: 5
+last_committed_task: T785
+current_branch: codex/078-completed-review-gate-drift
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: advance to the next open work item after WI-078 closure
+artifacts:
+  - specs/078-completed-review-gate-drift/spec.md
+  - specs/078-completed-review-gate-drift/plan.md
+  - specs/078-completed-review-gate-drift/tasks.md
+  - specs/078-completed-review-gate-drift/task-execution-log.md
+  - .ai-sdlc/work-items/078-completed-review-gate-drift/execution-plan.yaml
+  - .ai-sdlc/work-items/078-completed-review-gate-drift/runtime.yaml
+  - .ai-sdlc/work-items/078-completed-review-gate-drift/latest-summary.md
+timestamp: '2026-04-18T00:05:00Z'

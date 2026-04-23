@@ -55,7 +55,11 @@ def _receipt_result(
     )
 
 
-def seed_audit_chain(data_dir: Path) -> dict[str, str]:
+def seed_audit_chain(
+    data_dir: Path,
+    *,
+    with_resident_expert_consultation: bool = False,
+) -> dict[str, str]:
     policy_store = PolicyDecisionStore(data_dir / "policy_decisions.json")
     approval_store = CanonicalApprovalStore(data_dir / "canonical_approvals.json")
     response_store = ApprovalResponseStore(data_dir / "approval_responses.json")
@@ -103,6 +107,55 @@ def seed_audit_chain(data_dir: Path) -> dict[str, str]:
                 "action_ref": "execute_recovery",
                 "approval_id": "appr_001",
             },
+            **(
+                {
+                    "resident_expert_consultation": {
+                        "consultation_ref": "decision:forensic-1",
+                        "consulted_at": "2026-04-07T00:00:00Z",
+                        "coverage_status": "degraded",
+                        "degraded_expert_ids": ["hermes-agent-expert"],
+                        "opinions": [
+                            {
+                                "expert_id": "managed-agent-expert",
+                                "next_slice_recommendation": "tighten recovery lineage",
+                                "rationale": "managed execution closure should stay replayable",
+                                "risks_to_avoid": ["implicit recovery state transitions"],
+                            },
+                            {
+                                "expert_id": "hermes-agent-expert",
+                                "next_slice_recommendation": "reduce operator triage noise",
+                                "rationale": "incident dispatch still carries too much low-signal text",
+                                "risks_to_avoid": ["burying the next operator step"],
+                            },
+                        ],
+                        "synthesis": {
+                            "summary": "take the smallest slice that improves lineage and triage together",
+                            "chosen_next_slice": "lineage plus concise triage summary",
+                            "dissent_summary": "managed prioritizes lineage while hermes prioritizes triage density",
+                        },
+                        "experts": [
+                            {
+                                "expert_id": "managed-agent-expert",
+                                "status": "available",
+                                "runtime_handle": "agent:managed:1",
+                                "last_seen_at": "2026-04-06T23:59:30Z",
+                                "last_consulted_at": "2026-04-07T00:00:00Z",
+                                "last_consultation_ref": "decision:forensic-1",
+                            },
+                            {
+                                "expert_id": "hermes-agent-expert",
+                                "status": "stale",
+                                "runtime_handle": "agent:hermes:1",
+                                "last_seen_at": "2026-04-06T23:55:00Z",
+                                "last_consulted_at": "2026-04-07T00:00:00Z",
+                                "last_consultation_ref": "decision:forensic-1",
+                            },
+                        ],
+                    }
+                }
+                if with_resident_expert_consultation
+                else {}
+            ),
         },
     )
     policy_store.put(decision)
@@ -127,7 +180,7 @@ def seed_audit_chain(data_dir: Path) -> dict[str, str]:
         status="approved",
         created_at="2026-04-07T00:00:01Z",
         decided_at="2026-04-07T00:00:03Z",
-        decided_by="openclaw:user-1",
+        decided_by="watchdog:user-1",
         operator_notes=["approval approved by operator"],
         decision=decision,
     )
@@ -159,10 +212,10 @@ def seed_audit_chain(data_dir: Path) -> dict[str, str]:
         idempotency_key=f"{approval.envelope_id}|approve|client-request-1",
         project_id="repo-a",
         approval_status="approved",
-        operator="openclaw:user-1",
+        operator="watchdog:user-1",
         note="approved from host runtime",
         created_at="2026-04-07T00:00:03Z",
-        operator_notes=["response=approve operator=openclaw:user-1"],
+        operator_notes=["response=approve operator=watchdog:user-1"],
         approval_result=approval_receipt,
         execution_result=execution_receipt,
     )

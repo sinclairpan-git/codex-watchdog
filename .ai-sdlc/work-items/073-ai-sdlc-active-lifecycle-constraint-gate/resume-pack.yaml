@@ -1,0 +1,20 @@
+work_item:
+  id: 073-ai-sdlc-active-lifecycle-constraint-gate
+  spec_dir: specs/073-ai-sdlc-active-lifecycle-constraint-gate
+  branch: codex/073-ai-sdlc-active-lifecycle-constraint-gate
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-073 and advance next work item
+artifacts:
+  - specs/073-ai-sdlc-active-lifecycle-constraint-gate/spec.md
+  - specs/073-ai-sdlc-active-lifecycle-constraint-gate/plan.md
+  - specs/073-ai-sdlc-active-lifecycle-constraint-gate/tasks.md
+  - .ai-sdlc/work-items/073-ai-sdlc-active-lifecycle-constraint-gate/execution-plan.yaml
+docs_baseline_ref: 7a0e4a6709308de713a502d97f53caffb5be8781bdffea54c6b7a74bebab9f4e
+docs_baseline_at: '2026-04-17T02:34:33Z'
+review_approval_status: approved
+review_approved_by:
+  - Anthropic Manager Expert
+  - Hermes Agent Expert
+timestamp: '2026-04-17T02:34:33Z'

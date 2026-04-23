@@ -1,0 +1,19 @@
+work_item_id: 076-feishu-callback-contract-smoke
+spec_dir: specs/076-feishu-callback-contract-smoke
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T765
+current_branch: codex/076-feishu-callback-contract-smoke
+docs_baseline_ref: 52fefcfad6e08196de0ee213a7efb5405fbd7532
+docs_baseline_at: '2026-04-17T03:36:57Z'
+review_approval_status: approved
+review_approved_by:
+  - Anthropic Manager Expert
+  - Hermes Agent Expert
+ai_decisions_count: 2
+execution_mode: auto
+started_at: '2026-04-17T03:25:00Z'
+last_updated: '2026-04-17T03:36:57Z'
+debug_rounds: {}
+consecutive_halts: 0

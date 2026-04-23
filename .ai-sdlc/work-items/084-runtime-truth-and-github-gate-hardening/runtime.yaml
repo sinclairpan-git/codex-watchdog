@@ -1,0 +1,13 @@
+work_item_id: 084-runtime-truth-and-github-gate-hardening
+spec_dir: specs/084-runtime-truth-and-github-gate-hardening
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: ''
+current_branch: codex/084-runtime-truth-and-github-gate-hardening
+ai_decisions_count: 5
+execution_mode: auto
+started_at: '2026-04-19T06:14:17Z'
+last_updated: '2026-04-19T06:14:17Z'
+debug_rounds: {}
+consecutive_halts: 0

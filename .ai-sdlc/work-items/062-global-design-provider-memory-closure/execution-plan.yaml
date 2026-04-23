@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T621
+  title: 冻结 062 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T622
+  title: 写 failing tests 锁定 provider runtime 与 durable memory 缺口
+  status: completed
+  phase: 2
+  depends_on:
+  - T621
+- task_id: T623
+  title: 实现 OpenAI-compatible Brain provider
+  status: completed
+  phase: 3
+  depends_on:
+  - T622
+- task_id: T624
+  title: 实现 durable Memory Hub 与 session-driven ingestion
+  status: completed
+  phase: 4
+  depends_on:
+  - T623
+- task_id: T625
+  title: 完成 targeted / smoke 验证并回写 formal memory
+  status: completed
+  phase: 5
+  depends_on:
+  - T624
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T621
+  status: completed
+  started_at: '2026-04-16T11:30:00Z'
+  completed_at: '2026-04-16T11:31:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T622
+  status: completed
+  started_at: '2026-04-16T11:31:00Z'
+  completed_at: '2026-04-16T11:38:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T623
+  status: completed
+  started_at: '2026-04-16T11:38:00Z'
+  completed_at: '2026-04-16T11:46:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T624
+  status: completed
+  started_at: '2026-04-16T11:46:00Z'
+  completed_at: '2026-04-16T11:52:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T625
+  status: completed
+  started_at: '2026-04-16T11:52:00Z'
+  completed_at: '2026-04-16T11:56:47Z'
+current_batch: 5

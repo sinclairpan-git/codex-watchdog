@@ -1,0 +1,25 @@
+prd_path: codex-watchdog-prd.md
+constitution_path: .ai-sdlc/memory/constitution.md
+tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+spec_path: specs/001-codex-watchdog-foundation/spec.md
+plan_path: specs/001-codex-watchdog-foundation/plan.md
+tasks_path: specs/001-codex-watchdog-foundation/tasks.md
+active_files:
+- '`src/a_control_agent/`'
+- '`src/watchdog/`'
+- '`config/examples/`'
+- '`README.md`'
+- '`src/a_control_agent/api/`'
+- '`src/a_control_agent/storage/`'
+- '`src/watchdog/api/`'
+- '`src/watchdog/services/a_client/`'
+context_summary: '# Latest Summary
+
+
+  Current Batch: 1/1
+
+
+  Last Task: T13
+
+
+  Phase 1 complete: 3/3 tasks completed, 0 halted.'

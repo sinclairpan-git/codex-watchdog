@@ -1,0 +1,13 @@
+work_item_id: 078-completed-review-gate-drift
+spec_dir: specs/078-completed-review-gate-drift
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T785
+current_branch: codex/078-completed-review-gate-drift
+ai_decisions_count: 2
+execution_mode: auto
+started_at: '2026-04-18T00:00:00Z'
+last_updated: '2026-04-18T00:05:00Z'
+debug_rounds: {}
+consecutive_halts: 0

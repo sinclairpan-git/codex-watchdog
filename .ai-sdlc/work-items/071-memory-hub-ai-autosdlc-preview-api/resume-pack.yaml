@@ -1,0 +1,16 @@
+work_item:
+  id: 071-memory-hub-ai-autosdlc-preview-api
+  spec_dir: specs/071-memory-hub-ai-autosdlc-preview-api
+  branch: codex/071-memory-hub-ai-autosdlc-preview-api
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: hand off closed WI-071 and advance next work item
+artifacts:
+  - specs/071-memory-hub-ai-autosdlc-preview-api/spec.md
+  - specs/071-memory-hub-ai-autosdlc-preview-api/plan.md
+  - specs/071-memory-hub-ai-autosdlc-preview-api/tasks.md
+  - .ai-sdlc/work-items/071-memory-hub-ai-autosdlc-preview-api/execution-plan.yaml
+docs_baseline_ref: 66d73e5d43b1aa6acde9cfc21ac1183bbb89ca4c514ecdd2f5e05a91cfb4f310
+timestamp: '2026-04-16T16:14:52Z'
+

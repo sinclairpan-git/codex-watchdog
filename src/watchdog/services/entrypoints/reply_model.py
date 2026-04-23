@@ -1,0 +1,397 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+from watchdog.contracts.session_spine.enums import ReplyCode, ReplyKind
+from watchdog.contracts.session_spine.models import ReplyModel, WatchdogActionResult
+from watchdog.services.session_spine.replies import (
+    build_approval_inbox_reply as build_approval_inbox_read_reply,
+)
+from watchdog.services.session_spine.replies import (
+    build_approval_queue_reply as build_approval_queue_read_reply,
+)
+from watchdog.services.session_spine.replies import (
+    build_blocker_explanation_reply as build_blocker_explanation_read_reply,
+)
+from watchdog.services.session_spine.replies import (
+    build_session_facts_reply as build_session_facts_read_reply,
+)
+from watchdog.services.session_spine.replies import (
+    build_session_event_snapshot_reply as build_session_event_snapshot_read_reply,
+)
+from watchdog.services.session_spine.replies import build_progress_reply as build_progress_read_reply
+from watchdog.services.session_spine.replies import (
+    build_session_directory_reply as build_session_directory_read_reply,
+)
+from watchdog.services.session_spine.replies import build_session_reply as build_session_read_reply
+from watchdog.services.session_spine.replies import (
+    build_stuck_explanation_reply as build_stuck_explanation_read_reply,
+)
+from watchdog.services.session_spine.replies import (
+    build_workspace_activity_reply as build_workspace_activity_read_reply,
+)
+from watchdog.services.session_spine.service import (
+    ApprovalInboxReadBundle,
+    SessionDirectoryReadBundle,
+    SessionReadBundle,
+    WorkspaceActivityReadBundle,
+)
+from watchdog.contracts.session_spine.models import SessionEvent
+
+
+def _render_action_hint(*, intent_code: str, available_intents: list[str]) -> str | None:
+    intents = set(available_intents)
+    hints: list[str] = []
+
+    if "list_pending_approvals" in intents and intent_code != "list_pending_approvals":
+        hints.append("审批列表")
+
+    if "approve_approval" in intents:
+        if "reject_approval" in intents:
+            hints.append("回复同意/拒绝")
+        else:
+            hints.append("回复同意")
+
+    if "explain_blocker" in intents and intent_code != "explain_blocker":
+        hints.append("卡在哪里")
+
+    if "why_stuck" in intents and intent_code != "why_stuck" and "卡在哪里" not in hints:
+        hints.append("为什么卡住")
+
+    if not hints:
+        return None
+    return "、".join(hints)
+
+
+def _with_action_hint(reply: ReplyModel, *, available_intents: list[str]) -> ReplyModel:
+    hint = _render_action_hint(intent_code=reply.intent_code, available_intents=available_intents)
+    if not hint or " | 下一步=" in reply.message:
+        return reply
+    return reply.model_copy(update={"message": f"{reply.message} | 下一步={hint}"})
+
+
+def _parse_iso8601(value: str | None) -> datetime | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _directory_priority_reason(
+    *,
+    session,
+    progress,
+) -> tuple[int, str] | None:
+    attention_state = str(session.attention_state or "").strip()
+    recovery_outcome = str(progress.recovery_outcome or "").strip()
+    recovery_status = str(progress.recovery_status or "").strip()
+    recovery_suppression_reason = str(progress.recovery_suppression_reason or "").strip()
+    decision_degrade_reason = str(progress.decision_degrade_reason or "").strip()
+
+    if attention_state == "unreachable":
+        return (0, "链路不可用")
+    if recovery_outcome == "resume_failed" or recovery_status in {
+        "failed_retryable",
+        "failed_manual",
+    }:
+        return (1, "恢复失败")
+    if recovery_suppression_reason:
+        return (2, "恢复抑制")
+    if attention_state == "critical":
+        return (3, "卡住")
+    if session.pending_approval_count > 0 or attention_state == "needs_human":
+        return (4, "待审批")
+    if decision_degrade_reason == "provider_output_invalid":
+        return (5, "provider降级")
+    if decision_degrade_reason:
+        return (5, "决策降级")
+    return None
+
+
+def _render_directory_priority_summary(bundle: SessionDirectoryReadBundle) -> str | None:
+    session_by_project = {session.project_id: session for session in bundle.sessions}
+    ranked_projects: list[tuple[int, int, str, str]] = []
+
+    for index, progress in enumerate(bundle.progresses):
+        session = session_by_project.get(progress.project_id)
+        if session is None:
+            continue
+
+        reason = _directory_priority_reason(session=session, progress=progress)
+        if reason is None:
+            continue
+        ranked_projects.append((reason[0], index, progress.project_id, reason[1]))
+
+    if not ranked_projects:
+        return None
+
+    ranked_projects.sort(key=lambda item: (item[0], item[1]))
+    return "、".join(
+        f"{project_id}:{reason}"
+        for _, _, project_id, reason in ranked_projects[:3]
+    )
+
+
+def _render_directory_state_summary(bundle: SessionDirectoryReadBundle) -> str | None:
+    state_order = (
+        ("active", "进行中"),
+        ("awaiting_approval", "待审批"),
+        ("blocked", "受阻"),
+        ("unavailable", "不可达"),
+    )
+    state_counts = {
+        state_code: sum(
+            1
+            for session in bundle.sessions
+            if str(session.session_state or "").strip() == state_code
+        )
+        for state_code, _ in state_order
+    }
+    parts = [
+        f"{label}{state_counts[state_code]}"
+        for state_code, label in state_order
+        if state_counts[state_code] > 0
+    ]
+    if not parts:
+        return None
+    return "、".join(parts)
+
+
+def _directory_message_sort_key(
+    *,
+    session,
+    progress,
+    index: int,
+) -> tuple[int, int, int]:
+    reason = _directory_priority_reason(session=session, progress=progress)
+    if reason is None:
+        return (1, 0, index)
+    return (0, reason[0], index)
+
+
+def _directory_freshness_labels(bundle: SessionDirectoryReadBundle) -> dict[str, str]:
+    if len(bundle.progresses) < 2:
+        return {}
+
+    parsed_by_project = {
+        progress.project_id: _parse_iso8601(progress.last_progress_at)
+        for progress in bundle.progresses
+    }
+    latest_progress_at = max(
+        (parsed for parsed in parsed_by_project.values() if parsed is not None),
+        default=None,
+    )
+    if latest_progress_at is None:
+        return {
+            progress.project_id: "未知"
+            for progress in bundle.progresses
+        }
+
+    labels: dict[str, str] = {}
+    for progress in bundle.progresses:
+        progress_at = parsed_by_project.get(progress.project_id)
+        if progress_at is None:
+            labels[progress.project_id] = "未知"
+            continue
+        age = latest_progress_at - progress_at
+        if age > timedelta(hours=2):
+            labels[progress.project_id] = "静默"
+        elif age > timedelta(minutes=30):
+            labels[progress.project_id] = "较早"
+    return labels
+
+
+def _render_resident_expert_coverage_summary(bundle: SessionDirectoryReadBundle) -> str | None:
+    coverage = bundle.resident_expert_coverage
+    if coverage is None:
+        return None
+    parts: list[str] = []
+    labels = (
+        ("available_expert_count", "在线"),
+        ("bound_expert_count", "已绑定"),
+        ("restoring_expert_count", "恢复中"),
+        ("stale_expert_count", "过期"),
+        ("unavailable_expert_count", "未就绪"),
+    )
+    for field_name, label in labels:
+        count = int(getattr(coverage, field_name, 0) or 0)
+        if count > 0:
+            parts.append(f"{label}{count}")
+    if not parts:
+        return None
+    return "、".join(parts)
+
+
+def _with_directory_action_hints(reply: ReplyModel, *, bundle: SessionDirectoryReadBundle) -> ReplyModel:
+    if not reply.message:
+        return reply
+
+    session_by_project = {session.project_id: session for session in bundle.sessions}
+    session_intents = {
+        session.project_id: session.available_intents for session in bundle.sessions
+    }
+    lines = reply.message.splitlines()
+    if not lines:
+        return reply
+
+    header_line = lines[0]
+    resident_expert_summary = _render_resident_expert_coverage_summary(bundle)
+    if resident_expert_summary and " | 监督=" not in header_line:
+        header_line = f"{header_line} | 监督={resident_expert_summary}"
+    latest_consultation_ref = (
+        str(bundle.resident_expert_coverage.latest_consultation_ref or "").strip()
+        if bundle.resident_expert_coverage is not None
+        else ""
+    )
+    if latest_consultation_ref and " | 最近合议=" not in header_line:
+        header_line = f"{header_line} | 最近合议={latest_consultation_ref}"
+    state_summary = _render_directory_state_summary(bundle)
+    if state_summary and " | 状态=" not in header_line:
+        header_line = f"{header_line} | 状态={state_summary}"
+    priority_summary = _render_directory_priority_summary(bundle)
+    if priority_summary and " | 先处理=" not in header_line:
+        header_line = f"{header_line} | 先处理={priority_summary}"
+
+    enriched_lines = [header_line]
+    progress_lines = lines[1:]
+    freshness_labels = _directory_freshness_labels(bundle)
+    rendered_progress_lines: list[tuple[tuple[int, int, int], str]] = []
+    trailing_lines: list[str] = []
+    for index, line in enumerate(progress_lines):
+        if index >= len(bundle.progresses):
+            trailing_lines.append(line)
+            continue
+        progress = bundle.progresses[index]
+        session = session_by_project.get(progress.project_id)
+        sort_key = (1, 0, index)
+        if session is not None:
+            sort_key = _directory_message_sort_key(
+                session=session,
+                progress=progress,
+                index=index,
+            )
+            freshness_label = freshness_labels.get(progress.project_id)
+            if freshness_label and " | 更新=" not in line:
+                line = f"{line} | 更新={freshness_label}"
+            focus_reason = _directory_priority_reason(session=session, progress=progress)
+            if focus_reason and " | 关注=" not in line:
+                line = f"{line} | 关注={focus_reason[1]}"
+        hint = _render_action_hint(
+            intent_code=reply.intent_code,
+            available_intents=session_intents.get(progress.project_id, []),
+        )
+        if hint and " | 下一步=" not in line:
+            line = f"{line} | 下一步={hint}"
+        rendered_progress_lines.append((sort_key, line))
+    enriched_lines.extend(line for _, line in sorted(rendered_progress_lines, key=lambda item: item[0]))
+    enriched_lines.extend(trailing_lines)
+    return reply.model_copy(update={"message": "\n".join(enriched_lines)})
+
+
+def build_session_reply(
+    bundle: SessionReadBundle,
+    *,
+    intent_code: str = "get_session",
+) -> ReplyModel:
+    return _with_action_hint(
+        build_session_read_reply(bundle, intent_code=intent_code),
+        available_intents=bundle.session.available_intents,
+    )
+
+
+def build_session_directory_reply(bundle: SessionDirectoryReadBundle) -> ReplyModel:
+    return _with_directory_action_hints(
+        build_session_directory_read_reply(bundle),
+        bundle=bundle,
+    )
+
+
+def build_session_event_snapshot_reply(events: list[SessionEvent]) -> ReplyModel:
+    return build_session_event_snapshot_read_reply(events)
+
+
+def build_progress_reply(bundle: SessionReadBundle) -> ReplyModel:
+    return _with_action_hint(
+        build_progress_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
+
+
+def build_session_facts_reply(bundle: SessionReadBundle) -> ReplyModel:
+    return build_session_facts_read_reply(bundle)
+
+
+def build_workspace_activity_reply(bundle: WorkspaceActivityReadBundle) -> ReplyModel:
+    return build_workspace_activity_read_reply(bundle)
+
+
+def build_approval_queue_reply(bundle: SessionReadBundle) -> ReplyModel:
+    return _with_action_hint(
+        build_approval_queue_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
+
+
+def build_approval_inbox_reply(bundle: ApprovalInboxReadBundle) -> ReplyModel:
+    return build_approval_inbox_read_reply(bundle)
+
+
+def build_stuck_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
+    return _with_action_hint(
+        build_stuck_explanation_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
+
+
+def build_blocker_explanation_reply(bundle: SessionReadBundle) -> ReplyModel:
+    return _with_action_hint(
+        build_blocker_explanation_read_reply(bundle),
+        available_intents=bundle.session.available_intents,
+    )
+
+
+def build_action_reply(intent_code: str, result: WatchdogActionResult) -> ReplyModel:
+    reply_kind = ReplyKind.ACTION_RESULT
+    if result.reply_code == ReplyCode.RECOVERY_AVAILABILITY:
+        reply_kind = ReplyKind.EXPLANATION
+    return ReplyModel(
+        reply_kind=reply_kind,
+        reply_code=result.reply_code or ReplyCode.ACTION_RESULT,
+        intent_code=intent_code,
+        message=result.message,
+        action_result=result,
+        facts=result.facts,
+    )
+
+
+def build_control_link_error_reply(intent_code: str, message: str) -> ReplyModel:
+    return ReplyModel(
+        reply_kind=ReplyKind.EXPLANATION,
+        reply_code=ReplyCode.CONTROL_LINK_ERROR,
+        intent_code=intent_code,
+        message=message,
+    )
+
+
+def build_action_not_available_reply(intent_code: str, message: str) -> ReplyModel:
+    return ReplyModel(
+        reply_kind=ReplyKind.ACTION_RESULT,
+        reply_code=ReplyCode.ACTION_NOT_AVAILABLE,
+        intent_code=intent_code,
+        message=message,
+    )
+
+
+def build_unsupported_intent_reply(intent_code: str) -> ReplyModel:
+    return ReplyModel(
+        reply_kind=ReplyKind.EXPLANATION,
+        reply_code=ReplyCode.UNSUPPORTED_INTENT,
+        intent_code=intent_code,
+        message=f"unsupported intent: {intent_code}",
+    )

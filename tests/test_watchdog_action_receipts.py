@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from watchdog.contracts.session_spine.enums import (
     ActionCode,
     ActionStatus,
@@ -191,3 +193,39 @@ def test_lookup_action_receipt_preserves_supervision_evaluation_payload(tmp_path
     assert reply.action_result is not None
     assert reply.action_result.supervision_evaluation is not None
     assert reply.action_result.supervision_evaluation.reason_code == "stuck_soft"
+
+
+def test_action_receipt_store_reuses_cached_snapshot_until_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_path = tmp_path / "action_receipts.json"
+    store = ActionReceiptStore(store_path)
+    result = _result()
+    key = receipt_key(
+        action_code=result.action_code,
+        project_id=result.project_id,
+        approval_id=result.approval_id,
+        idempotency_key=result.idempotency_key,
+    )
+    store.put(key, result)
+
+    original_read_text = Path.read_text
+    read_calls = 0
+
+    def counting_read_text(self: Path, *args, **kwargs):
+        nonlocal read_calls
+        if self == store_path:
+            read_calls += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    assert store.get(key) is not None
+    assert store.list_items()[0][0] == key
+    assert read_calls == 0
+
+    store_path.write_text(original_read_text(store_path, encoding="utf-8") + "\n", encoding="utf-8")
+
+    assert store.get(key) is not None
+    assert read_calls == 1

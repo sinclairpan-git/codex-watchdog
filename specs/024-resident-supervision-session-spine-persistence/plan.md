@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/024-resident-supervision-session-spine-persistence/spec.md"
   - "src/watchdog/services/session_spine/projection.py"
   - "src/watchdog/services/session_spine/service.py"
@@ -27,18 +27,18 @@ related_doc:
 |---|---|---|
 | Resident Runtime | `src/watchdog/services/session_spine/runtime.py` | 常驻 projection loop、刷新调度、停止/恢复生命周期 |
 | Persistence | `src/watchdog/services/session_spine/store.py` | canonical spine 快照、`fact_snapshot_version`、`session_seq`、restore/replay 读取 |
-| Snapshot Builder | `src/watchdog/services/session_spine/projection.py`, `src/watchdog/services/session_spine/facts.py` | 从 A-side read model 构建 canonical snapshot，并决定“是否产生新快照版本” |
+| Snapshot Builder | `src/watchdog/services/session_spine/projection.py`, `src/watchdog/services/session_spine/facts.py` | 从 runtime-side read model 构建 canonical snapshot，并决定“是否产生新快照版本” |
 | Read Service | `src/watchdog/services/session_spine/service.py` | 从 persisted spine 组装 `SessionReadBundle` 等稳定 read bundle |
 | Query API | `src/watchdog/api/session_spine_queries.py`, `src/watchdog/api/supervision.py` | 把既有 stable query route 改为消费 persisted spine 与 freshness 语义 |
 | App Lifecycle | `src/watchdog/main.py` | 挂接 resident runtime 的启动、停止与 restore/replay |
-| 验证 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_session_spine_runtime.py`, `tests/integration/test_openclaw_integration_spine.py` | 锁住 runtime、排序、恢复与 stable query contract 不回归 |
+| 验证 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_session_spine_runtime.py`, `tests/integration/test_feishu_integration_spine.py` | 锁住 runtime、排序、恢复与 stable query contract 不回归 |
 
 ## 边界纪律
 
 - `024` 只拥有 canonical session spine 的 resident runtime 与 persistence 语义。
 - `024` 不拥有策略判定逻辑；`human_gate / hard_block / decision_key` 只允许在文档中保留为后续接口前提，不进入本工作项实现。
 - `024` 不拥有 delivery / retry / receipt / webhook 逻辑。
-- `024` 不拥有 OpenClaw 宿主渲染与 Feishu 渠道语义。
+- `024` 不拥有 Feishu 宿主渲染与 Feishu 渠道语义。
 
 ## 依赖顺序
 
@@ -92,7 +92,7 @@ related_doc:
 
 - `service.py` 改为以 persisted spine 为主要读取源；
 - `session_spine_queries.py` 与相关 query builder 对 freshness 有稳定解释；
-- 最小 integration 继续保证 OpenClaw 模板看到的 contract 不变。
+- 最小 integration 继续保证 Feishu 模板看到的 contract 不变。
 
 关键原则：
 
@@ -109,7 +109,7 @@ related_doc:
 关键原则：
 
 - 验证重点放在单调性、恢复性、contract continuity；
-- 不在本阶段引入 delivery / policy / OpenClaw runtime 说明。
+- 不在本阶段引入 delivery / policy / Feishu runtime 说明。
 
 ## 测试计划
 
@@ -136,12 +136,12 @@ related_doc:
 
 ### Integration
 
-- `tests/integration/test_openclaw_integration_spine.py`
+- `tests/integration/test_feishu_integration_spine.py`
 
 覆盖：
 
-- OpenClaw 模板继续通过 stable route 读取同源 session snapshot；
-- resident runtime 引入后，OpenClaw 可见 contract 不变。
+- Feishu 模板继续通过 stable route 读取同源 session snapshot；
+- resident runtime 引入后，Feishu 可见 contract 不变。
 
 ## 主要风险与应对
 

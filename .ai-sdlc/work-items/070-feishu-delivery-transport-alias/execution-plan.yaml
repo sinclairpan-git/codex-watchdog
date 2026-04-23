@@ -1,0 +1,70 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T701
+  title: 冻结 070 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T702
+  title: 写 failing test 锁定 `WATCHDOG_DELIVERY_TRANSPORT=feishu` alias contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T701
+- task_id: T703
+  title: 实现 runtime transport alias 兼容
+  status: completed
+  phase: 3
+  depends_on:
+  - T702
+- task_id: T704
+  title: 跑 targeted verification 并吸收对抗评审
+  status: completed
+  phase: 4
+  depends_on:
+  - T703
+- task_id: T705
+  title: 完成 ai_sdlc 状态同步与 closeout
+  status: completed
+  phase: 5
+  depends_on:
+  - T704
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T701
+  status: completed
+  started_at: '2026-04-16T14:20:00Z'
+  completed_at: '2026-04-16T14:22:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T702
+  status: completed
+  started_at: '2026-04-16T14:22:00Z'
+  completed_at: '2026-04-16T14:24:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T703
+  status: completed
+  started_at: '2026-04-16T14:24:00Z'
+  completed_at: '2026-04-16T14:25:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T704
+  status: completed
+  started_at: '2026-04-16T14:25:00Z'
+  completed_at: '2026-04-16T14:29:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T705
+  status: completed
+  started_at: '2026-04-16T14:29:00Z'
+  completed_at: '2026-04-16T14:31:00Z'
+current_batch: 5
+

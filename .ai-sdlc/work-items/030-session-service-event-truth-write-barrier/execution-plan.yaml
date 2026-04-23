@@ -1,0 +1,162 @@
+total_tasks: 6
+total_batches: 6
+tasks:
+- task_id: T301
+  title: 冻结 030 formal docs 与执行边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/spec.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/plan.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/tasks.md`'
+  - '`specs/030-session-service-event-truth-write-barrier/task-execution-log.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T302
+  title: 新增 Session event 契约与 append-only writer
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/services/session_service/models.py`'
+  - '`src/watchdog/services/session_service/store.py`'
+  - '`tests/test_watchdog_session_service.py`'
+  - '`tests/test_watchdog_session_service_atomicity.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T301
+- task_id: T303
+  title: 接入 policy 与 orchestrator 写入闸门
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/policy/decisions.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_session_service.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T302
+- task_id: T304
+  title: 收敛审批、通知、人工接管与记忆异常事件
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`src/watchdog/services/approvals/service.py`'
+  - '`tests/test_watchdog_session_service.py`'
+  - '`tests/test_watchdog_approval_loop.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T303
+- task_id: T305
+  title: 冻结命令租约、重排队与恢复位点
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`tests/test_watchdog_command_leases.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T304
+- task_id: T306
+  title: 完成 030 整体验证并交接到下一 work item
+  user_story: ''
+  phase: 6
+  file_paths:
+  - '`tests/test_watchdog_session_service.py`'
+  - '`tests/test_watchdog_session_service_atomicity.py`'
+  - '`tests/test_watchdog_approval_loop.py`'
+  - '`tests/test_watchdog_command_leases.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  - '`tests/test_watchdog_session_spine_runtime.py`'
+  - '`tests/test_long_running_autonomy_doc_contracts.py`'
+  - '`specs/030-session-service-event-truth-write-barrier/task-execution-log.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T305
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T301
+  status: completed
+  started_at: '2026-04-12T00:00:00+08:00'
+  completed_at: '2026-04-12T00:00:00+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T302
+  status: completed
+  started_at: '2026-04-13T13:27:59+08:00'
+  completed_at: '2026-04-13T13:27:59+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T303
+  status: completed
+  started_at: '2026-04-13T13:27:59+08:00'
+  completed_at: '2026-04-13T13:27:59+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T304
+  status: completed
+  started_at: '2026-04-13T13:27:59+08:00'
+  completed_at: '2026-04-13T13:27:59+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T305
+  status: completed
+  started_at: '2026-04-13T13:27:59+08:00'
+  completed_at: '2026-04-13T13:27:59+08:00'
+- batch_id: 6
+  phase: 6
+  tasks:
+  - T306
+  status: completed
+  started_at: '2026-04-13T13:27:59+08:00'
+  completed_at: '2026-04-13T13:27:59+08:00'
+current_batch: 6

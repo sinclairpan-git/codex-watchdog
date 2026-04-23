@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""向 A-Control-Agent 注册或更新一个原生 Codex thread。"""
+"""向 Codex runtime service 注册或更新一个原生 Codex thread。"""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--base-url",
         default=os.environ.get("A_AGENT_BASE_URL", "http://127.0.0.1:8710"),
-        help="A-Control-Agent base URL",
+        help="Codex runtime service base URL",
     )
     parser.add_argument(
         "--token",
         default=os.environ.get("A_AGENT_API_TOKEN", ""),
-        help="A-Control-Agent bearer token",
+        help="Codex runtime service bearer token",
     )
     parser.add_argument(
         "--payload",

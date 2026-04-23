@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T691
+  title: 冻结 069 owner 边界与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T692
+  title: 写 failing tests 锁定 Feishu / OpenAI integration readiness doc contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T691
+- task_id: T693
+  title: 实现 env sample、getting-started 与 validator 更新
+  status: completed
+  phase: 3
+  depends_on:
+  - T692
+- task_id: T694
+  title: 跑 targeted verification 并吸收对抗评审
+  status: completed
+  phase: 4
+  depends_on:
+  - T693
+- task_id: T695
+  title: 完成 ai_sdlc 状态同步与 closeout
+  status: completed
+  phase: 5
+  depends_on:
+  - T694
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T691
+  status: completed
+  started_at: '2026-04-16T14:02:00Z'
+  completed_at: '2026-04-16T14:04:00Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T692
+  status: completed
+  started_at: '2026-04-16T14:04:00Z'
+  completed_at: '2026-04-16T14:06:00Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T693
+  status: completed
+  started_at: '2026-04-16T14:06:00Z'
+  completed_at: '2026-04-16T14:09:00Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T694
+  status: completed
+  started_at: '2026-04-16T14:09:00Z'
+  completed_at: '2026-04-16T14:11:00Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T695
+  status: completed
+  started_at: '2026-04-16T14:11:00Z'
+  completed_at: '2026-04-16T14:11:55Z'
+current_batch: 5

@@ -1,0 +1,21 @@
+work_item:
+  id: 081-autonomous-next-step-recovery
+  spec_dir: specs/081-autonomous-next-step-recovery
+  branch: codex/081-autonomous-next-step-recovery
+current_stage: completed
+current_batch: 4
+last_committed_task: ''
+current_branch: codex/081-autonomous-next-step-recovery
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: start WI-082 for the next live runtime acceptance increment
+artifacts:
+  - specs/081-autonomous-next-step-recovery/spec.md
+  - specs/081-autonomous-next-step-recovery/plan.md
+  - specs/081-autonomous-next-step-recovery/tasks.md
+  - specs/081-autonomous-next-step-recovery/task-execution-log.md
+  - .ai-sdlc/work-items/081-autonomous-next-step-recovery/execution-plan.yaml
+  - .ai-sdlc/work-items/081-autonomous-next-step-recovery/runtime.yaml
+  - .ai-sdlc/work-items/081-autonomous-next-step-recovery/latest-summary.md
+timestamp: '2026-04-18T11:55:02Z'

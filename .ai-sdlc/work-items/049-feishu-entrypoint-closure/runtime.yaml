@@ -1,0 +1,12 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T495
+current_branch: codex/050-observability-restart-security-and-acceptance
+docs_baseline_ref: 8ede0acf1437e5ece8f5bc51c09f127ac22156e1b3b6deb78aa9a532d1eac651
+docs_baseline_at: '2026-04-16T08:19:16Z'
+ai_decisions_count: 0
+execution_mode: auto
+started_at: '2026-04-16T08:09:48Z'
+last_updated: '2026-04-16T08:21:16Z'
+debug_rounds: {}
+consecutive_halts: 0

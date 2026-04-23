@@ -9,9 +9,11 @@ from watchdog.api.deps import require_token
 from watchdog.contracts.session_spine.enums import ActionCode
 from watchdog.contracts.session_spine.models import WatchdogAction
 from watchdog.envelope import err, ok
-from watchdog.services.a_client.client import AControlAgentClient
+from watchdog.services.runtime_client.client import CodexRuntimeClient
+from watchdog.services.session_service import SessionService
 from watchdog.services.session_spine.actions import execute_watchdog_action
 from watchdog.services.session_spine.service import SessionSpineUpstreamError
+from watchdog.services.session_spine.store import SessionSpineStore
 from watchdog.settings import Settings
 from watchdog.storage.action_receipts import ActionReceiptStore
 
@@ -22,12 +24,28 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def get_client(request: Request) -> AControlAgentClient:
-    return request.app.state.a_client
+def get_client(request: Request) -> CodexRuntimeClient:
+    return request.app.state.runtime_client
 
 
 def get_receipt_store(request: Request) -> ActionReceiptStore:
     return request.app.state.action_receipt_store
+
+
+def get_session_service(request: Request) -> SessionService:
+    return request.app.state.session_service
+
+
+def get_session_spine_store(request: Request) -> SessionSpineStore:
+    return request.app.state.session_spine_store
+
+
+def get_canonical_approval_store(request: Request) -> Any:
+    return request.app.state.canonical_approval_store
+
+
+def get_decision_store(request: Request) -> Any:
+    return request.app.state.policy_decision_store
 
 
 def _parse_action(body: dict[str, Any]) -> WatchdogAction | None:
@@ -64,7 +82,7 @@ def _build_alias_action(
     action_body: dict[str, Any] = {
         "action_code": action_code,
         "project_id": project_id,
-        "operator": str(body.get("operator") or "openclaw"),
+        "operator": str(body.get("operator") or "watchdog"),
         "idempotency_key": str(body.get("idempotency_key") or ""),
         "arguments": arguments,
         "note": str(body.get("note") or ""),
@@ -74,16 +92,27 @@ def _build_alias_action(
     return _parse_action(action_body)
 
 
-def _resolve_project_id_for_approval(client: AControlAgentClient, approval_id: str) -> str | None:
+def _resolve_project_id_for_approval(
+    client: CodexRuntimeClient,
+    approval_id: str,
+    *,
+    approval_store: Any | None = None,
+) -> str | None:
     try:
         approvals = client.list_approvals()
     except Exception:
-        return None
+        approvals = []
     for approval in approvals:
         if str(approval.get("approval_id") or "") == approval_id:
             project_id = str(approval.get("project_id") or "")
             if project_id:
                 return project_id
+    if approval_store is None or not hasattr(approval_store, "records_for_approval_id"):
+        return None
+    for record in approval_store.records_for_approval_id(approval_id):
+        project_id = str(getattr(record, "project_id", "") or "")
+        if project_id:
+            return project_id
     return None
 
 
@@ -92,8 +121,12 @@ def handle_action(
     *,
     request: Request,
     settings: Settings,
-    client: AControlAgentClient,
+    client: CodexRuntimeClient,
     receipt_store: ActionReceiptStore,
+    session_service: SessionService,
+    store: SessionSpineStore,
+    approval_store: Any,
+    decision_store: Any,
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
     try:
@@ -102,6 +135,10 @@ def handle_action(
             settings=settings,
             client=client,
             receipt_store=receipt_store,
+            session_service=session_service,
+            store=store,
+            approval_store=approval_store,
+            decision_store=decision_store,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
@@ -120,8 +157,12 @@ def post_action(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     action = _parse_action(body)
@@ -136,6 +177,10 @@ def post_action(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -152,8 +197,12 @@ def continue_session_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     action = _build_alias_action(
@@ -169,6 +218,218 @@ def continue_session_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/pause",
+    summary="Alias: pause session",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=pause_session and reuses the canonical handler."
+    ),
+)
+def pause_session_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: CodexRuntimeClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.PAUSE_SESSION,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/resume",
+    summary="Alias: resume session",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=resume_session and folds top-level mode/handoff_summary "
+        "fields into canonical action arguments."
+    ),
+)
+def resume_session_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: CodexRuntimeClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.RESUME_SESSION,
+        project_id=project_id,
+        body=body,
+        top_level_argument_keys=("mode", "handoff_summary", "continuation_packet"),
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/summarize",
+    summary="Alias: summarize session",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=summarize_session and reuses the canonical handler."
+    ),
+)
+def summarize_session_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: CodexRuntimeClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.SUMMARIZE_SESSION,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/force-handoff",
+    summary="Alias: force handoff",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=force_handoff and reuses the canonical handler."
+    ),
+)
+def force_handoff_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: CodexRuntimeClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.FORCE_HANDOFF,
+        project_id=project_id,
+        body=body,
+        top_level_argument_keys=("reason",),
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
+    )
+
+
+@router.post(
+    "/sessions/{project_id}/actions/retry-with-conservative-path",
+    summary="Alias: retry with conservative path",
+    description=(
+        "Human-friendly wrapper over POST /api/v1/watchdog/actions. This route "
+        "maps to action_code=retry_with_conservative_path and reuses the canonical handler."
+    ),
+)
+def retry_with_conservative_path_alias(
+    project_id: str,
+    request: Request,
+    body: dict[str, Any],
+    settings: Settings = Depends(get_settings),
+    client: CodexRuntimeClient = Depends(get_client),
+    receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
+    _: None = Depends(require_token),
+) -> dict[str, object]:
+    action = _build_alias_action(
+        action_code=ActionCode.RETRY_WITH_CONSERVATIVE_PATH,
+        project_id=project_id,
+        body=body,
+    )
+    if action is None:
+        return err(request.headers.get("x-request-id"), _alias_parse_error(body))
+    return handle_action(
+        action,
+        request=request,
+        settings=settings,
+        client=client,
+        receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -185,8 +446,12 @@ def request_recovery_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     action = _build_alias_action(
@@ -202,6 +467,10 @@ def request_recovery_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -219,8 +488,12 @@ def post_operator_guidance_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     action = _build_alias_action(
@@ -237,6 +510,10 @@ def post_operator_guidance_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -254,8 +531,12 @@ def execute_recovery_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     action = _build_alias_action(
@@ -271,6 +552,10 @@ def execute_recovery_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -287,8 +572,12 @@ def evaluate_supervision_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     action = _build_alias_action(
@@ -304,6 +593,10 @@ def evaluate_supervision_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -320,11 +613,19 @@ def approve_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
-    project_id = str(body.get("project_id") or "") or _resolve_project_id_for_approval(client, approval_id)
+    project_id = str(body.get("project_id") or "") or _resolve_project_id_for_approval(
+        client,
+        approval_id,
+        approval_store=approval_store,
+    )
     if not project_id:
         return err(
             request.headers.get("x-request-id"),
@@ -344,6 +645,10 @@ def approve_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )
 
 
@@ -360,11 +665,19 @@ def reject_alias(
     request: Request,
     body: dict[str, Any],
     settings: Settings = Depends(get_settings),
-    client: AControlAgentClient = Depends(get_client),
+    client: CodexRuntimeClient = Depends(get_client),
     receipt_store: ActionReceiptStore = Depends(get_receipt_store),
+    session_service: SessionService = Depends(get_session_service),
+    store: SessionSpineStore = Depends(get_session_spine_store),
+    approval_store: Any = Depends(get_canonical_approval_store),
+    decision_store: Any = Depends(get_decision_store),
     _: None = Depends(require_token),
 ) -> dict[str, object]:
-    project_id = str(body.get("project_id") or "") or _resolve_project_id_for_approval(client, approval_id)
+    project_id = str(body.get("project_id") or "") or _resolve_project_id_for_approval(
+        client,
+        approval_id,
+        approval_store=approval_store,
+    )
     if not project_id:
         return err(
             request.headers.get("x-request-id"),
@@ -384,4 +697,8 @@ def reject_alias(
         settings=settings,
         client=client,
         receipt_store=receipt_store,
+        session_service=session_service,
+        store=store,
+        approval_store=approval_store,
+        decision_store=decision_store,
     )

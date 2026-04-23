@@ -1,0 +1,19 @@
+work_item_id: 074-approval-auto-replay-and-canonical-status
+spec_dir: specs/074-approval-auto-replay-and-canonical-status
+current_stage: completed
+current_batch: 5
+current_task: ''
+last_committed_task: T745
+current_branch: codex/074-approval-auto-replay-and-canonical-status
+docs_baseline_ref: 9a62a6b823ad74d4a30f046eb1f8858abc583065ddbbdf6fcae0d47d4d7ca523
+docs_baseline_at: '2026-04-17T03:18:00Z'
+review_approval_status: approved
+review_approved_by:
+  - Anthropic Manager Expert
+  - Hermes Agent Expert
+ai_decisions_count: 2
+execution_mode: auto
+started_at: '2026-04-17T02:36:00Z'
+last_updated: '2026-04-17T03:18:00Z'
+debug_rounds: {}
+consecutive_halts: 0

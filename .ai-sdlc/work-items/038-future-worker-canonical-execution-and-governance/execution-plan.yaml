@@ -1,0 +1,138 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T381
+  title: 冻结 038 formal docs 与 worker canonical execution 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/spec.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/plan.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/tasks.md`'
+  - '`specs/038-future-worker-canonical-execution-and-governance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T382
+  title: 写失败测试锁定 worker lifecycle、consume/reject 与 stale-result fail-closed
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_future_worker_contract.py`'
+  - '`tests/test_watchdog_future_worker_runtime.py`'
+  - '`tests/e2e/test_watchdog_future_worker_execution.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T381
+- task_id: T383
+  title: 补齐 canonical worker execution truth 与 runtime glue
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/future_worker/models.py`'
+  - '`src/watchdog/services/future_worker/service.py`'
+  - '`src/watchdog/services/session_service/models.py`'
+  - '`src/watchdog/services/session_service/service.py`'
+  - '`src/watchdog/services/session_spine/orchestrator.py`'
+  - '`src/watchdog/services/session_spine/recovery.py`'
+  - '`src/watchdog/services/brain/models.py`'
+  - '`src/watchdog/services/memory_hub/models.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T382
+- task_id: T384
+  title: 收口 ops surfacing 与 formal worker e2e 主链
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/api/ops.py`'
+  - '`src/watchdog/observability/metrics_export.py`'
+  - '`tests/test_watchdog_future_worker_runtime.py`'
+  - '`tests/e2e/test_watchdog_future_worker_execution.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T383
+- task_id: T385
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/038-future-worker-canonical-execution-and-governance/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/runtime.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/038-future-worker-canonical-execution-and-governance/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T384
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T381
+  status: completed
+  started_at: '2026-04-14T02:00:00+08:00'
+  completed_at: '2026-04-14T02:00:00+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T382
+  status: completed
+  started_at: '2026-04-14T08:46:00+08:00'
+  completed_at: '2026-04-14T08:50:54+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T383
+  status: completed
+  started_at: '2026-04-14T08:50:54+08:00'
+  completed_at: '2026-04-14T11:03:42+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T384
+  status: completed
+  started_at: '2026-04-14T11:03:42+08:00'
+  completed_at: '2026-04-14T11:03:42+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T385
+  status: completed
+  started_at: '2026-04-14T11:03:42+08:00'
+  completed_at: '2026-04-14T11:05:28+08:00'
+current_batch: 5

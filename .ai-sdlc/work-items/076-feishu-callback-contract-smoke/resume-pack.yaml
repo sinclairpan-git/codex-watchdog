@@ -1,0 +1,27 @@
+work_item:
+  id: 076-feishu-callback-contract-smoke
+  spec_dir: specs/076-feishu-callback-contract-smoke
+  branch: codex/076-feishu-callback-contract-smoke
+current_stage: completed
+current_batch: 5
+last_committed_task: T765
+current_branch: codex/076-feishu-callback-contract-smoke
+status:
+  current_stage: completed
+  current_task: ''
+  next_action: advance to the next open work item after WI-076 closure
+docs_baseline_ref: 52fefcfad6e08196de0ee213a7efb5405fbd7532
+docs_baseline_at: '2026-04-17T03:36:57Z'
+review_approval_status: approved
+review_approved_by:
+  - Anthropic Manager Expert
+  - Hermes Agent Expert
+artifacts:
+  - specs/076-feishu-callback-contract-smoke/spec.md
+  - specs/076-feishu-callback-contract-smoke/plan.md
+  - specs/076-feishu-callback-contract-smoke/tasks.md
+  - specs/076-feishu-callback-contract-smoke/task-execution-log.md
+  - .ai-sdlc/work-items/076-feishu-callback-contract-smoke/execution-plan.yaml
+  - .ai-sdlc/work-items/076-feishu-callback-contract-smoke/runtime.yaml
+  - .ai-sdlc/work-items/076-feishu-callback-contract-smoke/latest-summary.md
+timestamp: '2026-04-17T03:36:57Z'

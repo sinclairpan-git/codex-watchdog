@@ -151,7 +151,7 @@
           "supervision"
         ],
         "summary": "Evaluate Task",
-        "description": "拉取 A 侧任务 → stuck 分析 → 满足阈值则注入 soft steer。",
+        "description": "拉取 runtime 侧任务 → stuck 分析 → 满足阈值则注入 soft steer。",
         "operationId": "evaluate_task_api_v1_watchdog_tasks__project_id__evaluate_post",
         "parameters": [
           {
@@ -480,7 +480,7 @@
           "session-spine"
         ],
         "summary": "List stable session directory",
-        "description": "Stable read surface for cross-project session discovery. Returns a versioned ReplyModel carrying SessionProjection rows instead of the raw A-Control-Agent task list.",
+        "description": "Stable read surface for cross-project session discovery. Returns a versioned ReplyModel carrying SessionProjection rows instead of the raw Codex runtime service task list.",
         "operationId": "list_sessions_api_v1_watchdog_sessions_get",
         "parameters": [
           {
@@ -593,7 +593,7 @@
           "session-spine"
         ],
         "summary": "Get stable session projection",
-        "description": "Stable read surface for OpenClaw and other callers. Returns a versioned ReplyModel carrying SessionProjection and FactRecord data.",
+        "description": "Stable read surface for Feishu and other callers. Returns a versioned ReplyModel carrying SessionProjection and FactRecord data.",
         "operationId": "get_session_api_v1_watchdog_sessions__project_id__get",
         "parameters": [
           {
@@ -715,7 +715,7 @@
           "session-spine"
         ],
         "summary": "Get stable session facts truth source",
-        "description": "Canonical stable facts read surface for OpenClaw and other callers. Returns a versioned ReplyModel carrying FactRecord rows without changing the explanation surfaces.",
+        "description": "Canonical stable facts read surface for Feishu and other callers. Returns a versioned ReplyModel carrying FactRecord rows without changing the explanation surfaces.",
         "operationId": "get_session_facts_api_v1_watchdog_sessions__project_id__facts_get",
         "parameters": [
           {
@@ -776,7 +776,7 @@
           "session-spine"
         ],
         "summary": "Get stable workspace activity view",
-        "description": "Stable read surface for workspace activity inspection. Returns a versioned ReplyModel carrying WorkspaceActivityView instead of the raw A-Control-Agent workspace activity envelope.",
+        "description": "Stable read surface for workspace activity inspection. Returns a versioned ReplyModel carrying WorkspaceActivityView instead of the raw Codex runtime service workspace activity envelope.",
         "operationId": "get_workspace_activity_api_v1_watchdog_sessions__project_id__workspace_activity_get",
         "parameters": [
           {
@@ -910,7 +910,7 @@
           "session-spine"
         ],
         "summary": "Get stable session event snapshot",
-        "description": "Stable JSON read surface for session events. Returns a versioned ReplyModel carrying SessionEvent rows while leaving the stable SSE route unchanged.",
+        "description": "Stable JSON read surface for session events. Returns a versioned ReplyModel carrying SessionEvent rows. The snapshot merges projected raw task events with selected canonical Session Service events, synthesizes deterministic ids when raw events omit `event_id`, dedupes repeated event_ids, and keeps recovery and goal-contract lineage visible even when the control link is degraded.",
         "operationId": "get_session_event_snapshot_api_v1_watchdog_sessions__project_id__event_snapshot_get",
         "parameters": [
           {
@@ -1858,7 +1858,7 @@
           "session-spine-events"
         ],
         "summary": "Get stable session events stream",
-        "description": "Stable read-only event surface. This route projects raw task events into versioned SessionEvent records and keeps the legacy raw proxy unchanged.",
+        "description": "Stable read-only event surface. `follow=true` first emits a stable bootstrap snapshot made from projected raw snapshot events plus continuity-related canonical Session Service events, then follows the projected raw task event stream with duplicate event_ids suppressed. When raw events omit `event_id`, the projection synthesizes deterministic ids before dedupe. If stream startup fails it falls back to the bootstrap events already available. `follow=false` returns a versioned SessionEvent snapshot with a broader selected canonical Session Service merge.",
         "operationId": "get_session_events_api_v1_watchdog_sessions__project_id__events_get",
         "parameters": [
           {

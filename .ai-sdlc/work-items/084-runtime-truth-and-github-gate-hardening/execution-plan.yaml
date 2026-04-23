@@ -1,0 +1,69 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T841
+  title: formalize WI-084 的 owner、state entry、branch handoff 与 formal docs
+  status: completed
+  phase: 1
+  depends_on: []
+- task_id: T842
+  title: 冻结 runtime truth integrity 与 atomic runtime write contract
+  status: completed
+  phase: 2
+  depends_on:
+  - T841
+- task_id: T843
+  title: 实现 runtime truth validator、atomic writer 接入与 runtime mirror 漂移修复
+  status: completed
+  phase: 3
+  depends_on:
+  - T842
+- task_id: T844
+  title: 冻结 CI gate 与 GitHub branch protection 的静态和在线 contract
+  status: completed
+  phase: 4
+  depends_on:
+  - T843
+- task_id: T845
+  title: 运行 verification 并完成 WI-084 closeout
+  status: completed
+  phase: 5
+  depends_on:
+  - T844
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T841
+  status: completed
+  started_at: '2026-04-19T06:14:17Z'
+  completed_at: '2026-04-19T06:14:17Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T842
+  status: completed
+  started_at: '2026-04-19T06:14:17Z'
+  completed_at: '2026-04-19T06:14:17Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T843
+  status: completed
+  started_at: '2026-04-19T06:14:17Z'
+  completed_at: '2026-04-19T06:14:17Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T844
+  status: completed
+  started_at: '2026-04-19T06:14:17Z'
+  completed_at: '2026-04-19T06:14:17Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T845
+  status: completed
+  started_at: '2026-04-19T06:14:17Z'
+  completed_at: '2026-04-19T06:14:17Z'
+current_batch: 5

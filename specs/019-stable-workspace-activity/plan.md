@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/019-stable-workspace-activity/spec.md"
 ---
 
@@ -9,7 +9,7 @@ related_doc:
 
 ## 目标
 
-补齐 stable workspace activity surface，使 OpenClaw 与其他上层调用方可以基于 session spine contract 读取版本化工作区活动摘要，而不是继续绑定 A-Control-Agent raw `/workspace-activity`。
+补齐 stable workspace activity surface，使 Feishu 与其他上层调用方可以基于 session spine contract 读取版本化工作区活动摘要，而不是继续绑定 Codex runtime service raw `/workspace-activity`。
 
 ## 架构摘要
 
@@ -26,8 +26,8 @@ related_doc:
 | A Client | `src/watchdog/services/a_client/client.py` | 新增最小 `/api/v1/tasks/{project_id}/workspace-activity` 读取方法 |
 | L2 Projection | `src/watchdog/services/session_spine/service.py`, `src/watchdog/services/session_spine/projection.py`, `src/watchdog/services/session_spine/replies.py` | 构建共享 workspace-activity bundle、稳定 view 与 reply builder |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 canonical stable workspace activity route |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py` | 新增 `get_workspace_activity` intent，并复用稳定 reply builder |
-| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`, `tests/test_a_control_agent.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、stable route、adapter、raw 非回归与外部口径 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py` | 新增 `get_workspace_activity` intent，并复用稳定 reply builder |
+| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`, `tests/test_a_control_agent.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、stable route、adapter、raw 非回归与外部口径 |
 
 ## 依赖顺序
 
@@ -36,7 +36,7 @@ related_doc:
 2. **再补 A-client 与 L2 builder**
    - 先把 raw `/workspace-activity` 收进 A-client，再建立共享 workspace-activity bundle 和 reply builder。
 3. **再接 stable API route 与 adapter intent**
-   - HTTP 与 OpenClaw 复用同一 builder，不自行拼装 repo activity。
+   - HTTP 与 Feishu 复用同一 builder，不自行拼装 repo activity。
 4. **最后补测试、文档与项目状态**
    - 锁住 raw 非回归，对外文档改到 stable route，并推进 `.ai-sdlc`。
 
@@ -69,7 +69,7 @@ related_doc:
 - `recent_minutes` 参数在 builder 内统一传递
 - control-link / not-found 错误继续复用稳定 envelope
 
-### Phase 3：接入 stable API route 与 OpenClaw intent
+### Phase 3：接入 stable API route 与 Feishu intent
 
 交付内容：
 
@@ -122,7 +122,7 @@ related_doc:
 
 ### Integration / Legacy 非回归测试
 
-- OpenClaw adapter 可消费 `workspace_activity_view`
+- Feishu adapter 可消费 `workspace_activity_view`
 - raw `/api/v1/tasks/{project_id}/workspace-activity` 注册与基础行为不回归
 
 ## 主要风险与应对
@@ -154,7 +154,7 @@ related_doc:
 
 1. 存在独立 stable route `GET /api/v1/watchdog/sessions/{project_id}/workspace-activity`。
 2. 返回体使用 `ReplyModel(reply_code=workspace_activity_view)`，并携带稳定 `WorkspaceActivityView`。
-3. OpenClaw adapter 已支持 `get_workspace_activity`，且与 HTTP route 复用同一共享 builder。
+3. Feishu adapter 已支持 `get_workspace_activity`，且与 HTTP route 复用同一共享 builder。
 4. session spine `schema_version` 已推进到 `2026-04-05.019`。
 5. raw `/api/v1/tasks/{project_id}/workspace-activity` 已有显式非回归验证。
 6. README、getting-started、OpenAPI 与 `.ai-sdlc` 已同步到 019。

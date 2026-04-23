@@ -1,8 +1,8 @@
 {
   "thread_id": "thr_codex_native_current",
-  "project_id": "openclaw-codex-watchdog",
-  "cwd": "/Users/sinclairpan/project/openclaw-codex-watchdog",
-  "task_title": "Continue interrupted OpenClaw/Codex integration task",
+  "project_id": "codex-watchdog",
+  "cwd": "/Users/sinclairpan/project/codex-watchdog",
+  "task_title": "Continue interrupted Codex Watchdog integration task",
   "status": "running",
   "phase": "editing_source",
   "last_summary": "Implementing the native thread registration path for the current Codex session",

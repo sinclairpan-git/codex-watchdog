@@ -1,0 +1,62 @@
+version: 1
+evaluation_mode: formal_truth_first
+canonical_status_doc: docs/architecture/long-running-residual-backlog-status.md
+formal_truth_refs:
+  - .ai-sdlc/state/checkpoint.yml
+  - .ai-sdlc/project/config/project-state.yaml
+  - .ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/latest-summary.md
+  - .ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md
+  - .ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md
+  - .ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md
+  - .ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md
+  - .ai-sdlc/work-items/056-coverage-audit-snapshot-closeout/latest-summary.md
+  - .ai-sdlc/work-items/057-task-doc-status-sync/latest-summary.md
+residual_items:
+  - residual_id: RES-PRD-001
+    source_refs:
+      - codex-watchdog-prd.md
+    disposition: satisfied
+    formal_truth_refs:
+      - .ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md
+      - .ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md
+      - .ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md
+      - .ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md
+    notes: PRD 中关于长程自治闭环、执行门控与入口收口的核心义务已被 035/048/049/050 的 formal owner 消化。
+  - residual_id: RES-ARCH-001
+    source_refs:
+      - docs/architecture/codex-long-running-autonomy-design.md
+    disposition: satisfied
+    formal_truth_refs:
+      - .ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md
+      - .ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md
+      - .ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md
+    notes: 架构文档中的 Brain/runtime gate/observability 主线已进入 formal closeout 链，不再构成 repo-local residual blocker。
+  - residual_id: RES-PLAN-001
+    source_refs:
+      - docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md
+    disposition: superseded
+    formal_truth_refs:
+      - docs/architecture/coverage-audit-closeout-status.md
+      - .ai-sdlc/work-items/056-coverage-audit-snapshot-closeout/latest-summary.md
+      - .ai-sdlc/work-items/057-task-doc-status-sync/latest-summary.md
+      - .ai-sdlc/state/checkpoint.yml
+      - .ai-sdlc/project/config/project-state.yaml
+    notes: 实施计划保留为候选义务来源，但其 checkbox 状态已被 `.ai-sdlc` formal truth 与后续 closeout 文档取代，不再直接充当 live backlog。
+  - residual_id: RES-RUNTIME-083
+    source_refs:
+      - specs/082-external-integration-live-runtime-acceptance-closeout/task-execution-log.md
+      - docs/operations/external-integration-live-acceptance.md
+      - docs/getting-started.zh-CN.md
+    disposition: satisfied
+    formal_truth_refs:
+      - specs/083-feishu-discovery-session-directory-routing/spec.md
+      - .ai-sdlc/work-items/083-feishu-discovery-session-directory-routing/latest-summary.md
+      - .ai-sdlc/state/checkpoint.yml
+      - .ai-sdlc/project/config/project-state.yaml
+    notes: "live `feishu-discovery` runtime residual 已由 `WI-083` 正式关闭；同时 `WI-082` 的完整 external-integration smoke bundle 已回到 `Overall Status: passed`，因此当前不存在 active runtime residual blocker。"
+summary:
+  satisfied_count: 3
+  superseded_count: 1
+  residual_count: 0
+  conclusion: NO_RESIDUAL_BLOCKERS
+next_wi_candidates: []

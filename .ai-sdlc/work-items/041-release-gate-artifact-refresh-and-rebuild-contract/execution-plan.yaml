@@ -1,0 +1,132 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T411
+  title: 冻结 041 formal docs 与 refresh / rebuild 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/spec.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/plan.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/tasks.md`'
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T412
+  title: 写失败测试锁定 refresh / rebuild contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_release_gate.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T411
+- task_id: T413
+  title: 实现最小 refresh 命令与 runbook contract
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`scripts/refresh_release_gate_artifacts.py`'
+  - '`scripts/generate_release_gate_report.py`'
+  - '`docs/operations/release-gate-runbook.md`'
+  - '`tests/test_watchdog_release_gate.py`'
+  - '`tests/test_watchdog_release_gate_evidence.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T412
+- task_id: T414
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T413
+- task_id: T415
+  title: 完成 041 整体验证并交接下一 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/041-release-gate-artifact-refresh-and-rebuild-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/latest-summary.md`'
+  - '`.ai-sdlc/work-items/041-release-gate-artifact-refresh-and-rebuild-contract/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T414
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T411
+  status: completed
+  started_at: '2026-04-14T12:05:00+08:00'
+  completed_at: '2026-04-14T12:05:00+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T412
+  status: completed
+  started_at: '2026-04-14T12:06:00+08:00'
+  completed_at: '2026-04-14T12:12:00+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T413
+  status: completed
+  started_at: '2026-04-14T12:12:00+08:00'
+  completed_at: '2026-04-14T13:20:29+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T414
+  status: completed
+  started_at: '2026-04-14T13:20:29+08:00'
+  completed_at: '2026-04-14T13:20:29+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T415
+  status: completed
+  started_at: '2026-04-14T13:20:29+08:00'
+  completed_at: '2026-04-14T13:20:29+08:00'
+current_batch: 5

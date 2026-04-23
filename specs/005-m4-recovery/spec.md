@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # M4 恢复能力 — 功能规格说明
@@ -11,7 +11,7 @@ related_doc:
 
 ## 功能需求
 
-- **FR-301**：A-Control-Agent 实现 `POST /api/v1/tasks/{project_id}/handoff`：接受 `reason`，生成结构化 markdown 摘要写入仓库可配置目录，并更新任务状态（PRD §6.1 `handoff_in_progress` / 后续迁移）。
+- **FR-301**：Codex runtime service 实现 `POST /api/v1/tasks/{project_id}/handoff`：接受 `reason`，生成结构化 markdown 摘要写入仓库可配置目录，并更新任务状态（PRD §6.1 `handoff_in_progress` / 后续迁移）。
 - **FR-302**：实现 `POST /api/v1/tasks/{project_id}/resume`：接受 `mode`（如 `resume_or_new_thread`）与 `handoff_summary`，将任务置为 `resuming` 再 `running`，并写审计（PRD §9.3.5）。
 - **FR-303**：当 `context_pressure == critical` 时，策略层可触发 handoff 路径（本工作项以 API + 单元测试证明可调用性）。
 - **FR-304**：Watchdog 提供 `POST /api/v1/watchdog/tasks/{project_id}/recover`：编排「拉取状态 → 若 critical 则调用 A handoff 或返回建议」（最小实现：转发或组合已有 progress + handoff）。
@@ -34,4 +34,4 @@ related_doc:
 
 场景 1：`recover` 在 A 不可达时返回 `CONTROL_LINK_ERROR`。
 
-场景 2：A 可达且 `context_pressure` 为 `critical` 时尝试调用 A 侧 handoff（可 mock）。
+场景 2：A 可达且 `context_pressure` 为 `critical` 时尝试调用 runtime 侧 handoff（可 mock）。

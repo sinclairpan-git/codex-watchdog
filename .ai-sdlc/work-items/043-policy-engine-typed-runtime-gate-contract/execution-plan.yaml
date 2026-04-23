@@ -1,0 +1,130 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T431
+  title: 冻结 043 formal docs 与 policy-engine seam 边界
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/043-policy-engine-typed-runtime-gate-contract/spec.md`'
+  - '`specs/043-policy-engine-typed-runtime-gate-contract/plan.md`'
+  - '`specs/043-policy-engine-typed-runtime-gate-contract/tasks.md`'
+  - '`specs/043-policy-engine-typed-runtime-gate-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T432
+  title: 写失败测试锁定 typed runtime-gate policy contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`tests/test_watchdog_policy_engine.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T431
+- task_id: T433
+  title: 实现最小 typed runtime-gate helper 与 policy engine 收口
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/policy/engine.py`'
+  - '`src/watchdog/services/brain/release_gate_read_contract.py`'
+  - '`tests/test_watchdog_policy_engine.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T432
+- task_id: T434
+  title: 更新执行日志与 handoff 摘要
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`specs/043-policy-engine-typed-runtime-gate-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/runtime.yaml`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T433
+- task_id: T435
+  title: 完成 043 整体验证并交接后续 work item
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/043-policy-engine-typed-runtime-gate-contract/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/latest-summary.md`'
+  - '`.ai-sdlc/work-items/043-policy-engine-typed-runtime-gate-contract/resume-pack.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T434
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T431
+  status: completed
+  started_at: '2026-04-14T14:31:37+08:00'
+  completed_at: '2026-04-14T14:40:40+08:00'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T432
+  status: completed
+  started_at: '2026-04-14T14:40:40+08:00'
+  completed_at: '2026-04-14T14:41:40+08:00'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T433
+  status: completed
+  started_at: '2026-04-14T14:41:40+08:00'
+  completed_at: '2026-04-14T14:43:30+08:00'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T434
+  status: completed
+  started_at: '2026-04-14T14:43:30+08:00'
+  completed_at: '2026-04-14T14:44:31+08:00'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T435
+  status: completed
+  started_at: '2026-04-14T14:44:31+08:00'
+  completed_at: '2026-04-14T14:46:09+08:00'
+current_batch: 5

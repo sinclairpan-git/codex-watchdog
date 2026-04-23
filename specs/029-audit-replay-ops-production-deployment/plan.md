@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/029-audit-replay-ops-production-deployment/spec.md"
   - "docs/getting-started.zh-CN.md"
 ---
@@ -23,8 +23,8 @@ related_doc:
 |---|---|---|
 | Audit / Replay | `src/watchdog/services/audit/service.py`, `src/watchdog/services/audit/replay.py` | 审计查询、forensic replay |
 | Ops Surface | `src/watchdog/api/ops.py`, `src/watchdog/api/metrics.py` | operator 查询、健康与指标 |
-| Deployment Docs | `README.md`, `docs/getting-started.zh-CN.md`, `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md` | 安装、升级、回滚、runbook |
-| 验证 | `tests/test_watchdog_audit.py`, `tests/test_watchdog_replay.py`, `tests/integration/test_openclaw_integration_spine.py` | 审计、回放、运维关键路径 |
+| Deployment Docs | `README.md`, `docs/getting-started.zh-CN.md`, `docs/architecture/codex-watchdog-full-product-loop-design.md` | 安装、升级、回滚、runbook |
+| 验证 | `tests/test_watchdog_audit.py`, `tests/test_watchdog_replay.py`, `tests/integration/test_feishu_integration_spine.py` | 审计、回放、运维关键路径 |
 
 ## 边界纪律
 
@@ -66,7 +66,7 @@ related_doc:
   - 按 `decision_id / envelope_id / approval_id` 回放
 - `tests/test_watchdog_ops.py`
   - `/healthz` / `/api/v1/watchdog/ops/alerts` / `/metrics` 告警面
-- `tests/integration/test_openclaw_integration_spine.py`
+- `tests/integration/test_feishu_integration_spine.py`
   - A/B restart / restore
   - 接入链路不回归
 
