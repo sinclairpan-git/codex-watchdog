@@ -475,12 +475,12 @@ class TaskStore:
             data = self._read()
             tasks = data.get("tasks", {})
             if active_only:
-                active_ids = [
-                    str(thread_id)
-                    for thread_id in data.get("active_native_thread_ids", [])
-                    if str(thread_id).strip()
-                ]
-                if active_ids:
+                if "active_native_thread_ids" in data:
+                    active_ids = [
+                        str(thread_id)
+                        for thread_id in data.get("active_native_thread_ids", [])
+                        if str(thread_id).strip()
+                    ]
                     rows = [
                         tasks[thread_id]
                         for thread_id in active_ids
