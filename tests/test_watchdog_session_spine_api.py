@@ -23,7 +23,10 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     stable_thread_id_for_project,
 )
-from watchdog.services.session_spine.service import evaluate_session_policy_from_persisted_spine
+from watchdog.services.session_spine.service import (
+    build_session_directory_bundle,
+    evaluate_session_policy_from_persisted_spine,
+)
 from watchdog.services.session_spine.store import SessionSpineStore
 
 
@@ -386,7 +389,12 @@ def _seed_persisted_session_spine(
     session_seq: int = 3,
     fact_snapshot_version: str = "fact-v1",
     last_refreshed_at: str = "2026-04-05T05:25:00Z",
+    last_local_manual_activity_at: str | None = None,
 ) -> Path:
+    last_local_manual_activity_at = (
+        last_local_manual_activity_at
+        or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     task = {
         "project_id": project_id,
         "thread_id": "thr_native_1",
@@ -441,6 +449,7 @@ def _seed_persisted_session_spine(
                 "session_seq": session_seq,
                 "fact_snapshot_version": fact_snapshot_version,
                 "last_refreshed_at": last_refreshed_at,
+                "last_local_manual_activity_at": last_local_manual_activity_at,
                 "session": session.model_dump(mode="json"),
                 "progress": progress.model_dump(mode="json"),
                 "facts": [fact.model_dump(mode="json") for fact in facts],
@@ -1859,6 +1868,9 @@ def test_persisted_session_overlay_exposes_canonical_approval_across_stable_read
         facts=facts,
         approval_queue=[],
         last_refreshed_at="2026-04-05T05:25:00Z",
+        last_local_manual_activity_at=(
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        ),
     )
     decision = evaluate_session_policy_from_persisted_spine(
         "repo-a",
@@ -2285,6 +2297,214 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
         " | 决策=provider降级(schema:provider-decision-v2)\n"
         "- repo-c | editing_source | resuming after overflow | 上下文=high | 恢复=恢复失败(failed_retryable)"
     )
+
+
+def test_session_directory_bundle_filters_inactive_projects_with_stale_runtime_activity(
+    tmp_path,
+) -> None:
+    current = datetime(2026, 4, 23, 0, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-22T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "recent work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-stale",
+                    "thread_id": "thr_stale",
+                    "native_thread_id": "thr_native_stale",
+                    "created_at": "2026-04-10T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "old work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-10T00:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-22T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "recent work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-22T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
+
+
+def test_session_directory_bundle_ignores_recent_watchdog_handoff_as_project_activity(
+    tmp_path,
+) -> None:
+    current = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-22T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "recent user work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T00:05:00Z",
+                "last_substantive_user_input_at": "2026-04-22T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-stale-handoff",
+                    "thread_id": "thr_stale_handoff",
+                    "native_thread_id": "thr_native_stale_handoff",
+                    "created_at": "2026-04-09T00:00:00Z",
+                    "status": "running",
+                    "phase": "handoff",
+                    "pending_approval": False,
+                    "last_summary": "watchdog generated handoff",
+                    "files_touched": [],
+                    "context_pressure": "medium",
+                    "stuck_level": 4,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-22T13:00:00Z",
+                    "last_substantive_user_input_at": "2026-04-09T12:00:00Z",
+                    "last_local_manual_activity_at": "2026-04-09T12:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-22T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "recent user work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-22T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-22T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
+
+
+def test_session_directory_bundle_filters_smoke_and_home_name_pseudo_projects(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "sinclairpan"))
+    current = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-23T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "recent user work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-23T00:05:00Z",
+                "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "watchdog-smoke-feishu-control-20260419-012852",
+                    "thread_id": "thr_smoke",
+                    "native_thread_id": "thr_native_smoke",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "smoke project",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+                },
+                {
+                    "project_id": "sinclairpan",
+                    "thread_id": "thr_home_name",
+                    "native_thread_id": "thr_native_home_name",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "home directory pseudo project",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "recent user work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
 
 
 def test_session_directory_route_progresses_surface_current_child_session_id_resume_shape(

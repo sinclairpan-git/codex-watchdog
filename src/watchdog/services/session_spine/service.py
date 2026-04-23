@@ -421,6 +421,111 @@ def _task_liveness_reference_time(task: dict[str, Any] | None) -> datetime | Non
     return best
 
 
+def _directory_human_activity_reference_time(task: dict[str, Any] | None) -> datetime | None:
+    if not isinstance(task, dict):
+        return None
+    best: datetime | None = None
+    for key in (
+        "last_local_manual_activity_at",
+        "last_substantive_user_input_at",
+        "workspace_latest_mtime_iso",
+    ):
+        parsed = _parse_iso8601(str(task.get(key) or "").strip() or None)
+        if parsed is not None and (best is None or parsed > best):
+            best = parsed
+    return best
+
+
+def _iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _directory_task_liveness_reference_time(
+    task: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> datetime | None:
+    if not isinstance(task, dict):
+        return None
+    phase = str(task.get("phase") or "").strip().lower()
+    status = str(task.get("status") or "").strip().lower()
+    if phase == "handoff" or status in {"handoff_in_progress", "resuming"}:
+        return now
+    if str(task.get("created_at") or "").strip():
+        return now
+    return _task_liveness_reference_time(task)
+
+
+def _directory_projected_task_liveness_reference_time(
+    task: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> datetime | None:
+    if not isinstance(task, dict):
+        return None
+    return now if task_native_thread_id(task) else _task_liveness_reference_time(task)
+
+
+def _directory_task_with_projected_active_state(
+    task: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(task, dict):
+        return task
+    if not task_native_thread_id(task):
+        return task
+    if normalize_project_execution_state(task) != "unknown":
+        return task
+    updated = dict(task)
+    updated["project_execution_state"] = "active"
+    return updated
+
+
+def _directory_task_with_active_state(task: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(task, dict):
+        return task
+    if not str(task.get("created_at") or "").strip():
+        return task
+    if normalize_project_execution_state(task) != "unknown":
+        return task
+    updated = dict(task)
+    updated["project_execution_state"] = "active"
+    phase = str(updated.get("phase") or "").strip().lower()
+    status = str(updated.get("status") or "").strip().lower()
+    if phase == "handoff" or status in {"handoff_in_progress", "resuming"}:
+        human_activity_at = _directory_human_activity_reference_time(updated)
+        if human_activity_at is not None:
+            updated["last_progress_at"] = _iso_z(human_activity_at)
+    return updated
+
+
+def _directory_project_id_is_valid(project_id: str) -> bool:
+    normalized = str(project_id or "").strip()
+    if not normalized:
+        return False
+    if normalized.startswith("watchdog-smoke-"):
+        return False
+    home_name = Path.home().name.strip()
+    return normalized.casefold() != home_name.casefold()
+
+
+def _directory_bundle_is_active(bundle: SessionReadBundle) -> bool:
+    if not _directory_project_id_is_valid(bundle.project_id):
+        return False
+    return not any(fact.fact_code == "project_not_active" for fact in bundle.facts)
+
+
+def _append_active_directory_bundle(
+    *,
+    sessions: list[SessionProjection],
+    progresses: list[TaskProgressView],
+    bundle: SessionReadBundle,
+) -> None:
+    if not _directory_bundle_is_active(bundle):
+        return
+    sessions.append(bundle.session)
+    progresses.append(bundle.progress)
+
+
 def _event_payload_text(event: SessionEventRecord | None, key: str) -> str | None:
     if event is None:
         return None
@@ -1320,6 +1425,7 @@ def _build_session_read_bundle_from_session_events(
     receipt_store: ActionReceiptStore | None = None,
     orchestration_state_store: ResidentOrchestrationStateStore | None = None,
     dispatch_cooldown_seconds: float = 0.0,
+    liveness_now: datetime | None = None,
 ) -> SessionReadBundle:
     event_approvals = _build_approval_rows_from_session_events(events)
     terminal_event_approval_ids: set[str] = set()
@@ -1374,6 +1480,15 @@ def _build_session_read_bundle_from_session_events(
         persisted_record=persisted_record,
         task=task,
     )
+    if liveness_now is not None:
+        projected_task = _directory_task_with_projected_active_state(projected_task) or projected_task
+        projected_task = _task_with_authoritative_project_execution_state(
+            projected_task,
+            now=_directory_projected_task_liveness_reference_time(
+                projected_task,
+                now=liveness_now,
+            ),
+        ) or projected_task
     approval_facts = build_fact_records(
         project_id=project_id,
         task=projected_task,
@@ -1820,6 +1935,7 @@ def _task_from_persisted_record(
         "stuck_level": record.progress.stuck_level,
         "failure_count": 3 if "repeat_failure" in fact_codes else 0,
         "last_progress_at": record.progress.last_progress_at,
+        "last_local_manual_activity_at": record.last_local_manual_activity_at,
     }
 
 
@@ -1833,6 +1949,7 @@ def _build_session_read_bundle_from_persisted_record(
     receipt_store: ActionReceiptStore | None = None,
     orchestration_state_store: ResidentOrchestrationStateStore | None = None,
     dispatch_cooldown_seconds: float = 0.0,
+    liveness_now: datetime | None = None,
 ) -> SessionReadBundle:
     session_events = (
         _list_project_session_events(
@@ -1861,6 +1978,11 @@ def _build_session_read_bundle_from_persisted_record(
             approvals=approvals,
             native_thread_id=_latest_session_event_native_thread_id(session_events),
         )
+        if liveness_now is not None:
+            synthesized_task = (
+                _directory_task_with_projected_active_state(synthesized_task)
+                or synthesized_task
+            )
         bundle = _build_session_read_bundle(
             project_id=record.project_id,
             task=synthesized_task,
@@ -1870,6 +1992,14 @@ def _build_session_read_bundle_from_persisted_record(
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
             dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+            liveness_now=(
+                _directory_projected_task_liveness_reference_time(
+                    _directory_task_with_projected_active_state(synthesized_task),
+                    now=liveness_now,
+                )
+                if liveness_now is not None
+                else None
+            ),
         )
         event_facts = (
             build_session_service_fact_records(project_id=record.project_id, events=session_events)
@@ -1898,6 +2028,44 @@ def _build_session_read_bundle_from_persisted_record(
                 freshness_window_seconds=freshness_window_seconds,
             ),
         )
+    projected_task = _task_from_persisted_record(record, approvals=[])
+    if liveness_now is not None:
+        projected_task = _directory_task_with_projected_active_state(projected_task) or projected_task
+        projected_task = _task_with_authoritative_project_execution_state(
+            projected_task,
+            now=_directory_projected_task_liveness_reference_time(
+                projected_task,
+                now=liveness_now,
+            ),
+        ) or projected_task
+        active_facts = build_fact_records(
+            project_id=record.project_id,
+            task=projected_task,
+            approvals=[],
+        )
+        if any(fact.fact_code == "project_not_active" for fact in active_facts):
+            return SessionReadBundle(
+                project_id=record.project_id,
+                task=projected_task,
+                approvals=[],
+                facts=active_facts,
+                session=build_session_projection(
+                    project_id=record.project_id,
+                    task=projected_task,
+                    approvals=[],
+                    facts=active_facts,
+                ),
+                progress=build_task_progress_view(
+                    project_id=record.project_id,
+                    task=projected_task,
+                    facts=active_facts,
+                ),
+                approval_queue=[],
+                snapshot=_build_snapshot_read_semantics_from_persisted_record(
+                    record,
+                    freshness_window_seconds=freshness_window_seconds,
+                ),
+            )
     recovery = _build_recovery_projection(
         session_service=session_service,
         project_id=record.project_id,
@@ -2379,7 +2547,9 @@ def build_session_directory_bundle(
     orchestration_state_store: ResidentOrchestrationStateStore | None = None,
     dispatch_cooldown_seconds: float = 0.0,
     resident_expert_runtime_service: ResidentExpertRuntimeService | None = None,
+    liveness_now: datetime | None = None,
 ) -> SessionDirectoryReadBundle:
+    directory_liveness_now = liveness_now or datetime.now(timezone.utc)
     persisted_records = store.list_records() if store is not None else []
     persisted_by_project = {record.project_id: record for record in persisted_records}
     resident_expert_coverage = _build_resident_expert_coverage_view(
@@ -2427,9 +2597,13 @@ def build_session_directory_bundle(
                         receipt_store=receipt_store,
                         orchestration_state_store=orchestration_state_store,
                         dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                        liveness_now=directory_liveness_now,
                     )
-                    sessions.append(bundle.session)
-                    progresses.append(bundle.progress)
+                    _append_active_directory_bundle(
+                        sessions=sessions,
+                        progresses=progresses,
+                        bundle=bundle,
+                    )
                     continue
                 record = persisted_by_project.get(current_project_id)
                 if record is None:
@@ -2443,9 +2617,13 @@ def build_session_directory_bundle(
                     receipt_store=receipt_store,
                     orchestration_state_store=orchestration_state_store,
                     dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                    liveness_now=directory_liveness_now,
                 )
-                sessions.append(bundle.session)
-                progresses.append(bundle.progress)
+                _append_active_directory_bundle(
+                    sessions=sessions,
+                    progresses=progresses,
+                    bundle=bundle,
+                )
             if sessions:
                 return SessionDirectoryReadBundle(
                     tasks=[],
@@ -2464,9 +2642,11 @@ def build_session_directory_bundle(
                     receipt_store=receipt_store,
                     orchestration_state_store=orchestration_state_store,
                     dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                    liveness_now=directory_liveness_now,
                 )
                 for project_id, events in fallback_only_grouped_events.items()
             ]
+            bundles = [bundle for bundle in bundles if _directory_bundle_is_active(bundle)]
             return SessionDirectoryReadBundle(
                 tasks=[],
                 approvals=[],
@@ -2485,9 +2665,11 @@ def build_session_directory_bundle(
                     receipt_store=receipt_store,
                     orchestration_state_store=orchestration_state_store,
                     dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                    liveness_now=directory_liveness_now,
                 )
                 for record in persisted_records
             ]
+            bundles = [bundle for bundle in bundles if _directory_bundle_is_active(bundle)]
             return SessionDirectoryReadBundle(
                 tasks=[],
                 approvals=[],
@@ -2511,7 +2693,9 @@ def build_session_directory_bundle(
 
     sessions: list[SessionProjection] = []
     progresses: list[TaskProgressView] = []
+    active_tasks: list[dict[str, Any]] = []
     for project_id, task in tasks_by_project.items():
+        task = _directory_task_with_active_state(task) or task
         project_approvals = [
             row for row in approvals if str(row.get("project_id") or "") == project_id
         ]
@@ -2524,9 +2708,18 @@ def build_session_directory_bundle(
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
             dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+            liveness_now=_directory_task_liveness_reference_time(
+                task,
+                now=directory_liveness_now,
+            ),
         )
-        sessions.append(bundle.session)
-        progresses.append(bundle.progress)
+        _append_active_directory_bundle(
+            sessions=sessions,
+            progresses=progresses,
+            bundle=bundle,
+        )
+        if _directory_bundle_is_active(bundle):
+            active_tasks.append(task)
     covered_project_ids = set(tasks_by_project)
     supplemental_project_ids = [
         project_id
@@ -2544,9 +2737,13 @@ def build_session_directory_bundle(
                 receipt_store=receipt_store,
                 orchestration_state_store=orchestration_state_store,
                 dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                liveness_now=directory_liveness_now,
             )
-            sessions.append(bundle.session)
-            progresses.append(bundle.progress)
+            _append_active_directory_bundle(
+                sessions=sessions,
+                progresses=progresses,
+                bundle=bundle,
+            )
             continue
         record = persisted_by_project.get(project_id)
         if record is None:
@@ -2560,12 +2757,16 @@ def build_session_directory_bundle(
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
             dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+            liveness_now=directory_liveness_now,
         )
-        sessions.append(bundle.session)
-        progresses.append(bundle.progress)
+        _append_active_directory_bundle(
+            sessions=sessions,
+            progresses=progresses,
+            bundle=bundle,
+        )
 
     return SessionDirectoryReadBundle(
-        tasks=list(tasks_by_project.values()),
+        tasks=active_tasks,
         approvals=approvals,
         sessions=sessions,
         progresses=progresses,
