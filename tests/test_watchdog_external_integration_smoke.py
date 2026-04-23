@@ -319,6 +319,63 @@ def test_feishu_discovery_check_verifies_expected_project_ids(tmp_path: Path) ->
     assert results[0].evidence["message"].startswith("多项目进展（2）")
 
 
+def test_feishu_discovery_check_rejects_unexpected_stale_project_ids(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        content = json.loads(payload["event"]["message"]["content"])
+        assert content["text"] == "项目列表"
+        return httpx.Response(
+            200,
+            json={
+                "accepted": True,
+                "event_type": "command_request",
+                "data": {
+                    "intent_code": "list_sessions",
+                    "reply_code": "session_directory",
+                    "message": (
+                        "多项目进展（3）\n"
+                        "- repo-a | editing_source | editing files | 上下文=low | 恢复=原线程续跑\n"
+                        "- repo-b | approval | waiting for approval | 上下文=low | 恢复=原线程续跑\n"
+                        "- repo-stale | planning | stale work | 上下文=low | 恢复=原线程续跑"
+                    ),
+                    "sessions": [
+                        {"project_id": "repo-a"},
+                        {"project_id": "repo-b"},
+                        {"project_id": "repo-stale"},
+                    ],
+                    "progresses": [
+                        {"project_id": "repo-a"},
+                        {"project_id": "repo-b"},
+                        {"project_id": "repo-stale"},
+                    ],
+                },
+            },
+        )
+
+    config = ExternalIntegrationSmokeConfig(
+        base_url="https://watchdog.example",
+        api_token="wt",
+        data_dir=str(tmp_path),
+        feishu_verification_token="verify-token",
+        feishu_discovery_expected_project_ids=("repo-a", "repo-b"),
+    )
+
+    results = run_smoke_checks(
+        config=config,
+        targets=("feishu-discovery",),
+        remote_transport=httpx.MockTransport(handler),
+    )
+
+    assert len(results) == 1
+    assert results[0].check_name == "feishu-discovery"
+    assert results[0].status == "failed"
+    assert results[0].reason == "contract_mismatch"
+    assert results[0].evidence["unexpected_project_ids"] == ["repo-stale"]
+    assert results[0].evidence["unexpected_progress_project_ids"] == ["repo-stale"]
+
+
 def test_feishu_discovery_check_uses_documented_default_command_text(tmp_path: Path) -> None:
     config = ExternalIntegrationSmokeConfig(
         base_url="https://watchdog.example",
