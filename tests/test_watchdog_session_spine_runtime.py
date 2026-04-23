@@ -46,6 +46,7 @@ from watchdog.services.session_spine.runtime import SessionSpineRuntime
 from watchdog.services.session_spine.service import (
     SessionReadBundle,
     _directory_bundle_is_active,
+    _directory_task_with_projected_active_state,
     build_approval_inbox_bundle,
     build_session_read_bundle,
 )
@@ -3044,6 +3045,24 @@ def test_directory_active_filter_uses_task_execution_state_when_facts_are_event_
     )
 
     assert _directory_bundle_is_active(bundle) is False
+
+
+def test_projected_directory_active_state_ignores_watchdog_generated_handoff_progress() -> None:
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "status": "running",
+        "phase": "handoff",
+        "last_progress_at": "2026-04-22T13:00:00Z",
+        "last_local_manual_activity_at": "2026-04-09T12:00:00Z",
+        "last_substantive_user_input_at": "2026-04-09T12:30:00Z",
+    }
+
+    updated = _directory_task_with_projected_active_state(task)
+
+    assert updated is not None
+    assert updated["project_execution_state"] == "active"
+    assert updated["last_progress_at"] == "2026-04-09T12:30:00Z"
 
 
 def test_session_spine_runtime_reconciles_missing_persisted_project_via_workspace_liveness(

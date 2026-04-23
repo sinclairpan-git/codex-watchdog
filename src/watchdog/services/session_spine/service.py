@@ -479,6 +479,12 @@ def _directory_task_with_projected_active_state(
         return task
     updated = dict(task)
     updated["project_execution_state"] = "active"
+    phase = str(updated.get("phase") or "").strip().lower()
+    raw_status = str(updated.get("status") or "").strip().lower()
+    if phase == "handoff" or raw_status in {"handoff_in_progress", "resuming"}:
+        human_activity_at = _directory_human_activity_reference_time(updated)
+        if human_activity_at is not None:
+            updated["last_progress_at"] = _iso_z(human_activity_at)
     return updated
 
 
