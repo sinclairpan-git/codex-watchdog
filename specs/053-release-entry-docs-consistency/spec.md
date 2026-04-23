@@ -31,7 +31,7 @@
 
 - 实际离线包生成、发布自动化或 artifact 上传；
 - 版本号升级到 `v0.6.1+`；
-- 业务功能、runtime semantics、OpenClaw / Watchdog / A-Control-Agent 代码行为；
+- 业务功能、runtime semantics、Feishu / Watchdog / Codex runtime service 代码行为；
 - release pipeline 之外的 broader documentation rewrite。
 
 ## Formal Source

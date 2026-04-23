@@ -19,7 +19,7 @@ tasks:
   depends_on:
   - T762
 - task_id: T764
-  title: Fix openclaw response compatibility receipt replay idempotency
+  title: Fix feishu response compatibility receipt replay idempotency
   status: completed
   phase: 4
   depends_on:

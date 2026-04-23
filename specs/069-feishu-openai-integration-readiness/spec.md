@@ -11,7 +11,7 @@
 但外部接入真值仍未正式闭环：
 
 - `config/examples/watchdog.env.example` 还没有把 Feishu ingress/outbound 与 `OpenAI-compatible` provider 的启用变量作为正式样例暴露出来；
-- `docs/getting-started.zh-CN.md` 仍主要覆盖 OpenClaw webhook / resident orchestrator 默认路径，没有给出 “如何切到 Feishu 主控制面 + OpenAI-compatible provider” 的正式接入与验收顺序。
+- `docs/getting-started.zh-CN.md` 仍主要覆盖 Feishu webhook / resident orchestrator 默认路径，没有给出 “如何切到 Feishu 主控制面 + OpenAI-compatible provider” 的正式接入与验收顺序。
 
 `WI-069` 的目标是把这部分“可运行能力”和“可接入真值”对齐，但不再扩新的 runtime 行为。
 
@@ -44,7 +44,7 @@
 
 - **FR-6901**：069 只补接入就绪/config sample/runbook 真值，不扩新的 runtime product semantics。
 - **FR-6902**：runtime 默认值仍保持兼容；env sample 只能增加显式开关与样例，不得偷偷改变默认 transport / provider。
-- **FR-6903**：Feishu app 创建、机器人安装、OpenClaw 宿主插件部署仍属于仓库外职责；本工单只提供本仓库侧的可照抄配置和启用顺序。
+- **FR-6903**：Feishu app 创建、机器人安装、Feishu 宿主插件部署仍属于仓库外职责；本工单只提供本仓库侧的可照抄配置和启用顺序。
 
 ## 功能需求
 

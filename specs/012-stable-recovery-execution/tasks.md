@@ -2,7 +2,7 @@
 
 > 对应规格：`specs/012-stable-recovery-execution/spec.md`
 >
-> 对应总设计：`docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md`
+> 对应总设计：`docs/architecture/codex-watchdog-g0-and-v010-design.md`
 
 ## Batch 1
 
@@ -53,19 +53,19 @@
 
 ## Batch 2
 
-### Task 12.4 OpenClaw adapter 接入真实恢复动作
+### Task 12.4 Feishu adapter 接入真实恢复动作
 
 - **任务编号**：T124
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T123
-- **文件**：`src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_openclaw_adapter.py`
+- **文件**：`src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py`, `tests/test_watchdog_feishu_adapter.py`
 - **可并行**：否
 - **验收标准**：
   1. adapter 支持 `execute_recovery` intent；
   2. adapter 将 stable action result 映射为 `ReplyModel(reply_code=recovery_execution_result)`；
   3. adapter 不直连 legacy recover route；
   4. `request_recovery` 仍返回 advisory-only reply，不被新动作覆盖。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py`
 
 ### Task 12.5 文档与 OpenAPI 收口
 
@@ -86,18 +86,18 @@
 - **任务编号**：T126
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T124, T125
-- **文件**：`tests/integration/test_stable_recovery_execution.py`, `tests/integration/test_openclaw_integration_spine.py`
+- **文件**：`tests/integration/test_stable_recovery_execution.py`, `tests/integration/test_feishu_integration_spine.py`
 - **可并行**：否
 - **验收标准**：
   1. fake A client 可走通 `critical -> handoff`；
   2. fake A client 可走通 `critical -> handoff_and_resume`；
-  3. OpenClaw adapter 的 `execute_recovery` 与 stable API 结果一致；
+  3. Feishu adapter 的 `execute_recovery` 与 stable API 结果一致；
   4. `request_recovery` 仍保持 advisory-only；
   5. legacy recover 与 stable `execute_recovery` 并存，不互相覆盖。
-- **验证**：`uv run pytest -q tests/integration/test_openclaw_integration_spine.py tests/integration/test_stable_recovery_execution.py`
+- **验证**：`uv run pytest -q tests/integration/test_feishu_integration_spine.py tests/integration/test_stable_recovery_execution.py`
 
 ## 预期结果
 
 - Watchdog 对外同时具备 advisory-only recovery 与真实 recovery execution 两类稳定动作。
-- OpenClaw 能在不依赖 legacy recover payload 的前提下执行最小恢复闭环。
+- Feishu 能在不依赖 legacy recover payload 的前提下执行最小恢复闭环。
 - 012 在保持 legacy 非回归的同时，把真实恢复执行拉回 canonical `WatchdogAction -> WatchdogActionResult` 契约。

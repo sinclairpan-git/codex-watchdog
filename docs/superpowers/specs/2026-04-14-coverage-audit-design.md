@@ -11,7 +11,7 @@
 
 **纳入文档：**
 
-1. PRD：`openclaw-codex-watchdog-prd.md`
+1. PRD：`codex-watchdog-prd.md`
 2. 总实施计划：`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
 3. 架构与阶段定义：`docs/architecture/*`
 

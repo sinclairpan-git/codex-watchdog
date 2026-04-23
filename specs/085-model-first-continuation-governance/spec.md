@@ -56,13 +56,13 @@
 - `tests/test_watchdog_policy_decisions.py`
 - `tests/test_watchdog_session_spine_runtime.py`
 - `tests/test_watchdog_session_spine_api.py`
-- `tests/test_watchdog_openclaw_adapter.py`
-- `tests/integration/test_openclaw_integration_spine.py`
+- `tests/test_watchdog_feishu_adapter.py`
+- `tests/integration/test_feishu_integration_spine.py`
 - `.ai-sdlc/project/config/project-state.yaml`
 - `.ai-sdlc/state/checkpoint.yml`
 - `.ai-sdlc/state/resume-pack.yaml`
 - `specs/084-runtime-truth-and-github-gate-hardening/spec.md`
-- `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+- `docs/architecture/codex-watchdog-full-product-loop-design.md`
 
 ## 非 Owner 约束
 
@@ -287,7 +287,7 @@ routing gate 负责回答“往哪里继续”。它必须同时维护：
   - `supersedes_packet_id`
 - `packet_state = issued | consumed | invalidated`
 
-handoff markdown / OpenClaw 展示必须改为从 `ContinuationPacket` 渲染，正文最少要能让 Codex App 直接读到：
+handoff markdown / Feishu 展示必须改为从 `ContinuationPacket` 渲染，正文最少要能让 Codex App 直接读到：
 
 - 整个项目总目标是什么；
 - 当前分支/工单目标是什么；
@@ -390,7 +390,7 @@ advisory / suppression / packet dispatch 的限频也必须统一挂在同一控
 
 ## 验证要求
 
-- `uv run pytest -q tests/test_watchdog_brain_provider_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py`
+- `uv run pytest -q tests/test_watchdog_brain_provider_runtime.py tests/test_watchdog_policy_engine.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py`
 - `uv run pytest -q`
 - `uv run ruff check`
 - `uv run python -m ai_sdlc verify constraints`

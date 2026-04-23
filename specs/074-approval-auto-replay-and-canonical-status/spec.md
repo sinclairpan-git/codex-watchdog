@@ -28,7 +28,7 @@ Out of scope:
 
 ## Formal Sources
 
-- `openclaw-codex-watchdog-prd.md` section 7.1
+- `codex-watchdog-prd.md` section 7.1
 - `specs/066-task-state-model-closure/spec.md`
 - `specs/067-risk-boundary-and-control-observability/spec.md`
 

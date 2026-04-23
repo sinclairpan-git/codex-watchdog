@@ -10,7 +10,7 @@
 - **状态**：已完成
 - **目标**：把 050 的 observability / restart / security / acceptance 边界固定成 formal truth。
 - **文件**：
-  - `openclaw-codex-watchdog-prd.md`
+  - `codex-watchdog-prd.md`
   - `docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
   - `specs/050-observability-restart-security-and-acceptance/*`
   - `.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/*`

@@ -2,7 +2,7 @@
 
 ## 本次处理范围
 
-- 先停止当前机器上所有 OpenClaw 相关常驻运行态。
+- 先停止当前机器上所有 Feishu 相关常驻运行态。
 - 只做事实梳理、证据归档、根因分析。
 - 本文档不包含业务逻辑修复，也不把分析伪装成“已经修好”。
 
@@ -10,17 +10,17 @@
 
 2026-04-10 已将以下 `launchd` 服务从当前用户会话中 `bootout`：
 
-- `com.openclaw.a-control-agent`
-- `com.openclaw.a-control-agent.public-tunnel`
-- `com.openclaw.watchdog`
-- `com.openclaw.watchdog.public-tunnel`
-- `com.openclaw.watchdog.endpoint-notifier`
+- `com.feishu.a-control-agent`
+- `com.feishu.a-control-agent.public-tunnel`
+- `com.feishu.watchdog`
+- `com.feishu.watchdog.public-tunnel`
+- `com.feishu.watchdog.endpoint-notifier`
 
 清理后复查结果：
 
-- `launchctl list` 中已无任何 `com.openclaw.*` 常驻项。
+- `launchctl list` 中已无任何 `com.feishu.*` 常驻项。
 - 端口 `8710` 与 `8720` 已无监听。
-- 当前机器上不存在会自动继续投递消息的 OpenClaw runtime 进程。
+- 当前机器上不存在会自动继续投递消息的 Feishu runtime 进程。
 
 说明：
 
@@ -38,7 +38,7 @@
 该现象说明至少存在两个层面的问题：
 
 1. 上游系统仍在持续生成并投递 envelope。
-2. 下游 OpenClaw/飞书渲染链路没有正确识别当前 envelope 类型，回退成了 `unknown-*`。
+2. 下游 Feishu/飞书渲染链路没有正确识别当前 envelope 类型，回退成了 `unknown-*`。
 
 ## 已确认事实
 
@@ -46,18 +46,18 @@
 
 当前活跃链路来自两套目录：
 
-- 当前仓库：`/Users/sinclairpan/project/openclaw-codex-watchdog`
-- 外部 runtime：`/Users/sinclairpan/openclaw-codex-watchdog-a-runtime`
+- 当前仓库：`/Users/sinclairpan/project/codex-watchdog`
+- 外部 runtime：`/Users/sinclairpan/codex-watchdog-a-runtime`
 
 关键证据：
 
-- `~/Library/LaunchAgents/com.openclaw.watchdog.plist`
+- `~/Library/LaunchAgents/com.feishu.watchdog.plist`
   - 从当前仓库启动 `scripts/start_watchdog.sh`
-- `~/Library/LaunchAgents/com.openclaw.watchdog.endpoint-notifier.plist`
+- `~/Library/LaunchAgents/com.feishu.watchdog.endpoint-notifier.plist`
   - 从外部 runtime 目录启动 `scripts/start_watchdog_endpoint_notifier.sh`
-- `~/Library/LaunchAgents/com.openclaw.a-control-agent.public-tunnel.plist`
+- `~/Library/LaunchAgents/com.feishu.a-control-agent.public-tunnel.plist`
   - 从外部 runtime 目录启动 tunnel
-- `~/Library/LaunchAgents/com.openclaw.watchdog.public-tunnel.plist`
+- `~/Library/LaunchAgents/com.feishu.watchdog.public-tunnel.plist`
   - 从外部 runtime 目录启动 tunnel
 - `bin/start-a-agent.sh`
   - 从当前仓库启动 A agent，但读取当前仓库根目录下的 `.env.a`
@@ -73,17 +73,17 @@
 当前本地环境文件中存在明显分裂：
 
 - `.env.a`
-  - `A_AGENT_DATA_DIR=/Users/sinclairpan/openclaw-codex-watchdog-a-runtime/.data/a_control_agent`
+  - `A_AGENT_DATA_DIR=/Users/sinclairpan/codex-watchdog-a-runtime/.data/a_control_agent`
 - `.env.w`
-  - `WATCHDOG_DATA_DIR=/Users/sinclairpan/openclaw-codex-watchdog-a-runtime/.data/watchdog`
-  - `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE=/Users/sinclairpan/openclaw-codex-watchdog-a-runtime/.data/watchdog/openclaw_webhook_endpoint.json`
-  - `WATCHDOG_PUBLIC_URL_STATE_FILE=/Users/sinclairpan/openclaw-codex-watchdog-a-runtime/.data/watchdog/public_endpoint_state.json`
+  - `WATCHDOG_DATA_DIR=/Users/sinclairpan/codex-watchdog-a-runtime/.data/watchdog`
+  - `WATCHDOG_OPENCLAW_WEBHOOK_ENDPOINT_STATE_FILE=/Users/sinclairpan/codex-watchdog-a-runtime/.data/watchdog/feishu_webhook_endpoint.json`
+  - `WATCHDOG_PUBLIC_URL_STATE_FILE=/Users/sinclairpan/codex-watchdog-a-runtime/.data/watchdog/public_endpoint_state.json`
 
 而代码默认值本身并不是这样：
 
 - `src/watchdog/settings.py`
   - `data_dir` 默认是 `.data/watchdog`
-  - `openclaw_webhook_base_url` 默认是 `http://127.0.0.1:8740`
+  - `feishu_webhook_base_url` 默认是 `http://127.0.0.1:8740`
 
 结论：
 
@@ -105,7 +105,7 @@
   - `next_outbox_seq: 3684`
   - `delivery_outbox` 共 3683 条
   - `decision_outbox` 共 3406 条
-- `openclaw_webhook_endpoint.json`
+- `feishu_webhook_endpoint.json`
   - 当前 endpoint 为一个 `trycloudflare` 地址
 - `public_endpoint_state.json`
   - 当前 watchdog 公网地址也是另一个 `trycloudflare` 地址
@@ -119,14 +119,14 @@
 
 已确认的日志证据：
 
-- `~/Library/Logs/openclaw-watchdog.err.log`
+- `~/Library/Logs/feishu-watchdog.err.log`
   - 多次出现 `delivery_outbox.json` JSON 解析失败
   - 典型报错：`Invalid JSON: trailing characters`
   - 说明 outbox 文件曾经被写坏，后台编排和 delivery worker 都受影响
-- `~/Library/Logs/openclaw-watchdog-endpoint-notifier.err.log`
+- `~/Library/Logs/feishu-watchdog-endpoint-notifier.err.log`
   - 多次出现 `httpx.ConnectError: [Errno 8] nodename nor servname provided, or not known`
   - 说明 notifier 回调 bootstrap webhook 时存在目标不可解析或不可达
-- `~/Library/Logs/openclaw-watchdog.public-tunnel.err.log`
+- `~/Library/Logs/feishu-watchdog.public-tunnel.err.log`
   - 多次出现 quick tunnel 超时与重连
   - 说明公网地址本身不稳定
 
@@ -175,10 +175,10 @@
 
 ### 3. 当前最合理的根因判断
 
-在未直接拿到 OpenClaw/飞书渲染代码的前提下，基于现有证据，当前最合理的结论是：
+在未直接拿到 Feishu/飞书渲染代码的前提下，基于现有证据，当前最合理的结论是：
 
 - Watchdog 上游持续发送了大量 `progress_summary` 通知。
-- OpenClaw/飞书下游没有先按 `envelope_type + notification_kind` 分流。
+- Feishu/飞书下游没有先按 `envelope_type + notification_kind` 分流。
 - 下游直接把所有 `notification` 都按“决策结果通知模板”渲染。
 - 当 `decision_result` / `action_name` 缺失时，就落到了 `unknown-*` 默认值。
 
@@ -240,7 +240,7 @@
 
 ### 第二根因
 
-下游 OpenClaw/飞书渲染链路没有正确区分：
+下游 Feishu/飞书渲染链路没有正确区分：
 
 - `decision_result`
 - `progress_summary`
@@ -285,7 +285,7 @@
 
 但以下事项仍未在当前仓库内直接验证：
 
-- OpenClaw/飞书渲染代码的具体 fallback 分支
+- Feishu/飞书渲染代码的具体 fallback 分支
 - 外部 runtime 目录中的全部本地脚本差异
 - `delivery_outbox.json` 曾损坏时的具体写入竞争路径
 

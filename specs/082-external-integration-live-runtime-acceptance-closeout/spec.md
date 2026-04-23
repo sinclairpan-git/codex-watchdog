@@ -40,7 +40,7 @@
 - `tests/test_watchdog_session_spine_api.py`
 - `tests/test_watchdog_session_spine_runtime.py`
 - `tests/test_watchdog_ops.py`
-- `tests/integration/test_openclaw_integration_spine.py`
+- `tests/integration/test_feishu_integration_spine.py`
 - `.ai-sdlc/state/checkpoint.yml`
 - `.ai-sdlc/state/resume-pack.yaml`
 - `.ai-sdlc/project/config/project-state.yaml`
@@ -61,8 +61,8 @@
 
 ## 验证要求
 
-- `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py tests/test_watchdog_external_integration_smoke.py tests/test_watchdog_replay.py tests/test_watchdog_resident_experts.py tests/test_watchdog_session_spine_api.py::test_session_directory_route_surfaces_resident_expert_coverage tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_records_resident_expert_consultation_evidence tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_marks_resident_expert_coverage_degraded_when_stale tests/test_watchdog_ops.py::test_watchdog_ops_alerts_and_healthz_report_degraded_status tests/test_watchdog_ops.py::test_watchdog_ops_exposes_stale_resident_expert_runtime_status tests/integration/test_openclaw_integration_spine.py::test_integration_session_directory_api_and_adapter_share_resident_expert_coverage`
+- `uv run pytest -q tests/test_long_running_autonomy_doc_contracts.py tests/test_watchdog_external_integration_smoke.py tests/test_watchdog_replay.py tests/test_watchdog_resident_experts.py tests/test_watchdog_session_spine_api.py::test_session_directory_route_surfaces_resident_expert_coverage tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_records_resident_expert_consultation_evidence tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_marks_resident_expert_coverage_degraded_when_stale tests/test_watchdog_ops.py::test_watchdog_ops_alerts_and_healthz_report_degraded_status tests/test_watchdog_ops.py::test_watchdog_ops_exposes_stale_resident_expert_runtime_status tests/integration/test_feishu_integration_spine.py::test_integration_session_directory_api_and_adapter_share_resident_expert_coverage`
 - `set -a; source .env.w; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target health --target feishu --target feishu-control --target provider --target memory --markdown-report artifacts/watchdog-live-acceptance.md`
-- `set -a; source .env.w; export WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS="openclaw-codex-watchdog,Ai_AutoSDLC,meeting,portal"; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery`
+- `set -a; source .env.w; export WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS="codex-watchdog,Ai_AutoSDLC,meeting,portal"; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery`
 - `uv run python -m ai_sdlc verify constraints`
 - `uv run python -m ai_sdlc status`

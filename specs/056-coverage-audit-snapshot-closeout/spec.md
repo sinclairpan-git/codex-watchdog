@@ -40,7 +40,7 @@
 - `docs/superpowers/specs/2026-04-14-coverage-audit-matrix.md`
 - `specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/matrix-owner-ledger.yaml`
 - `.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md`
-- `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/latest-summary.md`
+- `.ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md`
 - `.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md`
 - `.ai-sdlc/work-items/051-high-coupling-test-hardening/latest-summary.md`
 - `.ai-sdlc/work-items/052-framework-defect-gate-and-path-discipline/latest-summary.md`

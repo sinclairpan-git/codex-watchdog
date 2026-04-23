@@ -2,7 +2,7 @@ generated_at: 2026-04-16T07:02:24Z
 source_matrix: docs/superpowers/specs/2026-04-14-coverage-audit-matrix.md
 pre_repair:
   spec_work_items:
-    - 001-openclaw-codex-watchdog
+    - 001-codex-watchdog
     - 002-m2-supervision
     - 004-m3-approval
     - 005-m4-recovery
@@ -10,7 +10,7 @@ pre_repair:
     - 007-prd-alignment
     - 008-codex-live-control-plane
     - 009-task-events-stream
-    - 010-openclaw-integration-spine
+    - 010-runtime-integration-spine
     - 011-stable-session-events
     - 012-stable-recovery-execution
     - 013-stable-action-receipts
@@ -23,12 +23,12 @@ pre_repair:
     - 020-stable-operator-guidance
     - 021-stable-session-event-snapshot
     - 022-stable-session-facts
-    - 023-codex-client-openclaw-route-template
+    - 023-codex-client-routing-template
     - 024-resident-supervision-session-spine-persistence
     - 025-policy-engine-decision-evidence
     - 026-canonical-action-approval-response-loop
     - 027-outbox-delivery-retry-receipt
-    - 028-openclaw-webhook-response-api-reference-runtime
+    - 028-webhook-response-api-reference-runtime
     - 029-audit-replay-ops-production-deployment
     - 030-session-service-event-truth-write-barrier
     - 031-session-spine-events-projection-read-surface
@@ -36,7 +36,7 @@ pre_repair:
     - 033-recovery-transaction-lineage
     - 034-memory-hub-codex-critical
     - 035-brain-decision-boundary-and-release-gate
-    - 036-feishu-control-plane-and-openclaw-retirement
+    - 036-feishu-control-plane-and-feishu-retirement
     - 037-autonomy-golden-path-and-release-gate-e2e
     - 038-future-worker-canonical-execution-and-governance
     - 039-release-gate-loading-api-and-evidence-bundle
@@ -49,7 +49,7 @@ pre_repair:
     - 046-session-event-gate-payload-write-contract
     - 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
   mirrored_work_items:
-    - 001-openclaw-codex-watchdog
+    - 001-codex-watchdog
     - 002-m2-supervision
     - 004-m3-approval
     - 005-m4-recovery
@@ -57,14 +57,14 @@ pre_repair:
     - 008-codex-live-control-plane
     - 009-task-events-stream
     - 022-stable-session-facts
-    - 023-codex-client-openclaw-route-template
+    - 023-codex-client-routing-template
     - 030-session-service-event-truth-write-barrier
     - 031-session-spine-events-projection-read-surface
     - 032-goal-contract-persistence-and-governance
     - 033-recovery-transaction-lineage
     - 034-memory-hub-codex-critical
     - 035-brain-decision-boundary-and-release-gate
-    - 036-feishu-control-plane-and-openclaw-retirement
+    - 036-feishu-control-plane-and-feishu-retirement
     - 037-autonomy-golden-path-and-release-gate-e2e
     - 038-future-worker-canonical-execution-and-governance
     - 039-release-gate-loading-api-and-evidence-bundle
@@ -78,7 +78,7 @@ pre_repair:
     - 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
   missing_work_item_mirrors:
     - 006-m5-hardening
-    - 010-openclaw-integration-spine
+    - 010-runtime-integration-spine
     - 011-stable-session-events
     - 012-stable-recovery-execution
     - 013-stable-action-receipts
@@ -94,17 +94,17 @@ pre_repair:
     - 025-policy-engine-decision-evidence
     - 026-canonical-action-approval-response-loop
     - 027-outbox-delivery-retry-receipt
-    - 028-openclaw-webhook-response-api-reference-runtime
+    - 028-webhook-response-api-reference-runtime
     - 029-audit-replay-ops-production-deployment
   next_work_item_seq: 48
   active_work_item_id: 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
   stale_pointers:
-    - '.ai-sdlc/state/checkpoint.yml points to 023-codex-client-openclaw-route-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair'
-    - '.ai-sdlc/state/checkpoint.yml points to 023-codex-client-openclaw-route-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair'
+    - '.ai-sdlc/state/checkpoint.yml points to 023-codex-client-routing-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair'
+    - '.ai-sdlc/state/checkpoint.yml points to 023-codex-client-routing-template, expected 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair'
     - '.ai-sdlc/project/config/project-state.yaml next_work_item_seq=24, expected 48'
 backfilled_mirror_work_items:
   - 006-m5-hardening
-  - 010-openclaw-integration-spine
+  - 010-runtime-integration-spine
   - 011-stable-session-events
   - 012-stable-recovery-execution
   - 013-stable-action-receipts
@@ -120,11 +120,11 @@ backfilled_mirror_work_items:
   - 025-policy-engine-decision-evidence
   - 026-canonical-action-approval-response-loop
   - 027-outbox-delivery-retry-receipt
-  - 028-openclaw-webhook-response-api-reference-runtime
+  - 028-webhook-response-api-reference-runtime
   - 029-audit-replay-ops-production-deployment
 post_repair:
   spec_work_items:
-    - 001-openclaw-codex-watchdog
+    - 001-codex-watchdog
     - 002-m2-supervision
     - 004-m3-approval
     - 005-m4-recovery
@@ -132,7 +132,7 @@ post_repair:
     - 007-prd-alignment
     - 008-codex-live-control-plane
     - 009-task-events-stream
-    - 010-openclaw-integration-spine
+    - 010-runtime-integration-spine
     - 011-stable-session-events
     - 012-stable-recovery-execution
     - 013-stable-action-receipts
@@ -145,12 +145,12 @@ post_repair:
     - 020-stable-operator-guidance
     - 021-stable-session-event-snapshot
     - 022-stable-session-facts
-    - 023-codex-client-openclaw-route-template
+    - 023-codex-client-routing-template
     - 024-resident-supervision-session-spine-persistence
     - 025-policy-engine-decision-evidence
     - 026-canonical-action-approval-response-loop
     - 027-outbox-delivery-retry-receipt
-    - 028-openclaw-webhook-response-api-reference-runtime
+    - 028-webhook-response-api-reference-runtime
     - 029-audit-replay-ops-production-deployment
     - 030-session-service-event-truth-write-barrier
     - 031-session-spine-events-projection-read-surface
@@ -158,7 +158,7 @@ post_repair:
     - 033-recovery-transaction-lineage
     - 034-memory-hub-codex-critical
     - 035-brain-decision-boundary-and-release-gate
-    - 036-feishu-control-plane-and-openclaw-retirement
+    - 036-feishu-control-plane-and-feishu-retirement
     - 037-autonomy-golden-path-and-release-gate-e2e
     - 038-future-worker-canonical-execution-and-governance
     - 039-release-gate-loading-api-and-evidence-bundle
@@ -171,7 +171,7 @@ post_repair:
     - 046-session-event-gate-payload-write-contract
     - 047-ai-sdlc-state-reconciliation-and-canonical-gate-repair
   mirrored_work_items:
-    - 001-openclaw-codex-watchdog
+    - 001-codex-watchdog
     - 002-m2-supervision
     - 004-m3-approval
     - 005-m4-recovery
@@ -179,7 +179,7 @@ post_repair:
     - 007-prd-alignment
     - 008-codex-live-control-plane
     - 009-task-events-stream
-    - 010-openclaw-integration-spine
+    - 010-runtime-integration-spine
     - 011-stable-session-events
     - 012-stable-recovery-execution
     - 013-stable-action-receipts
@@ -192,12 +192,12 @@ post_repair:
     - 020-stable-operator-guidance
     - 021-stable-session-event-snapshot
     - 022-stable-session-facts
-    - 023-codex-client-openclaw-route-template
+    - 023-codex-client-routing-template
     - 024-resident-supervision-session-spine-persistence
     - 025-policy-engine-decision-evidence
     - 026-canonical-action-approval-response-loop
     - 027-outbox-delivery-retry-receipt
-    - 028-openclaw-webhook-response-api-reference-runtime
+    - 028-webhook-response-api-reference-runtime
     - 029-audit-replay-ops-production-deployment
     - 030-session-service-event-truth-write-barrier
     - 031-session-spine-events-projection-read-surface
@@ -205,7 +205,7 @@ post_repair:
     - 033-recovery-transaction-lineage
     - 034-memory-hub-codex-critical
     - 035-brain-decision-boundary-and-release-gate
-    - 036-feishu-control-plane-and-openclaw-retirement
+    - 036-feishu-control-plane-and-feishu-retirement
     - 037-autonomy-golden-path-and-release-gate-e2e
     - 038-future-worker-canonical-execution-and-governance
     - 039-release-gate-loading-api-and-evidence-bundle

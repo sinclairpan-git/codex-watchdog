@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/012-stable-recovery-execution/spec.md"
 ---
 
@@ -16,7 +16,7 @@ related_doc:
 - **Contract-first**：先在 `session_spine` contract 内新增 `execute_recovery` 所需的 action / reply / effect 枚举，并推进 schema version。
 - **Execution Orchestration 分离**：把真实恢复编排封装成单独服务，让 stable action 与 legacy recover route 复用同一执行内核，而不是复制 HTTP 调用分支。
 - **Canonical vs Legacy 分离**：`POST /api/v1/watchdog/actions` 是 stable 主面；legacy `/watchdog/tasks/{project_id}/recover` 继续存在，但只做兼容包装。
-- **Adapter 只消费 stable result**：OpenClaw adapter 只依赖 `WatchdogActionResult` 与 `ReplyModel.reply_code`，不直接处理 legacy raw recover payload。
+- **Adapter 只消费 stable result**：Feishu adapter 只依赖 `WatchdogActionResult` 与 `ReplyModel.reply_code`，不直接处理 legacy raw recover payload。
 
 ## 模块边界与文件落点
 
@@ -27,8 +27,8 @@ related_doc:
 | L2 Action | `src/watchdog/services/session_spine/actions.py` | 把 `execute_recovery` 接入 canonical `WatchdogAction` 执行流与幂等收据 |
 | Stable API Surface | `src/watchdog/api/session_spine_actions.py`, `src/watchdog/main.py` | 暴露 canonical/alias stable action route |
 | Legacy 兼容 | `src/watchdog/api/recover_watchdog.py` | 复用 recovery execution 内核，保持旧 route 非回归 |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `adapter.py`, `reply_model.py` | 新增 `execute_recovery` intent，并稳定映射 `ReplyModel` |
-| 验证与文档 | `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_recovery_execution.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_stable_recovery_execution.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定稳定行为、非回归与接入文档 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `adapter.py`, `reply_model.py` | 新增 `execute_recovery` intent，并稳定映射 `ReplyModel` |
+| 验证与文档 | `tests/test_watchdog_action_idempotency.py`, `tests/test_watchdog_recovery_execution.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_stable_recovery_execution.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定稳定行为、非回归与接入文档 |
 
 ## 依赖顺序
 
@@ -102,7 +102,7 @@ related_doc:
 - alias route 仅做 body 映射
 - legacy route 输出保持原字段：`action=noop|handoff_triggered|handoff_and_resume`
 
-### Phase 4：接入 OpenClaw adapter 与文档
+### Phase 4：接入 Feishu adapter 与文档
 
 交付内容：
 
@@ -112,7 +112,7 @@ related_doc:
 
 关键原则：
 
-- adapter 不直连 A-Control-Agent recovery endpoints
+- adapter 不直连 Codex runtime service recovery endpoints
 - docs 明确 `request_recovery` 只是 advisory，`execute_recovery` 才是真实执行
 
 ### Phase 5：测试与收口
@@ -189,5 +189,5 @@ related_doc:
 1. `execute_recovery` 已作为新的稳定 action code 接入 canonical `WatchdogAction -> WatchdogActionResult`。
 2. `request_recovery` 仍保持 advisory-only。
 3. stable action 与 legacy recover route 共用同一执行内核，但输出各自契约。
-4. OpenClaw adapter 已支持 `execute_recovery`，且返回稳定 `ReplyModel(reply_code=recovery_execution_result)`。
+4. Feishu adapter 已支持 `execute_recovery`，且返回稳定 `ReplyModel(reply_code=recovery_execution_result)`。
 5. session spine schema version、OpenAPI、README、getting-started 与测试都已同步到 012。

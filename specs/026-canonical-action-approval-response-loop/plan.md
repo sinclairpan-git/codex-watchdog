@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/026-canonical-action-approval-response-loop/spec.md"
   - "specs/025-policy-engine-decision-evidence/spec.md"
 ---
@@ -22,9 +22,9 @@ related_doc:
 | 层 | 文件落点 | 责任 |
 |---|---|---|
 | Action Registry | `src/watchdog/services/actions/registry.py` | canonical action registry 与动作元数据 |
-| Action Executor | `src/watchdog/services/actions/executor.py` | 消费 decision records，调用 A 侧动作 |
+| Action Executor | `src/watchdog/services/actions/executor.py` | 消费 decision records，调用 runtime 侧动作 |
 | Approval Loop | `src/watchdog/services/approvals/service.py` | canonical approvals、响应幂等、approve/reject 语义 |
-| API Surface | `src/watchdog/api/session_spine_actions.py`, `src/watchdog/api/openclaw_responses.py` | canonical action / response 入口 |
+| API Surface | `src/watchdog/api/session_spine_actions.py`, `src/watchdog/api/feishu_responses.py` | canonical action / response 入口 |
 | 验证 | `tests/test_watchdog_action_execution.py`, `tests/test_watchdog_approval_loop.py` | registry、执行、审批、响应幂等 |
 
 ## 边界纪律

@@ -26,7 +26,7 @@
 
 ### Out of Scope
 
-- 不修改任何业务运行时、产品功能或 Feishu/OpenClaw 行为；
+- 不修改任何业务运行时、产品功能或 Feishu/Feishu 行为；
 - 不伪造历史 reviewer 名单，不把缺失审计证据的旧工单强行改写成 `approved`；
 - 不重写历史 `latest-summary.md`、`execution-plan.yaml` 的任务结果；
 - 不把非 completed work item 的 review gate 语义一并重构。
@@ -37,8 +37,8 @@
 - `src/watchdog/validation/ai_sdlc_reconciliation.py`
 - `tests/test_ai_sdlc_repo_cli.py`
 - `tests/test_ai_sdlc_reconciliation.py`
-- `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/runtime.yaml`
-- `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/resume-pack.yaml`
+- `.ai-sdlc/work-items/049-feishu-entrypoint-closure/runtime.yaml`
+- `.ai-sdlc/work-items/049-feishu-entrypoint-closure/resume-pack.yaml`
 - `.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/runtime.yaml`
 - `.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/resume-pack.yaml`
 - `.ai-sdlc/work-items/051-high-coupling-test-hardening/runtime.yaml`
@@ -61,8 +61,8 @@
 - `.ai-sdlc/work-items/059-stable-session-command-surface-and-restart-preservation/resume-pack.yaml`
 - `.ai-sdlc/work-items/060-memory-advisory-fail-closed-and-ops-hardening/runtime.yaml`
 - `.ai-sdlc/work-items/060-memory-advisory-fail-closed-and-ops-hardening/resume-pack.yaml`
-- `.ai-sdlc/work-items/061-openclaw-entry-routing-and-steer-contracts/runtime.yaml`
-- `.ai-sdlc/work-items/061-openclaw-entry-routing-and-steer-contracts/resume-pack.yaml`
+- `.ai-sdlc/work-items/061-entry-routing-and-steer-contracts/runtime.yaml`
+- `.ai-sdlc/work-items/061-entry-routing-and-steer-contracts/resume-pack.yaml`
 - `.ai-sdlc/work-items/062-global-design-provider-memory-closure/runtime.yaml`
 - `.ai-sdlc/work-items/062-global-design-provider-memory-closure/resume-pack.yaml`
 - `.ai-sdlc/work-items/063-async-memory-ingest-sink/runtime.yaml`

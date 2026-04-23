@@ -22,7 +22,7 @@ Last Committed Task: T765
   - `src/watchdog/validation/docs_contracts.py`
   - `tests/test_long_running_autonomy_doc_contracts.py`
 - Full verification also surfaced and fixed an idempotency defect in:
-  - `src/watchdog/api/openclaw_responses.py`
+  - `src/watchdog/api/feishu_responses.py`
 - Dual-agent adversarial review conclusion:
   - Anthropic Manager Expert required the work item to stay repo-local and not overclaim real Feishu org-level E2E.
   - Hermes Agent Expert confirmed this work should stay on `/api/v1/watchdog/feishu/events`, not be rewritten to `/api/v1/watchdog/feishu/control`.
@@ -31,9 +31,9 @@ Last Committed Task: T765
 ## Verification
 
 - `uv run pytest -q tests/test_watchdog_external_integration_smoke.py tests/test_long_running_autonomy_doc_contracts.py tests/test_watchdog_feishu_ingress.py`
-- `uv run pytest -q tests/test_watchdog_approval_loop.py::test_openclaw_response_api_uses_response_tuple_as_idempotency_key`
+- `uv run pytest -q tests/test_watchdog_approval_loop.py::test_feishu_response_api_uses_response_tuple_as_idempotency_key`
 - `uv run pytest -q`
-- `uv run ruff check src/watchdog/api/openclaw_responses.py src/watchdog/validation/external_integration_smoke.py scripts/watchdog_external_integration_smoke.py tests/test_watchdog_external_integration_smoke.py src/watchdog/validation/docs_contracts.py tests/test_long_running_autonomy_doc_contracts.py`
+- `uv run ruff check src/watchdog/api/feishu_responses.py src/watchdog/validation/external_integration_smoke.py scripts/watchdog_external_integration_smoke.py tests/test_watchdog_external_integration_smoke.py src/watchdog/validation/docs_contracts.py tests/test_long_running_autonomy_doc_contracts.py`
 - `uv run python -m ai_sdlc verify constraints`
 - `uv run python -m ai_sdlc status`
 

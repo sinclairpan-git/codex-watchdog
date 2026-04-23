@@ -33,7 +33,7 @@ tasks:
   phase: 2
   file_paths:
   - '`tests/test_watchdog_session_spine_api.py`'
-  - '`tests/integration/test_openclaw_integration_spine.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
   - '`tests/test_codex_app_server_bridge.py`'
   - '`tests/test_a_control_agent_control_flow.py`'
   parallelizable: false
@@ -54,7 +54,7 @@ tasks:
   - '`tests/test_codex_app_server_bridge.py`'
   - '`tests/test_a_control_agent_control_flow.py`'
   - '`tests/test_watchdog_session_spine_api.py`'
-  - '`tests/integration/test_openclaw_integration_spine.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
   parallelizable: false
   parallel_group: ''
   allowed_paths: []
@@ -73,7 +73,7 @@ tasks:
   - '`tests/test_codex_app_server_bridge.py`'
   - '`tests/test_a_control_agent_control_flow.py`'
   - '`tests/test_watchdog_session_spine_api.py`'
-  - '`tests/integration/test_openclaw_integration_spine.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
   parallelizable: false
   parallel_group: ''
   allowed_paths: []

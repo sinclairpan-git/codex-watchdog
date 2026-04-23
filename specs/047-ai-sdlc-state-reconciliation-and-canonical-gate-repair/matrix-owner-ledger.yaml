@@ -21,7 +21,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
+    source: '`codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
   -
     stable_id: matrix-row-0002
     summary: '任务状态可监管'
@@ -35,7 +35,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
+    source: '`codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
   -
     stable_id: matrix-row-0003
     summary: '卡顿 / 等待 / 上下文压力可自动处理'
@@ -49,7 +49,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
+    source: '`codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
   -
     stable_id: matrix-row-0004
     summary: '授权审批可分级自动化'
@@ -63,7 +63,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
+    source: '`codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
   -
     stable_id: matrix-row-0005
     summary: '线程可恢复、可续话、可追踪'
@@ -77,7 +77,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
+    source: '`codex-watchdog-prd.md:37-44 / ## 2.1 总体目标`'
   -
     stable_id: matrix-row-0006
     summary: '飞书中随时查询指定项目任务进展，响应时间小于 5 秒'
@@ -91,7 +91,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
+    source: '`codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
   -
     stable_id: matrix-row-0007
     summary: '无进展卡顿触发一次 引导 并记录动作'
@@ -105,7 +105,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
+    source: '`codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
   -
     stable_id: matrix-row-0008
     summary: '任务目标明确时自动选择保守路径继续执行'
@@ -119,7 +119,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
+    source: '`codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
   -
     stable_id: matrix-row-0009
     summary: '上下文压力高 / 线程退化时自动生成 交接摘要，并执行 续跑 或新线程续跑'
@@ -133,7 +133,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
+    source: '`codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
   -
     stable_id: matrix-row-0010
     summary: '授权请求按 `L0`/`L1`/`L2`/`L3` 四级风险模型处理，`L0`/`L1` 自动，`L2`/`L3` 精确提醒人工'
@@ -147,7 +147,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
+    source: '`codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
   -
     stable_id: matrix-row-0011
     summary: '关键状态、审批、自动处理动作均具备可审计日志'
@@ -161,7 +161,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
+    source: '`codex-watchdog-prd.md:46-55 / ## 2.2 成功标准`'
   -
     stable_id: matrix-row-0012
     summary: '飞书查询任务进展，返回阶段、摘要、文件、阻塞点、审批状态、上下文压力'
@@ -175,7 +175,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:159-169 / ### 5.1 场景一`'
+    source: '`codex-watchdog-prd.md:159-169 / ### 5.1 场景一`'
   -
     stable_id: matrix-row-0013
     summary: '持续无进展则升级飞书提醒并执行交接 / 续跑'
@@ -189,7 +189,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:170-180 / ### 5.2 场景二`'
+    source: '`codex-watchdog-prd.md:170-180 / ### 5.2 场景二`'
   -
     stable_id: matrix-row-0014
     summary: '`Codex` 等待用户决策时，在目标明确且风险可控时自动走最小风险、最小变更路径'
@@ -203,7 +203,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:182-189 / ### 5.3 场景三`'
+    source: '`codex-watchdog-prd.md:182-189 / ### 5.3 场景三`'
   -
     stable_id: matrix-row-0015
     summary: '若任务目标不清晰，则在飞书中请求人工决策'
@@ -217,7 +217,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:189-189 / ### 5.3 场景三`'
+    source: '`codex-watchdog-prd.md:189-189 / ### 5.3 场景三`'
   -
     stable_id: matrix-row-0016
     summary: '同类错误连续出现或原地打转时自动打断循环，给出最多 2 个修复方向并选择最小变更方案'
@@ -231,7 +231,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:191-201 / ### 5.4 场景四`'
+    source: '`codex-watchdog-prd.md:191-201 / ### 5.4 场景四`'
   -
     stable_id: matrix-row-0017
     summary: '达到严重阈值时通知人工接管'
@@ -245,7 +245,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:201-201 / ### 5.4 场景四`'
+    source: '`codex-watchdog-prd.md:201-201 / ### 5.4 场景四`'
   -
     stable_id: matrix-row-0018
     summary: '上下文压力过高 / 线程退化时自动生成 交接摘要，并尝试 续跑；必要时新线程续跑'
@@ -259,7 +259,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:203-213 / ### 5.5 场景五`'
+    source: '`codex-watchdog-prd.md:203-213 / ### 5.5 场景五`'
   -
     stable_id: matrix-row-0019
     summary: '审批请求触发条件：`Codex` 请求更高权限、网络访问、工作区外访问或高破坏性操作'
@@ -273,7 +273,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:217-218 / ### 5.6 场景六`'
+    source: '`codex-watchdog-prd.md:217-218 / ### 5.6 场景六`'
   -
     stable_id: matrix-row-0020
     summary: '`L0`：低风险自动通过'
@@ -287,7 +287,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
+    source: '`codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
   -
     stable_id: matrix-row-0021
     summary: '`L1`：自动通过并通知'
@@ -301,7 +301,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
+    source: '`codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
   -
     stable_id: matrix-row-0022
     summary: '`L2`：中风险飞书提醒人工审批'
@@ -315,7 +315,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
+    source: '`codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
   -
     stable_id: matrix-row-0023
     summary: '`L3`：高风险强制人工审批'
@@ -329,7 +329,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
+    source: '`codex-watchdog-prd.md:220-224 / ### 5.6 场景六`'
   -
     stable_id: matrix-row-0024
     summary: '仅能证明存在启发式分类器；工作区/网络/系统/凭据/破坏性 边界校验未证'
@@ -343,7 +343,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:303-315 / #### L0：自动通过`'
+    source: '`codex-watchdog-prd.md:303-315 / #### L0：自动通过`'
   -
     stable_id: matrix-row-0025
     summary: '仅能证明存在启发式分类器；工作区/网络/系统/凭据/破坏性/发布 边界校验未证'
@@ -357,7 +357,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:316-326 / #### L1：自动通过并通知`'
+    source: '`codex-watchdog-prd.md:316-326 / #### L1：自动通过并通知`'
   -
     stable_id: matrix-row-0026
     summary: '仅能证明存在启发式分类器；工作区/网络/系统/凭据/破坏性/发布 边界校验未证'
@@ -371,7 +371,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:328-339 / #### L2：人工审批`'
+    source: '`codex-watchdog-prd.md:328-339 / #### L2：人工审批`'
   -
     stable_id: matrix-row-0027
     summary: '仅能证明存在启发式分类器；工作区/网络/系统/凭据/破坏性/发布 边界校验未证'
@@ -385,7 +385,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:341-354 / #### L3：强制人工审批`'
+    source: '`codex-watchdog-prd.md:341-354 / #### L3：强制人工审批`'
   -
     stable_id: matrix-row-0028
     summary: '审批对象应包含 `approval_id` / `project_id` / `thread_id` / `risk_level` / `command` / `reason` / `requested_at` / `alternative` / `status` 等字段'
@@ -399,7 +399,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:356-369 / ### 7.2 审批对象`'
+    source: '`codex-watchdog-prd.md:356-369 / ### 7.2 审批对象`'
   -
     stable_id: matrix-row-0029
     summary: '监管、查询、控制、审批、恢复属于首版范围'
@@ -413,7 +413,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:61-73 / ### 3.1 范围内`'
+    source: '`codex-watchdog-prd.md:61-73 / ### 3.1 范围内`'
   -
     stable_id: matrix-row-0030
     summary: '对外暴露业务化 接口、统一 信封、强制鉴权、写操作审计'
@@ -427,7 +427,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:88-112 / ### 4.1 架构原则`'
+    source: '`codex-watchdog-prd.md:88-112 / ### 4.1 架构原则`'
   -
     stable_id: matrix-row-0031
     summary: '`A`/`B` 双机通过受控 接口 和后台循环协作'
@@ -441,7 +441,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:97-112 / ### 4.2 总体架构图`'
+    source: '`codex-watchdog-prd.md:97-112 / ### 4.2 总体架构图`'
   -
     stable_id: matrix-row-0032
     summary: '`A` 负责任务/审批/恢复，`B` 负责监管/控制/恢复编排'
@@ -455,7 +455,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:113-155 / ### 4.3 组件职责`'
+    source: '`codex-watchdog-prd.md:113-155 / ### 4.3 组件职责`'
   -
     stable_id: matrix-row-0033
     summary: '`B` 负责进展查询、监督扫描、审批桥接、复原与运维接口'
@@ -469,7 +469,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:113-155 / ### 4.3 组件职责`'
+    source: '`codex-watchdog-prd.md:113-155 / ### 4.3 组件职责`'
   -
     stable_id: matrix-row-0034
     summary: '任务主状态枚举不一致：当前实现仍出现 `waiting_human` / `approval` 等实现态，尚未证明需求文档原文 `waiting_for_direction` / `waiting_for_approval` / `stuck` / `handoff_in_progress` / `resuming` 全量覆盖'
@@ -483,7 +483,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:230-243 / ### 6.1 任务主状态`'
+    source: '`codex-watchdog-prd.md:230-243 / ### 6.1 任务主状态`'
   -
     stable_id: matrix-row-0035
     summary: '任务阶段枚举不一致：当前实现仍偏向 `planning` / `approval` / `recovery` 等实现态，尚未证明需求文档原文 `code_reading` / `editing_tests` / `running_tests` / `debugging` / `summarizing` / `handoff` 全量覆盖'
@@ -497,7 +497,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:244-255 / ### 6.2 任务阶段（phase）`'
+    source: '`codex-watchdog-prd.md:244-255 / ### 6.2 任务阶段（phase）`'
   -
     stable_id: matrix-row-0036
     summary: '任务状态对象需包含 `project_id` / `thread_id` / `status` / `phase` / `last_progress_at` / `last_summary` / `files_touched` / `pending_approval` / `approval_risk` / `context_pressure` / `stuck_level` / `failure_count` / `last_error_signature`'
@@ -511,7 +511,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:256-279 / ### 6.3 任务状态对象`'
+    source: '`codex-watchdog-prd.md:256-279 / ### 6.3 任务状态对象`'
   -
     stable_id: matrix-row-0037
     summary: '上下文压力需覆盖 `low` / `medium` / `high` / `critical`'
@@ -525,7 +525,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:280-287 / ### 6.4 上下文压力`'
+    source: '`codex-watchdog-prd.md:280-287 / ### 6.4 上下文压力`'
   -
     stable_id: matrix-row-0038
     summary: '卡顿等级 需覆盖 `0` / `1` / `2` / `3` / `4`'
@@ -539,7 +539,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:288-297 / ### 6.5 卡顿等级`'
+    source: '`codex-watchdog-prd.md:288-297 / ### 6.5 卡顿等级`'
   -
     stable_id: matrix-row-0039
     summary: '需要能按阈值识别无进展卡顿并触发 软引导'
@@ -553,7 +553,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:376-383 / ### 8.1 无进展卡顿阈值`'
+    source: '`codex-watchdog-prd.md:376-383 / ### 8.1 无进展卡顿阈值`'
   -
     stable_id: matrix-row-0040
     summary: '需要能识别同类错误重复出现并升级处理'
@@ -567,7 +567,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:384-390 / ### 8.2 循环失败阈值`'
+    source: '`codex-watchdog-prd.md:384-390 / ### 8.2 循环失败阈值`'
   -
     stable_id: matrix-row-0041
     summary: '上下文压力 达到 严重 时必须进入恢复路径'
@@ -581,7 +581,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:391-397 / ### 8.3 上下文压力阈值`'
+    source: '`codex-watchdog-prd.md:391-397 / ### 8.3 上下文压力阈值`'
   -
     stable_id: matrix-row-0042
     summary: '软引导 模板'
@@ -595,7 +595,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:400-408 / #### 8.4.1 软引导`'
+    source: '`codex-watchdog-prd.md:400-408 / #### 8.4.1 软引导`'
   -
     stable_id: matrix-row-0043
     summary: '等待指引引导 模板'
@@ -609,7 +609,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:410-415 / #### 8.4.2 等待指引引导`'
+    source: '`codex-watchdog-prd.md:410-415 / #### 8.4.2 等待指引引导`'
   -
     stable_id: matrix-row-0044
     summary: '打断循环引导 模板'
@@ -623,7 +623,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:417-422 / #### 8.4.3 打断循环引导`'
+    source: '`codex-watchdog-prd.md:417-422 / #### 8.4.3 打断循环引导`'
   -
     stable_id: matrix-row-0045
     summary: '交接摘要提示模板'
@@ -637,7 +637,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:424-435 / #### 8.4.4 交接摘要提示`'
+    source: '`codex-watchdog-prd.md:424-435 / #### 8.4.4 交接摘要提示`'
   -
     stable_id: matrix-row-0046
     summary: '需求文档 `force_handoff` 目前无稳定动作代码映射'
@@ -651,7 +651,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
+    source: '`codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
   -
     stable_id: matrix-row-0047
     summary: '需求文档 `pause` 目前无稳定动作代码映射'
@@ -665,7 +665,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
+    source: '`codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
   -
     stable_id: matrix-row-0048
     summary: '需求文档 `summarize` 目前无稳定动作代码映射'
@@ -679,7 +679,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
+    source: '`codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
   -
     stable_id: matrix-row-0049
     summary: '需求文档 `retry_with_conservative_path` 目前无稳定动作代码映射'
@@ -693,10 +693,10 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
+    source: '`codex-watchdog-prd.md:587-598 / ### 10.1.3 用户动作`'
   -
     stable_id: matrix-row-0050
-    summary: '`OpenClaw` 侧需把飞书消息转成 `Watchdog` 接口调用并做项目路由'
+    summary: '`Feishu` 侧需把飞书消息转成 `Watchdog` 接口调用并做项目路由'
     gap_type: '无验证；缺运行时入口/自然语言映射'
     owner: WI-049
     non_owners:
@@ -707,7 +707,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:607-613 / ### 11.2 OpenClaw 侧需要完成的集成`'
+    source: '`codex-watchdog-prd.md:607-613 / ### 11.2 Feishu 侧需要完成的集成`'
   -
     stable_id: matrix-row-0051
     summary: '查询、控制、审批类命令需要有稳定语义映射'
@@ -721,7 +721,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义`'
+    source: '`codex-watchdog-prd.md:615-635 / ### 11.3 建议的飞书侧命令语义`'
   -
     stable_id: matrix-row-0052
     summary: '`A` 侧需持久化任务、事件、审批、映射与交接摘要'
@@ -735,7 +735,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:639-646 / ### 12.1 A 侧`'
+    source: '`codex-watchdog-prd.md:639-646 / ### 12.1 runtime 侧`'
   -
     stable_id: matrix-row-0053
     summary: '`B` 侧需持久化 `Watchdog` 状态、动作、审批决策与通知历史'
@@ -749,7 +749,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:648-655 / ### 12.2 B 侧`'
+    source: '`codex-watchdog-prd.md:648-655 / ### 12.2 watchdog 侧`'
   -
     stable_id: matrix-row-0054
     summary: '`tasks` / `task_events` / `approvals` 字段集必须可落地'
@@ -763,7 +763,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:656-691 / ### 12.3 最小字段要求`'
+    source: '`codex-watchdog-prd.md:656-691 / ### 12.3 最小字段要求`'
   -
     stable_id: matrix-row-0055
     summary: '`A`/`B` 调用需受 令牌 鉴权，服务需走受控入口'
@@ -777,7 +777,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:696-701 / ### 13.1 网络`'
+    source: '`codex-watchdog-prd.md:696-701 / ### 13.1 网络`'
   -
     stable_id: matrix-row-0056
     summary: '`B` 不得获得任意 命令行 能力，高风险命令必须人工审批'
@@ -791,7 +791,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:703-708 / ### 13.2 权限边界`'
+    source: '`codex-watchdog-prd.md:703-708 / ### 13.2 权限边界`'
   -
     stable_id: matrix-row-0057
     summary: '创建任务、引导、交接、续跑、审批与控制命令都要留审计'
@@ -805,7 +805,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:710-720 / ### 13.3 审计`'
+    source: '`codex-watchdog-prd.md:710-720 / ### 13.3 审计`'
   -
     stable_id: matrix-row-0058
     summary: '禁止桌面文字识别（`OCR`）、任意命令执行、默认自动通过高风险命令、飞书逻辑与核心规则强耦合'
@@ -819,7 +819,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`openclaw-codex-watchdog-prd.md:908-913 / ### 19.3 明确禁止事项`'
+    source: '`codex-watchdog-prd.md:908-913 / ### 19.3 明确禁止事项`'
   -
     stable_id: matrix-row-0059
     summary: '进展查询需快、轮询间隔可控、状态对象读取需足够快'
@@ -833,7 +833,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:726-730 / ### 14.1 性能`'
+    source: '`codex-watchdog-prd.md:726-730 / ### 14.1 性能`'
   -
     stable_id: matrix-row-0060
     summary: '服务重启后需从持久化数据恢复映射与待处理状态'
@@ -847,7 +847,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:732-736 / ### 14.2 可用性`'
+    source: '`codex-watchdog-prd.md:732-736 / ### 14.2 可用性`'
   -
     stable_id: matrix-row-0061
     summary: '结构化日志、健康检查、指标、任务与审批指标都需要提供'
@@ -861,7 +861,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'WI-049 entry surface'
-    source: '`openclaw-codex-watchdog-prd.md:738-744 / ### 14.3 可观测性`'
+    source: '`codex-watchdog-prd.md:738-744 / ### 14.3 可观测性`'
   -
     stable_id: matrix-row-0062
     summary: '首版应基于 `Python` + `FastAPI` / `Node` 可选，但实现需保持接口化'
@@ -875,7 +875,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:750-762 / ### 15.1 技术栈建议`'
+    source: '`codex-watchdog-prd.md:750-762 / ### 15.1 技术栈建议`'
   -
     stable_id: matrix-row-0063
     summary: '`A`/`B` 目录结构需分出 `api`/`services`/`models`/`storage`/`main`'
@@ -889,7 +889,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:764-798 / ### 15.2 代码结构建议`'
+    source: '`codex-watchdog-prd.md:764-798 / ### 15.2 代码结构建议`'
   -
     stable_id: matrix-row-0064
     summary: '风险分级、卡顿、上下文压力、引导、交接/续跑、参数校验都要单测'
@@ -903,7 +903,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:804-812 / ### 16.1 单元测试`'
+    source: '`codex-watchdog-prd.md:804-812 / ### 16.1 单元测试`'
   -
     stable_id: matrix-row-0065
     summary: '创建任务、审批、恢复、`A` 不可达、飞书语义映射都要做集成测试'
@@ -917,7 +917,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:814-821 / ### 16.2 集成测试`'
+    source: '`codex-watchdog-prd.md:814-821 / ### 16.2 集成测试`'
   -
     stable_id: matrix-row-0066
     summary: '需要能用 `fake`/`mock` 事件流覆盖 卡顿 / 等待指引 / 重复失败 / 上下文压力严重 / 审批待处理'
@@ -931,7 +931,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:823-830 / ### 16.3 模拟器要求`'
+    source: '`codex-watchdog-prd.md:823-830 / ### 16.3 模拟器要求`'
   -
     stable_id: matrix-row-0067
     summary: '用户在飞书中输入“现在进展”，可返回当前任务摘要'
@@ -945,7 +945,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
+    source: '`codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
   -
     stable_id: matrix-row-0068
     summary: '在连续 8 分钟无进展时，系统自动触发一次 引导 并留痕'
@@ -959,7 +959,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
+    source: '`codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
   -
     stable_id: matrix-row-0069
     summary: '在出现 `L1` 审批请求时，系统自动批准并通知'
@@ -973,7 +973,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
+    source: '`codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
   -
     stable_id: matrix-row-0070
     summary: '在出现 `L2` 审批请求时，系统通过飞书提醒人工审批'
@@ -987,7 +987,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
+    source: '`codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
   -
     stable_id: matrix-row-0071
     summary: '在 上下文压力 = 严重 时，系统自动生成 交接摘要 并 续跑'
@@ -1001,10 +1001,10 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
+    source: '`codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
   -
     stable_id: matrix-row-0072
-    summary: '在 `A-Control-Agent` 重启后，原 `project_id` 任务仍可查询状态'
+    summary: '在 `Codex runtime service` 重启后，原 `project_id` 任务仍可查询状态'
     gap_type: '无验证/重启验证缺失；无入口'
     owner: WI-049
     non_owners:
@@ -1015,7 +1015,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
+    source: '`codex-watchdog-prd.md:836-843 / ### 17.1 功能验收`'
   -
     stable_id: matrix-row-0073
     summary: '未暴露公网、令牌 校验、`L3` 不得自动通过、所有自动动作需留痕'
@@ -1029,7 +1029,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:845-850 / ### 17.2 安全验收`'
+    source: '`codex-watchdog-prd.md:845-850 / ### 17.2 安全验收`'
   -
     stable_id: matrix-row-0074
     summary: '重启不丢审批、`A` 不可达要明确告警、交接/续跑 不应错乱'
@@ -1043,7 +1043,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:852-857 / ### 17.3 可靠性验收`'
+    source: '`codex-watchdog-prd.md:852-857 / ### 17.3 可靠性验收`'
   -
     stable_id: matrix-row-0075
     summary: '`A` 服务'
@@ -1057,7 +1057,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0076
     summary: '`Watchdog` 服务'
@@ -1071,7 +1071,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0077
     summary: '集成代码'
@@ -1085,7 +1085,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0078
     summary: '配置样例'
@@ -1099,7 +1099,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0079
     summary: '入门文档'
@@ -1113,7 +1113,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0080
     summary: '接口文档'
@@ -1127,7 +1127,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0081
     summary: '测试用例与测试报告'
@@ -1141,7 +1141,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0082
     summary: '审计日志样例'
@@ -1155,7 +1155,7 @@ entries:
     dependency_artifacts:
       - 'WI-048 runtime semantics baseline'
       - 'canonical route contract'
-    source: '`openclaw-codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
+    source: '`codex-watchdog-prd.md:937-948 / ## 22. 最终交付物要求`'
   -
     stable_id: matrix-row-0083
     summary: '所有 副作用 必须先经过 会话事件写入闸门'
@@ -1326,7 +1326,7 @@ entries:
     source: '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md:413 / 验收顺序`'
   -
     stable_id: matrix-row-0095
-    summary: '飞书成为唯一主控制面，`OpenClaw` 只保留兼容读写'
+    summary: '飞书成为唯一主控制面，`Feishu` 只保留兼容读写'
     gap_type: '无验证、无入口'
     owner: WI-049
     non_owners:
@@ -1477,7 +1477,7 @@ entries:
     dependency_artifacts:
       - 'WI-047 owner ledger'
       - 'runtime semantics baseline'
-    source: '`docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md:20-25 / 稳定脊柱现状与闭环缺口`'
+    source: '`docs/architecture/codex-watchdog-full-product-loop-design.md:20-25 / 稳定脊柱现状与闭环缺口`'
   -
     stable_id: matrix-row-0106
     summary: '`Brain` 必须具备策略闸门 / 输入构建 / 目标闭环判定 / 恢复 / 校验 / 认证 / 回放 / `Release Gate` 八大能力闭环'

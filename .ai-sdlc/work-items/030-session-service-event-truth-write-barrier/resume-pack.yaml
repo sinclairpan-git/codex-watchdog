@@ -2,7 +2,7 @@ current_stage: completed
 current_batch: 6
 last_committed_task: T306
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
+  prd_path: codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
   spec_path: specs/030-session-service-event-truth-write-barrier/spec.md

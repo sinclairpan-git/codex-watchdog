@@ -27,7 +27,7 @@
 
 - 任何 release blocker 条款；
 - 任何 runtime semantics、canonical action、policy truth 的改写；
-- 任何 Feishu / OpenClaw 正式入口定义或入口行为扩展；
+- 任何 Feishu / Feishu 正式入口定义或入口行为扩展；
 - 任何前端 / UI 自动化；
 - 为了测试强化而新增上游业务真源或重新定义 state contract。
 

@@ -4,9 +4,9 @@
 
 `WI-078` 完成后，repo-local `verify constraints` 已能阻断历史 completed work item 的 review gate mirror drift，但继续做 framework truth 巡检时，又暴露出另一处顶层状态缺口：
 
-- [`.ai-sdlc/state/checkpoint.yml`](/Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/state/checkpoint.yml) 已推进到当前 work item；
+- [`.ai-sdlc/state/checkpoint.yml`](/Users/sinclairpan/project/codex-watchdog/.ai-sdlc/state/checkpoint.yml) 已推进到当前 work item；
 - 当前执行分支也已不再是旧工单分支；
-- 但 [`.ai-sdlc/state/resume-pack.yaml`](/Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/state/resume-pack.yaml) 仍长期停留在 `WI-023 / verify / T234` 的工作集快照。
+- 但 [`.ai-sdlc/state/resume-pack.yaml`](/Users/sinclairpan/project/codex-watchdog/.ai-sdlc/state/resume-pack.yaml) 仍长期停留在 `WI-023 / verify / T234` 的工作集快照。
 
 这意味着仓库里仍同时存在两套“当前恢复入口”：
 
@@ -15,7 +15,7 @@
 
 更关键的是，现有 `python -m ai_sdlc verify constraints` 并不会检查这份顶层 state resume pack，因此该漂移可以长期静默存在。
 
-`WI-079` 因此只收口顶层 state resume pack 的 canonical sync 与 repo-local gate，不扩展任何产品运行时、Feishu/OpenClaw 功能或业务行为。
+`WI-079` 因此只收口顶层 state resume pack 的 canonical sync 与 repo-local gate，不扩展任何产品运行时、Feishu/Feishu 功能或业务行为。
 
 ## 范围
 

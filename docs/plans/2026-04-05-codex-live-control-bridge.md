@@ -2,9 +2,9 @@
 
 > 该计划已执行完成；以下内容保留为 008 实际落地结果与约束归档。
 
-**Goal:** 让 OpenClaw 继续只通过 Watchdog / A-Control-Agent 的稳定 REST 边界控制本机 Codex live session，008 只交付 `steer + approval + resume` 控制面，不包含 `SSE / WebSocket` 实时事件流。
+**Goal:** 让 Feishu 继续只通过 Watchdog / Codex runtime service 的稳定 REST 边界控制本机 Codex live session，008 只交付 `steer + approval + resume` 控制面，不包含 `SSE / WebSocket` 实时事件流。
 
-**Architecture:** A-Control-Agent 托管本地 `codex app-server --listen stdio://` bridge，负责 JSON-RPC 初始化、`thread/resume`、`thread/read`、`turn/start`、`turn/steer`、审批请求映射、决策回写，以及 task / approval store 与审计同步。实时事件流保留到 009。
+**Architecture:** Codex runtime service 托管本地 `codex app-server --listen stdio://` bridge，负责 JSON-RPC 初始化、`thread/resume`、`thread/read`、`turn/start`、`turn/steer`、审批请求映射、决策回写，以及 task / approval store 与审计同步。实时事件流保留到 009。
 
 **Tech Stack:** FastAPI, asyncio, stdio JSON-RPC, local `codex` CLI, file-backed stores
 
@@ -14,7 +14,7 @@
 
 ### In Scope
 
-- A-Control-Agent 生命周期内维护本地 Codex bridge
+- Codex runtime service 生命周期内维护本地 Codex bridge
 - 线程恢复、线程读取、活跃 turn 跟踪
 - `POST /api/v1/tasks/{project_id}/steer` 真实注入 live session
 - `POST /api/v1/tasks/{project_id}/resume` 真实恢复 thread 并注入 handoff summary
@@ -24,7 +24,7 @@
 ### Out of Scope
 
 - `SSE / WebSocket` 实时事件流
-- OpenClaw 直连 Codex app-server
+- Feishu 直连 Codex app-server
 - 直接修改 `~/.codex` 内部状态文件
 - 多机远程代理发现
 

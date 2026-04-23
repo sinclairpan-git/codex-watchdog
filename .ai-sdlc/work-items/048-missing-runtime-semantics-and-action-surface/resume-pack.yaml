@@ -8,7 +8,7 @@ review_approved_by:
 - Anthropic Manager Expert
 - Hermes Agent Expert
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
+  prd_path: codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
   spec_path: specs/048-missing-runtime-semantics-and-action-surface/spec.md

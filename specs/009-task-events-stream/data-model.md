@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 数据与行为补充：009-task-events-stream
@@ -22,4 +22,4 @@ related_doc:
 - `event: <event_type>`
 - `data: <compact-json>`
 
-`data` 内直接序列化完整事件对象，避免 B 侧再拼装字段。
+`data` 内直接序列化完整事件对象，避免 watchdog 侧再拼装字段。

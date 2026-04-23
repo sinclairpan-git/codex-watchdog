@@ -10,7 +10,7 @@
 
 但 runtime 仍存在一处未对齐：
 
-- `src/watchdog/main.py` 的 `_build_delivery_client()` 只接受 `feishu-app` 或 `openclaw`
+- `src/watchdog/main.py` 的 `_build_delivery_client()` 只接受 `feishu-app` 或 `feishu`
 
 这会导致用户按仓库内正式文档配置 `WATCHDOG_DELIVERY_TRANSPORT=feishu` 时，`create_app()` 在启动阶段直接抛出 `ValueError("unsupported delivery_transport: feishu")`，使 `WI-069` 刚关闭的接入路径不可运行。
 

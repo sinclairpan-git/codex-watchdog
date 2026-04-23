@@ -13,7 +13,7 @@
 
 ## 验证
 
-- `uv run pytest -q tests/test_watchdog_feishu_ingress.py tests/test_watchdog_external_integration_smoke.py tests/test_watchdog_session_spine_api.py::test_session_directory_route_surfaces_resident_expert_coverage tests/integration/test_openclaw_integration_spine.py::test_integration_session_directory_api_and_adapter_share_resident_expert_coverage`
-- `set -a; source .env.w; export WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS="openclaw-codex-watchdog,Ai_AutoSDLC,meeting,portal"; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery`
+- `uv run pytest -q tests/test_watchdog_feishu_ingress.py tests/test_watchdog_external_integration_smoke.py tests/test_watchdog_session_spine_api.py::test_session_directory_route_surfaces_resident_expert_coverage tests/integration/test_feishu_integration_spine.py::test_integration_session_directory_api_and_adapter_share_resident_expert_coverage`
+- `set -a; source .env.w; export WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS="codex-watchdog,Ai_AutoSDLC,meeting,portal"; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery`
 - `uv run python -m ai_sdlc verify constraints`
 - `uv run python -m ai_sdlc status`

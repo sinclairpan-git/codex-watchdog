@@ -1,13 +1,13 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 实施计划：M3 审批能力
 
 ## 目标
 
-交付审批存储、风险分级模块、A 侧 API、Watchdog 代理与测试；不实现飞书机器人（PRD §3.2）。
+交付审批存储、风险分级模块、runtime 侧 API、Watchdog 代理与测试；不实现飞书机器人（PRD §3.2）。
 
 ## 技术栈
 
@@ -19,7 +19,7 @@ related_doc:
 |------|------|
 | `risk_classifier` | 基于关键词与规则将 `command` 映射到 L0–L3 |
 | `approvals_store` | `approval_id` 索引的读写 |
-| `api/approvals` | A 侧 REST |
+| `api/approvals` | runtime 侧 REST |
 | `api/approvals_watchdog` | Watchdog 代理路由 |
 
 ## 宪章响应

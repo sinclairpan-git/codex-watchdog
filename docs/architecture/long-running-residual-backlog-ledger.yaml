@@ -7,19 +7,19 @@ formal_truth_refs:
   - .ai-sdlc/work-items/082-external-integration-live-runtime-acceptance-closeout/latest-summary.md
   - .ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md
   - .ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md
-  - .ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/latest-summary.md
+  - .ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md
   - .ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md
   - .ai-sdlc/work-items/056-coverage-audit-snapshot-closeout/latest-summary.md
   - .ai-sdlc/work-items/057-task-doc-status-sync/latest-summary.md
 residual_items:
   - residual_id: RES-PRD-001
     source_refs:
-      - openclaw-codex-watchdog-prd.md
+      - codex-watchdog-prd.md
     disposition: satisfied
     formal_truth_refs:
       - .ai-sdlc/work-items/035-brain-decision-boundary-and-release-gate/latest-summary.md
       - .ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md
-      - .ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/latest-summary.md
+      - .ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md
       - .ai-sdlc/work-items/050-observability-restart-security-and-acceptance/latest-summary.md
     notes: PRD 中关于长程自治闭环、执行门控与入口收口的核心义务已被 035/048/049/050 的 formal owner 消化。
   - residual_id: RES-ARCH-001

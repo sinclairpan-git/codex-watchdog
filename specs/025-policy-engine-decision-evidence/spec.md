@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/024-resident-supervision-session-spine-persistence/spec.md"
 ---
 
@@ -16,11 +16,11 @@ related_doc:
 - 如何把 `human_gate / hard_block`、受控不确定条件与动作注册策略收成 canonical policy engine；
 - 如何为每次决策落一份结构化的决策证据包。
 
-`025` 不解决真实动作执行、人工审批回流、主动消息投递或 OpenClaw/Feishu 宿主接入。
+`025` 不解决真实动作执行、人工审批回流、主动消息投递或 Feishu/Feishu 宿主接入。
 
 ## 功能需求
 
-- **FR-2501**：025 必须只消费 `024` 产出的 canonical persisted session spine 与 `fact_snapshot_version`，不得重新在策略层直接向 A-Control-Agent 发 raw query 取事实。
+- **FR-2501**：025 必须只消费 `024` 产出的 canonical persisted session spine 与 `fact_snapshot_version`，不得重新在策略层直接向 Codex runtime service 发 raw query 取事实。
 - **FR-2502**：025 必须把外部稳定决策结果冻结为：
   - `auto_execute_and_notify`
   - `require_user_decision`
@@ -93,6 +93,6 @@ related_doc:
 
 - 不执行 continue、recovery、approval callback 或任何真实动作。
 - 不引入 `ApprovalEnvelope / DecisionEnvelope / NotificationEnvelope` 的投递实现。
-- 不实现 OpenClaw webhook、Feishu 渠道渲染或用户输入回流。
+- 不实现 Feishu webhook、Feishu 渠道渲染或用户输入回流。
 - 不实现 receipt、retry、delivery outbox。
 - 不反向修改 `024` 的 session spine 持久化契约。

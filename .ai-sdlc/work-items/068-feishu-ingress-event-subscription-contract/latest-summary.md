@@ -21,7 +21,7 @@ Last Committed Task: T685
 
 ## Verification
 
-- `uv run pytest -q tests/test_watchdog_feishu_ingress.py tests/test_watchdog_feishu_control.py tests/test_openclaw_contracts.py` -> `21 passed in 1.09s`
+- `uv run pytest -q tests/test_watchdog_feishu_ingress.py tests/test_watchdog_feishu_control.py tests/test_feishu_contracts.py` -> `21 passed in 1.09s`
 - `uv run python -m ai_sdlc verify constraints` -> `Constraints OK`
 - `uv run python -m ai_sdlc status` -> `linked_wi_id=068-feishu-ingress-event-subscription-contract`, `current_stage=completed`, `next_work_item_seq=69`
 

@@ -22,10 +22,10 @@ related_doc:
 
 - `WI-034` 已冻结 `Memory Hub` 的 bounded retrieval / packet input / fallback contract；
 - `WI-035` 已冻结 `Brain / release gate` 的 runtime gate 语义；
-- `WI-036` 已冻结 `Feishu primary control + OpenClaw compatibility-only` 边界；
+- `WI-036` 已冻结 `Feishu primary control + Feishu compatibility-only` 边界；
 - `WI-047` 已生成 row-level owner ledger，并把 22 条 runtime semantics/action surface 缺口唯一归属给 `WI-048`。
 
-因此，048 不再做 AI-SDLC state repair，也不负责自然语言/飞书/OpenClaw 入口闭环；它交付的是后续 `WI-049` 和 `WI-050` 必须消费的 canonical runtime semantics baseline。
+因此，048 不再做 AI-SDLC state repair，也不负责自然语言/飞书/Feishu 入口闭环；它交付的是后续 `WI-049` 和 `WI-050` 必须消费的 canonical runtime semantics baseline。
 
 ## 当前 owner 行范围
 
@@ -59,7 +59,7 @@ related_doc:
 
 若后续 `coverage-audit-matrix.md` 变更，必须重新运行 `scripts/reconcile_ai_sdlc_state.py` 并按新 owner ledger 重新冻结边界；048 不得手工追加或删减 owner 行。
 
-补充边界说明：`matrix-row-0013 / 0015 / 0017` 中出现的“飞书提醒 / 飞书请求人工决策 / 飞书通知人工接管”在 048 只定义 canonical runtime semantic effect、reason code 与 receipt discipline，不负责任何 Feishu / OpenClaw / natural-language transport binding。对应渠道入口、路由与自然语言映射统一留给 `WI-049` 消费 048 交付的 runtime surface。
+补充边界说明：`matrix-row-0013 / 0015 / 0017` 中出现的“飞书提醒 / 飞书请求人工决策 / 飞书通知人工接管”在 048 只定义 canonical runtime semantic effect、reason code 与 receipt discipline，不负责任何 Feishu / Feishu / natural-language transport binding。对应渠道入口、路由与自然语言映射统一留给 `WI-049` 消费 048 交付的 runtime surface。
 
 ## 功能需求
 
@@ -72,8 +72,8 @@ related_doc:
 - **FR-4807**：048 必须把“禁止桌面 OCR、任意命令执行、默认自动通过高风险命令、飞书逻辑与核心规则强耦合”等禁止事项落成 runtime enforcement 或 hard-block policy，而不是继续作为注释或 README 约束。
 - **FR-4808**：048 必须把 `Memory Hub` 的 codex-critical 能力接到 runtime hot path：至少让 recovery/handoff/decision input 能消费项目事实、恢复案例、skill metadata 与 session archive refs；`Memory Hub` 不可用或冲突时必须通过 canonical events/facts 显式降级。
 - **FR-4809**：048 必须继续保持 `Session Service + Goal Contract` 为唯一运行时真源；`Memory Hub` 只输出 advisory retrieval / packet inputs，`AI_AutoSDLC.stage/active_goal` 只允许作为 bootstrap context，不能覆盖 `Goal Contract.current_phase_goal`。
-- **FR-4810**：048 不得负责飞书/OpenClaw/natural-language 到 canonical route 的正式入口闭环；它交付的 action surface 必须由 `WI-049` 作为入口层消费，而不是在 048 中直接补渠道接线。
-- **FR-4811**：048 的实现必须保留 compatibility boundary：已有 raw task payload、legacy OpenClaw aliases、existing approval bridge 不得因为状态/动作扩展而 silently break；若需要迁移，必须通过 normalize layer 或 alias route 吸收。
+- **FR-4810**：048 不得负责飞书/Feishu/natural-language 到 canonical route 的正式入口闭环；它交付的 action surface 必须由 `WI-049` 作为入口层消费，而不是在 048 中直接补渠道接线。
+- **FR-4811**：048 的实现必须保留 compatibility boundary：已有 raw task payload、legacy Feishu aliases、existing approval bridge 不得因为状态/动作扩展而 silently break；若需要迁移，必须通过 normalize layer 或 alias route 吸收。
 - **FR-4812**：048 在进入实现前，必须经过 Anthropic Manager Expert 与 Hermes Agent Expert 的对抗评审，且 reviewed docs baseline、approval status、approved_by 必须落入 `.ai-sdlc/work-items/048-*`；其中 `docs_baseline_ref` 必须是对已评审 formal artifact set 的不可变 `SHA-256` 内容哈希，`T482` 开始前必须重算并验证未漂移。
 
 ### Docs baseline hash recipe
@@ -166,7 +166,7 @@ related_doc:
 
 ## 非目标
 
-- 不在 048 中补飞书/OpenClaw/natural-language 主入口。
+- 不在 048 中补飞书/Feishu/natural-language 主入口。
 - 不在 048 中完成性能、重启、安全、可靠性、测试报告或最终交付物验收。
 - 不在 048 中把 `Memory Hub` 升级成新的 orchestrator 或第二真相源。
 - 不在 048 中把 backlog 测试强化、专项高耦合验证并入当前批次。

@@ -4,9 +4,9 @@
 
 当前仓库已经补上了一批与审批风险边界和控制面可观测性相关的运行时改动，但它们还没有被 formal owner 收口：
 
-- `A-Control-Agent` 的 `classify_risk()` 已开始对工作区外访问、网络、系统级命令、凭据读取、发布动作采取 fail-closed 分类；
-- `A-Control-Agent /healthz` 已返回 `tracked_threads`、`tracked_projects`；
-- `A-Control-Agent /metrics` 已输出 `aca_projects_total`；
+- `Codex runtime service` 的 `classify_risk()` 已开始对工作区外访问、网络、系统级命令、凭据读取、发布动作采取 fail-closed 分类；
+- `Codex runtime service /healthz` 已返回 `tracked_threads`、`tracked_projects`；
+- `Codex runtime service /metrics` 已输出 `aca_projects_total`；
 - `Watchdog /healthz` 已把 release gate blockers 纳入 degraded 判定；
 - `Watchdog /metrics` 已输出 task/approval/recovery 的聚合总量。
 
@@ -35,7 +35,7 @@
 
 ## Formal Source
 
-- `openclaw-codex-watchdog-prd.md`
+- `codex-watchdog-prd.md`
 - `docs/superpowers/specs/2026-04-14-coverage-audit-matrix.md`
 - `src/a_control_agent/risk/classifier.py`
 - `src/a_control_agent/main.py`
@@ -60,11 +60,11 @@
   - 凭据、token、password、API key
   - 发布、部署、release、publish
 - **FR-6707**：`auto_approve_allowed()` 必须固定为仅 `L0/L1=true`，`L2/L3=false`。
-- **FR-6708**：`A-Control-Agent /healthz` 必须返回：
+- **FR-6708**：`Codex runtime service /healthz` 必须返回：
   - `status`
   - `tracked_threads`
   - `tracked_projects`
-- **FR-6709**：`A-Control-Agent /metrics` 必须稳定输出：
+- **FR-6709**：`Codex runtime service /metrics` 必须稳定输出：
   - `aca_tasks_total`
   - `aca_projects_total`
 - **FR-6710**：`Watchdog /healthz` 必须在有 release gate blockers 时返回 `degraded`。
@@ -74,7 +74,7 @@
   - `watchdog_recovery_receipts_total`
 - **FR-6712**：targeted tests 必须证明：
   - 风险分类器对上述边界 fail-closed；
-  - `A-Control-Agent` healthz/metrics 返回项目级聚合；
+  - `Codex runtime service` healthz/metrics 返回项目级聚合；
   - `Watchdog` healthz/metrics 对 release gate blockers 和聚合计数可观测。
 
 ## Docs baseline hash recipe

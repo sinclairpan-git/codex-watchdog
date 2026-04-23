@@ -5,7 +5,7 @@ related_doc:
   - "specs/033-recovery-transaction-lineage/spec.md"
   - "specs/034-memory-hub-codex-critical/spec.md"
   - "specs/035-brain-decision-boundary-and-release-gate/spec.md"
-  - "specs/036-feishu-control-plane-and-openclaw-retirement/spec.md"
+  - "specs/036-feishu-control-plane-primary-surface/spec.md"
   - "specs/037-autonomy-golden-path-and-release-gate-e2e/spec.md"
   - "specs/038-future-worker-canonical-execution-and-governance/spec.md"
 ---

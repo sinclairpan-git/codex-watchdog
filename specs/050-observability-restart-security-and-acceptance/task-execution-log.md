@@ -9,7 +9,7 @@
   - A/B 重启恢复与 reliability closeout；
   - fail-closed control-link security / availability contract；
   - release-blocking acceptance closeout。
-- 已明确 050 不重开 048 的 runtime semantics，也不重开 049 的 Feishu/OpenClaw 入口语义。
+- 已明确 050 不重开 048 的 runtime semantics，也不重开 049 的 Feishu/Feishu 入口语义。
 - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/050-*` 基线。
 - 当前 canonical branch 已切到 `codex/050-observability-restart-security-and-acceptance`。
 - 当前下一执行入口固定为 `T502`：先写失败测试锁定 observability / acceptance contract，再进入实现。
@@ -34,13 +34,13 @@
 
 ### Phase 2：healthz / restart observability slices
 
-- 已补第二批 red/green，覆盖 `release_gate_blockers` 与 A 侧重启可见性：
+- 已补第二批 red/green，覆盖 `release_gate_blockers` 与 runtime 侧重启可见性：
   - `tests/test_watchdog_ops.py::test_watchdog_healthz_degrades_when_release_gate_blocker_exists_without_alert_bucket`
   - `tests/test_a_control_agent.py::test_healthz_reports_persisted_thread_counts_after_restart`
   - `tests/test_a_control_agent.py::test_healthz_counts_projects_distinct_from_threads`
 - 红测证据：
   - Watchdog `/healthz` 在只有 `release_gate_blockers`、没有普通 alert bucket 时仍返回 `ok`；
-  - A-Control-Agent `/healthz` 不暴露持久化 thread/project 计数；
+  - Codex runtime service `/healthz` 不暴露持久化 thread/project 计数；
   - `TaskStore.count_projects()` 错把 thread 数当作 project 数。
 - 已完成最小实现：
   - `src/watchdog/api/ops.py`：`build_ops_summary()` 现在在存在 `release_gate_blockers` 时也会降级为 `degraded`；
@@ -62,8 +62,8 @@
   - `tests/test_a_control_agent.py::test_metrics_export_projects_distinct_from_threads`
   - `tests/test_watchdog_ops.py::test_watchdog_metrics_pending_approval_total_uses_latest_pending_record_per_session`
 - 红测证据：
-  - A 侧 `/metrics` 缺少 `aca_projects_total`，无法直接观测 distinct project 数；
-  - B 侧 `watchdog_approval_pending_total` 会把过期 pending records 一并算入，和 `ops summary` 的 latest-record 语义不一致。
+  - runtime 侧 `/metrics` 缺少 `aca_projects_total`，无法直接观测 distinct project 数；
+  - watchdog 侧 `watchdog_approval_pending_total` 会把过期 pending records 一并算入，和 `ops summary` 的 latest-record 语义不一致。
 - 已完成最小实现：
   - `src/a_control_agent/observability/metrics_export.py`：新增 `aca_projects_total`；
   - `src/watchdog/observability/metrics_export.py`：`watchdog_approval_pending_total` 复用 `_latest_approval_records(...)`，与 ops summary 对齐。
@@ -73,10 +73,10 @@
 
 ### Phase 2：task store path compatibility slice
 
-- 已补第四批 `T502` red/green，聚焦 Watchdog metrics 对 A-Control-Agent 持久化路径的兼容读取：
+- 已补第四批 `T502` red/green，聚焦 Watchdog metrics 对 Codex runtime service 持久化路径的兼容读取：
   - `tests/test_watchdog_ops.py::test_watchdog_metrics_reads_task_totals_from_a_control_agent_store_path`
 - 红测证据：
-  - Watchdog metrics 只读取 `tasks.json`，而 A-Control-Agent 正式持久化路径为 `tasks_store.json`；
+  - Watchdog metrics 只读取 `tasks.json`，而 Codex runtime service 正式持久化路径为 `tasks_store.json`；
   - 在只存在 `tasks_store.json` 时，`watchdog_task_records_total` 会错误返回 `0`。
 - 已完成最小实现：
   - `src/watchdog/observability/metrics_export.py` 新增 `_task_store_for_metrics(...)`；
@@ -95,7 +95,7 @@
   - `GET /api/v1/watchdog/approvals` 与 `POST /api/v1/watchdog/approvals/{approval_id}/decision` 未与其他 legacy route 保持同等 `CONTROL_LINK_ERROR` fail-closed 语义。
 - 已完成最小实现：
   - `src/watchdog/api/approvals_proxy.py` 新增 `_a_client(settings)`；
-  - 它统一固定 `trust_env=False`，避免环境代理污染 Watchdog -> A-Control-Agent 控制链路；
+  - 它统一固定 `trust_env=False`，避免环境代理污染 Watchdog -> Codex runtime service 控制链路；
   - `list_approvals_watchdog` 与 `decision_watchdog` 现在共同捕获 `httpx.RequestError`、`RuntimeError`、`OSError` 并返回显式 `CONTROL_LINK_ERROR`。
 - 当前验证：
   - `uv run pytest -q tests/test_watchdog_session_spine_api.py -k "legacy_approvals_proxy_fails_closed_on_runtime_error or legacy_approval_decision_proxy_fails_closed_on_runtime_error"`

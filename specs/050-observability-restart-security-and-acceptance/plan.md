@@ -10,7 +10,7 @@
 2. 只消费 `WI-048` / `WI-049` 已冻结 contract，不改 canonical semantics。
 3. 优先补齐“可验证 evidence”，避免为了观测或验收再引入新的业务真源。
 4. 可观测性、健康检查和指标输出必须能被测试或 ops API 直接读取。
-5. 重启恢复验证必须覆盖 A 侧映射恢复与 B 侧审批/receipt 恢复，不能只做静态 schema 检查。
+5. 重启恢复验证必须覆盖 runtime 侧映射恢复与 watchdog 侧审批/receipt 恢复，不能只做静态 schema 检查。
 
 ## 工作流
 

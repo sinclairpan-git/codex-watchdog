@@ -2,7 +2,7 @@ total_tasks: 3
 total_batches: 1
 tasks:
 - task_id: T21
-  title: A-Control-Agent：steer API 与审计事件追加
+  title: Codex runtime service：steer API 与审计事件追加
   user_story: ''
   phase: 2
   file_paths:
@@ -34,7 +34,7 @@ tasks:
   depends_on:
   - T21
 - task_id: T23
-  title: Watchdog：对 A 侧发起 steer 的编排入口
+  title: Watchdog：对 runtime 侧发起 steer 的编排入口
   user_story: ''
   phase: 2
   file_paths:

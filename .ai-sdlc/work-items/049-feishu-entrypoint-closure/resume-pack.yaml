@@ -1,0 +1,53 @@
+current_stage: completed
+current_batch: 5
+last_committed_task: T495
+docs_baseline_ref: 8ede0acf1437e5ece8f5bc51c09f127ac22156e1b3b6deb78aa9a532d1eac651
+docs_baseline_at: '2026-04-16T08:19:16Z'
+working_set_snapshot:
+  prd_path: codex-watchdog-prd.md
+  constitution_path: .ai-sdlc/memory/constitution.md
+  tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
+  spec_path: specs/049-feishu-entrypoint-closure/spec.md
+  plan_path: specs/049-feishu-entrypoint-closure/plan.md
+  tasks_path: specs/049-feishu-entrypoint-closure/tasks.md
+  active_files:
+  - '`docs/architecture/coverage-audit-closeout-execution-design.md`'
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/matrix-owner-ledger.yaml`'
+  - '`specs/049-feishu-entrypoint-closure/spec.md`'
+  - '`specs/049-feishu-entrypoint-closure/plan.md`'
+  - '`specs/049-feishu-entrypoint-closure/tasks.md`'
+  - '`specs/049-feishu-entrypoint-closure/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/runtime.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md`'
+  context_summary: |
+    # Development Summary
+
+    Status: completed
+
+    Total Tasks: 5
+
+    Completed Tasks: 5
+
+    Halted Tasks: 0
+
+    Total Batches: 5
+
+    Completed Batches: 5
+
+    Last Committed Task: T495
+
+
+    ## Notes
+
+    - `WI-049` 已从 `WI-047` 的 owner ledger 正式接手 92 条 Feishu / Feishu / natural-language 入口闭环条款。
+    - 当前边界已明确为 Feishu primary entrypoint、Feishu compatibility entrypoint 与自然语言到 canonical route 的统一映射。
+    - `WI-049` 只消费 `WI-048` 已冻结的 runtime semantics baseline，不重新定义状态、动作、审批真相或 `Memory Hub` precedence。
+    - 下一执行入口已切换到 `WI-050 / T502`。
+current_branch: codex/050-observability-restart-security-and-acceptance
+timestamp: '2026-04-16T08:21:16Z'
+checkpoint_path: .ai-sdlc/state/checkpoint.yml
+checkpoint_last_updated: '2026-04-16T08:21:16Z'
+checkpoint_fingerprint: 8ede0acf1437e5ece8f5bc51c09f127ac22156e1b3b6deb78aa9a532d1eac651

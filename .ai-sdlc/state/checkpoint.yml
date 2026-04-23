@@ -13,7 +13,7 @@ multi_agent:
   supported: false
   max_parallel: 1
   tool_capability: ''
-prd_source: openclaw-codex-watchdog-prd.md
+prd_source: codex-watchdog-prd.md
 completed_stages:
   -
     stage: init

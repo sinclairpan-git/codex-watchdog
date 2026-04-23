@@ -6,7 +6,7 @@ tasks:
   user_story: ''
   phase: 1
   file_paths:
-  - '`openclaw-codex-watchdog-prd.md`'
+  - '`codex-watchdog-prd.md`'
   - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
   - '`specs/050-observability-restart-security-and-acceptance/spec.md`'
   - '`specs/050-observability-restart-security-and-acceptance/plan.md`'

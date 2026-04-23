@@ -4,8 +4,8 @@
 
 `WI-079` 已完成 framework state resume-pack 的 canonical sync，当前 repo-local `ai_sdlc` 主干已恢复到一致状态。继续审查下一张工单时，新的风险点不再是运行时代码漂移，而是 **真实环境联调口径的真值保护仍然偏弱**：
 
-- [`docs/operations/external-integration-live-acceptance.md`](/Users/sinclairpan/project/openclaw-codex-watchdog/docs/operations/external-integration-live-acceptance.md) 已经写出 fail-closed 规则与两种推荐结论口径，但 repo-local docs contract 只验证了 runbook 覆盖 Feishu / provider / memory / smoke 命令，没有把“不得把外部平台 blocker 写成仓库已自动闭环”的真值边界纳入测试；
-- [`docs/framework-defect-backlog.zh-CN.md`](/Users/sinclairpan/project/openclaw-codex-watchdog/docs/framework-defect-backlog.zh-CN.md) 里的 `FD-004` 仍停留在“待补 validator、CLI gate 与回归测试”，与 `WI-079` 已完成的实际状态不一致；
+- [`docs/operations/external-integration-live-acceptance.md`](/Users/sinclairpan/project/codex-watchdog/docs/operations/external-integration-live-acceptance.md) 已经写出 fail-closed 规则与两种推荐结论口径，但 repo-local docs contract 只验证了 runbook 覆盖 Feishu / provider / memory / smoke 命令，没有把“不得把外部平台 blocker 写成仓库已自动闭环”的真值边界纳入测试；
+- [`docs/framework-defect-backlog.zh-CN.md`](/Users/sinclairpan/project/codex-watchdog/docs/framework-defect-backlog.zh-CN.md) 里的 `FD-004` 仍停留在“待补 validator、CLI gate 与回归测试”，与 `WI-079` 已完成的实际状态不一致；
 - 如果后续文档继续漂移，仓库可能重新出现“repo 内 contract 已落地”与“真实环境接线已验收通过”被混写的风险。
 
 因此 `WI-080` 的目标不是重开任何 Feishu / provider / Memory 功能，而是把 **live acceptance 的 truth boundary** 冻结成 repo-local docs contract，并同步 formal backlog 口径。

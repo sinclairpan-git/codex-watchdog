@@ -1,13 +1,13 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 实施计划：M2 监管能力
 
 ## 目标
 
-交付 stuck 规则引擎（Watchdog 侧）、A 侧 steer 写入与持久化、循环失败计数、审计日志模块；不实现飞书通知与完整事件流（留待后续里程碑）。
+交付 stuck 规则引擎（Watchdog 侧）、runtime 侧 steer 写入与持久化、循环失败计数、审计日志模块；不实现飞书通知与完整事件流（留待后续里程碑）。
 
 ## 技术栈
 
@@ -15,8 +15,8 @@ related_doc:
 
 ## 架构要点
 
-- **A-Control-Agent**：扩展任务存储与 `POST .../steer`；steer 产生 `task_events` 或等价审计行。
-- **Watchdog**：`status_analyzer` 读取 A 侧任务 JSON（HTTP）或本地快照接口；`action_executor` 在需 steer 时调用 A 的 steer API。
+- **Codex runtime service**：扩展任务存储与 `POST .../steer`；steer 产生 `task_events` 或等价审计行。
+- **Watchdog**：`status_analyzer` 读取 runtime 侧任务 JSON（HTTP）或本地快照接口；`action_executor` 在需 steer 时调用 A 的 steer API。
 - **审计**：统一 `audit` 模块，字段含 `timestamp`、`project_id`、`action`、`reason`、`source`（watchdog | agent）。
 
 ## 阶段产物

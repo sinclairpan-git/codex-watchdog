@@ -2,7 +2,7 @@ current_stage: completed
 current_batch: 5
 last_committed_task: T355
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
+  prd_path: codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
   spec_path: specs/035-brain-decision-boundary-and-release-gate/spec.md

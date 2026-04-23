@@ -34,22 +34,22 @@
   4. lookup miss / control-link error 继续走稳定 envelope。
 - **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py -k native_thread`
 
-## Task 18.3 OpenClaw Adapter Intent
+## Task 18.3 Feishu Adapter Intent
 
 - **任务编号**：T183
 - **状态**：已完成（2026-04-06 回填）
 - **目标**：让 adapter 在无 `project_id` 时也能基于 `native_thread_id` 解回稳定 session reply。
 - **涉及文件**：
-  - `src/watchdog/services/adapters/openclaw/intents.py`
-  - `src/watchdog/services/adapters/openclaw/adapter.py`
-  - `tests/test_watchdog_openclaw_adapter.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `src/watchdog/services/adapters/feishu/intents.py`
+  - `src/watchdog/services/adapters/feishu/adapter.py`
+  - `tests/test_watchdog_feishu_adapter.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **完成标准**：
   1. adapter 支持 `get_session_by_native_thread`；
   2. 该 intent 要求 `arguments.native_thread_id`，不要求 `project_id`；
   3. adapter 与 HTTP stable route 复用同一共享 builder；
   4. 对同一 `native_thread_id`，HTTP 与 adapter 返回同源 session reply。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py -k native_thread`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py -k native_thread`
 
 ## Task 18.4 Raw 非回归、文档与项目状态收口
 

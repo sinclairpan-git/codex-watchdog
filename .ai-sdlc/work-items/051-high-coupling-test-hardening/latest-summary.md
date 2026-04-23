@@ -11,7 +11,7 @@ Last Committed Task: T515
 ## Notes
 - `WI-051` 已从 `WI-050` handoff 正式接手 `BL-2026-04-06-001` 的高耦合测试强化残项。
 - 当前边界已明确为高耦合场景矩阵、fake/stub contract 与 `targeted / seam-smoke / full` 三层验证入口固定。
-- `WI-051` 不承接 release blocker，不重开 runtime semantics、canonical action、policy truth 或 Feishu/OpenClaw 入口语义。
+- `WI-051` 不承接 release blocker，不重开 runtime semantics、canonical action、policy truth 或 Feishu/Feishu 入口语义。
 - 双对抗专家评审已收敛：真正缺口是 fake/stub drift 与 suite topology，而不是继续堆 approval/restart 相似 happy path。
 - `T512` 已正式关闭：`FakeAClient` / `BrokenAClient` contract drift 已锁定，并新增最小 seam-smoke。
 - `T513/T514` 已正式关闭：`seam-matrix.md` 已冻结 `targeted-bridge`、`targeted-a-control`、`targeted-watchdog`、`seam-smoke`、`full` 的正式命令入口。

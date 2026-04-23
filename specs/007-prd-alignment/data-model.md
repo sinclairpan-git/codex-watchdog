@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
+  - "codex-watchdog-prd.md"
 ---
 
 # 数据与行为补充：007-prd-alignment

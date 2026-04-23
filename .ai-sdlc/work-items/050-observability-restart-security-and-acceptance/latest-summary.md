@@ -13,7 +13,7 @@ Last Committed Task: T505
 - 当前边界已明确为 `/healthz`、metrics/export、A/B 重启恢复、fail-closed control link error 与 release-blocking acceptance evidence。
 - `WI-050` 不重开 `WI-048` runtime semantics，也不重开 `WI-049` 的入口语义。
 - 当前 canonical branch 已 pin 到 `codex/050-observability-restart-security-and-acceptance`。
-- `T502/T503` 已正式关闭：现已补齐 release gate blocker 降级、A 侧 distinct project metrics、Watchdog metrics 对 `tasks_store.json` 的正式读取，以及 pending approval latest-record 语义。
+- `T502/T503` 已正式关闭：现已补齐 release gate blocker 降级、runtime 侧 distinct project metrics、Watchdog metrics 对 `tasks_store.json` 的正式读取，以及 pending approval latest-record 语义。
 - `T504` 已正式关闭：现已补齐 legacy approvals proxy 的 `CONTROL_LINK_ERROR` fail-closed 契约，并验证 Watchdog 跨 `create_app()` 重启后 pending approvals / action receipts 仍可从正式 read surface 读取。
 - `T505` 已完成整体验证：050 正式验收集 `115 passed in 3.02s`，AI-SDLC reconciliation 与 docs contract 仍通过。
 - `WI-050` 已完成 formal closeout；剩余工作只允许进入 `WI-051` 的高耦合 hardening，不再包含 release blocker。

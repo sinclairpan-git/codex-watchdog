@@ -1,6 +1,6 @@
 ---
 related_doc:
-  - "docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md"
+  - "docs/architecture/codex-watchdog-full-product-loop-design.md"
   - "specs/026-canonical-action-approval-response-loop/spec.md"
 ---
 
@@ -8,7 +8,7 @@ related_doc:
 
 ## 概述
 
-`027-outbox-delivery-retry-receipt` 是完整产品闭环中的 `WI-4`。它的目标是把 envelope 投递补成可靠系统，让 Watchdog 主动通知 OpenClaw 时具备持久 outbox、顺序语义、重试、去重与 receipt 确认。
+`027-outbox-delivery-retry-receipt` 是完整产品闭环中的 `WI-4`。它的目标是把 envelope 投递补成可靠系统，让 Watchdog 主动通知 Feishu 时具备持久 outbox、顺序语义、重试、去重与 receipt 确认。
 
 ## 功能需求
 
@@ -20,7 +20,7 @@ related_doc:
   - `block_and_alert` -> 只发 `NotificationEnvelope(severity=critical)`
 - **FR-2704**：027 必须保证同一 `session_id` 下，先按 `fact_snapshot_version`，再按持久化单调序号投递。
 - **FR-2705**：027 必须允许不同 session 并行投递，但同一 session 不得乱序。
-- **FR-2706**：027 必须把 `envelope_id` 作为投递幂等主键；OpenClaw 回调失败重试时 `envelope_id` 不得变化。
+- **FR-2706**：027 必须把 `envelope_id` 作为投递幂等主键；Feishu 回调失败重试时 `envelope_id` 不得变化。
 - **FR-2707**：027 必须把 delivered 条件收紧为：
   - HTTP `2xx`
   - `accepted = true`
@@ -41,7 +41,7 @@ related_doc:
 
 ### 用户故事 1：服务主动通知不会因为瞬时网络错误而丢失
 
-场景 1：OpenClaw 短暂返回 `503`，delivery worker 自动重试而不是丢通知。
+场景 1：Feishu 短暂返回 `503`，delivery worker 自动重试而不是丢通知。
 
 场景 2：重试期间同一个 envelope 维持同一个 `envelope_id`，宿主可安全去重。
 
@@ -55,5 +55,5 @@ related_doc:
 
 - 不重跑风险判定。
 - 不执行 canonical action 或 approval business logic。
-- 不定义 OpenClaw 渲染细节或飞书卡片模板。
+- 不定义 Feishu 渲染细节或飞书卡片模板。
 - 不实现审计/回放产品面之外的宿主逻辑。

@@ -11,14 +11,14 @@
 - 当前未进入产品实现；下一执行入口固定为 `T302`。
 - 复查中断工作区后确认：产品实现其实已经推进到 `session_spine / approvals / delivery / api` 多个既有模块，只是 formal docs 没有回填，导致 `tasks.md` 仍停留在“未开始”。
 - 已验证通过：
-  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_api.py tests/test_long_running_autonomy_doc_contracts.py tests/test_openclaw_contracts.py`
-  - `uv run pytest -q tests/test_watchdog_delivery_http.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py tests/test_openclaw_contracts.py`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_ops.py tests/test_watchdog_session_spine_api.py tests/test_long_running_autonomy_doc_contracts.py tests/test_feishu_contracts.py`
+  - `uv run pytest -q tests/test_watchdog_delivery_http.py tests/test_watchdog_delivery_store.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_approval_loop.py tests/test_watchdog_ops.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_projection.py tests/test_watchdog_session_spine_runtime.py tests/test_long_running_autonomy_doc_contracts.py tests/test_feishu_contracts.py`
 - 当前已验证的行为包括：
   - canonical approval identity、pending refresh、duplicate pending reconcile 与 supersede；
   - delivery outbox 的单调 `outbox_seq`、跨实例串行化、重试/死信/transport requeue；
   - `context_critical` runtime 先转人工审批，不再直接 auto recovery；
   - stable read surface 可叠加 canonical approval，startup 会收敛历史 stale pending approvals；
-  - OpenClaw webhook bootstrap 可持久化最新 webhook endpoint，并把 transport dead-letter 重新排队。
+  - Feishu webhook bootstrap 可持久化最新 webhook endpoint，并把 transport dead-letter 重新排队。
 - 当前仍未完成的缺口：
   - 原计划中的独立 `src/watchdog/services/session_service/` 落点尚未建立；
   - command lease 的 store / expiry requeue / duplicate-execution gating 已接入 `resident_orchestrator`，但 live lease renewal 与跨 worker 协调位点仍未补齐；
@@ -43,11 +43,11 @@
 - 已补齐 `SessionService` 的 controlled event writer 缺口：
   - `src/watchdog/services/approvals/service.py` 现在会在 canonical approval response 成功落账后，额外记录 `human_override_recorded`；
   - `src/watchdog/services/session_service/service.py` 新增 `record_memory_unavailable_degraded()`、`record_memory_conflict_detected()` 与 `record_approval_expired()`，统一冻结 memory anomaly / approval expiry 的 canonical payload、related ids 与 correlation 规则；
-  - `src/watchdog/services/delivery/worker.py` 与 `src/watchdog/api/openclaw_bootstrap.py` 先前已接入 `notification_requeued`，本轮重扫后 controlled session events 已全部存在明确 writer 落点。
+  - `src/watchdog/services/delivery/worker.py` 与 `src/watchdog/api/feishu_bootstrap.py` 先前已接入 `notification_requeued`，本轮重扫后 controlled session events 已全部存在明确 writer 落点。
 - 已补充并通过的回归：
-  - `uv run pytest -q tests/test_watchdog_approval_loop.py -k 'respond_to_canonical_approval_records_session_event or openclaw_response_api_uses_response_tuple_as_idempotency_key'`
+  - `uv run pytest -q tests/test_watchdog_approval_loop.py -k 'respond_to_canonical_approval_records_session_event or feishu_response_api_uses_response_tuple_as_idempotency_key'`
   - `uv run pytest -q tests/test_watchdog_approval_loop.py`
-  - `uv run pytest -q tests/test_openclaw_contracts.py`
+  - `uv run pytest -q tests/test_feishu_contracts.py`
   - `uv run pytest -q tests/test_watchdog_session_service.py`
 - 当前对 `T304` 的判断更新为：
   - 审批请求、审批批准/拒绝、人工接管、通知重排队、memory anomalies 的 canonical writer 已落地；

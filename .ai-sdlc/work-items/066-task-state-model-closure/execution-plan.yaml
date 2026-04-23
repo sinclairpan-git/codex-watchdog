@@ -19,7 +19,7 @@ tasks:
   depends_on:
   - T662
 - task_id: T664
-  title: 跑 A-Control-Agent / Watchdog 受影响 targeted 验证
+  title: 跑 Codex runtime service / Watchdog 受影响 targeted 验证
   status: completed
   phase: 4
   depends_on:

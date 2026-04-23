@@ -10,7 +10,7 @@ Last Committed Task: T665
 
 ## Notes
 
-- `WI-066` 目标是把 `A-Control-Agent` 任务状态模型收敛到 PRD `6.1-6.5` 的正式枚举与字段集。
+- `WI-066` 目标是把 `Codex runtime service` 任务状态模型收敛到 PRD `6.1-6.5` 的正式枚举与字段集。
 - 当前已完成：
   - formal owner 边界已冻结；
   - `status` / `phase` / 核心字段集与 legacy normalize 已对齐 PRD 与 `task_state.py` canonical semantics；

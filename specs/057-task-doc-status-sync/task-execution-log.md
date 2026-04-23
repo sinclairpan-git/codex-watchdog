@@ -23,7 +23,7 @@
 - 已修正以下历史 mirror 漂移：
   - `specs/030-session-service-event-truth-write-barrier/tasks.md`
   - `specs/048-missing-runtime-semantics-and-action-surface/tasks.md`
-  - `specs/049-feishu-and-openclaw-entrypoint-closure/tasks.md`
+  - `specs/049-feishu-entrypoint-closure/tasks.md`
 
 ## 2026-04-16 Phase 4
 

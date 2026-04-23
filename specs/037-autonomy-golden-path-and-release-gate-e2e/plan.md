@@ -5,7 +5,7 @@ related_doc:
   - "specs/037-autonomy-golden-path-and-release-gate-e2e/spec.md"
   - "specs/033-recovery-transaction-lineage/spec.md"
   - "specs/035-brain-decision-boundary-and-release-gate/spec.md"
-  - "specs/036-feishu-control-plane-and-openclaw-retirement/spec.md"
+  - "specs/036-feishu-control-plane-primary-surface/spec.md"
 ---
 
 # 实施计划：037-autonomy-golden-path-and-release-gate-e2e
@@ -37,7 +37,7 @@ related_doc:
 
 - 037 不得为 e2e 单独定义测试专用真相层或临时旁路 API。
 - 037 不得依赖手工 DB patch、手工补 event、手工替换 `release_gate_report`、手工重置 interaction context 或手工跳过审批来让测试通过。
-- 037 不得回退到 OpenClaw 主控制面、policy-only auto execute 或手写 report 直通 runtime。
+- 037 不得回退到 Feishu 主控制面、policy-only auto execute 或手写 report 直通 runtime。
 - 037 不得把 release gate 变成“文档写着要有”的软约束；必须在 runtime 和 e2e 中硬阻断。
 - 037 不得把 flaky 或人工演示视作一期通关替代物；e2e 本身就是 release blocker。
 

@@ -5,7 +5,7 @@
 - 目标主题：`Long-running Autonomy`
 - 关联文档：
   - `docs/plans/2026-04-10-runtime-env-and-unknown-decision-rca.zh-CN.md`
-  - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+  - `docs/architecture/codex-watchdog-full-product-loop-design.md`
   - `docs/openapi/a-control-agent.json`
   - `docs/openapi/watchdog.json`
 
@@ -13,11 +13,11 @@
 
 本设计只服务一个目标：
 
-> 建立一套不依赖 OpenClaw、能够借助外部模型辅助 Codex 长期执行开发任务、减少中断、减少人工盯守的单控制面系统。
+> 建立一套不依赖 Feishu、能够借助外部模型辅助 Codex 长期执行开发任务、减少中断、减少人工盯守的单控制面系统。
 
 本设计的收敛结果固定为：
 
-- 主链路中移除 `OpenClaw`；
+- 主链路中移除 `Feishu`；
 - 只保留一套开发环境，不再维护“开发环境 + 外部运行环境”双环境；
 - 用 `Feishu` 自建机器人作为唯一的人类交互入口；
 - 用外部模型辅助自动决策，但不把权限边界直接交给模型；
@@ -27,7 +27,7 @@
 
 ### 2.1 本轮范围
 
-- `A-Control-Agent` 与 `Watchdog` 保留并重构职责；
+- `Codex runtime service` 与 `Watchdog` 保留并重构职责；
 - 新增 `Session Service`，作为唯一业务真源；
 - 新增 `Brain`，负责外部模型辅助决策；
 - 新增 `Memory Hub`，负责独立长期记忆；
@@ -37,7 +37,7 @@
 
 ### 2.2 明确非目标
 
-- 不再设计任何 `OpenClaw` 主链路；
+- 不再设计任何 `Feishu` 主链路；
 - 不把 `ChatGPT` 订阅网页会话当作可编程后端；
 - 不在第一阶段实现企业级多租户控制面；
 - 不在第一阶段开放高风险动作的自动批准；
@@ -71,7 +71,7 @@
 
 ### 3.5 长期记忆独立存在
 
-长期记忆库必须独立于 Codex、OpenClaw 和 SDLC 框架本身。  
+长期记忆库必须独立于 Codex、Feishu 和 SDLC 框架本身。  
 它可以被它们统一索引，但不属于任何单个运行时。  
 实现形态可以是 `embedded library`、本地 sidecar 或共享 daemon，但必须对外暴露稳定的 write / search / packet / skills contract。  
 不过第一阶段的成败标准不能偏移：`Memory Hub` 的首要职责，仍然是支撑 Codex 长时自动开发，而不是先做成一个脱离主线的通用记忆产品。
@@ -98,7 +98,7 @@ flowchart LR
     SVC --> PROJ["Projection Cache\nsession_spine / task views / audit facade"]
     SVC --> MEM["Memory Hub\n独立长期记忆 / retrieval packets"]
     PROJ --> WD["Watchdog Runtime"]
-    WD --> ACA["A-Control-Agent"]
+    WD --> ACA["Codex runtime service"]
     ACA --> CODEX["Codex 会话 / 本地执行环境"]
     MEM <--> SDLC["AI_AutoSDLC\nstage adapter / skill consumer"]
     WD --> FEI
@@ -111,7 +111,7 @@ flowchart LR
 `Hands` 是执行面集合，至少包括：
 
 - `Codex` 会话；
-- `A-Control-Agent` 的 canonical 读取与动作接口；
+- `Codex runtime service` 的 canonical 读取与动作接口；
 - `Watchdog` 执行 worker；
 - `Feishu sender`；
 - 本地 shell / worktree / git / 文件系统执行器。
@@ -269,15 +269,15 @@ flowchart LR
 
 现有运行态存储不立即删除，而是降级为 projection / cache：
 
-- [`src/watchdog/services/session_spine/store.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/session_spine/store.py)
+- [`src/watchdog/services/session_spine/store.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/session_spine/store.py)
   - 从“当前每项目最新快照真源”降级为 `Session Service` 的 projection cache；
-- [`src/a_control_agent/storage/tasks_store.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/storage/tasks_store.py)
+- [`src/a_control_agent/storage/tasks_store.py`](/Users/sinclairpan/project/codex-watchdog/src/a_control_agent/storage/tasks_store.py)
   - 在迁移阶段作为兼容层与 Goal Contract bootstrap 来源；
-- [`src/watchdog/services/approvals/`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/approvals/)
+- [`src/watchdog/services/approvals/`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/approvals/)
   - 从“审批状态真源”降级为 Session projection 的兼容读写外观与 inbox cache；
-- [`src/watchdog/services/delivery/store.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/delivery/store.py)
+- [`src/watchdog/services/delivery/store.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/delivery/store.py)
   - 只保留通知 envelope、投递重试与回执消费，不再定义业务状态是否已生效；
-- [`src/watchdog/services/audit/service.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/audit/service.py)
+- [`src/watchdog/services/audit/service.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/audit/service.py)
   - 逐步收敛为 Session query facade。
 
 ### 5.4 Brain
@@ -975,18 +975,18 @@ Packet 至少包含：
 
 | 当前模块 | 目标角色 | 迁移策略 |
 |---|---|---|
-| [`src/watchdog/services/session_spine/store.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/session_spine/store.py) | projection cache | 不删除，改为从 Session events 投影 |
-| [`src/watchdog/services/session_spine/orchestrator.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/session_spine/orchestrator.py) | decision / command 编排拆分入口 | 拆成 projection reader、decision proposer、command creator、executor worker |
-| [`src/watchdog/services/session_spine/recovery.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/session_spine/recovery.py) | Recovery Transaction step executor | 不继续扩权为总控 |
-| [`src/a_control_agent/storage/tasks_store.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/a_control_agent/storage/tasks_store.py) | Goal Contract bootstrap 与兼容层 | 先双写，后降级 |
-| [`src/watchdog/services/audit/service.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/audit/service.py) | Session query facade | 先兼容旧数据，再优先读 Session |
-| [`src/watchdog/services/adapters/openclaw/adapter.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/adapters/openclaw/adapter.py) | 旧链路兼容层 | 先停主链路引用，后物理删除 |
+| [`src/watchdog/services/session_spine/store.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/session_spine/store.py) | projection cache | 不删除，改为从 Session events 投影 |
+| [`src/watchdog/services/session_spine/orchestrator.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/session_spine/orchestrator.py) | decision / command 编排拆分入口 | 拆成 projection reader、decision proposer、command creator、executor worker |
+| [`src/watchdog/services/session_spine/recovery.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/session_spine/recovery.py) | Recovery Transaction step executor | 不继续扩权为总控 |
+| [`src/a_control_agent/storage/tasks_store.py`](/Users/sinclairpan/project/codex-watchdog/src/a_control_agent/storage/tasks_store.py) | Goal Contract bootstrap 与兼容层 | 先双写，后降级 |
+| [`src/watchdog/services/audit/service.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/audit/service.py) | Session query facade | 先兼容旧数据，再优先读 Session |
+| [`src/watchdog/services/adapters/feishu/adapter.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/adapters/feishu/adapter.py) | 旧链路兼容层 | 先停主链路引用，后物理删除 |
 
 ## 14. 分阶段实施顺序
 
 ### 阶段 0：冻结旧主链路
 
-- OpenClaw 不再作为目标架构的一部分；
+- Feishu 不再作为目标架构的一部分；
 - 先保持兼容代码只读存在；
 - 所有新设计均围绕 Feishu + Session + Brain + Memory。
 
@@ -1029,7 +1029,7 @@ Packet 至少包含：
 
 ### 阶段 7：退役旧链路
 
-- 完全切出 OpenClaw 主路径；
+- 完全切出 Feishu 主路径；
 - 清理旧 adapter、notifier、tunnel 依赖；
 - 保留必要的迁移审计记录。
 
@@ -1069,7 +1069,7 @@ Packet 至少包含：
 
 ## 16. 本设计的硬结论
 
-- `OpenClaw` 不再保留在主链路；
+- `Feishu` 不再保留在主链路；
 - `Session Service` 必须成为唯一业务真源；
 - `Memory Hub` 必须是独立长期记忆库，而不是 Watchdog 的附属 JSON；
 - `Memory Hub` 必须可以独立开发和部署，但它在第一阶段的价值判断只能围绕 Codex 长时自动开发；

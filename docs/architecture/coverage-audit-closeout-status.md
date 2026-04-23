@@ -6,7 +6,7 @@
 
 1. `WI-047` 已生成 row-level owner ledger：`specs/047-ai-sdlc-state-reconciliation-and-canonical-gate-repair/matrix-owner-ledger.yaml`
 2. `WI-048` 已完成 runtime semantics / action surface closeout
-3. `WI-049` 已完成 Feishu / OpenClaw / natural-language entry surface closeout
+3. `WI-049` 已完成 Feishu / Feishu / natural-language entry surface closeout
 4. `WI-050` 已完成 observability / restart / security / acceptance closeout
 5. `WI-051` 已完成 backlog `BL-2026-04-06-001` 的高耦合测试强化
 6. `WI-052`、`WI-053`、`WI-054`、`WI-055` 已完成 repo-side framework / release / verification / checkpoint blocker closeout

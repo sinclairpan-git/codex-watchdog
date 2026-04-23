@@ -47,22 +47,22 @@
   4. canonical 与 alias 返回同源 `WatchdogActionResult`。
 - **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py -k operator_guidance`
 
-## Task 20.4 OpenClaw Adapter Intent
+## Task 20.4 Feishu Adapter Intent
 
 - **任务编号**：T204
 - **状态**：已完成（2026-04-06 回填）
-- **目标**：让 OpenClaw 通过 stable contract 提交 operator guidance。
+- **目标**：让 Feishu 通过 stable contract 提交 operator guidance。
 - **涉及文件**：
-  - `src/watchdog/services/adapters/openclaw/intents.py`
-  - `src/watchdog/services/adapters/openclaw/adapter.py`
-  - `tests/test_watchdog_openclaw_adapter.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `src/watchdog/services/adapters/feishu/intents.py`
+  - `src/watchdog/services/adapters/feishu/adapter.py`
+  - `tests/test_watchdog_feishu_adapter.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **完成标准**：
   1. adapter 支持 `post_operator_guidance`；
   2. 该 intent 映射到 `ActionCode.POST_OPERATOR_GUIDANCE`；
   3. adapter 与 HTTP canonical/alias 复用同一 action executor；
-  4. OpenClaw 可稳定消费 `ReplyModel(reply_code=action_result)`。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py -k operator_guidance`
+  4. Feishu 可稳定消费 `ReplyModel(reply_code=action_result)`。
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py -k operator_guidance`
 
 ## Task 20.5 Legacy 非回归、文档与项目状态收口
 
@@ -85,6 +85,6 @@
 ## 整体验收
 
 - 调用方已经可以通过 stable `WatchdogAction(action_code=post_operator_guidance)` 提交人工指导，而不必绑定 raw `/steer`。
-- canonical route、alias route 与 OpenClaw adapter 共享同一稳定结果模型与幂等语义。
+- canonical route、alias route 与 Feishu adapter 共享同一稳定结果模型与幂等语义。
 - 020 只补 stable operator-guidance seam，不改变既有 recovery / supervision / approvals / events contract。
 - raw `/api/v1/tasks/{project_id}/steer` 继续存在，并有显式非回归覆盖。

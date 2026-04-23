@@ -31,7 +31,7 @@
 - **目标**：先用 red tests 锁定 `FakeAClient` / stub drift 与最小高价值接缝烟测。
 - **文件**：
   - `tests/test_watchdog_session_spine_api.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `tests/integration/test_feishu_integration_spine.py`
   - `tests/test_codex_app_server_bridge.py`
   - `tests/test_a_control_agent_control_flow.py`
 - **可并行**：否
@@ -40,7 +40,7 @@
   2. 存在一条覆盖 `approval -> callback -> restart -> stable read semantics` 的最小 `seam-smoke` 红测；
   3. 失败原因能明确指向 drift 或接缝缺口，而不是泛化失败。
 - **验证**：
-  - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py -k "fake_a_client or seam_smoke"`
+  - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py -k "fake_a_client or seam_smoke"`
 
 ## Task 51.3 固定高耦合场景矩阵与 targeted suites
 
@@ -52,7 +52,7 @@
   - `tests/test_codex_app_server_bridge.py`
   - `tests/test_a_control_agent_control_flow.py`
   - `tests/test_watchdog_session_spine_api.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **可并行**：否
 - **验收标准**：
   1. bridge / a-control / watchdog 三组 targeted seam 均有正式矩阵项；
@@ -71,14 +71,14 @@
   - `tests/test_codex_app_server_bridge.py`
   - `tests/test_a_control_agent_control_flow.py`
   - `tests/test_watchdog_session_spine_api.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **可并行**：否
 - **验收标准**：
   1. `seam-smoke` 和 `full` 有稳定入口，不再依赖临时拼命令；
   2. 若存在测试基建修补，改动范围局限在测试替身、fixture 或命令编排；
   3. 不把 051 扩大成生产代码增强项。
 - **验证**：
-  - `uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py`
+  - `uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py`
 
 ## Task 51.5 完成 051 整体验证并回写 backlog / formal memory
 
@@ -95,4 +95,4 @@
   2. backlog 条目已被消化或重标状态；
   3. `.ai-sdlc` 元数据准确指向 051 之后的下一执行入口。
 - **验证**：
-  - `uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py`
+  - `uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py`

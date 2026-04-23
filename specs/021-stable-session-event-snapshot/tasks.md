@@ -50,23 +50,23 @@
   4. 011 的 `GET /api/v1/watchdog/sessions/{project_id}/events` 不回归。
 - **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_events_api.py -k event`
 
-## Task 21.4 OpenClaw Adapter Intent
+## Task 21.4 Feishu Adapter Intent
 
 - **任务编号**：T214
 - **状态**：已完成（2026-04-06 回填）
-- **目标**：让 OpenClaw 通过主 `intent -> ReplyModel` 闭环消费事件快照。
+- **目标**：让 Feishu 通过主 `intent -> ReplyModel` 闭环消费事件快照。
 - **涉及文件**：
-  - `src/watchdog/services/adapters/openclaw/intents.py`
-  - `src/watchdog/services/adapters/openclaw/reply_model.py`
-  - `src/watchdog/services/adapters/openclaw/adapter.py`
-  - `tests/test_watchdog_openclaw_adapter.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `src/watchdog/services/adapters/feishu/intents.py`
+  - `src/watchdog/services/adapters/feishu/reply_model.py`
+  - `src/watchdog/services/adapters/feishu/adapter.py`
+  - `tests/test_watchdog_feishu_adapter.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **完成标准**：
   1. adapter 支持 `list_session_events`；
   2. `handle_intent("list_session_events")` 返回稳定 `ReplyModel(reply_code=session_event_snapshot)`；
   3. adapter 与 HTTP route 共用同一 `SessionEvent` reply builder；
   4. direct helper `list_session_events()` / `iter_session_events()` 不回归。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py -k session_events`
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py -k session_events`
 
 ## Task 21.5 文档、OpenAPI 与项目状态收口
 
@@ -87,5 +87,5 @@
 ## 整体验收
 
 - 调用方已经可以通过 stable JSON `ReplyModel(events=SessionEvent[])` 一次性获取事件快照，而不必只能走 SSE。
-- OpenClaw adapter 已将 `list_session_events` 纳入主 `handle_intent -> ReplyModel` 闭环。
+- Feishu adapter 已将 `list_session_events` 纳入主 `handle_intent -> ReplyModel` 闭环。
 - 021 只补 stable JSON event snapshot seam，不改变 011 的 stable SSE contract，也不扩成 cursor/backfill/实时事件系统。

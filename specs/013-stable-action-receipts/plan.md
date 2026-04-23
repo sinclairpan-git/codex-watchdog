@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/013-stable-action-receipts/spec.md"
 ---
 
@@ -14,9 +14,9 @@ related_doc:
 ## 架构摘要
 
 - **Contract-first**：先在 `session_spine` contract 内冻结 receipt query object、reply code 与 reply payload 扩展，再推进 schema version。
-- **Lookup-only**：receipt 查询只读 `ActionReceiptStore`，不访问 A-Control-Agent，不重放 side effect，不把 query 面做成执行器。
+- **Lookup-only**：receipt 查询只读 `ActionReceiptStore`，不访问 Codex runtime service，不重放 side effect，不把 query 面做成执行器。
 - **Canonical vs Alias 分离**：`GET /api/v1/watchdog/action-receipts` 是 stable 主面；session 路径 alias 只做人类友好的 query wrapper。
-- **Adapter 只消费 stable receipt reply**：OpenClaw adapter 只依赖 `ActionReceiptQuery -> ReplyModel`，不读取 receipt 存储文件，也不拼 transport-only 结果。
+- **Adapter 只消费 stable receipt reply**：Feishu adapter 只依赖 `ActionReceiptQuery -> ReplyModel`，不读取 receipt 存储文件，也不拼 transport-only 结果。
 
 ## 模块边界与文件落点
 
@@ -25,8 +25,8 @@ related_doc:
 | Contract | `src/watchdog/contracts/session_spine/enums.py`, `models.py`, `versioning.py` | 新增 receipt query object、reply code、ReplyModel payload 字段，并推进 schema version |
 | Storage / Lookup | `src/watchdog/storage/action_receipts.py`, `src/watchdog/services/session_spine/receipts.py` | 封装稳定 receipt key lookup 与 receipt reply 构造 |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 canonical / alias stable receipt query route |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `adapter.py`, `reply_model.py` | 新增 `get_action_receipt` intent，并映射稳定 receipt reply |
-| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_action_receipts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定 contract、lookup、API、adapter 与集成行为 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `adapter.py`, `reply_model.py` | 新增 `get_action_receipt` intent，并映射稳定 receipt reply |
+| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_action_receipts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定 contract、lookup、API、adapter 与集成行为 |
 
 ## 依赖顺序
 
@@ -69,7 +69,7 @@ related_doc:
 关键原则：
 
 - 只读本地 receipt 存储
-- 不访问 A-Control-Agent
+- 不访问 Codex runtime service
 - 不因为 receipt 缺失而执行动作
 
 ### Phase 3：接入 canonical / alias stable API
@@ -85,7 +85,7 @@ related_doc:
 - alias route 只是可读性包装
 - 两条路由对同一 query 返回相同 `ReplyModel`
 
-### Phase 4：接入 OpenClaw adapter 与文档
+### Phase 4：接入 Feishu adapter 与文档
 
 交付内容：
 
@@ -125,7 +125,7 @@ related_doc:
 
 - canonical route 返回 receipt reply
 - alias route 与 canonical route 返回相同 payload
-- receipt 缺失时返回稳定 `ReplyModel`，不访问 A 侧
+- receipt 缺失时返回稳定 `ReplyModel`，不访问 runtime 侧
 
 ### Adapter 测试
 
@@ -146,7 +146,7 @@ related_doc:
 应对：
 
 - lookup 服务只接 `ActionReceiptStore`
-- API / adapter 测试锁定“不访问 A-Control-Agent”
+- API / adapter 测试锁定“不访问 Codex runtime service”
 
 ### 风险 2：API 与 adapter 各自拼 receipt key 导致漂移
 
@@ -168,6 +168,6 @@ related_doc:
 
 1. 存在 canonical stable receipt query route，且查询键与既有幂等设计一致。
 2. receipt 命中与未命中都通过稳定 `ReplyModel.reply_code` 表达。
-3. receipt 查询不会访问 A-Control-Agent，也不会重新执行动作。
-4. OpenClaw adapter 已支持 `get_action_receipt`，且不直读本地 receipt 文件。
+3. receipt 查询不会访问 Codex runtime service，也不会重新执行动作。
+4. Feishu adapter 已支持 `get_action_receipt`，且不直读本地 receipt 文件。
 5. session spine schema version、OpenAPI、README、getting-started 与测试都已同步到 013。

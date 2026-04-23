@@ -7,7 +7,7 @@
 - 基于 `WI-047` 生成的 `matrix-owner-ledger.yaml`，已把 owner=`WI-048` 的 22 条矩阵行提取为当前 work item 的固定边界。
 - 当前收紧后的 048 边界：
   - 只做 canonical task status / phase、stable action surface、fail-closed approval boundary 与 `Memory Hub` hot-path runtime semantics；
-  - 不进入 `WI-049` 的飞书/OpenClaw/natural-language 主入口闭环；
+  - 不进入 `WI-049` 的飞书/Feishu/natural-language 主入口闭环；
   - 不进入 `WI-050` 的性能/重启/安全/可靠性/交付物验收；
   - 不允许通过 README、summary、prompt 文案或 example 冒充 runtime semantics closure。
 - 已创建 `spec.md / plan.md / tasks.md / task-execution-log.md` 与 `.ai-sdlc/work-items/048-*` 基线。
@@ -46,10 +46,10 @@
   - `/api/v1/watchdog/sessions/{project_id}/actions/summarize`
   - `/api/v1/watchdog/sessions/{project_id}/actions/force-handoff`
   - `/api/v1/watchdog/sessions/{project_id}/actions/retry-with-conservative-path`
-- 已扩展 `ActionCode / Effect / AControlAgentClient`，新增 `session_paused / session_resumed / summary_generated / conservative_retry_requested` 等 canonical effect，并补齐 A 侧 `/api/v1/tasks/{project_id}/pause` runtime path。
+- 已扩展 `ActionCode / Effect / AControlAgentClient`，新增 `session_paused / session_resumed / summary_generated / conservative_retry_requested` 等 canonical effect，并补齐 runtime 侧 `/api/v1/tasks/{project_id}/pause` runtime path。
 - `continue`、`resume` 与 `force_handoff` 仍复用既有 steer / recovery / handoff hot path，没有新增旁路执行器。
 - T483 回归验证通过：
-  - `uv run pytest -q tests/test_watchdog_runtime_semantics.py tests/test_watchdog_action_execution.py tests/test_watchdog_steer.py tests/test_a_control_agent.py tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_degradation.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_contracts.py tests/integration/test_openclaw_integration_spine.py tests/test_m2_stuck.py`
+  - `uv run pytest -q tests/test_watchdog_runtime_semantics.py tests/test_watchdog_action_execution.py tests/test_watchdog_steer.py tests/test_a_control_agent.py tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_degradation.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_contracts.py tests/integration/test_feishu_integration_spine.py tests/test_m2_stuck.py`
   - 结果：`118 passed in 2.41s`
 
 ### Phase 4：fail-closed boundary 与 Memory Hub hot path closeout
@@ -77,4 +77,4 @@
   - `uv run pytest -q tests/test_watchdog_recovery_execution.py tests/test_watchdog_action_execution.py tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_runtime.py tests/test_a_control_agent.py tests/test_codex_app_server_bridge.py tests/test_watchdog_memory_hub.py tests/test_watchdog_memory_degradation.py`
   - 结果：`147 passed in 4.57s`
 - 当前 `WI-048` 正式完成，下一执行入口固定为 `WI-049`。
-- `WI-049` 只负责 Feishu / OpenClaw / natural-language 主入口与语义路由绑定，必须直接消费 048 已冻结的 canonical runtime surface，不得重新定义状态、动作或 Memory precedence contract。
+- `WI-049` 只负责 Feishu / Feishu / natural-language 主入口与语义路由绑定，必须直接消费 048 已冻结的 canonical runtime surface，不得重新定义状态、动作或 Memory precedence contract。

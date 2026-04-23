@@ -17,8 +17,8 @@ Last Committed Task: T785
   - `ai_sdlc/cli.py`
   - `tests/test_ai_sdlc_reconciliation.py`
   - `tests/test_ai_sdlc_repo_cli.py`
-  - `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/runtime.yaml`
-  - `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/resume-pack.yaml`
+  - `.ai-sdlc/work-items/049-feishu-entrypoint-closure/runtime.yaml`
+  - `.ai-sdlc/work-items/049-feishu-entrypoint-closure/resume-pack.yaml`
   - `.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/runtime.yaml`
   - `.ai-sdlc/work-items/050-observability-restart-security-and-acceptance/resume-pack.yaml`
   - `.ai-sdlc/work-items/051-high-coupling-test-hardening/runtime.yaml`
@@ -41,8 +41,8 @@ Last Committed Task: T785
   - `.ai-sdlc/work-items/059-stable-session-command-surface-and-restart-preservation/resume-pack.yaml`
   - `.ai-sdlc/work-items/060-memory-advisory-fail-closed-and-ops-hardening/runtime.yaml`
   - `.ai-sdlc/work-items/060-memory-advisory-fail-closed-and-ops-hardening/resume-pack.yaml`
-  - `.ai-sdlc/work-items/061-openclaw-entry-routing-and-steer-contracts/runtime.yaml`
-  - `.ai-sdlc/work-items/061-openclaw-entry-routing-and-steer-contracts/resume-pack.yaml`
+  - `.ai-sdlc/work-items/061-entry-routing-and-steer-contracts/runtime.yaml`
+  - `.ai-sdlc/work-items/061-entry-routing-and-steer-contracts/resume-pack.yaml`
   - `.ai-sdlc/work-items/062-global-design-provider-memory-closure/runtime.yaml`
   - `.ai-sdlc/work-items/062-global-design-provider-memory-closure/resume-pack.yaml`
   - `.ai-sdlc/work-items/063-async-memory-ingest-sink/runtime.yaml`

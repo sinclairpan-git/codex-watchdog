@@ -8,12 +8,12 @@
 - **状态**：已完成
 - **目标**：把审计、回放、运维与生产部署的边界冻结为 formal docs，不反向改写前五个 WI。
 - **涉及文件**：
-  - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+  - `docs/architecture/codex-watchdog-full-product-loop-design.md`
   - `specs/029-audit-replay-ops-production-deployment/spec.md`
   - `specs/029-audit-replay-ops-production-deployment/plan.md`
   - `specs/029-audit-replay-ops-production-deployment/tasks.md`
 - **验证**：人工审阅 formal docs 是否与总设计 Section 5 的 WI-6 边界一致。
-- **完成情况**：已回写 `README.md`、`docs/getting-started.zh-CN.md`、`docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md` 与本 work item 的 plan/tasks 状态。
+- **完成情况**：已回写 `README.md`、`docs/getting-started.zh-CN.md`、`docs/architecture/codex-watchdog-full-product-loop-design.md` 与本 work item 的 plan/tasks 状态。
 
 ## Task 29.2 新增审计与回放服务
 
@@ -49,8 +49,8 @@
 - **涉及文件**：
   - `README.md`
   - `docs/getting-started.zh-CN.md`
-  - `tests/integration/test_openclaw_integration_spine.py`
-- **验证**：`uv run pytest -q tests/integration/test_openclaw_integration_spine.py`
+  - `tests/integration/test_feishu_integration_spine.py`
+- **验证**：`uv run pytest -q tests/integration/test_feishu_integration_spine.py`
 - **完成情况**：已把安装、升级、回滚、密钥轮换与公网入口纪律收成正式文档交付。
 
 ## 整体验收

@@ -8,7 +8,7 @@
 - **状态**：已完成
 - **目标**：把 `human_gate / hard_block`、受控不确定条件、稳定决策结果与 `decision_key` 收成可执行文档与模型边界。
 - **涉及文件**：
-  - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+  - `docs/architecture/codex-watchdog-full-product-loop-design.md`
   - `specs/025-policy-engine-decision-evidence/spec.md`
   - `specs/025-policy-engine-decision-evidence/plan.md`
   - `specs/025-policy-engine-decision-evidence/tasks.md`
@@ -57,4 +57,4 @@
 
 - `025` 是完整产品闭环中的 `WI-2`，只负责 canonical policy engine 与 decision evidence layer。
 - `025` 完成后，后续 `026/027` 可以直接消费 canonical decision records，而不是重新判断风险。
-- `025` 不引入真实执行、delivery outbox 或 OpenClaw runtime。
+- `025` 不引入真实执行、delivery outbox 或 Feishu runtime。

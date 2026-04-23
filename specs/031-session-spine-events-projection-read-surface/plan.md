@@ -17,7 +17,7 @@ related_doc:
 - **Read from canonical events first**：031 默认读取 030 已建立的 `Session Service` canonical events，并在读时物化 `session / progress / facts / approval_queue / memory anomaly`。
 - **Compatibility fallback only**：024 的 persisted spine 仍保留，但只在历史迁移缺口时作为兼容 cache；新读面不再以它为 truth source。
 - **Single query facade**：approval inbox、session query 与 audit query 共享同一套 projection builder / query facade，避免再维护多条平行读取路径。
-- **Contract stays stable**：外部 stable API 与 OpenClaw 模板继续保持原有返回形状，031 只切底层来源，不改调用方协议。
+- **Contract stays stable**：外部 stable API 与 Feishu 模板继续保持原有返回形状，031 只切底层来源，不改调用方协议。
 
 ## 模块边界与文件落点
 
@@ -161,5 +161,5 @@ related_doc:
 1. `session_spine` stable read surface 已优先消费 Session events projection；
 2. persisted spine 只作为兼容回退存在，不再是默认读主路径；
 3. approval inbox、memory anomaly、human override、notification status 与 audit query 已统一走 Session query facade；
-4. stable API / OpenClaw 模板 contract 不回退；
+4. stable API / Feishu 模板 contract 不回退；
 5. 下一 work item 可以直接基于 Session projection 继续 Goal Contract / Recovery，不再回头改读面主路径。

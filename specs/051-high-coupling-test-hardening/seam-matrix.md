@@ -90,7 +90,7 @@
 
 ### 固定验证入口
 
-`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py -k "fake_a_client or seam_smoke"`
+`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py -k "fake_a_client or seam_smoke"`
 
 ## full
 
@@ -102,7 +102,7 @@
 
 ### 固定验证入口
 
-`uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py`
+`uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py`
 
 ## 去重复原则
 

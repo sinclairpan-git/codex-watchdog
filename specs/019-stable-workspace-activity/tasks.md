@@ -52,23 +52,23 @@
   4. 上游 miss / control-link error 继续走稳定 envelope。
 - **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py -k workspace_activity`
 
-## Task 19.4 OpenClaw Adapter Intent
+## Task 19.4 Feishu Adapter Intent
 
 - **任务编号**：T194
 - **状态**：已完成（2026-04-06 回填）
-- **目标**：让 OpenClaw 通过 stable contract 消费 workspace activity。
+- **目标**：让 Feishu 通过 stable contract 消费 workspace activity。
 - **涉及文件**：
-  - `src/watchdog/services/adapters/openclaw/intents.py`
-  - `src/watchdog/services/adapters/openclaw/adapter.py`
-  - `src/watchdog/services/adapters/openclaw/reply_model.py`
-  - `tests/test_watchdog_openclaw_adapter.py`
-  - `tests/integration/test_openclaw_integration_spine.py`
+  - `src/watchdog/services/adapters/feishu/intents.py`
+  - `src/watchdog/services/adapters/feishu/adapter.py`
+  - `src/watchdog/services/adapters/feishu/reply_model.py`
+  - `tests/test_watchdog_feishu_adapter.py`
+  - `tests/integration/test_feishu_integration_spine.py`
 - **完成标准**：
   1. adapter 支持 `get_workspace_activity`；
   2. 该 intent 要求 `project_id`，`arguments.recent_minutes` 可选；
   3. adapter 与 HTTP stable route 复用同一 reply builder；
-  4. OpenClaw 可稳定消费 `workspace_activity_view`。
-- **验证**：`uv run pytest -q tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py -k workspace_activity`
+  4. Feishu 可稳定消费 `workspace_activity_view`。
+- **验证**：`uv run pytest -q tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py -k workspace_activity`
 
 ## Task 19.5 Raw 非回归、文档与项目状态收口
 

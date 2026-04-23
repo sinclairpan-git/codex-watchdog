@@ -19,7 +19,7 @@ tasks:
   depends_on:
   - T642
 - task_id: T644
-  title: 实现 app wiring 与 OpenClaw compatibility 共存
+  title: 实现 app wiring 与 Feishu compatibility 共存
   status: completed
   phase: 4
   depends_on:

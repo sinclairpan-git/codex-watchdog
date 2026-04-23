@@ -4,7 +4,7 @@
 
 ## Batch 1
 
-### Task 9.1 A-Control-Agent SSE 事件流
+### Task 9.1 Codex runtime service SSE 事件流
 
 - **任务编号**：T91
 - **状态**：已完成（2026-04-05）
@@ -53,14 +53,14 @@
 - **可并行**：否
 - **验收标准**：
   1. Watchdog 提供 `GET /api/v1/watchdog/tasks/{project_id}/events`；
-  2. `follow=false` 可返回 SSE 快照，`follow=true` 可透传 A 侧事件流；
-  3. A 侧业务错误与链路错误在 Watchdog 侧语义正确；
+  2. `follow=false` 可返回 SSE 快照，`follow=true` 可透传 runtime 侧事件流；
+  3. runtime 侧业务错误与链路错误在 Watchdog 侧语义正确；
   4. 文档与 OpenAPI 同步。
 - **验证**：`uv run pytest -q tests/test_watchdog.py`
 
 ## 执行结果
 
-- T91：A-Control-Agent 已提供基础 SSE 事件流，并复用 `task_events.jsonl` 作为回放来源。
+- T91：Codex runtime service 已提供基础 SSE 事件流，并复用 `task_events.jsonl` 作为回放来源。
 - T92：README、接入文档与 OpenAPI 已同步，回归测试和静态检查通过。
 - T93：`handoff`、`resume`、`approval_decided` 已写入任务事件流，SSE 可直接消费这些控制流动作。
-- T94：Watchdog 已可代理 A 侧任务事件流，OpenClaw 不必直连 A 机也能读取 SSE。
+- T94：Watchdog 已可代理 runtime 侧任务事件流，Feishu 不必直连 runtime 机器也能读取 SSE。

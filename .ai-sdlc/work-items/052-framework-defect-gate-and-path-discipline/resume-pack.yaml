@@ -4,7 +4,7 @@ last_committed_task: T525
 docs_baseline_ref: 470c389ec8356d88cdf8f4d958244607033959e87a2fe164ac9ec60fb764d2bd
 docs_baseline_at: '2026-04-16T09:23:37Z'
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
+  prd_path: codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
   spec_path: specs/052-framework-defect-gate-and-path-discipline/spec.md

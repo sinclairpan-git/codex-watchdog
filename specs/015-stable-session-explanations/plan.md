@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/015-stable-session-explanations/spec.md"
 ---
 
@@ -24,8 +24,8 @@ related_doc:
 |---|---|---|
 | Shared Reply Builders | `src/watchdog/services/session_spine/replies.py` | 冻结并复用 session/progress/approvals/explanations 的稳定 `ReplyModel` builder |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 stuck / blocker explanation route，并复用 shared builder |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/adapter.py`, `src/watchdog/services/adapters/openclaw/reply_model.py` | 迁移到 shared explanation builder；不再自持 explanation 过滤逻辑 |
-| 验证与文档 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/test_watchdog_session_spine_contracts.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定 route、共享 builder、adapter 非回归与文档口径 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/adapter.py`, `src/watchdog/services/adapters/feishu/reply_model.py` | 迁移到 shared explanation builder；不再自持 explanation 过滤逻辑 |
+| 验证与文档 | `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/test_watchdog_session_spine_contracts.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json` | 锁定 route、共享 builder、adapter 非回归与文档口径 |
 
 ## 依赖顺序
 

@@ -2,12 +2,12 @@ current_stage: completed
 current_batch: 1
 last_committed_task: T23
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
-  constitution_path: /Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/memory/constitution.md
-  tech_stack_path: /Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/profiles/tech-stack.yml
-  spec_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/002-m2-supervision/spec.md
-  plan_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/002-m2-supervision/plan.md
-  tasks_path: /Users/sinclairpan/project/openclaw-codex-watchdog/specs/002-m2-supervision/tasks.md
+  prd_path: codex-watchdog-prd.md
+  constitution_path: /Users/sinclairpan/project/codex-watchdog/.ai-sdlc/memory/constitution.md
+  tech_stack_path: /Users/sinclairpan/project/codex-watchdog/.ai-sdlc/profiles/tech-stack.yml
+  spec_path: /Users/sinclairpan/project/codex-watchdog/specs/002-m2-supervision/spec.md
+  plan_path: /Users/sinclairpan/project/codex-watchdog/specs/002-m2-supervision/plan.md
+  tasks_path: /Users/sinclairpan/project/codex-watchdog/specs/002-m2-supervision/tasks.md
   active_files: []
   context_summary: |
     # Development Summary

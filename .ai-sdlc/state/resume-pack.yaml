@@ -2,7 +2,7 @@ current_stage: execute
 current_batch: 8
 last_committed_task: ''
 working_set_snapshot:
-  prd_path: openclaw-codex-watchdog-prd.md
+  prd_path: codex-watchdog-prd.md
   constitution_path: .ai-sdlc/memory/constitution.md
   tech_stack_path: .ai-sdlc/profiles/tech-stack.yml
   spec_path: specs/085-model-first-continuation-governance/spec.md
@@ -25,7 +25,7 @@ working_set_snapshot:
   - '`src/watchdog/services/session_spine/task_state.py`'
   - '`src/a_control_agent/storage/handoff_manager.py`'
   - '`tests/test_watchdog_session_spine_runtime.py`'
-  - '`tests/integration/test_openclaw_integration_spine.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
   - '`.ai-sdlc/state/checkpoint.yml`'
   - '`.ai-sdlc/state/resume-pack.yaml`'
   - '`.ai-sdlc/project/config/project-state.yaml`'

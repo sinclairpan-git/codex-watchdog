@@ -12,7 +12,7 @@ related_doc:
 
 ## 概述
 
-`047-ai-sdlc-state-reconciliation-and-canonical-gate-repair` 是在 `WI-046` formal docs 完成后追加的第十八个正式执行 work item。它不再扩新的产品语义、Feishu/OpenClaw 入口、release-gate contract 或测试平台，而是先修复当前仓库已经存在的 AI-SDLC canonical truth 漂移，并为后续 `WI-048` 到 `WI-051` 建立唯一可执行的 owner ledger 与 state gate。
+`047-ai-sdlc-state-reconciliation-and-canonical-gate-repair` 是在 `WI-046` formal docs 完成后追加的第十八个正式执行 work item。它不再扩新的产品语义、Feishu/Feishu 入口、release-gate contract 或测试平台，而是先修复当前仓库已经存在的 AI-SDLC canonical truth 漂移，并为后续 `WI-048` 到 `WI-051` 建立唯一可执行的 owner ledger 与 state gate。
 
 047 要解决的是当前仓库已经明确暴露出来的四类 drift：
 
@@ -68,7 +68,7 @@ related_doc:
 
 ## 非目标
 
-- 不在 047 中补 Feishu / OpenClaw 入口。
+- 不在 047 中补 Feishu / Feishu 入口。
 - 不在 047 中新增或修改产品运行时语义。
 - 不在 047 中关闭 `WI-048` 到 `WI-051` owner 的矩阵行。
 - 不在 047 中重写覆盖性审计矩阵的业务条款内容。

@@ -10,7 +10,7 @@
 
 与此同时，仓库内仍存在三类会继续诱发“还有很多待办未落地”错觉的输入：
 
-1. 原始产品义务来源：`openclaw-codex-watchdog-prd.md`
+1. 原始产品义务来源：`codex-watchdog-prd.md`
 2. 目标架构来源：`docs/architecture/codex-long-running-autonomy-design.md`
 3. 长程实施计划：`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
 
@@ -42,7 +42,7 @@
 
 ## Formal Source
 
-- `openclaw-codex-watchdog-prd.md`
+- `codex-watchdog-prd.md`
 - `docs/architecture/codex-long-running-autonomy-design.md`
 - `docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
 - `docs/architecture/coverage-audit-closeout-execution-design.md`
@@ -102,7 +102,7 @@
 - `src/watchdog/api/**`
 - `src/a_control_agent/**`
 - `docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
-- `openclaw-codex-watchdog-prd.md`
+- `codex-watchdog-prd.md`
 - `docs/architecture/codex-long-running-autonomy-design.md`
 
 ## Docs baseline hash recipe
@@ -110,7 +110,7 @@
 `docs_baseline_ref` 的生成方式必须唯一且可重现。058 固定使用以下规则：
 
 1. reviewed formal artifact set 固定为以下 repo-root 相对路径，且顺序不得改变：
-   - `openclaw-codex-watchdog-prd.md`
+   - `codex-watchdog-prd.md`
    - `docs/architecture/codex-long-running-autonomy-design.md`
    - `docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
    - `docs/architecture/coverage-audit-closeout-status.md`

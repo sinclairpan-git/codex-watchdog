@@ -7,7 +7,7 @@
 仓库内已有明确 contract 与回归面：
 
 - `docs/getting-started.zh-CN.md` 与 `docs/operations/external-integration-live-acceptance.md` 都要求 `feishu-discovery` 文本事件真正落到 `list_sessions/session_directory`；
-- `tests/test_watchdog_feishu_ingress.py`、`tests/test_watchdog_external_integration_smoke.py`、`tests/test_watchdog_session_spine_api.py` 与 `tests/integration/test_openclaw_integration_spine.py` 已冻结 repo-local 读面与消息入口语义；
+- `tests/test_watchdog_feishu_ingress.py`、`tests/test_watchdog_external_integration_smoke.py`、`tests/test_watchdog_session_spine_api.py` 与 `tests/integration/test_feishu_integration_spine.py` 已冻结 repo-local 读面与消息入口语义；
 - 真实环境却返回 `goal_contract_bootstrap`，说明需要一张新的 formal owner 单独承接路由/部署/语义漂移问题，而不能继续塞进 `WI-082` 的验收 closeout。
 
 因此 `WI-083` 的目标是正式承接 **Feishu discovery session-directory routing residual**：冻结这条入口的 contract、核对 repo-local 与 live runtime 的差异来源，并把修复与复验落成独立 evidence 链。
@@ -34,14 +34,14 @@
 - `docs/getting-started.zh-CN.md`
 - `docs/operations/external-integration-live-acceptance.md`
 - `src/watchdog/services/feishu_ingress/service.py`
-- `src/watchdog/services/adapters/openclaw/intents.py`
-- `src/watchdog/services/adapters/openclaw/adapter.py`
+- `src/watchdog/services/adapters/feishu/intents.py`
+- `src/watchdog/services/adapters/feishu/adapter.py`
 - `src/watchdog/api/session_spine_queries.py`
 - `src/watchdog/validation/external_integration_smoke.py`
 - `tests/test_watchdog_feishu_ingress.py`
 - `tests/test_watchdog_external_integration_smoke.py`
 - `tests/test_watchdog_session_spine_api.py`
-- `tests/integration/test_openclaw_integration_spine.py`
+- `tests/integration/test_feishu_integration_spine.py`
 - `docs/architecture/long-running-residual-backlog-ledger.yaml`
 - `.ai-sdlc/state/checkpoint.yml`
 - `.ai-sdlc/state/resume-pack.yaml`
@@ -63,7 +63,7 @@
 
 ## 验证要求
 
-- `uv run pytest -q tests/test_watchdog_feishu_ingress.py tests/test_watchdog_external_integration_smoke.py tests/test_watchdog_session_spine_api.py::test_session_directory_route_surfaces_resident_expert_coverage tests/integration/test_openclaw_integration_spine.py::test_integration_session_directory_api_and_adapter_share_resident_expert_coverage`
-- `set -a; source .env.w; export WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS="openclaw-codex-watchdog,Ai_AutoSDLC,meeting,portal"; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery`
+- `uv run pytest -q tests/test_watchdog_feishu_ingress.py tests/test_watchdog_external_integration_smoke.py tests/test_watchdog_session_spine_api.py::test_session_directory_route_surfaces_resident_expert_coverage tests/integration/test_feishu_integration_spine.py::test_integration_session_directory_api_and_adapter_share_resident_expert_coverage`
+- `set -a; source .env.w; export WATCHDOG_SMOKE_FEISHU_DISCOVERY_EXPECTED_PROJECT_IDS="codex-watchdog,Ai_AutoSDLC,meeting,portal"; set +a; uv run python scripts/watchdog_external_integration_smoke.py --target feishu-discovery`
 - `uv run python -m ai_sdlc verify constraints`
 - `uv run python -m ai_sdlc status`

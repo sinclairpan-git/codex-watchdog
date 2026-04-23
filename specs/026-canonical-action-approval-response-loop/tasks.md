@@ -8,7 +8,7 @@
 - **状态**：已完成
 - **目标**：把 canonical action registry、approval record 与响应幂等键收敛成 formal boundary。
 - **涉及文件**：
-  - `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+  - `docs/architecture/codex-watchdog-full-product-loop-design.md`
   - `specs/026-canonical-action-approval-response-loop/spec.md`
   - `specs/026-canonical-action-approval-response-loop/plan.md`
   - `specs/026-canonical-action-approval-response-loop/tasks.md`
@@ -19,7 +19,7 @@
 
 - **任务编号**：T262
 - **状态**：已完成
-- **目标**：新增 canonical action registry 与执行器，消费 decision records 调用 A-side 动作。
+- **目标**：新增 canonical action registry 与执行器，消费 decision records 调用 runtime-side 动作。
 - **涉及文件**：
   - `src/watchdog/services/actions/registry.py`
   - `src/watchdog/services/actions/executor.py`
@@ -34,7 +34,7 @@
 - **目标**：落 canonical approval records、approve/reject 语义与响应幂等。
 - **涉及文件**：
   - `src/watchdog/services/approvals/service.py`
-  - `src/watchdog/api/openclaw_responses.py`
+  - `src/watchdog/api/feishu_responses.py`
   - `tests/test_watchdog_approval_loop.py`
 - **验证**：`uv run pytest -q tests/test_watchdog_approval_loop.py`
 - **完成情况**：已落 canonical approval records、approve/reject/execute_action 响应闭环与幂等键。

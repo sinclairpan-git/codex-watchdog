@@ -15,7 +15,7 @@ related_doc:
 ## 架构摘要
 
 - **Normalize, do not rewrite blindly**：优先通过 canonical normalize layer 吸收 legacy task status / phase / approval waiting 值，而不是一次性重写所有现有存储和回放数据。
-- **Action surface before entry surface**：048 只交付 action code / handler / receipt / effect / alias route，不做 Feishu/OpenClaw/natural-language 的入口闭环；后续入口层只能消费 048 冻结的 runtime semantics。
+- **Action surface before entry surface**：048 只交付 action code / handler / receipt / effect / alias route，不做 Feishu/Feishu/natural-language 的入口闭环；后续入口层只能消费 048 冻结的 runtime semantics。
 - **Memory Hub stays advisory**：`Memory Hub` 只增强 recovery / decision input 的 continuity packet，不能成为真相源；不可用时必须显式 degrade，冲突时必须继续以 `Session Service + Goal Contract` 为准并写入 canonical conflict event。
 
 ## 模块边界与文件落点
@@ -33,7 +33,7 @@ related_doc:
 
 ## 边界纪律
 
-- 048 不得把飞书/OpenClaw/natural-language 主入口并入当前 work item。
+- 048 不得把飞书/Feishu/natural-language 主入口并入当前 work item。
 - `matrix-row-0013 / 0015 / 0017` 在 048 只交付 semantic effect、reason code 与 receipt discipline；任何 Feishu / route binding 统一留给 `WI-049`。
 - 048 不得把 `Memory Hub` 升级成新的 runtime truth source；`Session Service + Goal Contract` 仍是唯一真相源。
 - 048 不得靠 README、summary、example 或 prompt 文案伪装“动作已落地”；必须有 canonical action/effect/test 证据。

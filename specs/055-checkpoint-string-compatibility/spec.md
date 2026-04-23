@@ -2,7 +2,7 @@
 
 ## 背景
 
-`WI-054` 完成后，repo-local `verify constraints` 与外部 `Ai_AutoSDLC` 真值均已通过，但外部框架在读取当前仓库的 [`checkpoint.yml`](/Users/sinclairpan/project/openclaw-codex-watchdog/.ai-sdlc/state/checkpoint.yml) 时仍会先打印一段 schema 警告，再 fallback 成功。
+`WI-054` 完成后，repo-local `verify constraints` 与外部 `Ai_AutoSDLC` 真值均已通过，但外部框架在读取当前仓库的 [`checkpoint.yml`](/Users/sinclairpan/project/codex-watchdog/.ai-sdlc/state/checkpoint.yml) 时仍会先打印一段 schema 警告，再 fallback 成功。
 
 根因已确认：
 

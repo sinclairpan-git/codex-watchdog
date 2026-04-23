@@ -25,7 +25,7 @@
 - `src/watchdog/main.py`
 - `src/watchdog/settings.py`
 - `tests/test_watchdog_feishu_ingress.py`
-- `tests/test_openclaw_contracts.py`
+- `tests/test_feishu_contracts.py`
 - `ai_sdlc` 工单文档与状态同步
 
 ### Out of Scope
@@ -38,7 +38,7 @@
 ## Formal Source
 
 - `docs/architecture/codex-long-running-autonomy-design.md`
-- `docs/architecture/openclaw-codex-watchdog-full-product-loop-design.md`
+- `docs/architecture/codex-watchdog-full-product-loop-design.md`
 - `docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`
 - `.ai-sdlc/work-items/064-feishu-direct-delivery-runtime/latest-summary.md`
 - `src/watchdog/api/feishu_control.py`
@@ -74,7 +74,7 @@
   - 在多任务歧义或非 DM 条件下 fail-closed；
 - 旧 Feishu `event_id` 重放不会覆盖较新的 goal contract；
 - 同一 project 存在 completed + running 两条 task 时，自动绑定必须落到 active session；
-- `tests/test_openclaw_contracts.py` 能看到新的 route；
+- `tests/test_feishu_contracts.py` 能看到新的 route；
 - `ai_sdlc verify constraints` 通过。
 
 ## Docs baseline hash recipe

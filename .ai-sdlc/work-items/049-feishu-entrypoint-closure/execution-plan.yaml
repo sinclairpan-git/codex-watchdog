@@ -1,0 +1,140 @@
+total_tasks: 5
+total_batches: 5
+tasks:
+- task_id: T491
+  title: 冻结 049 owner 行范围、入口边界与 formal docs
+  user_story: ''
+  phase: 1
+  file_paths:
+  - '`docs/plans/2026-04-10-long-running-autonomy-implementation-plan.md`'
+  - '`specs/049-feishu-entrypoint-closure/spec.md`'
+  - '`specs/049-feishu-entrypoint-closure/plan.md`'
+  - '`specs/049-feishu-entrypoint-closure/tasks.md`'
+  - '`specs/049-feishu-entrypoint-closure/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/runtime.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md`'
+  - '`.ai-sdlc/state/checkpoint.yml`'
+  - '`.ai-sdlc/project/config/project-state.yaml`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on: []
+- task_id: T492
+  title: 写失败测试锁定正式入口与自然语言映射 contract
+  user_story: ''
+  phase: 2
+  file_paths:
+  - '`src/watchdog/services/feishu_control/service.py`'
+  - '`src/watchdog/api/feishu_control.py`'
+  - '`src/watchdog/services/adapters/feishu/adapter.py`'
+  - '`src/watchdog/services/adapters/feishu/intents.py`'
+  - '`tests/test_watchdog_feishu_control.py`'
+  - '`tests/test_watchdog_feishu_adapter.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T491
+- task_id: T493
+  title: 实现 Feishu primary command gateway 与 shared intent mapping
+  user_story: ''
+  phase: 3
+  file_paths:
+  - '`src/watchdog/services/feishu_control/service.py`'
+  - '`src/watchdog/api/feishu_control.py`'
+  - '`src/watchdog/services/adapters/feishu/intents.py`'
+  - '`tests/test_watchdog_feishu_control.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T492
+- task_id: T494
+  title: 实现 Feishu compatibility entry route 与 project routing 收口
+  user_story: ''
+  phase: 4
+  file_paths:
+  - '`src/watchdog/services/adapters/feishu/adapter.py`'
+  - '`src/watchdog/api/feishu_responses.py`'
+  - '`tests/test_watchdog_feishu_adapter.py`'
+  - '`tests/integration/test_feishu_integration_spine.py`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T493
+- task_id: T495
+  title: 完成 049 整体验证并交接 WI-050
+  user_story: ''
+  phase: 5
+  file_paths:
+  - '`specs/049-feishu-entrypoint-closure/task-execution-log.md`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/execution-plan.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/runtime.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/resume-pack.yaml`'
+  - '`.ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md`'
+  parallelizable: false
+  parallel_group: ''
+  allowed_paths: []
+  forbidden_paths: []
+  interface_contracts: []
+  merge_order: 0
+  status: completed
+  depends_on:
+  - T494
+batches:
+- batch_id: 1
+  phase: 1
+  tasks:
+  - T491
+  status: completed
+  started_at: '2026-04-16T08:09:48Z'
+  completed_at: '2026-04-16T08:09:48Z'
+- batch_id: 2
+  phase: 2
+  tasks:
+  - T492
+  status: completed
+  started_at: '2026-04-16T08:09:48Z'
+  completed_at: '2026-04-16T08:19:16Z'
+- batch_id: 3
+  phase: 3
+  tasks:
+  - T493
+  status: completed
+  started_at: '2026-04-16T08:19:16Z'
+  completed_at: '2026-04-16T08:19:16Z'
+- batch_id: 4
+  phase: 4
+  tasks:
+  - T494
+  status: completed
+  started_at: '2026-04-16T08:19:16Z'
+  completed_at: '2026-04-16T08:19:16Z'
+- batch_id: 5
+  phase: 5
+  tasks:
+  - T495
+  status: completed
+  started_at: '2026-04-16T08:19:16Z'
+  completed_at: '2026-04-16T08:21:16Z'
+current_batch: 5

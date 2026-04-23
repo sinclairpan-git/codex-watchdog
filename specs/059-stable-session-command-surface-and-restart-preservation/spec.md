@@ -8,8 +8,8 @@
 
 1. `session_spine` 新增稳定动作面：`pause`、`resume`、`summarize`、`force_handoff`、`retry_with_conservative_path`
 2. task lifecycle 新增 canonical `status/phase` 归一化与动作转移校验
-3. OpenClaw / Feishu 新增 natural-language -> canonical intent 路由
-4. A-Control-Agent 新增 `pause` control endpoint
+3. Feishu / Feishu 新增 natural-language -> canonical intent 路由
+4. Codex runtime service 新增 `pause` control endpoint
 5. Watchdog restart 后，稳定读面需要保留 pending approvals 与 action receipts，不得因为重启而丢失已存在真值
 
 这批改动涉及同一条 control/read surface contract：外部入口如何映射到 canonical action、动作何时允许、A side 如何承接 pause/handoff/resume、以及重启后读面如何维持既有真值。
@@ -28,8 +28,8 @@
   - `retry_with_conservative_path`
 - action alias route、intent 映射与 canonical handler 复用；
 - task `status/phase` 归一化与动作转移 fail-closed 校验；
-- A-Control-Agent 的 `pause` control endpoint；
-- Feishu/OpenClaw 的 command request / natural-language 路由到 canonical read/write surface；
+- Codex runtime service 的 `pause` control endpoint；
+- Feishu/Feishu 的 command request / natural-language 路由到 canonical read/write surface；
 - restart 后 pending approvals 与 action receipts 的稳定保留与可读性验证；
 - 对应 targeted tests、formal docs 与 `.ai-sdlc` 状态。
 
@@ -45,8 +45,8 @@
 - `src/watchdog/api/session_spine_actions.py`
 - `src/watchdog/services/session_spine/actions.py`
 - `src/watchdog/services/session_spine/task_state.py`
-- `src/watchdog/services/adapters/openclaw/intents.py`
-- `src/watchdog/services/adapters/openclaw/adapter.py`
+- `src/watchdog/services/adapters/feishu/intents.py`
+- `src/watchdog/services/adapters/feishu/adapter.py`
 - `src/watchdog/services/feishu_control/service.py`
 - `src/a_control_agent/api/recovery.py`
 - `tests/test_watchdog_session_spine_api.py`
@@ -65,8 +65,8 @@
 
 - **FR-5905**：canonical action surface 必须支持 `pause_session`、`resume_session`、`summarize_session`、`force_handoff`、`retry_with_conservative_path`，且 alias route 必须复用同一 canonical handler。
 - **FR-5906**：task lifecycle 必须把 legacy `status/phase` 归一化到稳定 canonical surface，并通过统一 helper 校验动作是否允许发生。
-- **FR-5907**：Feishu/OpenClaw command request 必须能把自然语言命令解析到 canonical intent，并复用同一 read/write surface。
-- **FR-5908**：A-Control-Agent 必须暴露 `pause` endpoint，并对 task store / event log / audit log 写入稳定结果。
+- **FR-5907**：Feishu/Feishu command request 必须能把自然语言命令解析到 canonical intent，并复用同一 read/write surface。
+- **FR-5908**：Codex runtime service 必须暴露 `pause` endpoint，并对 task store / event log / audit log 写入稳定结果。
 - **FR-5909**：restart 后 stable read surfaces 必须继续保留并返回：
   1. pending approvals
   2. 已存在 action receipts

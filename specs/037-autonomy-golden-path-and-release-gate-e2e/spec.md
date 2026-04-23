@@ -7,7 +7,7 @@ related_doc:
   - "specs/032-goal-contract-persistence-and-governance/spec.md"
   - "specs/033-recovery-transaction-lineage/spec.md"
   - "specs/035-brain-decision-boundary-and-release-gate/spec.md"
-  - "specs/036-feishu-control-plane-and-openclaw-retirement/spec.md"
+  - "specs/036-feishu-control-plane-primary-surface/spec.md"
 ---
 
 # 一期自治通关与端到端 Release Gate 验收 — 功能规格说明

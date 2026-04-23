@@ -25,7 +25,7 @@
 
 ### Out of Scope
 
-- 不修改任何产品业务语义、Feishu/OpenClaw runtime contract 或外部集成行为；
+- 不修改任何产品业务语义、Feishu/Feishu runtime contract 或外部集成行为；
 - 不把 branch protection live check 混进 PR gate，也不要求每个 PR workflow 都在线调用 GitHub branch protection API；
 - 不重新设计 `.ai-sdlc/work-items/*/runtime.yaml` 的 schema，只在既有结构内补最小 fail-closed 约束；
 - 不扩展 GitHub governance 到 CODEOWNERS、merge queue、required deployment 等当前仓库尚未冻结的策略。

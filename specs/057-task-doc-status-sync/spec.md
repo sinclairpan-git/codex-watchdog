@@ -11,7 +11,7 @@
 
 - `specs/030-session-service-event-truth-write-barrier/tasks.md`
 - `specs/048-missing-runtime-semantics-and-action-surface/tasks.md`
-- `specs/049-feishu-and-openclaw-entrypoint-closure/tasks.md`
+- `specs/049-feishu-entrypoint-closure/tasks.md`
 
 这会造成同一 work item 在 formal truth 内出现两套状态：
 
@@ -40,13 +40,13 @@
 
 - `specs/030-session-service-event-truth-write-barrier/tasks.md`
 - `specs/048-missing-runtime-semantics-and-action-surface/tasks.md`
-- `specs/049-feishu-and-openclaw-entrypoint-closure/tasks.md`
+- `specs/049-feishu-entrypoint-closure/tasks.md`
 - `.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/execution-plan.yaml`
 - `.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/execution-plan.yaml`
-- `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/execution-plan.yaml`
+- `.ai-sdlc/work-items/049-feishu-entrypoint-closure/execution-plan.yaml`
 - `.ai-sdlc/work-items/030-session-service-event-truth-write-barrier/latest-summary.md`
 - `.ai-sdlc/work-items/048-missing-runtime-semantics-and-action-surface/latest-summary.md`
-- `.ai-sdlc/work-items/049-feishu-and-openclaw-entrypoint-closure/latest-summary.md`
+- `.ai-sdlc/work-items/049-feishu-entrypoint-closure/latest-summary.md`
 
 ## 非 Owner 约束
 
@@ -72,7 +72,7 @@
    - `docs/architecture/coverage-audit-closeout-execution-design.md`
    - `specs/030-session-service-event-truth-write-barrier/tasks.md`
    - `specs/048-missing-runtime-semantics-and-action-surface/tasks.md`
-   - `specs/049-feishu-and-openclaw-entrypoint-closure/tasks.md`
+   - `specs/049-feishu-entrypoint-closure/tasks.md`
    - `specs/057-task-doc-status-sync/spec.md`
    - `specs/057-task-doc-status-sync/plan.md`
    - `specs/057-task-doc-status-sync/tasks.md`

@@ -1,7 +1,7 @@
 ---
 related_doc:
-  - "openclaw-codex-watchdog-prd.md"
-  - "docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md"
+  - "codex-watchdog-prd.md"
+  - "docs/architecture/codex-watchdog-g0-and-v010-design.md"
   - "specs/021-stable-session-event-snapshot/spec.md"
 ---
 
@@ -16,7 +16,7 @@ related_doc:
 - **Reply surface only**：021 只扩 `ReplyModel` 和 stable JSON route，不改 `SessionEvent` 模型本体。
 - **Projection reuse**：JSON snapshot 与 SSE 都必须复用 `src/watchdog/services/session_spine/events.py` 里的既有 `SessionEvent` 投影。
 - **Stable vs transport split**：稳定语义继续由 `SessionEvent` 承载；021 只是新增 JSON snapshot transport，011 的 SSE transport 保持原样。
-- **Adapter symmetry**：OpenClaw adapter 继续保留直读 helper，但 `handle_intent("list_session_events")` 必须回到主 `ReplyModel` 闭环。
+- **Adapter symmetry**：Feishu adapter 继续保留直读 helper，但 `handle_intent("list_session_events")` 必须回到主 `ReplyModel` 闭环。
 - **Schema bump scope**：只推进 session spine reply schema 到 `2026-04-05.021`；event schema version 保持 `2026-04-05.011`。
 
 ## 模块边界与文件落点
@@ -26,8 +26,8 @@ related_doc:
 | Contract | `src/watchdog/contracts/session_spine/enums.py`, `src/watchdog/contracts/session_spine/models.py`, `src/watchdog/contracts/session_spine/versioning.py` | 新增 `ReplyKind.EVENTS`、`ReplyCode.SESSION_EVENT_SNAPSHOT`、`ReplyModel.events`，推进 session spine schema version |
 | L2 Reply Builder | `src/watchdog/services/session_spine/replies.py` | 新增 stable event snapshot reply builder，输入 `SessionEvent[]`，输出 `ReplyModel(events=...)` |
 | Stable API Surface | `src/watchdog/api/session_spine_queries.py` | 暴露 `GET /api/v1/watchdog/sessions/{project_id}/event-snapshot`，复用既有 event projection |
-| L3 Adapter | `src/watchdog/services/adapters/openclaw/intents.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `src/watchdog/services/adapters/openclaw/adapter.py` | 把 `list_session_events` 纳入 `handle_intent -> ReplyModel`，并复用同一 reply builder |
-| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`, `tests/test_watchdog_session_events_api.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、JSON route、adapter、integration、011 SSE 非回归与对外口径 |
+| L3 Adapter | `src/watchdog/services/adapters/feishu/intents.py`, `src/watchdog/services/adapters/feishu/reply_model.py`, `src/watchdog/services/adapters/feishu/adapter.py` | 把 `list_session_events` 纳入 `handle_intent -> ReplyModel`，并复用同一 reply builder |
+| 验证与文档 | `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`, `tests/test_watchdog_session_events_api.py`, `README.md`, `docs/getting-started.zh-CN.md`, `docs/openapi/watchdog.json`, `.ai-sdlc/project/config/project-state.yaml` | 锁定 contract、JSON route、adapter、integration、011 SSE 非回归与对外口径 |
 
 ## 依赖顺序
 
@@ -73,7 +73,7 @@ related_doc:
 - message 保持最小、可预测，例如 `N event(s)`
 - 不在 builder 里重新做 raw 解析
 
-### Phase 3：接入 stable API route 与 OpenClaw intent
+### Phase 3：接入 stable API route 与 Feishu intent
 
 交付内容：
 
@@ -121,7 +121,7 @@ related_doc:
 
 ### Adapter / Integration 测试
 
-- OpenClaw adapter 支持 `list_session_events`
+- Feishu adapter 支持 `list_session_events`
 - `handle_intent("list_session_events")` 返回与 HTTP route 同源的 stable reply
 - 原有 direct helper `list_session_events()` / `iter_session_events()` 不回归
 
@@ -161,7 +161,7 @@ related_doc:
 1. 存在稳定 reply `ReplyKind.EVENTS / ReplyCode.SESSION_EVENT_SNAPSHOT`。
 2. `ReplyModel` 已支持 `events: list[SessionEvent]`。
 3. 存在 `GET /api/v1/watchdog/sessions/{project_id}/event-snapshot`。
-4. OpenClaw adapter 已支持 `handle_intent("list_session_events") -> ReplyModel`。
+4. Feishu adapter 已支持 `handle_intent("list_session_events") -> ReplyModel`。
 5. `SESSION_SPINE_SCHEMA_VERSION` 已推进到 `2026-04-05.021`，但 `SESSION_EVENTS_SCHEMA_VERSION` 未改变。
 6. 011 stable SSE route 已有显式非回归验证。
 7. README、getting-started、OpenAPI 与 `.ai-sdlc` 已同步到 021。

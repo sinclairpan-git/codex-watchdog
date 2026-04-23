@@ -1,11 +1,11 @@
 # 任务分解：002-m2-supervision
 
 > 对应规格：`specs/002-m2-supervision/spec.md`  
-> 需求真值：`openclaw-codex-watchdog-prd.md`
+> 需求真值：`codex-watchdog-prd.md`
 
 ## Batch 1：M2 监管与审计实现
 
-### Task 2.1 A-Control-Agent：steer API 与审计事件追加
+### Task 2.1 Codex runtime service：steer API 与审计事件追加
 
 - **任务编号**：T21
 - **依赖**：无
@@ -29,7 +29,7 @@
   3. 审计写入与 FR-104 字段一致。
 - **验证**：`pytest tests/test_m2_stuck.py -q`
 
-### Task 2.3 Watchdog：对 A 侧发起 steer 的编排入口
+### Task 2.3 Watchdog：对 runtime 侧发起 steer 的编排入口
 
 - **任务编号**：T23
 - **依赖**：T22

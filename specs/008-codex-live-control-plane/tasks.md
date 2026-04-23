@@ -12,7 +12,7 @@
 - **文件**：`src/a_control_agent/services/codex/protocol.py`, `src/a_control_agent/services/codex/app_server_bridge.py`, `src/a_control_agent/services/codex/client.py`, `src/a_control_agent/main.py`, `src/a_control_agent/settings.py`, `tests/test_codex_app_server_bridge.py`
 - **可并行**：否
 - **验收标准**：
-  1. A-Control-Agent 可按配置启动并关闭本地 Codex bridge；
+  1. Codex runtime service 可按配置启动并关闭本地 Codex bridge；
   2. bridge 支持 `thread/resume`、`thread/read`、`turn/start`、`turn/steer` 的最小调用面；
   3. 断线、启动超时、请求超时有稳定错误返回；
   4. 相关 `pytest` 通过。

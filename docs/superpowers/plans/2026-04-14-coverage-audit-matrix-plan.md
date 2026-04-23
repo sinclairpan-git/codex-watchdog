@@ -13,7 +13,7 @@
 ### Task 1: 抽取 PRD 条款并建立证据槽位
 
 **Files:**
-- Read: `openclaw-codex-watchdog-prd.md`
+- Read: `codex-watchdog-prd.md`
 - Create: `docs/superpowers/specs/2026-04-14-coverage-audit-matrix.md`
 
 - [ ] **Step 1: 逐段抽取 PRD 需求条款**

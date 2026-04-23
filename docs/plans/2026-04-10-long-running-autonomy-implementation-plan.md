@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 以最小迁移风险把当前 `watchdog + a-control-agent` 逐步收敛到 `Session Service -> Projection Cache -> Goal Contract -> Brain/Recovery -> Feishu` 的单控制面架构，同时把 `Memory Hub` 收敛成可独立开发的能力层，通过统一 contract 同时服务 Codex 长时自动开发与 `AI_AutoSDLC` 调用，并停止 `OpenClaw` 继续充当主链路。
+**Goal:** 以最小迁移风险把当前 `watchdog + a-control-agent` 逐步收敛到 `Session Service -> Projection Cache -> Goal Contract -> Brain/Recovery -> Feishu` 的单控制面架构，同时把 `Memory Hub` 收敛成可独立开发的能力层，通过统一 contract 同时服务 Codex 长时自动开发与 `AI_AutoSDLC` 调用，并停止 `Feishu` 继续充当主链路。
 
 **Architecture:** 先建立新的事件真源与双写桥，再把现有 `session_spine`、审批视图和审计查询改成从事件投影读取，之后补齐 `Goal Contract`、恢复事务、`Brain + Provider certification + replay` 决策闭环和飞书控制面，并把 `Memory Hub` 收敛成受 `Session Service + Goal Contract` 约束的 retrieval/provider 能力层，通过受控 packet inputs、session search、skills metadata 和安全降级同时服务 Codex 主路径与后续兼容入口。整个过程坚持 fail-closed、真源前置写入、低风险先迁移，不在第一阶段引入新的自动高危能力。
 
@@ -29,7 +29,7 @@
 - `src/watchdog/services/memory_hub/`
   - 新建独立 contract、resident facade、session search archive、基线扫描、增量索引、skill registry、packet input retrieval facade。
 - `src/watchdog/api/`
-  - 增加 Session query / Feishu control / Goal Contract 读取接口，逐步退役 OpenClaw 专属入口。
+  - 增加 Session query / Feishu control / Goal Contract 读取接口，逐步退役 Feishu 专属入口。
 - `tests/`
   - 为每个迁移阶段补充事件写入屏障、命令租约恢复、通知投递恢复、projection 兼容、recovery lineage、Goal Contract 治理、Brain 决策回放、Memory Hub 降级策略、Feishu ACL 和端到端 release gate 的失败/成功用例。
 
@@ -313,23 +313,23 @@
   - `git add src/watchdog/services/brain scripts/generate_release_gate_report.py docs/operations/release-gate-runbook.md src/watchdog/services/policy/engine.py src/watchdog/services/session_spine/orchestrator.py tests/test_watchdog_brain_decision_loop.py tests/test_watchdog_provider_certification.py tests/test_watchdog_decision_replay.py tests/test_watchdog_release_gate.py tests/test_watchdog_release_gate_evidence.py tests/fixtures/release_gate_packets.jsonl tests/fixtures/release_gate_shadow_runs.jsonl tests/fixtures/release_gate_expected_report.json tests/fixtures/release_gate_label_manifest.json`
   - `git commit -m "feat: add brain decision loop and provider certification"`
 
-### Task 7: 迁移到 Feishu 主控制面并退役 OpenClaw 主链路
+### Task 7: 迁移到 Feishu 主控制面并退役 Feishu 主链路
 
-**Canonical execution work item:** `specs/036-feishu-control-plane-and-openclaw-retirement/`
+**Canonical execution work item:** `specs/036-feishu-control-plane-primary-surface/`
 
 **Files:**
 - Create: `src/watchdog/services/feishu_control/service.py`
 - Create: `src/watchdog/api/feishu_control.py`
 - Modify: `src/watchdog/main.py`
-- Modify: `src/watchdog/api/openclaw_bootstrap.py`
-- Modify: `src/watchdog/api/openclaw_callbacks.py`
-- Modify: `src/watchdog/services/adapters/openclaw/adapter.py`
+- Modify: `src/watchdog/api/feishu_bootstrap.py`
+- Modify: `src/watchdog/api/feishu_callbacks.py`
+- Modify: `src/watchdog/services/adapters/feishu/adapter.py`
 - Modify: `src/watchdog/services/delivery/store.py`
 - Modify: `src/watchdog/services/delivery/worker.py`
 - Modify: `src/watchdog/services/session_service/models.py`
 - Modify: `src/watchdog/services/session_spine/projection.py`
 - Test: `tests/test_watchdog_feishu_control.py`
-- Test: `tests/test_openclaw_contracts.py`
+- Test: `tests/test_feishu_contracts.py`
 - Create: `tests/test_watchdog_notification_delivery.py`
 
 - [x] **Step 1: 写失败测试，冻结 Feishu 控制语义**
@@ -338,11 +338,11 @@
   - 覆盖审批确认、通知回执与人工覆盖都必须先落 `Session Service` 事件，再映射为控制动作。
   - 覆盖 `notification_delivery_succeeded|failed|requeued`、`interaction_context_superseded`、过期窗口拒绝、stale interaction 和重新生成交互上下文。
   - 覆盖同一 `interaction_family_id` 任意时刻只允许一个有效上下文，旧上下文晚到送达/回复只能记审计不能双生效。
-  - 覆盖 OpenClaw 入口退为兼容层而非主执行入口。
+  - 覆盖 Feishu 入口退为兼容层而非主执行入口。
 
 - [x] **Step 2: 运行测试确认正确失败**
-  - Run: `uv run pytest tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py -q`
-  - Expected: 因 Feishu 控制面缺失、通知投递中间态未建模、上下文 supersede 语义未冻结或 OpenClaw 仍承担主职责而失败。
+  - Run: `uv run pytest tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_feishu_contracts.py -q`
+  - Expected: 因 Feishu 控制面缺失、通知投递中间态未建模、上下文 supersede 语义未冻结或 Feishu 仍承担主职责而失败。
 
 - [x] **Step 3: 实现最小控制面切换**
   - 新增 Feishu command gateway 与 ACL。
@@ -351,14 +351,14 @@
   - 为通知投递增加送达成功、发送失败、重试排队、上下文 supersede 与窗口过期的真相事件，并在需要时生成新的交互上下文。
   - 为同一交互族冻结单活跃上下文规则与 notification attempt 幂等键，晚到送达/回复只能进入审计。
   - `main.py` 中把新控制面注册为主入口。
-  - OpenClaw bootstrap/callbacks 仅保留迁移期兼容协议，并标记退役边界。
+  - Feishu bootstrap/callbacks 仅保留迁移期兼容协议，并标记退役边界。
 
 - [x] **Step 4: 运行测试确认通过**
-  - Run: `uv run pytest tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_ops.py -q`
-  - Expected: 主控制面切到 Feishu，通知/审批的中间态故障可恢复，补发后的旧上下文不会双生效，OpenClaw 只剩兼容读写接口。
+  - Run: `uv run pytest tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_feishu_contracts.py tests/test_watchdog_ops.py -q`
+  - Expected: 主控制面切到 Feishu，通知/审批的中间态故障可恢复，补发后的旧上下文不会双生效，Feishu 只剩兼容读写接口。
 
 - [x] **Step 5: 提交**
-  - `git add src/watchdog/services/feishu_control src/watchdog/api/feishu_control.py src/watchdog/main.py src/watchdog/api/openclaw_bootstrap.py src/watchdog/api/openclaw_callbacks.py src/watchdog/services/adapters/openclaw/adapter.py src/watchdog/services/delivery/store.py src/watchdog/services/delivery/worker.py src/watchdog/services/session_service/models.py src/watchdog/services/session_spine/projection.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_openclaw_contracts.py tests/test_watchdog_ops.py`
+  - `git add src/watchdog/services/feishu_control src/watchdog/api/feishu_control.py src/watchdog/main.py src/watchdog/api/feishu_bootstrap.py src/watchdog/api/feishu_callbacks.py src/watchdog/services/adapters/feishu/adapter.py src/watchdog/services/delivery/store.py src/watchdog/services/delivery/worker.py src/watchdog/services/session_service/models.py src/watchdog/services/session_spine/projection.py tests/test_watchdog_feishu_control.py tests/test_watchdog_notification_delivery.py tests/test_feishu_contracts.py tests/test_watchdog_ops.py`
   - `git commit -m "feat: switch primary control plane to feishu"`
 
 ### Task 8: 固化一期通关验收与端到端 release gate
@@ -411,7 +411,7 @@
 - [x] 完成 Task 5 后，确认长期记忆写入遵循“基线建档 + 增量摄取 + provenance + security verdict”，`watchdog/Codex` 主路径已接入，`AI_AutoSDLC` 仅保留 disabled-by-default preview compatibility contract，preview 入口不阻塞一期放行，且 `Memory Hub` 不可用或冲突时会写入 `memory_unavailable_degraded` / `memory_conflict_detected` canonical event 后再安全降级。
 - [x] 完成 Task 6 后，确认 `Brain` 具备 provider certification、replay、decision validation 和低风险自动决策闭环，且受明确量化 release gate、证据包和放行报告约束。
 - [x] 完成 Task 6 后，确认 release gate 的样本冻结、人工标注、报告归档均有脚本化产物与责任人元数据，不能靠临时人工流程替代。
-- [x] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，OpenClaw 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
+- [x] 完成 Task 7 后，确认 Feishu 成为唯一主控制面，Feishu 不再承担主链路职责，通知/审批的中间态故障具备恢复协议，补发后的旧上下文不会双生效。
 - [x] 完成 Task 8 后，确认至少一条 `Feishu DM -> Goal Contract -> Brain -> Session write barrier -> command execution -> interruption recovery -> human approval/override -> completion -> replay/metrics` 主链路可在无手工补状态前提下重复打通，并且 low-risk 放行前已经产出并校验对应的 `release_gate_report`。
 - [x] 完成 Task 9 后，确认 future worker / sub-agent 只以 canonical execution contract 存在，lifecycle 与 result consume/reject 全部进入 `Session Service` truth，worker 输出只有在 parent canonical consume 后才真正生效。
 - [x] 完成 Task 9 后，确认 declarative worker request、same-trace replay/consume、late-result rejection 与 recovery supersede 都已 fail-closed，并能从 runtime / recovery / ops/read-side 回看。
@@ -804,7 +804,7 @@
   - 通过 normalize/compatibility layer 吸收 legacy task status / phase，而不是要求现有 raw payload 一次性改写；
   - 把 `continue / pause / resume / summarize / force_handoff / retry_with_conservative_path` 收敛到正式 action code 与 alias route；
   - 让 unclear-goal human decision、break-loop conservative retry、severe-threshold takeover、handoff/resume 进入正式 runtime path；
-  - 保持 048 只交付 runtime semantics baseline，不直接补飞书/OpenClaw/natural-language 入口。
+  - 保持 048 只交付 runtime semantics baseline，不直接补飞书/Feishu/natural-language 入口。
 
 - [ ] **Step 4: 实现 fail-closed approval boundary 与 Memory Hub hot-path semantics**
   - 把 workspace/network/system/credential/destructive/publish 六类边界写成显式 risk contract，并让未知输入默认升级到人工 gate；

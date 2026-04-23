@@ -2,7 +2,7 @@
 
 ## 背景
 
-当前 `A-Control-Agent` 已经持久化了 `context_pressure`、`stuck_level`、`pending_approval`、
+当前 `Codex runtime service` 已经持久化了 `context_pressure`、`stuck_level`、`pending_approval`、
 `approval_risk`、`files_touched` 等任务态字段，但整体仍停留在“部分实现、部分历史实现态共存”的状态：
 
 - `status` 仍出现 `waiting_human` 等实现态；
@@ -27,18 +27,18 @@
 - `src/a_control_agent/services/codex/app_server_bridge.py`
 - `src/a_control_agent/api/recovery.py`
 - `tests/test_a_control_agent.py`
-- 受影响的 `A-Control-Agent` / `Watchdog` task-state targeted 回归
+- 受影响的 `Codex runtime service` / `Watchdog` task-state targeted 回归
 
 ### Out of Scope
 
 - 不在本工单内补 `pause` / `summarize` / `force_handoff` / `retry_with_conservative_path` 的 stable action code；
-- 不扩张 Feishu / OpenClaw 自然语言入口；
+- 不扩张 Feishu / Feishu 自然语言入口；
 - 不重写 approval canonical loop；
 - 不在本工单内改造非任务状态模型的监督策略。
 
 ## Formal Source
 
-- `openclaw-codex-watchdog-prd.md`
+- `codex-watchdog-prd.md`
 - `docs/superpowers/specs/2026-04-14-coverage-audit-matrix.md`
 - `src/a_control_agent/storage/tasks_store.py`
 - `src/a_control_agent/api/tasks.py`
@@ -72,7 +72,7 @@
   `watchdog.services.session_spine.task_state.normalize_task_status()` /
   `normalize_task_phase()` 的 canonical semantics。
 - **FR-6609a**：共享 canonical helper 必须吸收 `resume_failed -> failed` 的 legacy status 归一规则，
-  作为唯一真值入口；`A-Control-Agent` 不得在 helper 之外再维护第二套 `resume_failed` 私有映射。
+  作为唯一真值入口；`Codex runtime service` 不得在 helper 之外再维护第二套 `resume_failed` 私有映射。
 - **FR-6610**：`/api/v1/tasks` 相关写接口必须拒绝不在正式枚举内的新值。
 - **FR-6611**：受影响的 bridge/client/recovery 写回必须改为只写正式枚举。
 - **FR-6613**：`resume_failed` 只能作为 legacy compatibility alias 输入；recovery 失败的持久化输出必须写成
@@ -86,7 +86,7 @@
 ## 设计决策
 
 - **DD-6601**：正式 canonical semantics 直接对齐
-  [`task_state.py`](/Users/sinclairpan/project/openclaw-codex-watchdog/src/watchdog/services/session_spine/task_state.py)，不再在 `A-Control-Agent`
+  [`task_state.py`](/Users/sinclairpan/project/codex-watchdog/src/watchdog/services/session_spine/task_state.py)，不再在 `Codex runtime service`
   侧另起一套 status/phase 映射规则。
 - **DD-6602**：legacy status 兼容映射固定为：
   - `waiting_human + pending_approval=true -> waiting_for_approval`
@@ -94,7 +94,7 @@
   - `done|complete -> completed`
   - `error|resume_failed -> failed`
 - **DD-6602a**：`resume_failed` 不属于正式 contract；其兼容语义统一沉到共享
-  `task_state.normalize_task_status()`，并要求 `A-Control-Agent` recovery 失败路径在实现阶段改为
+  `task_state.normalize_task_status()`，并要求 `Codex runtime service` recovery 失败路径在实现阶段改为
   `failed + last_error_signature`，不得继续把 `resume_failed` 持久化进任务记录。
 - **DD-6603**：legacy phase 兼容映射固定为：
   - `coding -> editing_source`

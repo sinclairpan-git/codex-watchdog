@@ -117,7 +117,7 @@
 截至当前仓库状态，已确认缺少 `.ai-sdlc/work-items/` 镜像的 `specs/` work item 为：
 
 - `006-m5-hardening`
-- `010-openclaw-integration-spine`
+- `010-runtime-integration-spine`
 - `011-stable-session-events`
 - `012-stable-recovery-execution`
 - `013-stable-action-receipts`
@@ -133,7 +133,7 @@
 - `025-policy-engine-decision-evidence`
 - `026-canonical-action-approval-response-loop`
 - `027-outbox-delivery-retry-receipt`
-- `028-openclaw-webhook-response-api-reference-runtime`
+- `028-webhook-response-api-reference-runtime`
 - `029-audit-replay-ops-production-deployment`
 
 `WI-047` 必须把这份 inventory 固化为机器可校验的 reconciliation ledger。
@@ -166,7 +166,7 @@
 大部分未落地条款已有一定实现或验证，但仍缺少正式入口。典型表现为：
 
 - 只有 stable API，没有主控制面自然语言入口
-- 只有 OpenClaw 示例脚本，没有正式运行时路由
+- 只有 Feishu 示例脚本，没有正式运行时路由
 - 只有 read-side / internal contract，没有可被主链路消费的触达面
 
 ### 3.4 P3：验证与非功能缺口
@@ -223,18 +223,18 @@
 - 本批负责的纯无实现条款全部具备实现、验证、入口三证
 - 不引入与当前批次无关的新抽象层
 
-### 4.3 WI-049：Feishu And OpenClaw Entrypoint Closure
+### 4.3 WI-049：Feishu And Feishu Entrypoint Closure
 
 负责：
 
-- 把现有 Feishu control-plane 与 OpenClaw 模板升级为正式主链路入口
+- 把现有 Feishu control-plane 与 Feishu 模板升级为正式主链路入口
 - 收敛自然语言语义到 canonical route
 - 关闭以 `无入口` 为主的大批矩阵条款
 
 关闭条件：
 
 - 主链路可从正式入口触达 progress / approval / recovery / control
-- OpenClaw / Feishu 入口与 stable route 的映射具备形式化验证
+- Feishu / Feishu 入口与 stable route 的映射具备形式化验证
 - 入口证据必须是 live route 或被主链路实际消费的 runtime surface，不能使用 `examples/`、summary 或兼容壳冒充
 
 ### 4.4 WI-050：Verification And NFR Closeout
@@ -353,7 +353,7 @@
 | --- | --- | --- |
 | `WI-047` | 状态真值修复、镜像补齐、owner ledger 建立、framework gate 修复 | 不关闭产品功能条款 |
 | `WI-048` | 当前缺口类型含 `无实现` 或 `实现缺口` 的运行时语义 / 动作面条款 | 不负责自然语言入口与渠道运行时闭环 |
-| `WI-049` | Feishu / OpenClaw / natural-language 到 canonical route 的正式入口条款 | 不新增 `WI-048` 未定义的新产品语义 |
+| `WI-049` | Feishu / Feishu / natural-language 到 canonical route 的正式入口条款 | 不新增 `WI-048` 未定义的新产品语义 |
 | `WI-050` | 以验证、性能、重启、安全、可靠性、最终交付物为主的剩余矩阵条款 | 不新增新的产品语义；只补验证和验收闭环 |
 | `WI-051` | `BL-2026-04-06-001` 项目 backlog | 默认不拥有任何矩阵行；除非 `WI-050` 在 latest-summary 中显式 handoff |
 | `WI-052` | framework defect backlog 与 canonical path / constraint gate | 不关闭业务功能条款；只收敛 repo-local framework contract |
@@ -464,7 +464,7 @@
   - 动作面 / 运行时语义红绿测试
   - 新增 route 或 service 的 targeted 回归
 - `WI-049`
-  - Feishu / OpenClaw 正式入口集成测试
+  - Feishu / Feishu 正式入口集成测试
   - 自然语言语义到 canonical route 的契约验证
 - `WI-050`
   - 性能基准

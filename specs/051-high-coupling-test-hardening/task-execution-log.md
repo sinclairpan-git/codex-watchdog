@@ -8,7 +8,7 @@
   - approval / callback / restart / session spine 的高耦合场景矩阵；
   - fake / stub 与真实 `AClient` 的 contract hardening；
   - `targeted / seam-smoke / full` 三层验证入口固定。
-- 已明确 051 不承接 release blocker、不改 runtime semantics、不改 Feishu / OpenClaw 入口语义，也不引入前端 / UI 自动化。
+- 已明确 051 不承接 release blocker、不改 runtime semantics、不改 Feishu / Feishu 入口语义，也不引入前端 / UI 自动化。
 - 已完成双对抗专家评审：
   - `Anthropic Manager Agent` 视角结论：051 现在可以启动，但只能先 formalize，不能直接进入实现；
   - `Hermes Agent` 视角结论：真正缺口是 fake/stub drift 与 suite topology，而不是继续平铺 approval/restart happy path。
@@ -26,17 +26,17 @@
 - 已新增 red tests：
   - `tests/test_watchdog_session_spine_api.py::test_fake_a_client_matches_a_control_agent_client_core_signature_contract`
   - `tests/test_watchdog_session_spine_api.py::test_fake_a_client_broken_stub_matches_a_control_agent_client_core_signature_contract`
-  - `tests/integration/test_openclaw_integration_spine.py::test_integration_fake_a_client_matches_a_control_agent_client_core_signature_contract`
-  - `tests/integration/test_openclaw_integration_spine.py::test_integration_fake_a_client_broken_stub_matches_a_control_agent_client_core_signature_contract`
+  - `tests/integration/test_feishu_integration_spine.py::test_integration_fake_a_client_matches_a_control_agent_client_core_signature_contract`
+  - `tests/integration/test_feishu_integration_spine.py::test_integration_fake_a_client_broken_stub_matches_a_control_agent_client_core_signature_contract`
   - `tests/test_watchdog_session_spine_api.py::test_seam_smoke_deferred_approval_delivery_survives_restart_and_updates_stable_reads`
 - 红测证据：
-  - `BrokenAClient` 在 `tests/test_watchdog_session_spine_api.py` 与 `tests/integration/test_openclaw_integration_spine.py` 中缺少 `list_tasks` 等真实 `AControlAgentClient` 已暴露的接口；
+  - `BrokenAClient` 在 `tests/test_watchdog_session_spine_api.py` 与 `tests/integration/test_feishu_integration_spine.py` 中缺少 `list_tasks` 等真实 `AControlAgentClient` 已暴露的接口；
   - 初版 seam smoke 复用了带历史 pending approval 的 persisted seed，失败原因不是接缝缺口而是历史样本噪音，因此已修正为无历史噪音的最小链路。
 - 已完成最小实现：
   - 为两个 `BrokenAClient` 补齐 `list_tasks / decide_approval / trigger_pause / trigger_handoff / trigger_resume / get_workspace_activity_envelope` 等 contract surface；
   - 将 seam smoke 改为显式构造单条 `approval -> delivered receipt -> restart -> stable read semantics` 链路。
 - 当前验证：
-  - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py -k "fake_a_client or seam_smoke"`
+  - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py -k "fake_a_client or seam_smoke"`
   - 结果：`5 passed, 66 deselected in 0.56s`
 
 ### Phase 3：固定 targeted suites
@@ -58,9 +58,9 @@
 - 已在 `seam-matrix.md` 明确 `seam-smoke` 与 `full` 的正式命令入口；
 - 已明确 051 的去重复原则：不再继续平铺 approval inbox、canonical/alias happy path、已存在 restart persistence 回归。
 - 当前验证：
-  - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py -k "fake_a_client or seam_smoke"`
+  - `uv run pytest -q tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py -k "fake_a_client or seam_smoke"`
   - 结果：`5 passed, 66 deselected in 0.51s`
-  - `uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_openclaw_integration_spine.py tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py`
+  - `uv run pytest -q tests/test_codex_app_server_bridge.py tests/test_a_control_agent_control_flow.py tests/test_watchdog_session_spine_api.py tests/integration/test_feishu_integration_spine.py tests/test_ai_sdlc_reconciliation.py tests/test_long_running_autonomy_doc_contracts.py`
   - 结果：`106 passed in 2.88s`
 
 ### Phase 5：051 formal closeout

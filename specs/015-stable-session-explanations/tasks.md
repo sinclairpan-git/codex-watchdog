@@ -2,7 +2,7 @@
 
 > 对应规格：`specs/015-stable-session-explanations/spec.md`
 >
-> 对应总设计：`docs/architecture/openclaw-codex-watchdog-g0-and-v010-design.md`
+> 对应总设计：`docs/architecture/codex-watchdog-g0-and-v010-design.md`
 
 ## Batch 1
 
@@ -11,13 +11,13 @@
 - **任务编号**：T151
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：无
-- **文件**：`src/watchdog/services/session_spine/replies.py`, `src/watchdog/services/adapters/openclaw/reply_model.py`, `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_openclaw_adapter.py`
+- **文件**：`src/watchdog/services/session_spine/replies.py`, `src/watchdog/services/adapters/feishu/reply_model.py`, `tests/test_watchdog_session_spine_contracts.py`, `tests/test_watchdog_feishu_adapter.py`
 - **可并行**：否
 - **验收标准**：
   1. explanation reply builder 从 adapter 专有逻辑收拢到 shared 层；
   2. `why_stuck` 与 `explain_blocker` 继续仅基于 `FactRecord + stable read model`；
   3. 015 不推进 session spine `schema_version`，仍保持 `2026-04-05.014`。
-- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_contracts.py tests/test_watchdog_openclaw_adapter.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_contracts.py tests/test_watchdog_feishu_adapter.py`
 
 ### Task 15.2 Stable explanation read routes
 
@@ -40,13 +40,13 @@
 - **任务编号**：T153
 - **状态**：已完成（2026-04-06 回填）
 - **依赖**：T152
-- **文件**：`tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_openclaw_adapter.py`, `tests/integration/test_openclaw_integration_spine.py`
+- **文件**：`tests/test_watchdog_session_spine_api.py`, `tests/test_watchdog_feishu_adapter.py`, `tests/integration/test_feishu_integration_spine.py`
 - **可并行**：否
 - **验收标准**：
   1. API 与 adapter 对同一输入返回相同 `reply_code`；
   2. API 与 adapter 的 explanation facts 集一致；
   3. explanation route 接入不会破坏 `get_session` / `get_progress` / `pending-approvals` / events / actions / receipts 既有稳定行为。
-- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_openclaw_adapter.py tests/integration/test_openclaw_integration_spine.py`
+- **验证**：`uv run pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_feishu_adapter.py tests/integration/test_feishu_integration_spine.py`
 
 ### Task 15.4 文档、OpenAPI 与项目状态收口
 

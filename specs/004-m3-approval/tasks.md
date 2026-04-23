@@ -16,7 +16,7 @@
   3. 单元测试覆盖典型命令样例。
 - **验证**：`pytest tests/test_m3_risk.py -q`
 
-### Task 3.2 A-Control-Agent 审批 API
+### Task 3.2 Codex runtime service 审批 API
 
 - **任务编号**：T32
 - **依赖**：T31
