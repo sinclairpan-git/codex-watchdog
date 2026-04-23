@@ -427,6 +427,13 @@ class TaskStore:
             entry["thread_ids"].append(thread_id)
         entry["current_thread_id"] = thread_id
 
+    def _mark_native_thread_active_if_synced(self, data: dict[str, Any], thread_id: str) -> None:
+        raw_active = data.get("active_native_thread_ids")
+        if not isinstance(raw_active, list):
+            return
+        if thread_id not in raw_active:
+            raw_active.append(thread_id)
+
     def _append_event(
         self,
         *,
@@ -607,6 +614,7 @@ class TaskStore:
                 fallback_phase=fallback_phase,
             )
             self._write_task(data, rec)
+            self._mark_native_thread_active_if_synced(data, thread_id)
             self._write(data)
         self._append_event(
             project_id=project_id,

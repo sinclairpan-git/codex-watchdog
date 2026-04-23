@@ -63,6 +63,10 @@ def _assert_a_client_signature_compatibility(fake_client_cls: type[object]) -> N
             ), f"{fake_client_cls.__name__}.{method_name} default drifted for {name}"
 
 
+def _fresh_iso_z() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 class FakeAClient:
     def __init__(
         self,
@@ -2634,6 +2638,7 @@ def test_session_directory_route_progresses_surface_goal_contract_context(tmp_pa
 
 
 def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) -> None:
+    active_at = _fresh_iso_z()
     app = create_app(
         Settings(
             api_token="wt",
@@ -2653,7 +2658,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
         "context_pressure": "critical",
         "stuck_level": 2,
         "failure_count": 3,
-        "last_progress_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": active_at,
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     session = build_session_projection(
@@ -2673,7 +2678,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
         progress=progress,
         facts=facts,
         approval_queue=[],
-        last_refreshed_at="2026-04-07T00:01:00Z",
+        last_refreshed_at=active_at,
     )
     app.state.session_service.record_event(
         event_type="recovery_execution_suppressed",
@@ -2686,9 +2691,9 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
             "suppression_source": "resident_orchestrator",
             "task_status": "active",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     c = TestClient(app)
 
@@ -2698,7 +2703,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
     data = response.json()["data"]
     assert data["progresses"][0]["recovery_suppression_reason"] == "reentry_without_newer_progress"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
     assert data["message"] == (
         "多项目进展（1）\n"
         "- repo-a | editing_source | editing files | 上下文=critical | 恢复抑制=等待新进展"
@@ -2706,6 +2711,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
 
 
 def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path) -> None:
+    active_at = _fresh_iso_z()
     app = create_app(
         Settings(
             api_token="wt",
@@ -2726,7 +2732,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
         "context_pressure": "critical",
         "stuck_level": 2,
         "failure_count": 3,
-        "last_progress_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": active_at,
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     session = build_session_projection(
@@ -2746,7 +2752,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
         progress=progress,
         facts=facts,
         approval_queue=[],
-        last_refreshed_at="2026-04-07T00:01:00Z",
+        last_refreshed_at=active_at,
     )
     app.state.session_service.record_event(
         event_type="recovery_execution_suppressed",
@@ -2759,10 +2765,10 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
             "suppression_source": "resident_orchestrator",
             "task_status": "active",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
             "cooldown_seconds": "300",
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     c = TestClient(app)
 
@@ -2772,7 +2778,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
     data = response.json()["data"]
     assert data["progresses"][0]["recovery_suppression_reason"] == "cooldown_window_active"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
     assert data["message"] == (
         "多项目进展（1）\n"
         "- repo-a | editing_source | editing files | 上下文=critical | 恢复抑制=恢复冷却中"
@@ -2780,6 +2786,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
 
 
 def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_path) -> None:
+    active_at = _fresh_iso_z()
     app = create_app(
         Settings(
             api_token="wt",
@@ -2800,7 +2807,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
         "context_pressure": "critical",
         "stuck_level": 2,
         "failure_count": 3,
-        "last_progress_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": active_at,
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     session = build_session_projection(
@@ -2820,7 +2827,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
         progress=progress,
         facts=facts,
         approval_queue=[],
-        last_refreshed_at="2026-04-07T00:01:00Z",
+        last_refreshed_at=active_at,
     )
     app.state.session_service.record_event(
         event_type="recovery_execution_suppressed",
@@ -2833,9 +2840,9 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
             "suppression_source": "resident_orchestrator",
             "task_status": "handoff_in_progress",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     c = TestClient(app)
 
@@ -2845,7 +2852,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
     data = response.json()["data"]
     assert data["progresses"][0]["recovery_suppression_reason"] == "recovery_in_flight"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
     assert data["message"] == (
         "多项目进展（1）\n"
         "- repo-a | handoff | handoff drafted | 上下文=critical | 恢复抑制=恢复进行中"
@@ -2855,6 +2862,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
 def test_session_directory_route_projects_recovery_suppression_from_session_events_without_live_control(
     tmp_path,
 ) -> None:
+    active_at = _fresh_iso_z()
     SessionService.from_data_dir(tmp_path).record_event(
         event_type="recovery_execution_suppressed",
         project_id="repo-a",
@@ -2869,9 +2877,9 @@ def test_session_directory_route_projects_recovery_suppression_from_session_even
             "suppression_source": "resident_orchestrator",
             "task_status": "running",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     app = create_app(
         Settings(
@@ -2893,7 +2901,7 @@ def test_session_directory_route_projects_recovery_suppression_from_session_even
     assert data["sessions"][0]["native_thread_id"] == "thr_native_1"
     assert data["progresses"][0]["recovery_suppression_reason"] == "reentry_without_newer_progress"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
 
 
 def test_session_directory_route_merges_live_tasks_with_event_only_recovery_suppression(
@@ -3032,6 +3040,7 @@ def test_session_directory_route_merges_live_tasks_with_event_only_recovery_supp
 def test_session_directory_route_projects_child_interaction_event_without_live_control(
     tmp_path,
 ) -> None:
+    active_at = _fresh_iso_z()
     SessionService.from_data_dir(tmp_path).record_event(
         event_type="interaction_window_expired",
         project_id="repo-a",
@@ -3045,10 +3054,10 @@ def test_session_directory_route_projects_child_interaction_event_without_live_c
         },
         payload={
             "channel_kind": "dm",
-            "expired_at": "2026-04-07T00:30:00Z",
-            "received_at": "2026-04-07T00:40:00Z",
+            "expired_at": active_at,
+            "received_at": active_at,
         },
-        occurred_at="2026-04-07T00:40:00Z",
+        occurred_at=active_at,
     )
     app = create_app(
         Settings(

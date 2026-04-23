@@ -718,6 +718,38 @@ def test_task_list_returns_empty_when_active_native_sync_finds_no_threads(
     assert stale["thread_id"] == "thr_stale"
 
 
+def test_registered_thread_remains_visible_between_active_native_sync_ticks(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo-active"
+    repo.mkdir()
+    app = create_app(
+        Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+        codex_client=FakeCodexClient([]),
+        start_background_workers=False,
+    )
+    c = TestClient(app)
+    h = {"Authorization": "Bearer test-token"}
+
+    asyncio.run(_sync_codex_threads(app))
+    registered = c.post(
+        "/api/v1/tasks/native-threads",
+        headers=h,
+        json={
+            "project_id": "repo-active",
+            "thread_id": "thr_new",
+            "cwd": str(repo),
+            "task_title": "New Native Session",
+            "status": "running",
+            "phase": "planning",
+        },
+    )
+
+    assert registered.status_code == 200
+    listed = c.get("/api/v1/tasks", headers=h).json()["data"]["tasks"]
+    assert [task["thread_id"] for task in listed] == ["thr_new"]
+
+
 def test_risk_classifier_fails_closed_for_workspace_boundary_and_network_like_commands() -> None:
     from a_control_agent.risk.classifier import auto_approve_allowed, classify_risk
 

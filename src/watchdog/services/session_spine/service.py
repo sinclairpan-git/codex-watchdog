@@ -511,6 +511,9 @@ def _directory_project_id_is_valid(project_id: str) -> bool:
 def _directory_bundle_is_active(bundle: SessionReadBundle) -> bool:
     if not _directory_project_id_is_valid(bundle.project_id):
         return False
+    project_execution_state = normalize_project_execution_state(bundle.task)
+    if is_non_active_project_execution_state(project_execution_state):
+        return False
     return not any(fact.fact_code == "project_not_active" for fact in bundle.facts)
 
 
