@@ -13,6 +13,7 @@ from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.store import SessionSpineStore
+from watchdog.services.session_spine.task_state import DEFAULT_ACTIVE_SESSION_STALE_AFTER_SECONDS
 from watchdog.settings import Settings
 
 
@@ -382,6 +383,26 @@ class DeliveryWorker:
         )
         return self._store.update_delivery_record(updated)
 
+    def _apply_inactive_project_suppression(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        reason: str,
+        now: datetime,
+    ) -> DeliveryOutboxRecord:
+        notes = list(record.operator_notes)
+        notes.append(f"delivery_skipped failure_code=inactive_project reason={reason}")
+        updated = record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "inactive_project",
+                "next_retry_at": None,
+                "operator_notes": notes,
+                "updated_at": _iso_z(now),
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
     def _apply_local_manual_activity_deferral(
         self,
         *,
@@ -439,6 +460,65 @@ class DeliveryWorker:
         if age_seconds <= max(self._settings.progress_summary_max_age_seconds, 0.0):
             return None
         return (occurred_at, age_seconds)
+
+    @staticmethod
+    def _record_fact_codes(session_record: object) -> set[str]:
+        facts = getattr(session_record, "facts", None)
+        if not isinstance(facts, list):
+            return set()
+        return {
+            str(getattr(fact, "fact_code", "") or "").strip()
+            for fact in facts
+            if str(getattr(fact, "fact_code", "") or "").strip()
+        }
+
+    @staticmethod
+    def _record_latest_activity_at(session_record: object) -> datetime | None:
+        progress = getattr(session_record, "progress", None)
+        candidates = (
+            getattr(session_record, "last_local_manual_activity_at", None),
+            getattr(progress, "last_progress_at", None),
+        )
+        parsed = [
+            timestamp
+            for timestamp in (_parse_iso(str(candidate or "")) for candidate in candidates)
+            if timestamp is not None
+        ]
+        if not parsed:
+            return None
+        return max(timestamp.astimezone(UTC) for timestamp in parsed)
+
+    def _inactive_project_suppression_reason(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        now: datetime,
+    ) -> str | None:
+        if self._session_spine_store is None:
+            return None
+        payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+        if str(payload.get("envelope_type") or "").strip() != "approval":
+            return None
+        try:
+            session_record = self._session_spine_store.get(record.project_id)
+        except Exception:
+            return None
+        if session_record is None:
+            return "project_record_missing"
+        fact_codes = self._record_fact_codes(session_record)
+        if "project_not_active" in fact_codes:
+            return "project_not_active"
+        session = getattr(session_record, "session", None)
+        session_state = str(getattr(session, "session_state", "") or "").strip().lower()
+        if session_state and session_state != "active":
+            return "session_not_active"
+        latest_activity_at = self._record_latest_activity_at(session_record)
+        if latest_activity_at is None:
+            return None
+        inactive_seconds = (now.astimezone(UTC) - latest_activity_at).total_seconds()
+        if inactive_seconds > DEFAULT_ACTIVE_SESSION_STALE_AFTER_SECONDS:
+            return "no_recent_project_activity"
+        return None
 
     @staticmethod
     def _suppressed_by_notification_policy(
@@ -750,6 +830,16 @@ class DeliveryWorker:
             return self._apply_notification_policy_suppression(
                 record=record,
                 failure_code=suppressed_by_policy,
+                now=now,
+            )
+        inactive_project_reason = self._inactive_project_suppression_reason(
+            record=record,
+            now=now,
+        )
+        if inactive_project_reason is not None:
+            return self._apply_inactive_project_suppression(
+                record=record,
+                reason=inactive_project_reason,
                 now=now,
             )
         suppressed = self._suppressed_for_local_manual_activity(record=record, now=now)

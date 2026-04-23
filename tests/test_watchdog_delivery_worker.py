@@ -590,18 +590,50 @@ class _OrderedClient:
 
 
 class _SessionSpineStoreStub:
-    def __init__(self, *, last_local_manual_activity_at: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        last_local_manual_activity_at: str | None = None,
+        session_state: str = "active",
+        last_refreshed_at: str = "2026-04-07T00:20:00Z",
+        last_progress_at: str | None = "2026-04-07T00:20:00Z",
+        fact_codes: list[str] | None = None,
+    ) -> None:
         self._last_local_manual_activity_at = last_local_manual_activity_at
+        self._session_state = session_state
+        self._last_refreshed_at = last_refreshed_at
+        self._last_progress_at = last_progress_at
+        self._fact_codes = list(fact_codes or [])
 
     def get(self, project_id: str):
-        if project_id != "repo-a" or self._last_local_manual_activity_at is None:
+        if project_id != "repo-a":
             return None
 
         class _Record:
-            def __init__(self, value: str) -> None:
-                self.last_local_manual_activity_at = value
+            def __init__(
+                self,
+                *,
+                last_local_manual_activity_at: str | None,
+                session_state: str,
+                last_refreshed_at: str,
+                last_progress_at: str | None,
+                fact_codes: list[str],
+            ) -> None:
+                self.last_local_manual_activity_at = last_local_manual_activity_at
+                self.last_refreshed_at = last_refreshed_at
+                self.session = type("_Session", (), {"session_state": session_state})()
+                self.progress = type("_Progress", (), {"last_progress_at": last_progress_at})()
+                self.facts = [
+                    type("_Fact", (), {"fact_code": fact_code})() for fact_code in fact_codes
+                ]
 
-        return _Record(self._last_local_manual_activity_at)
+        return _Record(
+            last_local_manual_activity_at=self._last_local_manual_activity_at,
+            session_state=self._session_state,
+            last_refreshed_at=self._last_refreshed_at,
+            last_progress_at=self._last_progress_at,
+            fact_codes=self._fact_codes,
+        )
 
 
 class _NotificationObservingClient:
@@ -1596,6 +1628,94 @@ def test_delivery_worker_treats_naive_progress_summary_timestamp_as_utc(
     assert dropped.operator_notes[-1] == (
         "delivery_skipped failure_code=stale_progress_summary "
         "occurred_at=2026-04-07T00:00:00 age_seconds=1201"
+    )
+    assert client.calls == []
+
+
+def test_delivery_worker_suppresses_approval_for_inactive_project_without_downstream_call(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a",
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="active",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+            fact_codes=["project_not_active"],
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "inactive_project"
+    assert suppressed.delivery_attempt == 0
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=inactive_project reason=project_not_active"
+    )
+    assert client.calls == []
+
+
+def test_delivery_worker_suppresses_approval_when_project_has_no_recent_activity(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="post_operator_guidance",
+        approval_id="approval:repo-a",
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="active",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "inactive_project"
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=inactive_project reason=no_recent_project_activity"
     )
     assert client.calls == []
 

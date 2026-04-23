@@ -47,6 +47,16 @@ def _normalize_path(raw: str) -> str:
     return str(Path(raw).expanduser().resolve(strict=False))
 
 
+def _project_id_from_cwd(cwd: str) -> str:
+    normalized = str(cwd or "").strip()
+    if not normalized:
+        return "unknown-project"
+    path = Path(normalized).expanduser().resolve(strict=False)
+    if path == Path.home().resolve(strict=False):
+        return "unknown-project"
+    return canonicalize_project_id(path.name)
+
+
 def _extract_output_text(content: Any) -> str:
     if not isinstance(content, list):
         return ""
@@ -221,14 +231,12 @@ class LocalCodexClient:
                 if cwd == root or cwd.startswith(f"{root}/"):
                     visible.append(row)
                     break
-        return visible or rows
+        return visible
 
     def _summarize_thread(self, row: dict[str, Any]) -> dict[str, Any]:
         cwd = str(rewrite_legacy_project_aliases(str(row.get("cwd") or "")))
         rollout_path = Path(str(row.get("rollout_path") or ""))
-        project_id = canonicalize_project_id(
-            Path(cwd).name if cwd.strip() else "unknown-project"
-        )
+        project_id = _project_id_from_cwd(cwd)
         session = {
             "thread_id": str(row.get("id") or ""),
             "project_id": project_id,
@@ -358,7 +366,11 @@ class LocalCodexClient:
 
     def list_threads(self) -> list[dict[str, Any]]:
         rows = self._filter_visible_threads(self._load_threads())
-        return [self._summarize_thread(row) for row in rows]
+        return [
+            session
+            for session in (self._summarize_thread(row) for row in rows)
+            if session.get("project_id") != "unknown-project"
+        ]
 
     def describe_thread(self, thread_id: str) -> dict[str, Any]:
         rows = self._load_threads(thread_id)
