@@ -747,6 +747,13 @@ def test_authoritative_project_state_is_scoped_to_matching_workspace_project(tmp
         },
         repo_root=repo_root,
     )
+    matching_case_variant = _task_with_authoritative_project_execution_state(
+        {
+            "project_id": "Workspace-Repo",
+            "project_execution_state": "active",
+        },
+        repo_root=repo_root,
+    )
     unrelated = _task_with_authoritative_project_execution_state(
         {
             "project_id": "repo-a",
@@ -757,6 +764,8 @@ def test_authoritative_project_state_is_scoped_to_matching_workspace_project(tmp
 
     assert matching is not None
     assert matching["project_execution_state"] == "completed"
+    assert matching_case_variant is not None
+    assert matching_case_variant["project_execution_state"] == "completed"
     assert unrelated is not None
     assert unrelated["project_execution_state"] == "active"
     assert "authoritative_project_execution_state_missing" not in unrelated
