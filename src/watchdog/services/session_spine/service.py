@@ -52,6 +52,7 @@ from watchdog.services.session_spine.task_state import (
     derive_project_execution_state_liveness_override,
     is_non_active_project_execution_state,
     normalize_project_execution_state,
+    normalize_task_status,
 )
 from watchdog.storage.action_receipts import ActionReceiptStore, receipt_key
 
@@ -463,7 +464,7 @@ def _directory_projected_task_liveness_reference_time(
 ) -> datetime | None:
     if not isinstance(task, dict):
         return None
-    return now if task_native_thread_id(task) else _task_liveness_reference_time(task)
+    return now
 
 
 def _directory_task_with_projected_active_state(
@@ -471,9 +472,10 @@ def _directory_task_with_projected_active_state(
 ) -> dict[str, Any] | None:
     if not isinstance(task, dict):
         return task
-    if not task_native_thread_id(task):
-        return task
     if normalize_project_execution_state(task) != "unknown":
+        return task
+    status = normalize_task_status(task)
+    if status in {"paused", "completed", "failed"}:
         return task
     updated = dict(task)
     updated["project_execution_state"] = "active"
@@ -487,11 +489,14 @@ def _directory_task_with_active_state(task: dict[str, Any] | None) -> dict[str, 
         return task
     if normalize_project_execution_state(task) != "unknown":
         return task
+    status = normalize_task_status(task)
+    if status in {"paused", "completed", "failed"}:
+        return task
     updated = dict(task)
     updated["project_execution_state"] = "active"
     phase = str(updated.get("phase") or "").strip().lower()
-    status = str(updated.get("status") or "").strip().lower()
-    if phase == "handoff" or status in {"handoff_in_progress", "resuming"}:
+    raw_status = str(updated.get("status") or "").strip().lower()
+    if phase == "handoff" or raw_status in {"handoff_in_progress", "resuming"}:
         human_activity_at = _directory_human_activity_reference_time(updated)
         if human_activity_at is not None:
             updated["last_progress_at"] = _iso_z(human_activity_at)
@@ -510,6 +515,9 @@ def _directory_project_id_is_valid(project_id: str) -> bool:
 
 def _directory_bundle_is_active(bundle: SessionReadBundle) -> bool:
     if not _directory_project_id_is_valid(bundle.project_id):
+        return False
+    status = normalize_task_status(bundle.task)
+    if status in {"paused", "completed", "failed"}:
         return False
     project_execution_state = normalize_project_execution_state(bundle.task)
     if is_non_active_project_execution_state(project_execution_state):
