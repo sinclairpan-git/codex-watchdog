@@ -243,21 +243,19 @@ class TaskStore:
             if entry["current_thread_id"] not in entry["thread_ids"]:
                 entry["current_thread_id"] = tid
 
-        active_native_thread_ids = []
         raw_active = data.get("active_native_thread_ids")
+        result = {
+            "version": 2,
+            "projects": projects,
+            "tasks": tasks,
+        }
         if isinstance(raw_active, list):
-            active_native_thread_ids = [
+            result["active_native_thread_ids"] = [
                 str(thread_id)
                 for thread_id in raw_active
                 if str(thread_id).strip() and str(thread_id) in tasks
             ]
-
-        return {
-            "version": 2,
-            "projects": projects,
-            "tasks": tasks,
-            "active_native_thread_ids": active_native_thread_ids,
-        }
+        return result
 
     def _load(self) -> tuple[dict[str, Any], bool]:
         raw = self._read_file()
