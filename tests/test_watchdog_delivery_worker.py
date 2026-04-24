@@ -1721,6 +1721,41 @@ def test_delivery_worker_suppresses_decision_notification_for_inactive_project_w
     assert client.calls == []
 
 
+def test_delivery_worker_delivers_decision_notification_when_project_record_is_missing(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-missing",
+        session_id="session:repo-missing",
+        fact_snapshot_version="fact-v7",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(),
+        settings=_settings(tmp_path),
+    )
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-missing",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert delivered.failure_code is None
+    assert client.calls == [record.envelope_id]
+
+
 def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
     tmp_path: Path,
 ) -> None:
@@ -2200,6 +2235,77 @@ def test_delivery_worker_delivers_deferred_notification_after_local_manual_activ
     assert delivered.failure_code is None
     assert delivered.delivery_attempt == 1
     assert client.calls == [record.envelope_id]
+
+
+def test_delivery_worker_recomputes_route_for_deferred_notification_after_quiet_window(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="auto_execute_and_notify",
+        action_ref="continue_session",
+    )
+    (notification_envelope,) = [
+        envelope
+        for envelope in build_envelopes_for_decision(decision)
+        if isinstance(envelope, NotificationEnvelope)
+        and envelope.notification_kind == "decision_result"
+    ]
+    (record,) = store.enqueue_envelopes([notification_envelope])
+
+    client = _RouteObservingClient()
+    first_worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            last_local_manual_activity_at="2026-04-07T00:19:50Z"
+        ),
+        settings=_settings(tmp_path).model_copy(
+            update={
+                "delivery_transport": "feishu",
+                "feishu_receive_id": "ou_old_owner",
+                "feishu_receive_id_type": "open_id",
+            }
+        ),
+    )
+    second_worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            last_local_manual_activity_at="2026-04-07T00:19:50Z"
+        ),
+        settings=_settings(tmp_path).model_copy(
+            update={
+                "delivery_transport": "feishu",
+                "feishu_receive_id": "ou_new_owner",
+                "feishu_receive_id_type": "open_id",
+            }
+        ),
+    )
+
+    deferred = first_worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 0, tzinfo=timezone.utc),
+    )
+    stored_deferred = store.get_delivery_record(record.envelope_id)
+    delivered = second_worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 29, 51, tzinfo=timezone.utc),
+    )
+
+    assert deferred is not None
+    assert deferred.delivery_status == "retrying"
+    assert stored_deferred.envelope_payload.get("receive_id") is None
+    assert stored_deferred.envelope_payload.get("receive_id_type") is None
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert client.calls == [record.envelope_id]
+    assert client.payloads[0]["receive_id"] == "ou_new_owner"
+    assert client.payloads[0]["receive_id_type"] == "open_id"
 
 
 def test_delivery_worker_suppresses_legacy_decision_record_but_delivers_decision_result_notification(

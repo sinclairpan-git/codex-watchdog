@@ -516,6 +516,8 @@ class DeliveryWorker:
         except Exception:
             return None
         if session_record is None:
+            if envelope_type == "notification" and notification_kind == "decision_result":
+                return None
             return "project_record_missing"
         fact_codes = self._record_fact_codes(session_record)
         if "project_not_active" in fact_codes:
@@ -950,15 +952,6 @@ class DeliveryWorker:
                 reason=inactive_project_reason,
                 now=now,
             )
-        record = self._apply_dynamic_delivery_route(record=record, now=now)
-        notification_payload = self._notification_payload(record)
-        duplicate_of = self._duplicate_delivered_record(record)
-        if duplicate_of is not None:
-            return self._apply_duplicate_delivery_suppression(
-                record=record,
-                duplicate_of=duplicate_of,
-                now=now,
-            )
         suppressed = self._suppressed_for_local_manual_activity(record=record, now=now)
         if suppressed is not None:
             last_local_manual_activity_at, age_seconds, next_retry_at = suppressed
@@ -967,6 +960,15 @@ class DeliveryWorker:
                 last_local_manual_activity_at=last_local_manual_activity_at,
                 age_seconds=age_seconds,
                 next_retry_at=next_retry_at,
+                now=now,
+            )
+        record = self._apply_dynamic_delivery_route(record=record, now=now)
+        notification_payload = self._notification_payload(record)
+        duplicate_of = self._duplicate_delivered_record(record)
+        if duplicate_of is not None:
+            return self._apply_duplicate_delivery_suppression(
+                record=record,
+                duplicate_of=duplicate_of,
                 now=now,
             )
         if notification_payload is not None:
