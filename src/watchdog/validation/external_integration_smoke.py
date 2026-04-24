@@ -637,6 +637,12 @@ def _run_feishu_discovery_check(
     missing_project_ids = [
         project_id for project_id in sorted(expected_project_ids) if project_id not in actual_project_ids
     ]
+    unexpected_project_ids = [
+        project_id for project_id in actual_project_ids if project_id not in expected_project_ids
+    ]
+    unexpected_progress_project_ids = [
+        project_id for project_id in progress_project_ids if project_id not in expected_project_ids
+    ]
     if missing_project_ids:
         return SmokeCheckResult(
             check_name="feishu-discovery",
@@ -647,6 +653,20 @@ def _run_feishu_discovery_check(
                 "expected_project_ids": sorted(expected_project_ids),
                 "actual_project_ids": actual_project_ids,
                 "missing_project_ids": missing_project_ids,
+            },
+        )
+    if unexpected_project_ids or unexpected_progress_project_ids:
+        return SmokeCheckResult(
+            check_name="feishu-discovery",
+            status="failed",
+            reason="contract_mismatch",
+            evidence={
+                "command_text": command_text,
+                "expected_project_ids": sorted(expected_project_ids),
+                "actual_project_ids": actual_project_ids,
+                "progress_project_ids": progress_project_ids,
+                "unexpected_project_ids": unexpected_project_ids,
+                "unexpected_progress_project_ids": unexpected_progress_project_ids,
             },
         )
     if progress_project_ids != actual_project_ids:

@@ -642,6 +642,114 @@ def test_sync_does_not_overwrite_operator_paused_status(tmp_path: Path) -> None:
     assert task["last_summary"] == "still executing"
 
 
+def test_task_list_only_exposes_current_active_native_threads_after_sync(tmp_path: Path) -> None:
+    active_repo = tmp_path / "repo-active"
+    stale_repo = tmp_path / "repo-stale"
+    active_repo.mkdir()
+    stale_repo.mkdir()
+    app = create_app(
+        Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+        codex_client=FakeCodexClient(
+            [
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "cwd": str(active_repo),
+                    "task_title": "Active Native Session",
+                    "status": "running",
+                    "phase": "planning",
+                    "last_summary": "current work",
+                }
+            ]
+        ),
+        start_background_workers=False,
+    )
+    c = TestClient(app)
+    h = {"Authorization": "Bearer test-token"}
+    app.state.task_store.upsert_native_thread(
+        {
+            "project_id": "repo-stale",
+            "thread_id": "thr_stale",
+            "cwd": str(stale_repo),
+            "task_title": "Old Native Session",
+            "status": "running",
+            "phase": "planning",
+            "last_summary": "old work",
+        }
+    )
+
+    asyncio.run(_sync_codex_threads(app))
+
+    listed = c.get("/api/v1/tasks", headers=h).json()["data"]["tasks"]
+    assert [task["thread_id"] for task in listed] == ["thr_active"]
+    stale = c.get("/api/v1/tasks/by-thread/thr_stale", headers=h).json()["data"]
+    assert stale["thread_id"] == "thr_stale"
+
+
+def test_task_list_returns_empty_when_active_native_sync_finds_no_threads(
+    tmp_path: Path,
+) -> None:
+    stale_repo = tmp_path / "repo-stale"
+    stale_repo.mkdir()
+    app = create_app(
+        Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+        codex_client=FakeCodexClient([]),
+        start_background_workers=False,
+    )
+    c = TestClient(app)
+    h = {"Authorization": "Bearer test-token"}
+    app.state.task_store.upsert_native_thread(
+        {
+            "project_id": "repo-stale",
+            "thread_id": "thr_stale",
+            "cwd": str(stale_repo),
+            "task_title": "Old Native Session",
+            "status": "running",
+            "phase": "planning",
+            "last_summary": "old work",
+        }
+    )
+
+    asyncio.run(_sync_codex_threads(app))
+
+    listed = c.get("/api/v1/tasks", headers=h).json()["data"]["tasks"]
+    assert listed == []
+    stale = c.get("/api/v1/tasks/by-thread/thr_stale", headers=h).json()["data"]
+    assert stale["thread_id"] == "thr_stale"
+
+
+def test_registered_thread_remains_visible_between_active_native_sync_ticks(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo-active"
+    repo.mkdir()
+    app = create_app(
+        Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+        codex_client=FakeCodexClient([]),
+        start_background_workers=False,
+    )
+    c = TestClient(app)
+    h = {"Authorization": "Bearer test-token"}
+
+    asyncio.run(_sync_codex_threads(app))
+    registered = c.post(
+        "/api/v1/tasks/native-threads",
+        headers=h,
+        json={
+            "project_id": "repo-active",
+            "thread_id": "thr_new",
+            "cwd": str(repo),
+            "task_title": "New Native Session",
+            "status": "running",
+            "phase": "planning",
+        },
+    )
+
+    assert registered.status_code == 200
+    listed = c.get("/api/v1/tasks", headers=h).json()["data"]["tasks"]
+    assert [task["thread_id"] for task in listed] == ["thr_new"]
+
+
 def test_risk_classifier_fails_closed_for_workspace_boundary_and_network_like_commands() -> None:
     from a_control_agent.risk.classifier import auto_approve_allowed, classify_risk
 

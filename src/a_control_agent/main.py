@@ -58,9 +58,14 @@ async def _sync_codex_threads(app: FastAPI) -> None:
         return
     ordered = [dict(session) for session in sessions if isinstance(session, dict)]
     ordered.sort(key=lambda session: str(session.get("last_progress_at") or session.get("thread_id") or ""))
+    active_thread_ids: list[str] = []
     for session in ordered:
         session = _preserve_operator_paused_status(app.state.task_store, session)
-        app.state.task_store.upsert_native_thread(session)
+        record = app.state.task_store.upsert_native_thread(session)
+        thread_id = str(record.get("thread_id") or "").strip()
+        if thread_id:
+            active_thread_ids.append(thread_id)
+    app.state.task_store.set_active_native_thread_ids(active_thread_ids)
 
 
 async def _run_codex_sync_loop(app: FastAPI) -> None:

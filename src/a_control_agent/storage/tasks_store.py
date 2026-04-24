@@ -243,7 +243,19 @@ class TaskStore:
             if entry["current_thread_id"] not in entry["thread_ids"]:
                 entry["current_thread_id"] = tid
 
-        return {"version": 2, "projects": projects, "tasks": tasks}
+        raw_active = data.get("active_native_thread_ids")
+        result = {
+            "version": 2,
+            "projects": projects,
+            "tasks": tasks,
+        }
+        if isinstance(raw_active, list):
+            result["active_native_thread_ids"] = [
+                str(thread_id)
+                for thread_id in raw_active
+                if str(thread_id).strip() and str(thread_id) in tasks
+            ]
+        return result
 
     def _load(self) -> tuple[dict[str, Any], bool]:
         raw = self._read_file()
@@ -415,6 +427,13 @@ class TaskStore:
             entry["thread_ids"].append(thread_id)
         entry["current_thread_id"] = thread_id
 
+    def _mark_native_thread_active_if_synced(self, data: dict[str, Any], thread_id: str) -> None:
+        raw_active = data.get("active_native_thread_ids")
+        if not isinstance(raw_active, list):
+            return
+        if thread_id not in raw_active:
+            raw_active.append(thread_id)
+
     def _append_event(
         self,
         *,
@@ -456,14 +475,45 @@ class TaskStore:
             row = self._read().get("tasks", {}).get(thread_id)
             return TaskRecord(dict(row)) if isinstance(row, dict) else None
 
-    def list_tasks(self) -> list[TaskRecord]:
+    def list_tasks(self, *, active_only: bool = False) -> list[TaskRecord]:
         with self._lock:
-            rows = self._read().get("tasks", {}).values()
+            data = self._read()
+            tasks = data.get("tasks", {})
+            if active_only:
+                if "active_native_thread_ids" in data:
+                    active_ids = [
+                        str(thread_id)
+                        for thread_id in data.get("active_native_thread_ids", [])
+                        if str(thread_id).strip()
+                    ]
+                    rows = [
+                        tasks[thread_id]
+                        for thread_id in active_ids
+                        if isinstance(tasks.get(thread_id), dict)
+                    ]
+                else:
+                    rows = tasks.values()
+            else:
+                rows = tasks.values()
             ordered = sorted(
                 (dict(row) for row in rows if isinstance(row, dict)),
                 key=lambda row: (str(row.get("created_at", "")), str(row.get("thread_id", ""))),
             )
             return [TaskRecord(row) for row in ordered]
+
+    def set_active_native_thread_ids(self, thread_ids: list[str]) -> None:
+        normalized: list[str] = []
+        for thread_id in thread_ids:
+            value = str(thread_id).strip()
+            if value and value not in normalized:
+                normalized.append(value)
+        with self._lock:
+            data = self._read()
+            tasks = data.get("tasks", {})
+            data["active_native_thread_ids"] = [
+                thread_id for thread_id in normalized if thread_id in tasks
+            ]
+            self._write(data)
 
     def upsert_from_create(self, project_id: str, body: dict[str, Any]) -> TaskRecord:
         body = rewrite_legacy_project_aliases(body)
@@ -564,6 +614,7 @@ class TaskStore:
                 fallback_phase=fallback_phase,
             )
             self._write_task(data, rec)
+            self._mark_native_thread_active_if_synced(data, thread_id)
             self._write(data)
         self._append_event(
             project_id=project_id,

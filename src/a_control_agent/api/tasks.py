@@ -55,7 +55,7 @@ def list_tasks(
     store: TaskStore = Depends(get_store),
     _: None = Depends(require_token),
 ) -> dict[str, Any]:
-    tasks = [dict(rec) for rec in store.list_tasks()]
+    tasks = [dict(rec) for rec in store.list_tasks(active_only=True)]
     return ok(request.headers.get("x-request-id"), {"tasks": tasks})
 
 

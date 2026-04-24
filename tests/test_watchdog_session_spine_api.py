@@ -23,7 +23,10 @@ from watchdog.services.session_spine.projection import (
     build_task_progress_view,
     stable_thread_id_for_project,
 )
-from watchdog.services.session_spine.service import evaluate_session_policy_from_persisted_spine
+from watchdog.services.session_spine.service import (
+    build_session_directory_bundle,
+    evaluate_session_policy_from_persisted_spine,
+)
 from watchdog.services.session_spine.store import SessionSpineStore
 
 
@@ -58,6 +61,10 @@ def _assert_a_client_signature_compatibility(fake_client_cls: type[object]) -> N
             assert (
                 fake_parameter.default == real_parameter.default
             ), f"{fake_client_cls.__name__}.{method_name} default drifted for {name}"
+
+
+def _fresh_iso_z() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 class FakeAClient:
@@ -386,7 +393,12 @@ def _seed_persisted_session_spine(
     session_seq: int = 3,
     fact_snapshot_version: str = "fact-v1",
     last_refreshed_at: str = "2026-04-05T05:25:00Z",
+    last_local_manual_activity_at: str | None = None,
 ) -> Path:
+    last_local_manual_activity_at = (
+        last_local_manual_activity_at
+        or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     task = {
         "project_id": project_id,
         "thread_id": "thr_native_1",
@@ -441,6 +453,7 @@ def _seed_persisted_session_spine(
                 "session_seq": session_seq,
                 "fact_snapshot_version": fact_snapshot_version,
                 "last_refreshed_at": last_refreshed_at,
+                "last_local_manual_activity_at": last_local_manual_activity_at,
                 "session": session.model_dump(mode="json"),
                 "progress": progress.model_dump(mode="json"),
                 "facts": [fact.model_dump(mode="json") for fact in facts],
@@ -1859,6 +1872,9 @@ def test_persisted_session_overlay_exposes_canonical_approval_across_stable_read
         facts=facts,
         approval_queue=[],
         last_refreshed_at="2026-04-05T05:25:00Z",
+        last_local_manual_activity_at=(
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        ),
     )
     decision = evaluate_session_policy_from_persisted_spine(
         "repo-a",
@@ -2287,6 +2303,347 @@ def test_session_directory_route_returns_stable_session_projections(tmp_path) ->
     )
 
 
+def test_session_directory_bundle_filters_inactive_projects_with_stale_runtime_activity(
+    tmp_path,
+) -> None:
+    current = datetime(2026, 4, 23, 0, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-22T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "recent work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-stale",
+                    "thread_id": "thr_stale",
+                    "native_thread_id": "thr_native_stale",
+                    "created_at": "2026-04-10T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "old work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-10T00:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-22T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "recent work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-22T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
+
+
+def test_session_directory_bundle_filters_terminal_runtime_tasks_without_execution_state(
+    tmp_path,
+) -> None:
+    current = datetime(2026, 4, 23, 0, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-23T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "current work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-23T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-paused",
+                    "thread_id": "thr_paused",
+                    "native_thread_id": "thr_native_paused",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "paused",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "paused work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "current work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
+
+
+def test_session_directory_route_filters_stale_event_only_fallback_without_native_thread(
+    tmp_path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="recovery_execution_suppressed",
+        project_id="repo-stale",
+        session_id="session:repo-stale",
+        correlation_id="corr:recovery-suppressed:repo-stale",
+        related_ids={"recovery_transaction_id": "recovery-tx:repo-stale"},
+        payload={
+            "suppression_reason": "reentry_without_newer_progress",
+            "suppression_source": "resident_orchestrator",
+            "task_status": "running",
+            "context_pressure": "critical",
+            "last_progress_at": "2026-04-07T00:00:00Z",
+        },
+        occurred_at="2026-04-07T00:02:00Z",
+    )
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=BrokenAClient(),
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["sessions"] == []
+    assert data["progresses"] == []
+
+
+def test_session_directory_route_returns_empty_when_degraded_fallback_filters_every_project(
+    tmp_path,
+) -> None:
+    SessionService.from_data_dir(tmp_path).record_event(
+        event_type="approval_requested",
+        project_id="watchdog-smoke-degraded",
+        session_id="session:watchdog-smoke-degraded",
+        correlation_id="corr:watchdog-smoke-degraded:approval",
+        related_ids={"approval_id": "approval:watchdog-smoke-degraded"},
+        payload={
+            "approval_id": "approval:watchdog-smoke-degraded",
+            "status": "pending",
+            "requested_at": _fresh_iso_z(),
+        },
+        occurred_at=_fresh_iso_z(),
+    )
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=BrokenAClient(),
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["sessions"] == []
+    assert data["progresses"] == []
+
+
+def test_session_directory_bundle_ignores_recent_watchdog_handoff_as_project_activity(
+    tmp_path,
+) -> None:
+    current = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-22T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "recent user work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-22T00:05:00Z",
+                "last_substantive_user_input_at": "2026-04-22T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "repo-stale-handoff",
+                    "thread_id": "thr_stale_handoff",
+                    "native_thread_id": "thr_native_stale_handoff",
+                    "created_at": "2026-04-09T00:00:00Z",
+                    "status": "running",
+                    "phase": "handoff",
+                    "pending_approval": False,
+                    "last_summary": "watchdog generated handoff",
+                    "files_touched": [],
+                    "context_pressure": "medium",
+                    "stuck_level": 4,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-22T13:00:00Z",
+                    "last_substantive_user_input_at": "2026-04-09T12:00:00Z",
+                    "last_local_manual_activity_at": "2026-04-09T12:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-22T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "recent user work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-22T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-22T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
+
+
+def test_session_directory_bundle_filters_smoke_and_home_name_pseudo_projects(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "sinclairpan"))
+    current = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    bundle = build_session_directory_bundle(
+        FakeAClient(
+            task={
+                "project_id": "repo-active",
+                "thread_id": "thr_active",
+                "native_thread_id": "thr_native_active",
+                "created_at": "2026-04-23T00:00:00Z",
+                "status": "running",
+                "phase": "planning",
+                "pending_approval": False,
+                "last_summary": "recent user work",
+                "files_touched": [],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-23T00:05:00Z",
+                "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+            },
+            tasks=[
+                {
+                    "project_id": "watchdog-smoke-feishu-control-20260419-012852",
+                    "thread_id": "thr_smoke",
+                    "native_thread_id": "thr_native_smoke",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "smoke project",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+                },
+                {
+                    "project_id": "sinclairpan",
+                    "thread_id": "thr_home_name",
+                    "native_thread_id": "thr_native_home_name",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "home directory pseudo project",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+                },
+                {
+                    "project_id": "repo-active",
+                    "thread_id": "thr_active",
+                    "native_thread_id": "thr_native_active",
+                    "created_at": "2026-04-23T00:00:00Z",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "recent user work",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-23T00:05:00Z",
+                    "last_substantive_user_input_at": "2026-04-23T00:00:00Z",
+                },
+            ],
+        ),
+        liveness_now=current,
+    )
+
+    assert [session.project_id for session in bundle.sessions] == ["repo-active"]
+    assert [progress.project_id for progress in bundle.progresses] == ["repo-active"]
+
+
 def test_session_directory_route_progresses_surface_current_child_session_id_resume_shape(
     tmp_path,
 ) -> None:
@@ -2414,6 +2771,7 @@ def test_session_directory_route_progresses_surface_goal_contract_context(tmp_pa
 
 
 def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) -> None:
+    active_at = _fresh_iso_z()
     app = create_app(
         Settings(
             api_token="wt",
@@ -2433,7 +2791,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
         "context_pressure": "critical",
         "stuck_level": 2,
         "failure_count": 3,
-        "last_progress_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": active_at,
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     session = build_session_projection(
@@ -2453,7 +2811,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
         progress=progress,
         facts=facts,
         approval_queue=[],
-        last_refreshed_at="2026-04-07T00:01:00Z",
+        last_refreshed_at=active_at,
     )
     app.state.session_service.record_event(
         event_type="recovery_execution_suppressed",
@@ -2466,9 +2824,9 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
             "suppression_source": "resident_orchestrator",
             "task_status": "active",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     c = TestClient(app)
 
@@ -2478,7 +2836,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
     data = response.json()["data"]
     assert data["progresses"][0]["recovery_suppression_reason"] == "reentry_without_newer_progress"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
     assert data["message"] == (
         "多项目进展（1）\n"
         "- repo-a | editing_source | editing files | 上下文=critical | 恢复抑制=等待新进展"
@@ -2486,6 +2844,7 @@ def test_session_directory_route_surfaces_active_recovery_suppression(tmp_path) 
 
 
 def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path) -> None:
+    active_at = _fresh_iso_z()
     app = create_app(
         Settings(
             api_token="wt",
@@ -2506,7 +2865,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
         "context_pressure": "critical",
         "stuck_level": 2,
         "failure_count": 3,
-        "last_progress_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": active_at,
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     session = build_session_projection(
@@ -2526,7 +2885,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
         progress=progress,
         facts=facts,
         approval_queue=[],
-        last_refreshed_at="2026-04-07T00:01:00Z",
+        last_refreshed_at=active_at,
     )
     app.state.session_service.record_event(
         event_type="recovery_execution_suppressed",
@@ -2539,10 +2898,10 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
             "suppression_source": "resident_orchestrator",
             "task_status": "active",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
             "cooldown_seconds": "300",
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     c = TestClient(app)
 
@@ -2552,7 +2911,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
     data = response.json()["data"]
     assert data["progresses"][0]["recovery_suppression_reason"] == "cooldown_window_active"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
     assert data["message"] == (
         "多项目进展（1）\n"
         "- repo-a | editing_source | editing files | 上下文=critical | 恢复抑制=恢复冷却中"
@@ -2560,6 +2919,7 @@ def test_session_directory_route_surfaces_recovery_cooldown_suppression(tmp_path
 
 
 def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_path) -> None:
+    active_at = _fresh_iso_z()
     app = create_app(
         Settings(
             api_token="wt",
@@ -2580,7 +2940,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
         "context_pressure": "critical",
         "stuck_level": 2,
         "failure_count": 3,
-        "last_progress_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": active_at,
     }
     facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
     session = build_session_projection(
@@ -2600,7 +2960,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
         progress=progress,
         facts=facts,
         approval_queue=[],
-        last_refreshed_at="2026-04-07T00:01:00Z",
+        last_refreshed_at=active_at,
     )
     app.state.session_service.record_event(
         event_type="recovery_execution_suppressed",
@@ -2613,9 +2973,9 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
             "suppression_source": "resident_orchestrator",
             "task_status": "handoff_in_progress",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     c = TestClient(app)
 
@@ -2625,7 +2985,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
     data = response.json()["data"]
     assert data["progresses"][0]["recovery_suppression_reason"] == "recovery_in_flight"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
     assert data["message"] == (
         "多项目进展（1）\n"
         "- repo-a | handoff | handoff drafted | 上下文=critical | 恢复抑制=恢复进行中"
@@ -2635,6 +2995,7 @@ def test_session_directory_route_surfaces_recovery_in_flight_suppression(tmp_pat
 def test_session_directory_route_projects_recovery_suppression_from_session_events_without_live_control(
     tmp_path,
 ) -> None:
+    active_at = _fresh_iso_z()
     SessionService.from_data_dir(tmp_path).record_event(
         event_type="recovery_execution_suppressed",
         project_id="repo-a",
@@ -2649,9 +3010,9 @@ def test_session_directory_route_projects_recovery_suppression_from_session_even
             "suppression_source": "resident_orchestrator",
             "task_status": "running",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:00:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:02:00Z",
+        occurred_at=active_at,
     )
     app = create_app(
         Settings(
@@ -2673,7 +3034,7 @@ def test_session_directory_route_projects_recovery_suppression_from_session_even
     assert data["sessions"][0]["native_thread_id"] == "thr_native_1"
     assert data["progresses"][0]["recovery_suppression_reason"] == "reentry_without_newer_progress"
     assert data["progresses"][0]["recovery_suppression_source"] == "resident_orchestrator"
-    assert data["progresses"][0]["recovery_suppression_observed_at"] == "2026-04-07T00:02:00Z"
+    assert data["progresses"][0]["recovery_suppression_observed_at"] == active_at
 
 
 def test_session_directory_route_merges_live_tasks_with_event_only_recovery_suppression(
@@ -2812,6 +3173,7 @@ def test_session_directory_route_merges_live_tasks_with_event_only_recovery_supp
 def test_session_directory_route_projects_child_interaction_event_without_live_control(
     tmp_path,
 ) -> None:
+    active_at = _fresh_iso_z()
     SessionService.from_data_dir(tmp_path).record_event(
         event_type="interaction_window_expired",
         project_id="repo-a",
@@ -2825,10 +3187,10 @@ def test_session_directory_route_projects_child_interaction_event_without_live_c
         },
         payload={
             "channel_kind": "dm",
-            "expired_at": "2026-04-07T00:30:00Z",
-            "received_at": "2026-04-07T00:40:00Z",
+            "expired_at": active_at,
+            "received_at": active_at,
         },
-        occurred_at="2026-04-07T00:40:00Z",
+        occurred_at=active_at,
     )
     app = create_app(
         Settings(
@@ -3172,6 +3534,7 @@ def test_session_directory_route_keeps_live_tasks_when_live_approval_read_fails_
 def test_session_directory_route_appends_supplemental_event_only_project_not_present_in_live_tasks(
     tmp_path,
 ) -> None:
+    active_at = _fresh_iso_z()
     SessionService.from_data_dir(tmp_path).record_event(
         event_type="recovery_execution_suppressed",
         project_id="repo-c",
@@ -3183,9 +3546,9 @@ def test_session_directory_route_appends_supplemental_event_only_project_not_pre
             "suppression_source": "resident_orchestrator",
             "task_status": "running",
             "context_pressure": "critical",
-            "last_progress_at": "2026-04-07T00:02:00Z",
+            "last_progress_at": active_at,
         },
-        occurred_at="2026-04-07T00:03:00Z",
+        occurred_at=active_at,
     )
     app = create_app(
         Settings(
