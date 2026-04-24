@@ -833,6 +833,53 @@ def test_session_route_ignores_stale_event_only_approval_without_canonical_pendi
     assert approvals_data["approvals"] == []
 
 
+def test_session_route_prefers_runtime_over_optional_interaction_events(tmp_path) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "runtime remains authoritative",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-24T05:00:00Z",
+            },
+            approvals=[],
+        ),
+    )
+    app.state.session_service.record_event(
+        event_type="interaction_window_expired",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:interaction-window-expired:repo-a",
+        related_ids={"native_thread_id": "thr_native_1"},
+        payload={"reason": "operator window expired"},
+        occurred_at="2026-04-24T04:55:00Z",
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["session"]["session_state"] == "active"
+    assert data["session"]["pending_approval_count"] == 0
+    assert data["progress"]["summary"] == "runtime remains authoritative"
+    assert data["snapshot"]["read_source"] == "live_query_fallback"
+
+
 def test_persisted_session_route_merges_recovery_suppression_fact_from_session_events(tmp_path) -> None:
     _seed_persisted_session_spine(tmp_path)
     a_client = BrokenAClient()

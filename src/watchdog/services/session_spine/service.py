@@ -1049,12 +1049,6 @@ def _has_session_event_bundle_source(events: list[SessionEventRecord]) -> bool:
     return _has_relevant_session_projection_events(events) or _has_event_only_fallback_events(events)
 
 
-def _has_runtime_optional_session_event_source(events: list[SessionEventRecord]) -> bool:
-    return _has_relevant_session_projection_events(events) or any(
-        event.event_type in SESSION_EVENT_RUNTIME_OPTIONAL_FALLBACK_TYPES for event in events
-    )
-
-
 def _has_relevant_approval_projection_events(events: list[SessionEventRecord]) -> bool:
     return any(event.event_type in SESSION_EVENT_APPROVAL_TYPES for event in events)
 
@@ -2285,7 +2279,7 @@ def build_session_read_bundle(
     if (
         persisted_record is None
         and session_service is not None
-        and _has_runtime_optional_session_event_source(session_events)
+        and _has_relevant_session_projection_events(session_events)
     ):
         return _build_session_read_bundle_from_session_events(
             project_id=project_id,
