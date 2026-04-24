@@ -1677,7 +1677,7 @@ def test_delivery_worker_suppresses_approval_for_inactive_project_without_downst
     assert client.calls == []
 
 
-def test_delivery_worker_suppresses_approval_when_project_has_no_recent_activity(
+def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1698,26 +1698,23 @@ def test_delivery_worker_suppresses_approval_when_project_has_no_recent_activity
         store=store,
         delivery_client=client,
         session_spine_store=_SessionSpineStoreStub(
-            session_state="active",
+            session_state="awaiting_approval",
             last_refreshed_at="2026-04-01T00:00:00Z",
             last_progress_at="2026-04-01T00:00:00Z",
         ),
         settings=_settings(tmp_path),
     )
 
-    suppressed = worker.process_next_ready(
+    delivered = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
         session_id="session:repo-a",
     )
 
-    assert suppressed is not None
-    assert suppressed.envelope_id == record.envelope_id
-    assert suppressed.delivery_status == "delivery_failed"
-    assert suppressed.failure_code == "inactive_project"
-    assert suppressed.operator_notes[-1] == (
-        "delivery_skipped failure_code=inactive_project reason=no_recent_project_activity"
-    )
-    assert client.calls == []
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert delivered.failure_code is None
+    assert client.calls == [record.envelope_id]
 
 
 def test_delivery_worker_defers_non_critical_notifications_during_local_manual_activity_quiet_window(

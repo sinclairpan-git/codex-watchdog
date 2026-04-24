@@ -244,7 +244,7 @@ def build_approval_projections(
                 approval_id=str(approval.get("approval_id") or ""),
                 project_id=project_id,
                 thread_id=stable_thread_id_for_project(project_id),
-                native_thread_id=native_thread_id or _approval_native_thread_id(approval),
+                native_thread_id=_approval_native_thread_id(approval) or native_thread_id,
                 risk_level=_approval_nested_text(approval, "risk_level", "risk_class") or None,
                 command=_approval_nested_text(approval, "command", "requested_action"),
                 reason=_approval_nested_text(approval, "reason", "summary", "decision_reason"),

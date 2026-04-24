@@ -2092,6 +2092,81 @@ def test_background_runtime_approval_queue_uses_effective_native_thread_from_leg
     assert snapshot.effective_native_thread_id == "thr_child_1"
 
 
+def test_background_runtime_overlays_canonical_pending_approvals_onto_persisted_record(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "runtime task has no visible approvals",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 4,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[],
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    approval = materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:runtime-overlay-approval",
+            decision_key=(
+                "session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|"
+                "approval:runtime-overlay"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id="approval:runtime-overlay",
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="explicit human confirmation required",
+            matched_policy_rules=["brain_requires_approval"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v1",
+            idempotency_key=(
+                "session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|"
+                "approval:runtime-overlay"
+            ),
+            created_at="2026-04-05T05:21:00Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+        session_service=app.state.session_service,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    assert record.session.pending_approval_count == 1
+    assert [approval_row.approval_id for approval_row in record.approval_queue] == [
+        approval.approval_id
+    ]
+    assert {fact.fact_code for fact in record.facts} >= {
+        "approval_pending",
+        "awaiting_human_direction",
+    }
+
+
 def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
     tmp_path: Path,
 ) -> None:
@@ -3142,6 +3217,109 @@ def test_session_spine_runtime_reconciles_missing_persisted_project_via_workspac
     assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
 
 
+def test_session_spine_runtime_refresh_all_uses_direct_project_fetch_when_task_list_omits_project(
+    tmp_path: Path,
+) -> None:
+    store = SessionSpineStore(tmp_path / SESSION_SPINE_STORE_FILENAME)
+    seed_runtime = SessionSpineRuntime(
+        client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "stale persisted summary",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "critical",
+                "stuck_level": 4,
+                "failure_count": 3,
+                "last_progress_at": "2026-04-22T13:01:11.938008+00:00",
+            }
+        ),
+        store=store,
+    )
+    seed_runtime.refresh_all()
+
+    class MissingFromTaskListClient:
+        def list_tasks(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "project_id": "repo-b",
+                    "thread_id": "thr_native_2",
+                    "status": "running",
+                    "phase": "planning",
+                    "pending_approval": False,
+                    "last_summary": "other task",
+                    "files_touched": [],
+                    "context_pressure": "low",
+                    "stuck_level": 0,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-24T03:00:00Z",
+                }
+            ]
+
+        def get_envelope(self, project_id: str) -> dict[str, object]:
+            assert project_id == "repo-a"
+            return {
+                "success": True,
+                "data": {
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "status": "resuming",
+                    "phase": "handoff",
+                    "pending_approval": False,
+                    "last_summary": "live recovery is still in progress",
+                    "files_touched": [],
+                    "context_pressure": "critical",
+                    "stuck_level": 4,
+                    "failure_count": 0,
+                    "last_progress_at": "2026-04-24T03:00:00Z",
+                },
+            }
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
+        def get_workspace_activity_envelope(
+            self,
+            project_id: str,
+            *,
+            recent_minutes: int = 15,
+        ) -> dict[str, object]:
+            return {
+                "success": True,
+                "data": {
+                    "project_id": project_id,
+                    "activity": {
+                        "cwd_exists": True,
+                        "files_scanned": 0,
+                        "latest_mtime_iso": None,
+                        "recent_change_count": 0,
+                        "recent_window_minutes": recent_minutes,
+                    },
+                },
+            }
+
+    reconcile_runtime = SessionSpineRuntime(client=MissingFromTaskListClient(), store=store)
+    reconcile_runtime.refresh_all()
+
+    reconciled_record = store.get("repo-a")
+    assert reconciled_record is not None
+    assert reconciled_record.session.session_state == "active"
+    assert reconciled_record.progress.summary == "live recovery is still in progress"
+    assert reconciled_record.progress.last_progress_at == "2026-04-24T03:00:00Z"
+    assert reconciled_record.facts == []
+
+
 def test_session_spine_runtime_pauses_project_when_only_stale_substantive_input_remains(
     tmp_path: Path,
 ) -> None:
@@ -3940,6 +4118,91 @@ def test_resident_orchestrator_records_new_recovery_suppression_event_when_state
         event for event in gate_events if event.payload.get("gate_kind") == "recovery_execution"
     ]
     assert len(suppressed_gate_events) == 2
+
+
+def test_resident_orchestrator_allows_recovery_suppression_gate_replay_after_fact_version_changes(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "context exhausted",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+
+    details = {
+        "recovery_transaction_id": "txn-1",
+        "recovery_status": "running",
+        "recovery_updated_at": "2026-04-07T00:00:00Z",
+        "last_progress_at": "2026-04-05T05:20:00Z",
+        "suppression_reason": "recovery_in_flight",
+        "source_packet_id": "packet:handoff-v9",
+    }
+    app.state.resident_orchestrator._record_recovery_reentry_suppressed(record, details=details)
+
+    mutated_facts = list(record.facts)
+    mutated_facts[0] = mutated_facts[0].model_copy(
+        update={"detail": f"{mutated_facts[0].detail} (new evidence)"}
+    )
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=record.session,
+        progress=record.progress,
+        facts=mutated_facts,
+        approval_queue=record.approval_queue,
+        last_refreshed_at="2026-04-07T00:00:05Z",
+        last_local_manual_activity_at=record.last_local_manual_activity_at,
+    )
+    updated_record = app.state.session_spine_store.get("repo-a")
+    assert updated_record is not None
+    assert updated_record.fact_snapshot_version == "fact-v2"
+
+    app.state.resident_orchestrator._record_recovery_reentry_suppressed(
+        updated_record,
+        details=details,
+    )
+
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    gate_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+
+    assert len(suppressed_events) == 1
+    assert [event.payload["authoritative_snapshot_version"] for event in gate_events] == [
+        "fact-v1",
+        "fact-v2",
+    ]
+    assert [
+        event.related_ids["route_key"]
+        for event in gate_events
+        if event.payload.get("gate_kind") == "recovery_execution"
+    ] == [
+        "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v1",
+        "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v2",
+    ]
 
 
 def test_resident_orchestrator_does_not_auto_recover_stale_unrefreshed_session_record(

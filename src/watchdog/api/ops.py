@@ -544,6 +544,8 @@ def _provider_degrade_reason_counts(
     decisions,
     *,
     session_spine_store: SessionSpineStore,
+    now: datetime,
+    threshold_seconds: float,
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for record in _latest_decision_records(decisions):
@@ -559,6 +561,12 @@ def _provider_degrade_reason_counts(
             continue
         reason = str(trace.get("degrade_reason") or "").strip()
         if not reason:
+            continue
+        if not _is_recent_enough(
+            record.created_at,
+            now=now,
+            threshold_seconds=threshold_seconds,
+        ):
             continue
         current = _current_session_record_for_decision(record, session_spine_store=session_spine_store)
         if current is not None:
@@ -1057,6 +1065,8 @@ def build_ops_summary(
     provider_degrade_reason_counts = _provider_degrade_reason_counts(
         decisions,
         session_spine_store=session_spine_store,
+        now=now,
+        threshold_seconds=settings.ops_provider_degrade_alert_window_seconds,
     )
     release_gate_blockers = _release_gate_blockers(decisions)
     recovery_suppression_reason_counts = _active_recovery_suppression_reason_counts(
@@ -1193,6 +1203,8 @@ def build_ops_health_summary(
     provider_degrade_reason_counts = _provider_degrade_reason_counts(
         decision_records,
         session_spine_store=session_spine_store,
+        now=now,
+        threshold_seconds=settings.ops_provider_degrade_alert_window_seconds,
     )
 
     blocked_too_long = _count_blocked_too_long(

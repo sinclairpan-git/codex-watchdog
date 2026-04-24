@@ -2459,9 +2459,7 @@ class ResidentOrchestrator:
             return False
         if list(approval_record.decision_options) != _CANONICAL_APPROVAL_DECISION_OPTIONS:
             return False
-        if _fact_snapshot_order(approval_record.fact_snapshot_version) > _fact_snapshot_order(
-            fact_snapshot_version
-        ):
+        if approval_record.fact_snapshot_version != fact_snapshot_version:
             return False
         return True
 
@@ -2487,9 +2485,7 @@ class ResidentOrchestrator:
         if payload.get("decision_options") != _CANONICAL_APPROVAL_DECISION_OPTIONS:
             return False
         existing_snapshot = payload.get("fact_snapshot_version")
-        if isinstance(existing_snapshot, str) and _fact_snapshot_order(
-            existing_snapshot
-        ) > _fact_snapshot_order(fact_snapshot_version):
+        if isinstance(existing_snapshot, str) and existing_snapshot != fact_snapshot_version:
             return False
         return True
 

@@ -3311,6 +3311,62 @@ def test_build_ops_summary_ignores_provider_degradation_for_non_active_current_s
     assert summary.alerts == []
 
 
+def test_build_ops_summary_ignores_stale_provider_degradation_outside_alert_window(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    settings = Settings(
+        data_dir=str(tmp_path),
+        ops_provider_degrade_alert_window_seconds=900,
+    )
+
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-degrade-stale",
+            decision_key="session:repo-a|fact-v7|policy-v1|allow|continue_session|",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="propose_execute",
+            runtime_disposition="auto_execute_and_notify",
+            decision_result="allow",
+            risk_class="low",
+            decision_reason="stale degraded provider decision",
+            matched_policy_rules=[],
+            why_not_escalated=None,
+            why_escalated=None,
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|allow|continue_session|",
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "degrade_reason": "provider_unavailable",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(
+        data_dir=tmp_path,
+        settings=settings,
+        decision_store=decision_store,
+        now=datetime(2099, 1, 1, 1, 0, tzinfo=UTC),
+    )
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+
+
 def test_build_ops_summary_ignores_provider_degradation_after_newer_local_manual_activity(
     tmp_path: Path,
 ) -> None:

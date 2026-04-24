@@ -442,18 +442,39 @@ class SessionService:
         normalized_goal_contract_version = _normalize_optional_text(goal_contract_version)
         normalized_suppression_reason = _normalize_optional_text(suppression_reason)
         normalized_lineage_refs = _normalize_lineage_refs(lineage_refs)
-        resolved_correlation_id = correlation_id or _stable_id(
-            "corr:continuation-gate",
-            session_id,
-            gate_kind,
-            gate_status,
-            decision_source,
-            decision_class,
-            action_ref or "",
-            normalized_snapshot_version or "",
-            normalized_suppression_reason or "",
-            causation_id or "",
-        )
+        if correlation_id is None:
+            resolved_correlation_id = _stable_id(
+                "corr:continuation-gate",
+                session_id,
+                gate_kind,
+                gate_status,
+                decision_source,
+                decision_class,
+                action_ref or "",
+                normalized_snapshot_version or "",
+                normalized_suppression_reason or "",
+                causation_id or "",
+            )
+        else:
+            resolved_correlation_id = _stable_id(
+                "corr:continuation-gate",
+                correlation_id,
+                gate_kind,
+                gate_status,
+                decision_source,
+                decision_class,
+                action_ref or "",
+                normalized_snapshot_version or "",
+                normalized_snapshot_epoch or "",
+                normalized_goal_contract_version or "",
+                normalized_suppression_reason or "",
+                normalized_identity or "",
+                normalized_route_key or "",
+                normalized_branch_switch_token or "",
+                normalized_source_packet_id or "",
+                *normalized_lineage_refs,
+                causation_id or "",
+            )
         related_ids: dict[str, str] = {}
         if normalized_identity is not None:
             related_ids["continuation_identity"] = normalized_identity

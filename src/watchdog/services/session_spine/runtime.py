@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import httpx
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from watchdog.services.runtime_client.client import CodexRuntimeClient
 from watchdog.services.session_spine.service import (
     _build_session_read_bundle,
+    _list_actionable_canonical_approval_rows,
     _load_approvals_or_raise,
     _task_from_persisted_record,
 )
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
+
+if TYPE_CHECKING:
+    from watchdog.services.approvals.service import CanonicalApprovalStore
 
 
 class SessionSpineRuntime:
@@ -19,9 +23,11 @@ class SessionSpineRuntime:
         *,
         client: CodexRuntimeClient,
         store: SessionSpineStore,
+        approval_store: CanonicalApprovalStore | None = None,
     ) -> None:
         self._client = client
         self._store = store
+        self._approval_store = approval_store
 
     def refresh_all(self) -> None:
         liveness_now = datetime.now(UTC)
@@ -121,6 +127,11 @@ class SessionSpineRuntime:
                 approvals = _load_approvals_or_raise(self._client, project_id)
             except RuntimeError:
                 return
+        approvals = self._merge_local_approvals(
+            project_id=project_id,
+            approvals=approvals,
+            task=task,
+        )
 
         bundle = _build_session_read_bundle(
             project_id=project_id,
@@ -185,16 +196,34 @@ class SessionSpineRuntime:
         approvals: list[dict[str, Any]] | None,
         liveness_now: datetime | None = None,
     ) -> None:
-        synthesized_task = _task_from_persisted_record(record, approvals=approvals or [])
-        synthesized_task["runtime_task_missing"] = True
+        task: dict[str, Any] | None = None
+        try:
+            body = self._client.get_envelope(record.project_id)
+        except (AttributeError, httpx.RequestError, RuntimeError, OSError):
+            body = None
+        if isinstance(body, dict) and body.get("success"):
+            data = body.get("data")
+            if isinstance(data, dict):
+                task = data
+
+        if task is None:
+            synthesized_task = _task_from_persisted_record(record, approvals=approvals or [])
+            synthesized_task["runtime_task_missing"] = True
+            task = synthesized_task
+
         task = self._task_with_workspace_manual_activity(
             project_id=record.project_id,
-            task=synthesized_task,
+            task=task,
+        )
+        approvals = self._merge_local_approvals(
+            project_id=record.project_id,
+            approvals=approvals or [],
+            task=task,
         )
         bundle = _build_session_read_bundle(
             project_id=record.project_id,
             task=task,
-            approvals=approvals or [],
+            approvals=approvals,
             liveness_now=liveness_now or self._task_liveness_reference_time(task),
         )
         self._store.put(
@@ -207,6 +236,62 @@ class SessionSpineRuntime:
                 str(task.get("last_local_manual_activity_at") or "") or None
             ),
         )
+
+    def _merge_local_approvals(
+        self,
+        *,
+        project_id: str,
+        approvals: list[dict[str, Any]],
+        task: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        for approval in approvals:
+            approval_id = str(approval.get("approval_id") or "").strip()
+            if not approval_id:
+                continue
+            rows_by_id[approval_id] = dict(approval)
+        for approval in _list_actionable_canonical_approval_rows(
+            self._approval_store,
+            project_id=project_id,
+        ):
+            approval_id = str(approval.get("approval_id") or "").strip()
+            if not approval_id:
+                continue
+            if approval_id not in rows_by_id and self._canonical_overlay_is_stale_for_task(
+                task=task,
+                approval=approval,
+            ):
+                continue
+            rows_by_id.setdefault(approval_id, dict(approval))
+        return sorted(
+            rows_by_id.values(),
+            key=lambda row: (
+                str(row.get("requested_at") or row.get("created_at") or "") == "",
+                str(row.get("requested_at") or row.get("created_at") or ""),
+                str(row.get("approval_id") or ""),
+            ),
+        )
+
+    @classmethod
+    def _canonical_overlay_is_stale_for_task(
+        cls,
+        *,
+        task: dict[str, Any] | None,
+        approval: dict[str, Any],
+    ) -> bool:
+        if not isinstance(task, dict):
+            return False
+        if bool(task.get("pending_approval")):
+            return False
+        task_last_progress = cls._parse_iso(str(task.get("last_progress_at") or "").strip() or None)
+        if task_last_progress is None:
+            return False
+        approval_requested_at = cls._parse_iso(
+            str(approval.get("requested_at") or approval.get("created_at") or "").strip() or None
+        )
+        if approval_requested_at is None:
+            return False
+        return task_last_progress > approval_requested_at
 
     @staticmethod
     def _max_iso_timestamp(*values: str) -> str | None:

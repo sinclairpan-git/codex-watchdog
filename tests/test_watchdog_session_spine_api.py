@@ -744,6 +744,142 @@ def test_session_route_reads_seeded_persisted_spine_on_cold_start(tmp_path) -> N
     assert a_client.list_approvals_calls == []
 
 
+def test_session_route_ignores_stale_event_only_approval_without_canonical_pending_record(
+    tmp_path,
+) -> None:
+    store = SessionSpineStore(tmp_path / "session_spine.json")
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "browser download still running",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 4,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-05T05:21:00Z",
+    )
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=BrokenAClient(),
+    )
+    app.state.session_service.record_event(
+        event_type="approval_requested",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:approval:approval:stale-event-only",
+        related_ids={
+            "approval_id": "approval:stale-event-only",
+            "decision_id": "decision:stale-event-only",
+            "native_thread_id": "thr_native_1",
+        },
+        payload={
+            "requested_action": "continue_session",
+            "requested_action_args": {},
+            "decision_options": ["approve", "reject", "execute_action"],
+            "fact_snapshot_version": "fact-v1",
+            "goal_contract_version": "goal-v1",
+            "policy_version": "policy-v1",
+        },
+        occurred_at="2026-04-05T05:22:00Z",
+    )
+    c = TestClient(app)
+
+    session_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+    approvals_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert approvals_response.status_code == 200
+    session_data = session_response.json()["data"]
+    approvals_data = approvals_response.json()["data"]
+
+    assert session_data["session"]["session_state"] != "awaiting_approval"
+    assert session_data["session"]["pending_approval_count"] == 0
+    assert "approval_pending" not in [fact["fact_code"] for fact in session_data["facts"]]
+    assert "awaiting_human_direction" not in [
+        fact["fact_code"] for fact in session_data["facts"]
+    ]
+    assert approvals_data["approvals"] == []
+
+
+def test_session_route_prefers_runtime_over_optional_interaction_events(tmp_path) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "runtime remains authoritative",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-24T05:00:00Z",
+            },
+            approvals=[],
+        ),
+    )
+    app.state.session_service.record_event(
+        event_type="interaction_window_expired",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:interaction-window-expired:repo-a",
+        related_ids={"native_thread_id": "thr_native_1"},
+        payload={"reason": "operator window expired"},
+        occurred_at="2026-04-24T04:55:00Z",
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    data = response.json()["data"]
+    assert data["session"]["session_state"] == "active"
+    assert data["session"]["pending_approval_count"] == 0
+    assert data["progress"]["summary"] == "runtime remains authoritative"
+    assert data["snapshot"]["read_source"] == "live_query_fallback"
+
+
 def test_persisted_session_route_merges_recovery_suppression_fact_from_session_events(tmp_path) -> None:
     _seed_persisted_session_spine(tmp_path)
     a_client = BrokenAClient()
@@ -1135,7 +1271,7 @@ def test_persisted_session_projection_facts_preserve_source_state_summary_and_co
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["snapshot"]["read_source"] == "session_events_projection"
+    assert data["snapshot"]["read_source"] == "persisted_spine"
     assert data["session"]["headline"] == "editing recovery path"
     assert data["progress"]["summary"] == "editing recovery path"
     assert data["progress"]["context_pressure"] == "medium"
@@ -1657,7 +1793,7 @@ def test_session_route_exposes_persisted_snapshot_freshness_semantics(tmp_path) 
     assert a_client.list_approvals_calls == []
 
 
-def test_session_route_prefers_session_service_projection_over_persisted_spine(tmp_path) -> None:
+def test_session_route_overlays_session_service_projection_onto_persisted_spine(tmp_path) -> None:
     _seed_persisted_session_spine(tmp_path)
     a_client = BrokenAClient()
     app = create_app(
@@ -1718,7 +1854,7 @@ def test_session_route_prefers_session_service_projection_over_persisted_spine(t
     facts_data = facts_response.json()["data"]
     inbox_data = inbox_response.json()["data"]
 
-    assert session_data["snapshot"]["read_source"] == "session_events_projection"
+    assert session_data["snapshot"]["read_source"] == "persisted_spine"
     assert session_data["session"]["native_thread_id"] == "thr_native_1"
     assert session_data["session"]["session_state"] == "active"
     assert session_data["progress"]["project_id"] == "repo-a"
@@ -1820,7 +1956,7 @@ def test_session_route_projects_human_override_and_notification_status_from_sess
     session_data = session_response.json()["data"]
     facts_data = facts_response.json()["data"]
 
-    assert session_data["snapshot"]["read_source"] == "session_events_projection"
+    assert session_data["snapshot"]["read_source"] == "persisted_spine"
     assert [fact["fact_code"] for fact in facts_data["facts"]] == [
         "human_override_recorded",
         "notification_receipt_recorded",
