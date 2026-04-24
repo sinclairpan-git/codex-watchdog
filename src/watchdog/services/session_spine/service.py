@@ -1940,6 +1940,48 @@ def _list_actionable_canonical_approval_rows(
     )
 
 
+def _canonical_approval_id_sets(
+    approval_store: CanonicalApprovalStore | None,
+    *,
+    project_id: str | None = None,
+) -> tuple[set[str], set[str]]:
+    if approval_store is None:
+        return set(), set()
+    known_ids = {
+        record.approval_id
+        for record in approval_store.list_records()
+        if project_id is None or record.project_id == project_id
+    }
+    actionable_ids = {
+        str(row.get("approval_id") or "")
+        for row in _list_actionable_canonical_approval_rows(
+            approval_store,
+            project_id=project_id,
+        )
+        if str(row.get("approval_id") or "")
+    }
+    return known_ids, actionable_ids
+
+
+def _filter_persisted_approval_projections(
+    approvals: list[ApprovalProjection],
+    *,
+    approval_store: CanonicalApprovalStore | None,
+    project_id: str | None = None,
+) -> list[ApprovalProjection]:
+    known_ids, actionable_ids = _canonical_approval_id_sets(
+        approval_store,
+        project_id=project_id,
+    )
+    if not known_ids:
+        return list(approvals)
+    return [
+        approval
+        for approval in approvals
+        if approval.approval_id not in known_ids or approval.approval_id in actionable_ids
+    ]
+
+
 def _merge_approval_rows(
     persisted_approvals: list[ApprovalProjection],
     canonical_rows: list[dict[str, Any]],
@@ -2008,6 +2050,7 @@ def _build_session_read_bundle_from_persisted_record(
     dispatch_cooldown_seconds: float = 0.0,
     liveness_now: datetime | None = None,
 ) -> SessionReadBundle:
+    approval_fact_codes = {"approval_pending", "awaiting_human_direction"}
     session_events = (
         _list_project_session_events(
             session_service,
@@ -2111,12 +2154,33 @@ def _build_session_read_bundle_from_persisted_record(
         state_store=orchestration_state_store,
         dispatch_cooldown_seconds=dispatch_cooldown_seconds,
     )
+    effective_approval_queue = _filter_persisted_approval_projections(
+        record.approval_queue,
+        approval_store=approval_store,
+        project_id=record.project_id,
+    )
+    effective_facts = list(record.facts)
+    effective_session = record.session
+    if effective_approval_queue != list(record.approval_queue):
+        if not effective_approval_queue:
+            effective_facts = [
+                fact for fact in record.facts if fact.fact_code not in approval_fact_codes
+            ]
+        projected_task = _task_from_persisted_record(record, approvals=effective_approval_queue)
+        effective_session = build_session_projection(
+            project_id=record.project_id,
+            task=projected_task,
+            approvals=[
+                approval.model_dump(mode="json") for approval in effective_approval_queue
+            ],
+            facts=effective_facts,
+        )
     return SessionReadBundle(
         project_id=record.project_id,
         task=None,
         approvals=[],
-        facts=list(record.facts),
-        session=record.session,
+        facts=effective_facts,
+        session=effective_session,
         progress=record.progress.model_copy(
             update={
                 "recovery_outcome": (recovery or {}).get("recovery_outcome"),
@@ -2143,7 +2207,7 @@ def _build_session_read_bundle_from_persisted_record(
                 "continuation_control_plane": continuation_control_plane,
             }
         ),
-        approval_queue=list(record.approval_queue),
+        approval_queue=effective_approval_queue,
         snapshot=_build_snapshot_read_semantics_from_persisted_record(
             record,
             freshness_window_seconds=freshness_window_seconds,
@@ -2528,12 +2592,16 @@ def build_approval_inbox_bundle(
     )
     if store is not None:
         persisted = sorted(
-            [
-            approval
-            for record in store.list_records()
-            for approval in record.approval_queue
-            if project_id is None or approval.project_id == project_id
-            ],
+            _filter_persisted_approval_projections(
+                [
+                approval
+                for record in store.list_records()
+                for approval in record.approval_queue
+                if project_id is None or approval.project_id == project_id
+                ],
+                approval_store=approval_store,
+                project_id=project_id,
+            ),
             key=_approval_sort_key,
         )
         if persisted or canonical_rows:
