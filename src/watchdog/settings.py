@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     delivery_worker_interval_seconds: float = 5.0
     delivery_initial_backoff_seconds: float = 5.0
     delivery_max_attempts: int = 3
+    delivery_duplicate_suppression_window_seconds: float = 600.0
     memory_preview_ai_autosdlc_cursor_enabled: bool = False
     approval_expiration_seconds: float = 0.0
     ops_blocked_too_long_seconds: float = 900.0

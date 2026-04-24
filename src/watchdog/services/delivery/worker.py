@@ -534,6 +534,8 @@ class DeliveryWorker:
                     record.project_id,
                     record.session_id,
                     str(record.effective_native_thread_id or ""),
+                    str(payload.get("receive_id") or "").strip(),
+                    str(payload.get("receive_id_type") or "").strip(),
                     str(payload.get("requested_action") or "").strip(),
                     action_args if isinstance(action_args, dict) else {},
                     str(payload.get("reason") or payload.get("summary") or "").strip(),
@@ -553,6 +555,8 @@ class DeliveryWorker:
                     record.project_id,
                     record.session_id,
                     str(record.effective_native_thread_id or ""),
+                    str(payload.get("receive_id") or "").strip(),
+                    str(payload.get("receive_id_type") or "").strip(),
                     str(payload.get("decision_result") or "").strip(),
                     str(payload.get("action_name") or "").strip(),
                     action_args if isinstance(action_args, dict) else {},
@@ -562,6 +566,30 @@ class DeliveryWorker:
                 separators=(",", ":"),
             )
         return None
+
+    def _within_duplicate_suppression_window(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        candidate: DeliveryOutboxRecord,
+    ) -> bool:
+        window_seconds = max(
+            self._settings.delivery_duplicate_suppression_window_seconds,
+            0.0,
+        )
+        if window_seconds <= 0:
+            return False
+        record_created_at = _parse_iso(record.created_at)
+        candidate_created_at = _parse_iso(candidate.created_at)
+        if record_created_at is None or candidate_created_at is None:
+            return True
+        elapsed = abs(
+            (
+                record_created_at.astimezone(UTC)
+                - candidate_created_at.astimezone(UTC)
+            ).total_seconds()
+        )
+        return elapsed <= window_seconds
 
     def _duplicate_delivered_record(self, record: DeliveryOutboxRecord) -> str | None:
         fingerprint = self._duplicate_delivery_fingerprint(record)
@@ -573,6 +601,11 @@ class DeliveryWorker:
             if candidate.delivery_status != "delivered":
                 continue
             if self._duplicate_delivery_fingerprint(candidate) == fingerprint:
+                if not self._within_duplicate_suppression_window(
+                    record=record,
+                    candidate=candidate,
+                ):
+                    continue
                 return candidate.envelope_id
         return None
 
@@ -898,6 +931,8 @@ class DeliveryWorker:
                 reason=inactive_project_reason,
                 now=now,
             )
+        record = self._apply_dynamic_delivery_route(record=record, now=now)
+        notification_payload = self._notification_payload(record)
         duplicate_of = self._duplicate_delivered_record(record)
         if duplicate_of is not None:
             return self._apply_duplicate_delivery_suppression(
@@ -915,8 +950,6 @@ class DeliveryWorker:
                 next_retry_at=next_retry_at,
                 now=now,
             )
-        record = self._apply_dynamic_delivery_route(record=record, now=now)
-        notification_payload = self._notification_payload(record)
         if notification_payload is not None:
             self._record_notification_announced(record=record, payload=notification_payload)
         result = self._delivery_client.deliver_record(record)
