@@ -1975,6 +1975,71 @@ def test_delivery_worker_allows_duplicate_decision_notice_after_suppression_wind
     assert client.calls == [first_record.envelope_id, second_record.envelope_id]
 
 
+def test_delivery_worker_allows_duplicate_decision_notice_after_static_route_changes(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    second_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v8",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    (first_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
+
+    client = _OrderedClient("never-match")
+    first_worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path).model_copy(
+            update={
+                "delivery_transport": "feishu",
+                "feishu_receive_id": "ou_old_owner",
+                "feishu_receive_id_type": "open_id",
+            }
+        ),
+    )
+    second_worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        settings=_settings(tmp_path).model_copy(
+            update={
+                "delivery_transport": "feishu",
+                "feishu_receive_id": "ou_new_owner",
+                "feishu_receive_id_type": "open_id",
+            }
+        ),
+    )
+
+    delivered = first_worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+    (second_record,) = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))
+    resent = second_worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 2, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == first_record.envelope_id
+    assert resent is not None
+    assert resent.envelope_id == second_record.envelope_id
+    assert resent.delivery_status == "delivered"
+    assert resent.failure_code is None
+    assert client.calls == [first_record.envelope_id, second_record.envelope_id]
+
+
 def test_delivery_worker_defers_non_critical_notifications_during_local_manual_activity_quiet_window(
     tmp_path: Path,
 ) -> None:

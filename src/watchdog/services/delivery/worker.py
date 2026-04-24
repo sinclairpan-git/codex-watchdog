@@ -698,17 +698,36 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         now: datetime,
     ) -> DeliveryOutboxRecord:
-        if self._session_service is None:
-            return record
         transport = str(self._settings.delivery_transport or "").strip().lower()
         if transport not in {"feishu", "feishu-app"}:
-            return record
-        if str(self._settings.feishu_receive_id or "").strip():
             return record
         payload = dict(record.envelope_payload)
         existing_receive_id = str(payload.get("receive_id") or "").strip()
         existing_receive_id_type = str(payload.get("receive_id_type") or "").strip()
         if existing_receive_id and existing_receive_id_type:
+            return record
+        static_receive_id = str(self._settings.feishu_receive_id or "").strip()
+        if static_receive_id:
+            receive_id_type = str(self._settings.feishu_receive_id_type or "").strip()
+            if not receive_id_type:
+                return record
+            payload["receive_id"] = static_receive_id
+            payload["receive_id_type"] = receive_id_type
+            notes = list(record.operator_notes)
+            notes.append(
+                "delivery_route_resolved "
+                "source=settings "
+                f"receive_id_type={receive_id_type}"
+            )
+            updated = record.model_copy(
+                update={
+                    "envelope_payload": payload,
+                    "operator_notes": notes,
+                    "updated_at": _iso_z(now),
+                }
+            )
+            return self._store.update_delivery_record(updated)
+        if self._session_service is None:
             return record
         resolved = self._resolve_dynamic_delivery_route(record)
         if resolved is None:
