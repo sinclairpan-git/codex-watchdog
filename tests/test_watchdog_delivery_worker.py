@@ -1923,6 +1923,70 @@ def test_delivery_worker_suppresses_duplicate_decision_notifications_across_fact
     assert client.calls == [first_record.envelope_id]
 
 
+def test_delivery_worker_preserves_attempt_count_when_suppressing_duplicate_retry(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    second_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v8",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    (retrying_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
+    retrying_record = store.update_delivery_record(
+        retrying_record.model_copy(
+            update={
+                "delivery_status": "retrying",
+                "delivery_attempt": 1,
+                "failure_code": "upstream_503",
+                "next_retry_at": "2026-04-07T00:00:02Z",
+            }
+        )
+    )
+    (delivered_record,) = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))
+    delivered_record = store.update_delivery_record(
+        delivered_record.model_copy(
+            update={
+                "delivery_status": "delivered",
+                "delivery_attempt": 1,
+                "receipt_id": "rcpt_second",
+                "failure_code": None,
+                "next_retry_at": None,
+            }
+        )
+    )
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 2, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == retrying_record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "duplicate_delivery_notice"
+    assert suppressed.delivery_attempt == 1
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=duplicate_delivery_notice "
+        f"duplicate_of={delivered_record.envelope_id}"
+    )
+    assert client.calls == []
+
+
 def test_delivery_worker_allows_duplicate_decision_notice_when_evidence_changes(
     tmp_path: Path,
 ) -> None:

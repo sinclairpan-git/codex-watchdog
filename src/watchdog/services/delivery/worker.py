@@ -418,7 +418,6 @@ class DeliveryWorker:
         updated = record.model_copy(
             update={
                 "delivery_status": "delivery_failed",
-                "delivery_attempt": 0,
                 "failure_code": "duplicate_delivery_notice",
                 "next_retry_at": None,
                 "operator_notes": notes,
