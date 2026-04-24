@@ -1677,6 +1677,50 @@ def test_delivery_worker_suppresses_approval_for_inactive_project_without_downst
     assert client.calls == []
 
 
+def test_delivery_worker_suppresses_decision_notification_for_inactive_project_without_downstream_call(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="active",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+            fact_codes=["project_not_active"],
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "inactive_project"
+    assert suppressed.delivery_attempt == 0
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=inactive_project reason=project_not_active"
+    )
+    assert client.calls == []
+
+
 def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
     tmp_path: Path,
 ) -> None:
@@ -1715,6 +1759,109 @@ def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
     assert delivered.delivery_status == "delivered"
     assert delivered.failure_code is None
     assert client.calls == [record.envelope_id]
+
+
+def test_delivery_worker_suppresses_duplicate_approval_across_fact_snapshots(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a:v7",
+    )
+    second_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v8",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a:v8",
+    )
+    (first_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="awaiting_approval",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+    (second_record,) = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 2, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == first_record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert suppressed is not None
+    assert suppressed.envelope_id == second_record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "duplicate_delivery_notice"
+    assert suppressed.delivery_attempt == 0
+    assert client.calls == [first_record.envelope_id]
+
+
+def test_delivery_worker_suppresses_duplicate_decision_notifications_across_fact_snapshots(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    second_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v8",
+        decision_result="block_and_alert",
+        action_ref="continue_session",
+    )
+    (first_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+    (second_record,) = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 2, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == first_record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert suppressed is not None
+    assert suppressed.envelope_id == second_record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "duplicate_delivery_notice"
+    assert suppressed.delivery_attempt == 0
+    assert client.calls == [first_record.envelope_id]
 
 
 def test_delivery_worker_defers_non_critical_notifications_during_local_manual_activity_quiet_window(
