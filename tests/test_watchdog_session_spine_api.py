@@ -6879,6 +6879,57 @@ def test_watchdog_read_surfaces_keep_newer_persisted_progress_over_older_session
     assert approvals_data["approvals"] == []
 
 
+def test_watchdog_read_keeps_pending_approval_after_later_notification_event(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    app = create_app(settings, runtime_client=BrokenAClient())
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v10"),
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(update={"created_at": "2026-04-07T00:00:00Z"})
+    )
+    app.state.session_service.record_event(
+        event_type="notification_delivery_succeeded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:notification:repo-a:after-approval",
+        related_ids={
+            "native_thread_id": "native:repo-a",
+            "notification_event_id": "event:notification:repo-a",
+        },
+        payload={
+            "notification_kind": "decision_result",
+            "delivery_status": "delivered",
+        },
+        occurred_at="2026-04-07T00:10:00Z",
+    )
+
+    c = TestClient(app)
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    session_data = session_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+    assert session_data["session"]["session_state"] == "awaiting_approval"
+    assert session_data["session"]["pending_approval_count"] == 1
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == [
+        approval.approval_id
+    ]
+
+
 def test_watchdog_restart_preserves_action_receipt_lookup_without_reexecution(tmp_path: Path) -> None:
     settings = Settings(
         api_token="wt",

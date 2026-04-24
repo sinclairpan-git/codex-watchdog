@@ -1035,8 +1035,6 @@ def build_ops_summary(
     receipt_items = receipt_store.list_items()
     if runtime_pending_approvals is None and fetch_runtime_pending_approvals:
         runtime_pending_approvals = _fetch_runtime_pending_approvals(settings)
-    if runtime_pending_approvals is None:
-        runtime_pending_approvals = []
 
     blocked_too_long = _count_blocked_too_long(
         decisions,
@@ -1192,6 +1190,9 @@ def build_ops_health_summary(
     receipt_store: ActionReceiptStore | None = None,
     runtime_pending_approvals: list[dict[str, object]] | None = None,
 ) -> dict[str, int | str]:
+    health_runtime_pending_approvals = (
+        runtime_pending_approvals if runtime_pending_approvals is not None else []
+    )
     summary = build_ops_summary(
         data_dir=data_dir,
         settings=settings,
@@ -1200,8 +1201,8 @@ def build_ops_health_summary(
         approval_store=approval_store,
         delivery_store=delivery_store,
         receipt_store=receipt_store,
-        runtime_pending_approvals=runtime_pending_approvals,
-        fetch_runtime_pending_approvals=runtime_pending_approvals is not None,
+        runtime_pending_approvals=health_runtime_pending_approvals,
+        fetch_runtime_pending_approvals=False,
     )
     return {
         "status": summary.status,

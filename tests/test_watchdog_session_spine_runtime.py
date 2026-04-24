@@ -1012,11 +1012,13 @@ def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_
     )
     snapshot = _read_store(tmp_path)
 
-    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.action_ref for outcome in outcomes] == [None]
     assert [outcome.decision_result for outcome in outcomes] == [None]
-    assert snapshot["sessions"]["repo-a"]["session"]["session_state"] == "active"
+    assert snapshot["sessions"]["repo-a"]["session"]["session_state"] == "blocked"
     assert snapshot["sessions"]["repo-a"]["session"]["pending_approval_count"] == 0
-    assert snapshot["sessions"]["repo-a"]["facts"] == []
+    assert [fact["fact_code"] for fact in snapshot["sessions"]["repo-a"]["facts"]] == [
+        "approval_state_unavailable"
+    ]
     assert app.state.delivery_outbox_store.list_records() == []
 
 

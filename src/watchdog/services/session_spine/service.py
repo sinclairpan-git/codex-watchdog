@@ -444,13 +444,11 @@ def _max_iso8601_timestamp(*values: str | None) -> str | None:
     return best_raw
 
 
-def _approval_row_is_stale_for_task(
-    task: dict[str, Any] | None,
+def _approval_row_is_stale_after_progress_at(
+    progress_at: str | None,
     approval: dict[str, Any],
 ) -> bool:
-    if not isinstance(task, dict):
-        return False
-    task_last_progress = _parse_iso8601(str(task.get("last_progress_at") or "").strip() or None)
+    task_last_progress = _parse_iso8601(str(progress_at or "").strip() or None)
     if task_last_progress is None:
         return False
     approval_requested_at = _parse_iso8601(
@@ -459,6 +457,17 @@ def _approval_row_is_stale_for_task(
     if approval_requested_at is None:
         return False
     return task_last_progress > approval_requested_at
+
+
+def _approval_row_matches_native_thread(
+    approval: dict[str, Any],
+    native_thread_id: str | None,
+) -> bool:
+    target = str(native_thread_id or "").strip()
+    if not target:
+        return True
+    approval_thread = str(approval.get("native_thread_id") or "").strip()
+    return not approval_thread or approval_thread == target
 
 
 def _directory_human_activity_reference_time(task: dict[str, Any] | None) -> datetime | None:
@@ -1564,8 +1573,20 @@ def _build_session_read_bundle_from_session_events(
         persisted_record=persisted_record,
         task=task,
     )
+    projected_native_thread_id = task_native_thread_id(projected_task)
+    stale_approval_progress_at = _max_iso8601_timestamp(
+        str((task or {}).get("last_progress_at") or "").strip() or None,
+        (
+            persisted_record.progress.last_progress_at
+            if persisted_record is not None and persisted_record.progress is not None
+            else None
+        ),
+    )
     filtered_approvals = [
-        approval for approval in approvals if not _approval_row_is_stale_for_task(projected_task, approval)
+        approval
+        for approval in approvals
+        if _approval_row_matches_native_thread(approval, projected_native_thread_id)
+        and not _approval_row_is_stale_after_progress_at(stale_approval_progress_at, approval)
     ]
     if filtered_approvals != approvals:
         approvals = filtered_approvals

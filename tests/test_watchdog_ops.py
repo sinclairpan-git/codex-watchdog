@@ -183,6 +183,7 @@ def test_watchdog_ops_alerts_and_healthz_report_degraded_status(tmp_path: Path) 
     payload = alerts.json()
     assert payload["success"] is True
     assert [item["alert_code"] for item in payload["data"]["alerts"]] == [
+        "approval_pending_too_long",
         "blocked_too_long",
         "delivery_failed",
         "mapping_incomplete",
