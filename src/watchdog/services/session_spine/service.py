@@ -1343,10 +1343,11 @@ def _build_event_projection_task(
     )
     event_native_thread_id = _latest_session_event_native_thread_id(events)
     native_thread_id = str(
-        _event_projection_identity_native_thread_id(
-            task=task,
-            persisted_record=persisted_record,
-            events=events,
+        task_native_thread_id(task)
+        or (
+            event_native_thread_id
+            if persisted_record is None or _has_event_only_fallback_events(events)
+            else ""
         )
         or ""
     ).strip()
