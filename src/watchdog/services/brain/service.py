@@ -486,6 +486,15 @@ class BrainDecisionService:
                 evidence_codes=["project_execution_state_not_active"],
                 remaining_work_hypothesis=["wait until project execution state returns to active"],
             )
+        fact_codes = self._fact_codes(record)
+        if "approval_state_unavailable" in fact_codes:
+            return self._rule_based_intent(
+                record=record,
+                intent="observe_only",
+                rationale="approval state is inconsistent and must be reconciled before continuation",
+                evidence_codes=["approval_state_unavailable"],
+                remaining_work_hypothesis=["reconcile runtime approval state before continuing"],
+            )
         if decision_context.governance_ref.pending_approval:
             return self._rule_based_intent(
                 record=record,
@@ -566,6 +575,9 @@ class BrainDecisionService:
             if "task_completed" in fact_codes:
                 intent = "candidate_closure"
                 rationale = rationale or "session reached a terminal completed state"
+            elif "approval_state_unavailable" in fact_codes:
+                intent = "observe_only"
+                rationale = rationale or "approval state is inconsistent and must be reconciled"
             elif fact_codes.intersection({"approval_pending", "awaiting_human_direction"}):
                 intent = "require_approval"
                 rationale = rationale or "session requires explicit human guidance"

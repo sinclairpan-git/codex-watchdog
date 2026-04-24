@@ -1014,9 +1014,11 @@ def test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_
 
     assert [outcome.action_ref for outcome in outcomes] == [None]
     assert [outcome.decision_result for outcome in outcomes] == [None]
-    assert snapshot["sessions"]["repo-a"]["session"]["session_state"] == "active"
+    assert snapshot["sessions"]["repo-a"]["session"]["session_state"] == "blocked"
     assert snapshot["sessions"]["repo-a"]["session"]["pending_approval_count"] == 0
-    assert snapshot["sessions"]["repo-a"]["facts"] == []
+    assert [fact["fact_code"] for fact in snapshot["sessions"]["repo-a"]["facts"]] == [
+        "approval_state_unavailable"
+    ]
     assert app.state.delivery_outbox_store.list_records() == []
 
 
@@ -1663,6 +1665,95 @@ def test_resident_orchestrator_ignores_orphaned_stale_canonical_approval_when_ru
 
     assert app.state.resident_orchestrator._canonical_pending_approval_projections(record) == []
     assert app.state.resident_orchestrator._active_approvals(record) == []
+
+
+def test_resident_orchestrator_blocks_orphaned_runtime_pending_flag_without_reminting_approval(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+        feishu_interaction_window_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_for_approval",
+            "phase": "planning",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "runtime claims approval is pending but approval list is empty",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "medium",
+            "stuck_level": 4,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[],
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    stale_decision = CanonicalDecisionRecord(
+        decision_id="decision:repo-a:fact-v1:require_user_decision:orphaned-runtime-pending",
+        decision_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        thread_id="session:repo-a",
+        native_thread_id="native:repo-a",
+        approval_id="appr_001",
+        action_ref="continue_session",
+        trigger="resident_orchestrator",
+        decision_result="require_user_decision",
+        risk_class="human_gate",
+        decision_reason="orphaned pending approval should not be reminted",
+        matched_policy_rules=["brain_requires_approval"],
+        why_not_escalated=None,
+        why_escalated="brain intent requires explicit human approval",
+        uncertainty_reasons=[],
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|appr_001",
+        created_at="2026-04-05T05:21:30Z",
+        operator_notes=[],
+        evidence={
+            "decision": {
+                "decision_result": "require_user_decision",
+                "action_ref": "continue_session",
+                "approval_id": "appr_001",
+            }
+        },
+    )
+    materialize_canonical_approval(
+        stale_decision,
+        approval_store=app.state.canonical_approval_store,
+        delivery_outbox_store=app.state.delivery_outbox_store,
+        session_service=app.state.session_service,
+    )
+    app.state.session_spine_runtime.refresh_all()
+
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    assert record.approval_queue == []
+    assert [fact.fact_code for fact in record.facts] == ["approval_state_unavailable"]
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    assert decisions[0].brain_intent == "observe_only"
+    approvals = app.state.canonical_approval_store.list_records()
+    assert len(approvals) == 1
+    assert approvals[0].approval_id == "appr_001"
+    assert approvals[0].status == "superseded"
+    steer_mock.assert_not_called()
 
 
 def test_resident_orchestrator_remints_approval_when_projected_goal_contract_drifts(

@@ -1207,7 +1207,10 @@ def test_feishu_control_command_request_surfaces_active_recovery_suppression(
     assert response.json()["success"] is True
     assert response.json()["data"]["intent_code"] == "get_session"
     assert response.json()["data"]["reply_code"] == "session_projection"
-    assert response.json()["data"]["message"] == "waiting for approval | 恢复抑制=等待新进展"
+    assert (
+        response.json()["data"]["message"]
+        == "waiting for approval | 恢复抑制=等待新进展 | 下一步=卡在哪里"
+    )
     assert response.json()["data"]["progress"]["recovery_suppression_reason"] == (
         "reentry_without_newer_progress"
     )
@@ -1260,7 +1263,7 @@ def test_feishu_control_command_request_surfaces_goal_contract_context(tmp_path:
     assert response.json()["success"] is True
     assert (
         response.json()["data"]["message"]
-        == "waiting for approval | 当前目标=继续把 recovery 自动重入收口到 child continuation"
+        == "waiting for approval | 当前目标=继续把 recovery 自动重入收口到 child continuation | 下一步=卡在哪里"
     )
     assert response.json()["data"]["progress"]["goal_contract_version"] == "goal-v1"
     assert response.json()["data"]["progress"]["current_phase_goal"] == (
@@ -1422,7 +1425,10 @@ def test_feishu_control_command_request_renders_recovery_cooldown_suppression(
 
     assert response.status_code == 200
     assert response.json()["success"] is True
-    assert response.json()["data"]["message"] == "waiting for approval | 恢复抑制=恢复冷却中"
+    assert (
+        response.json()["data"]["message"]
+        == "waiting for approval | 恢复抑制=恢复冷却中 | 下一步=卡在哪里"
+    )
     assert response.json()["data"]["progress"]["recovery_suppression_reason"] == (
         "cooldown_window_active"
     )
@@ -1469,7 +1475,10 @@ def test_feishu_control_command_request_renders_recovery_in_flight_suppression(
 
     assert response.status_code == 200
     assert response.json()["success"] is True
-    assert response.json()["data"]["message"] == "waiting for approval | 恢复抑制=恢复进行中"
+    assert (
+        response.json()["data"]["message"]
+        == "waiting for approval | 恢复抑制=恢复进行中 | 下一步=卡在哪里"
+    )
     assert response.json()["data"]["progress"]["recovery_suppression_reason"] == (
         "recovery_in_flight"
     )

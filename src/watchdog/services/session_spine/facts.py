@@ -115,6 +115,7 @@ def build_fact_records(
         ]
 
     pending_approvals = [approval for approval in approvals if is_actionable_approval(approval)]
+    task_pending_approval = bool(_task_value(task, "pending_approval", False))
     if is_terminal_task(task) and not pending_approvals:
         return [
             _build_fact(
@@ -129,9 +130,8 @@ def build_fact_records(
             )
         ]
     if pending_approvals:
-        related_ids: dict[str, Any] = {
-            "approval_id": str(pending_approvals[0].get("approval_id") or "")
-        }
+        related_ids: dict[str, Any] = {}
+        related_ids["approval_id"] = str(pending_approvals[0].get("approval_id") or "")
         facts.append(
             _build_fact(
                 project_id,
@@ -157,6 +157,21 @@ def build_fact_records(
                 observed_at=observed_at,
             )
         )
+    elif task_pending_approval:
+        return [
+            _build_fact(
+                project_id,
+                fact_code="approval_state_unavailable",
+                fact_kind="blocker",
+                severity="warning",
+                summary="approval state unavailable",
+                detail=(
+                    "runtime reports pending approval but no actionable approval object is available"
+                ),
+                source="watchdog_projection",
+                observed_at=observed_at,
+            )
+        ]
 
     project_execution_state = normalize_project_execution_state(task)
     if bool(_task_value(task, "authoritative_project_execution_state_missing", False)):

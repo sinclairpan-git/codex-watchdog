@@ -257,6 +257,8 @@ class SessionSpineRuntime:
             approval_id = str(approval.get("approval_id") or "").strip()
             if not approval_id:
                 continue
+            if not rows_by_id and bool((task or {}).get("pending_approval")):
+                continue
             if approval_id not in rows_by_id and self._canonical_overlay_is_stale_for_task(
                 task=task,
                 approval=approval,

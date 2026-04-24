@@ -173,7 +173,7 @@ def test_watchdog_ops_alerts_and_healthz_report_degraded_status(tmp_path: Path) 
     health = client.get("/healthz")
     assert health.status_code == 200
     assert health.json()["status"] == "degraded"
-    assert health.json()["active_alerts"] == 5
+    assert health.json()["active_alerts"] == 4
 
     alerts = client.get(
         "/api/v1/watchdog/ops/alerts",
@@ -3438,6 +3438,82 @@ def test_build_ops_summary_ignores_provider_degradation_after_newer_local_manual
     assert summary.status == "ok"
     assert summary.active_alerts == 0
     assert summary.alerts == []
+
+
+def test_watchdog_healthz_matches_filtered_provider_degradation_counts(
+    tmp_path: Path,
+) -> None:
+    decision_store = PolicyDecisionStore(tmp_path / "policy_decisions.json")
+    spine_store = SessionSpineStore(tmp_path / "session_spine.json")
+    settings = Settings(data_dir=str(tmp_path))
+
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "session:repo-a",
+        "status": "running",
+        "phase": "planning",
+        "project_execution_state": "active",
+        "pending_approval": False,
+        "last_summary": "operator has manually taken over after degraded provider decision",
+        "files_touched": [],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2099-01-01T00:00:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(project_id="repo-a", task=task, approvals=[], facts=facts),
+        progress=build_task_progress_view(project_id="repo-a", task=task, facts=facts),
+        facts=facts,
+        approval_queue=[],
+        last_local_manual_activity_at="2099-01-01T00:10:00Z",
+        last_refreshed_at="2099-01-01T00:10:30Z",
+    )
+    decision_store.put(
+        CanonicalDecisionRecord(
+            decision_id="decision:provider-degrade-healthz-filtered",
+            decision_key="session:repo-a|fact-v7|policy-v1|allow|continue_session|",
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_native_1",
+            approval_id=None,
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            brain_intent="observe_only",
+            runtime_disposition="block_and_alert",
+            decision_result="block_and_alert",
+            risk_class="hard_block",
+            decision_reason="brain observed state without proposing execution",
+            matched_policy_rules=["brain_observe_only"],
+            why_not_escalated=None,
+            why_escalated="brain intent is observe_only",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v7",
+            idempotency_key="session:repo-a|fact-v7|policy-v1|block_and_alert|continue_session|",
+            created_at="2099-01-01T00:00:00Z",
+            operator_notes=[],
+            evidence={
+                "decision_trace": {
+                    "provider": "openai-compatible",
+                    "model": "MiniMax-M2.7",
+                    "degrade_reason": "provider_unavailable",
+                }
+            },
+        )
+    )
+
+    summary = build_ops_summary(data_dir=tmp_path, settings=settings, decision_store=decision_store)
+    health = build_ops_health_summary(data_dir=tmp_path, settings=settings, decision_store=decision_store)
+
+    assert summary.status == "ok"
+    assert summary.active_alerts == 0
+    assert summary.alerts == []
+    assert health["status"] == "ok"
+    assert health["active_alerts"] == 0
 
 
 def test_build_ops_summary_ignores_blocked_too_long_for_stale_shadow_session(

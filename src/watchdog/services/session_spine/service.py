@@ -428,6 +428,48 @@ def _task_liveness_reference_time(task: dict[str, Any] | None) -> datetime | Non
     return best
 
 
+def _max_iso8601_timestamp(*values: str | None) -> str | None:
+    best_raw: str | None = None
+    best_dt: datetime | None = None
+    for value in values:
+        normalized = str(value or "").strip()
+        if not normalized:
+            continue
+        parsed = _parse_iso8601(normalized)
+        if parsed is None:
+            continue
+        if best_dt is None or parsed > best_dt:
+            best_dt = parsed
+            best_raw = normalized
+    return best_raw
+
+
+def _approval_row_is_stale_after_progress_at(
+    progress_at: str | None,
+    approval: dict[str, Any],
+) -> bool:
+    task_last_progress = _parse_iso8601(str(progress_at or "").strip() or None)
+    if task_last_progress is None:
+        return False
+    approval_requested_at = _parse_iso8601(
+        str(approval.get("requested_at") or approval.get("created_at") or "").strip() or None
+    )
+    if approval_requested_at is None:
+        return False
+    return task_last_progress > approval_requested_at
+
+
+def _approval_row_matches_native_thread(
+    approval: dict[str, Any],
+    native_thread_id: str | None,
+) -> bool:
+    target = str(native_thread_id or "").strip()
+    if not target:
+        return True
+    approval_thread = str(approval.get("native_thread_id") or "").strip()
+    return not approval_thread or approval_thread == target
+
+
 def _directory_human_activity_reference_time(task: dict[str, Any] | None) -> datetime | None:
     if not isinstance(task, dict):
         return None
@@ -1073,6 +1115,23 @@ def _latest_session_event_native_thread_id(events: list[SessionEventRecord]) -> 
     return None
 
 
+def _event_projection_identity_native_thread_id(
+    *,
+    task: dict[str, Any] | None,
+    persisted_record: PersistedSessionRecord | None,
+    events: list[SessionEventRecord],
+) -> str | None:
+    task_thread_id = task_native_thread_id(task)
+    if task_thread_id:
+        return task_thread_id
+    event_thread_id = _latest_session_event_native_thread_id(events)
+    if event_thread_id and (persisted_record is None or _has_event_only_fallback_events(events)):
+        return event_thread_id
+    if persisted_record is not None and persisted_record.effective_native_thread_id:
+        return persisted_record.effective_native_thread_id
+    return event_thread_id
+
+
 def _project_session_events_for_native_thread(
     session_service: SessionService,
     native_thread_id: str,
@@ -1347,14 +1406,14 @@ def _build_event_projection_task(
         if suppression_last_progress_at:
             event_last_progress_at = suppression_last_progress_at
             break
-    last_progress_at = (
-        event_last_progress_at
-        or str((task or {}).get("last_progress_at") or "").strip()
-        or (
+    last_progress_at = _max_iso8601_timestamp(
+        event_last_progress_at,
+        str((task or {}).get("last_progress_at") or "").strip() or None,
+        (
             persisted_record.progress.last_progress_at
             if persisted_record is not None
             else None
-        )
+        ),
     )
     preserve_source_state = (
         task is not None
@@ -1531,6 +1590,49 @@ def _build_session_read_bundle_from_session_events(
         persisted_record=persisted_record,
         task=task,
     )
+    projected_native_thread_id = _event_projection_identity_native_thread_id(
+        task=task,
+        persisted_record=persisted_record,
+        events=events,
+    )
+    stale_approval_progress_at = _max_iso8601_timestamp(
+        str((task or {}).get("last_progress_at") or "").strip() or None,
+        (
+            persisted_record.progress.last_progress_at
+            if persisted_record is not None and persisted_record.progress is not None
+            else None
+        ),
+    )
+    non_stale_approvals = [
+        approval
+        for approval in approvals
+        if not _approval_row_is_stale_after_progress_at(stale_approval_progress_at, approval)
+    ]
+    has_projected_thread_approval = any(
+        _approval_row_matches_native_thread(approval, projected_native_thread_id)
+        and str(approval.get("native_thread_id") or "").strip()
+        for approval in non_stale_approvals
+    )
+    require_projected_thread_approval = bool(
+        projected_native_thread_id and _has_event_only_fallback_events(events)
+    )
+    filtered_approvals = [
+        approval
+        for approval in non_stale_approvals
+        if (
+            not (require_projected_thread_approval or has_projected_thread_approval)
+            or _approval_row_matches_native_thread(approval, projected_native_thread_id)
+        )
+    ]
+    if filtered_approvals != approvals:
+        approvals = filtered_approvals
+        projected_task = _build_event_projection_task(
+            project_id=project_id,
+            approvals=approvals,
+            events=events,
+            persisted_record=persisted_record,
+            task=task,
+        )
     if liveness_now is not None:
         projected_task = _directory_task_with_projected_active_state(projected_task) or projected_task
         projected_task = _task_with_authoritative_project_execution_state(
@@ -1556,15 +1658,7 @@ def _build_session_read_bundle_from_session_events(
         project_id=project_id,
         events=events,
     )
-    has_blocking_persisted_facts = persisted_record is not None and any(
-        fact.fact_code in {"approval_pending", "awaiting_human_direction", "project_not_active"}
-        for fact in persisted_record.facts
-    )
-    facts = (
-        event_facts
-        if not approvals and event_facts and not has_blocking_persisted_facts
-        else _merge_fact_records(approval_facts, event_facts)
-    )
+    facts = _merge_fact_records(approval_facts, event_facts)
     native_thread_id = task_native_thread_id(projected_task)
     recovery = _build_recovery_projection(
         session_service=session_service,
@@ -1976,6 +2070,27 @@ def _filter_persisted_approval_projections(
     ]
 
 
+def _persisted_record_has_orphaned_approval_state(
+    record: PersistedSessionRecord,
+    *,
+    canonical_approvals: list[dict[str, Any]],
+    session_events: list[SessionEventRecord],
+) -> bool:
+    has_persisted_approval_state = bool(record.approval_queue) or any(
+        fact.fact_code in {"approval_pending", "awaiting_human_direction"}
+        for fact in record.facts
+    )
+    if not has_persisted_approval_state:
+        return False
+    if canonical_approvals:
+        return False
+    if not any(event.event_type in SESSION_EVENT_FACT_TYPES for event in session_events):
+        return False
+    if _has_relevant_approval_projection_events(session_events):
+        return False
+    return True
+
+
 def _merge_approval_rows(
     persisted_approvals: list[ApprovalProjection],
     canonical_rows: list[dict[str, Any]],
@@ -2258,6 +2373,11 @@ def build_session_read_bundle(
 ) -> SessionReadBundle:
     session_events: list[SessionEventRecord] = []
     persisted_record = store.get(project_id) if store is not None else None
+    canonical_approvals = _list_actionable_canonical_approval_rows(
+        approval_store,
+        project_id=project_id,
+    )
+    should_verify_orphaned_persisted_approval = False
     if session_service is not None:
         session_events = _list_project_session_events(
             session_service,
@@ -2266,16 +2386,22 @@ def build_session_read_bundle(
         )
     if store is not None:
         if persisted_record is not None:
-            return _build_session_read_bundle_from_persisted_record(
+            should_verify_orphaned_persisted_approval = _persisted_record_has_orphaned_approval_state(
                 persisted_record,
-                approval_store=approval_store,
-                freshness_window_seconds=freshness_window_seconds,
-                session_service=session_service,
-                decision_store=decision_store,
-                receipt_store=receipt_store,
-                orchestration_state_store=orchestration_state_store,
-                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                canonical_approvals=canonical_approvals,
+                session_events=session_events,
             )
+            if not should_verify_orphaned_persisted_approval:
+                return _build_session_read_bundle_from_persisted_record(
+                    persisted_record,
+                    approval_store=approval_store,
+                    freshness_window_seconds=freshness_window_seconds,
+                    session_service=session_service,
+                    decision_store=decision_store,
+                    receipt_store=receipt_store,
+                    orchestration_state_store=orchestration_state_store,
+                    dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+                )
     if (
         persisted_record is None
         and session_service is not None
@@ -2295,6 +2421,17 @@ def build_session_read_bundle(
         task = _load_task_or_raise(client, project_id)
         approvals = _load_approvals_or_raise(client, project_id)
     except SessionSpineUpstreamError:
+        if should_verify_orphaned_persisted_approval and persisted_record is not None:
+            return _build_session_read_bundle_from_persisted_record(
+                persisted_record,
+                approval_store=approval_store,
+                freshness_window_seconds=freshness_window_seconds,
+                session_service=session_service,
+                decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+            )
         if session_service is not None and _has_session_event_bundle_source(session_events):
             return _build_session_read_bundle_from_session_events(
                 project_id=project_id,
@@ -2585,19 +2722,52 @@ def build_approval_inbox_bundle(
         project_id=project_id,
     )
     if store is not None:
+        persisted_records = [
+            record
+            for record in store.list_records()
+            if project_id is None or record.project_id == project_id
+        ]
         persisted = sorted(
             _filter_persisted_approval_projections(
                 [
-                approval
-                for record in store.list_records()
-                for approval in record.approval_queue
-                if project_id is None or approval.project_id == project_id
+                    approval
+                    for record in persisted_records
+                    for approval in record.approval_queue
                 ],
                 approval_store=approval_store,
                 project_id=project_id,
             ),
             key=_approval_sort_key,
         )
+        if project_id is not None:
+            persisted_record = next(
+                (record for record in persisted_records if record.project_id == project_id),
+                None,
+            )
+            session_events = (
+                _list_project_session_events(session_service, project_id)
+                if session_service is not None
+                else []
+            )
+            if (
+                persisted_record is not None
+                and persisted
+                and _persisted_record_has_orphaned_approval_state(
+                    persisted_record,
+                    canonical_approvals=canonical_rows,
+                    session_events=session_events,
+                )
+            ):
+                try:
+                    approvals = _load_approvals_or_raise(client, project_id)
+                except SessionSpineUpstreamError:
+                    approvals = None
+                else:
+                    return ApprovalInboxReadBundle(
+                        project_id=project_id,
+                        approvals=approvals,
+                        approval_inbox=build_approval_inbox_projections(approvals=approvals),
+                    )
         if persisted or canonical_rows:
             merged = list(persisted)
             existing_ids = {approval.approval_id for approval in merged}
