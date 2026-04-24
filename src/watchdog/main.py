@@ -441,6 +441,7 @@ def create_app(
     app.state.session_spine_runtime = SessionSpineRuntime(
         client=app.state.runtime_client,
         store=app.state.session_spine_store,
+        approval_store=app.state.canonical_approval_store,
     )
     app.state.resident_orchestration_state_store = ResidentOrchestrationStateStore(
         Path(settings.data_dir) / "resident_orchestrator.json"

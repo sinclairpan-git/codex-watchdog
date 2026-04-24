@@ -240,6 +240,12 @@ SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES = frozenset(
 )
 SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES |= SESSION_EVENT_GOAL_CONTRACT_TYPES
 SESSION_EVENT_PROJECTION_TYPES = SESSION_EVENT_APPROVAL_TYPES | SESSION_EVENT_FACT_TYPES
+SESSION_EVENT_RUNTIME_OPTIONAL_FALLBACK_TYPES = frozenset(
+    {
+        "interaction_context_superseded",
+        "interaction_window_expired",
+    }
+)
 
 
 def _approval_sort_key(approval: ApprovalProjection) -> tuple[bool, str, str]:
@@ -1039,6 +1045,16 @@ def _has_event_only_fallback_events(events: list[SessionEventRecord]) -> bool:
     return any(event.event_type in SESSION_EVENT_EVENT_ONLY_FALLBACK_TYPES for event in events)
 
 
+def _has_session_event_bundle_source(events: list[SessionEventRecord]) -> bool:
+    return _has_relevant_session_projection_events(events) or _has_event_only_fallback_events(events)
+
+
+def _has_runtime_optional_session_event_source(events: list[SessionEventRecord]) -> bool:
+    return _has_relevant_session_projection_events(events) or any(
+        event.event_type in SESSION_EVENT_RUNTIME_OPTIONAL_FALLBACK_TYPES for event in events
+    )
+
+
 def _has_relevant_approval_projection_events(events: list[SessionEventRecord]) -> bool:
     return any(event.event_type in SESSION_EVENT_APPROVAL_TYPES for event in events)
 
@@ -1272,9 +1288,14 @@ def _build_event_projection_task(
         str((goal_contract.metadata if goal_contract is not None else {}).get("last_summary") or "").strip()
         or (goal_contract.current_phase_goal if goal_contract is not None else None)
     )
+    event_native_thread_id = _latest_session_event_native_thread_id(events)
     native_thread_id = str(
         task_native_thread_id(task)
-        or (persisted_record.effective_native_thread_id if persisted_record is not None else "")
+        or (
+            event_native_thread_id
+            if persisted_record is None or _has_event_only_fallback_events(events)
+            else ""
+        )
         or ""
     ).strip()
     if not native_thread_id:
@@ -1285,7 +1306,11 @@ def _build_event_projection_task(
                     for approval in approvals
                     if str(approval.get("native_thread_id") or "").strip()
                 ),
-                "",
+                (
+                    persisted_record.effective_native_thread_id
+                    if persisted_record is not None
+                    else event_native_thread_id or ""
+                ),
             )
             or ""
         ).strip()
@@ -1445,6 +1470,7 @@ def _build_session_read_bundle_from_session_events(
     liveness_now: datetime | None = None,
 ) -> SessionReadBundle:
     event_approvals = _build_approval_rows_from_session_events(events)
+    has_approval_projection_events = _has_relevant_approval_projection_events(events)
     terminal_event_approval_ids: set[str] = set()
     for event in events:
         if event.event_type == "approval_requested":
@@ -1457,6 +1483,11 @@ def _build_session_read_bundle_from_session_events(
     canonical_rows = _list_actionable_canonical_approval_rows(
         approval_store,
         project_id=project_id,
+    )
+    persisted_rows = (
+        [_approval_projection_to_row(approval) for approval in persisted_record.approval_queue]
+        if persisted_record is not None and not has_approval_projection_events
+        else []
     )
     known_canonical_ids: set[str] = set()
     actionable_canonical_ids = {
@@ -1471,12 +1502,21 @@ def _build_session_read_bundle_from_session_events(
             if record.project_id == project_id
         }
     approvals_by_id: dict[str, dict[str, Any]] = {}
+    for row in persisted_rows:
+        approval_id = str(row.get("approval_id") or "")
+        if not approval_id or approval_id in terminal_event_approval_ids:
+            continue
+        if approval_store is not None:
+            if approval_id in known_canonical_ids and approval_id not in actionable_canonical_ids:
+                continue
+        approvals_by_id[approval_id] = dict(row)
     for row in event_approvals:
         approval_id = str(row.get("approval_id") or "")
         if not approval_id:
             continue
-        if approval_id in known_canonical_ids and approval_id not in actionable_canonical_ids:
-            continue
+        if approval_store is not None:
+            if approval_id not in actionable_canonical_ids:
+                continue
         approvals_by_id[approval_id] = dict(row)
     for row in canonical_rows:
         approval_id = str(row.get("approval_id") or "")
@@ -1981,62 +2021,27 @@ def _build_session_read_bundle_from_persisted_record(
         approval_store,
         project_id=record.project_id,
     )
-    persisted_approval_rows = [
-        _approval_projection_to_row(approval) for approval in record.approval_queue
-    ]
-    approvals = (
-        _merge_approval_rows(record.approval_queue, canonical_approvals)
-        if canonical_approvals
-        else persisted_approval_rows
-    )
-    if canonical_approvals or _has_event_only_fallback_events(session_events):
-        synthesized_task = _task_from_persisted_record(
-            record,
-            approvals=approvals,
-            native_thread_id=_latest_session_event_native_thread_id(session_events),
-        )
-        if liveness_now is not None:
-            synthesized_task = (
-                _directory_task_with_projected_active_state(synthesized_task)
-                or synthesized_task
-            )
-        bundle = _build_session_read_bundle(
+    if (
+        canonical_approvals
+        or _has_session_event_bundle_source(session_events)
+    ):
+        bundle = _build_session_read_bundle_from_session_events(
             project_id=record.project_id,
-            task=synthesized_task,
-            approvals=approvals,
+            events=session_events,
+            persisted_record=record,
+            approval_store=approval_store,
             session_service=session_service,
             decision_store=decision_store,
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
             dispatch_cooldown_seconds=dispatch_cooldown_seconds,
-            liveness_now=(
-                _directory_projected_task_liveness_reference_time(
-                    _directory_task_with_projected_active_state(synthesized_task),
-                    now=liveness_now,
-                )
-                if liveness_now is not None
-                else None
-            ),
-        )
-        event_facts = (
-            build_session_service_fact_records(project_id=record.project_id, events=session_events)
-            if session_events
-            else []
-        )
-        has_blocking_persisted_facts = any(
-            fact.fact_code in {"approval_pending", "awaiting_human_direction", "project_not_active"}
-            for fact in record.facts
-        )
-        facts = (
-            event_facts
-            if not canonical_approvals and event_facts and not has_blocking_persisted_facts
-            else bundle.facts
+            liveness_now=liveness_now,
         )
         return SessionReadBundle(
             project_id=bundle.project_id,
             task=bundle.task,
             approvals=bundle.approvals,
-            facts=facts,
+            facts=bundle.facts,
             session=bundle.session,
             progress=bundle.progress,
             approval_queue=bundle.approval_queue,
@@ -2201,18 +2206,6 @@ def build_session_read_bundle(
             project_id,
             include_child_event_only_fallbacks=True,
         )
-        if _has_relevant_session_projection_events(session_events):
-            return _build_session_read_bundle_from_session_events(
-                project_id=project_id,
-                events=session_events,
-                persisted_record=persisted_record,
-                approval_store=approval_store,
-                session_service=session_service,
-                decision_store=decision_store,
-                receipt_store=receipt_store,
-                orchestration_state_store=orchestration_state_store,
-                dispatch_cooldown_seconds=dispatch_cooldown_seconds,
-            )
     if store is not None:
         if persisted_record is not None:
             return _build_session_read_bundle_from_persisted_record(
@@ -2225,11 +2218,26 @@ def build_session_read_bundle(
                 orchestration_state_store=orchestration_state_store,
                 dispatch_cooldown_seconds=dispatch_cooldown_seconds,
             )
+    if (
+        persisted_record is None
+        and session_service is not None
+        and _has_runtime_optional_session_event_source(session_events)
+    ):
+        return _build_session_read_bundle_from_session_events(
+            project_id=project_id,
+            events=session_events,
+            approval_store=approval_store,
+            session_service=session_service,
+            decision_store=decision_store,
+            receipt_store=receipt_store,
+            orchestration_state_store=orchestration_state_store,
+            dispatch_cooldown_seconds=dispatch_cooldown_seconds,
+        )
     try:
         task = _load_task_or_raise(client, project_id)
         approvals = _load_approvals_or_raise(client, project_id)
     except SessionSpineUpstreamError:
-        if session_service is not None and _has_event_only_fallback_events(session_events):
+        if session_service is not None and _has_session_event_bundle_source(session_events):
             return _build_session_read_bundle_from_session_events(
                 project_id=project_id,
                 events=session_events,
@@ -2296,8 +2304,7 @@ def build_session_read_bundle_by_native_thread(
             native_thread_id=native_thread_id,
         )
         if (
-            _has_relevant_session_projection_events(session_events)
-            or _has_event_only_fallback_events(session_events)
+            _has_session_event_bundle_source(session_events)
         ):
             return _build_session_read_bundle_from_session_events(
                 project_id=persisted_record.project_id,
@@ -2336,8 +2343,7 @@ def build_session_read_bundle_by_native_thread(
                 fallback_project_id,
             )
             if (
-                _has_relevant_session_projection_events(session_events)
-                or _has_event_only_fallback_events(session_events)
+                _has_session_event_bundle_source(session_events)
             ):
                 return _build_session_read_bundle_from_session_events(
                     project_id=fallback_project_id,
@@ -2367,8 +2373,7 @@ def build_session_read_bundle_by_native_thread(
             native_thread_id=native_thread_id,
         )
         if (
-            _has_relevant_session_projection_events(session_events)
-            or _has_event_only_fallback_events(session_events)
+            _has_session_event_bundle_source(session_events)
         ):
             return _build_session_read_bundle_from_session_events(
                 project_id=project_id,

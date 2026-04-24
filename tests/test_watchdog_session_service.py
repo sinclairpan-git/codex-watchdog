@@ -1166,3 +1166,62 @@ def test_session_service_records_continuation_governance_events_with_stable_writ
         "route_key": "repo-a:session:repo-a:thr_native_1:recover_current_branch:fact-v9",
         "source_packet_id": "packet:handoff-v9",
     }
+
+
+def test_session_service_records_distinct_continuation_gate_events_when_route_version_changes(
+    tmp_path: Path,
+) -> None:
+    service = SessionService(SessionServiceStore(tmp_path / "session_service.json"))
+    continuation_identity = "repo-a:session:repo-a:thr_native_1:recover_current_branch"
+
+    first = service.record_continuation_gate_verdict(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        gate_kind="recovery_execution",
+        gate_status="suppressed",
+        decision_source="rules_fallback",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version="fact-v1",
+        snapshot_epoch="session-seq:1",
+        goal_contract_version="goal-v7",
+        suppression_reason="recovery_in_flight",
+        continuation_identity=continuation_identity,
+        route_key=f"{continuation_identity}:fact-v1",
+        source_packet_id="packet:handoff-v9",
+        lineage_refs=["recovery-tx:repo-a", "packet:handoff-v9"],
+        correlation_id="corr:recovery-suppressed:repo-a:txn-1",
+    )
+    second = service.record_continuation_gate_verdict(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        gate_kind="recovery_execution",
+        gate_status="suppressed",
+        decision_source="rules_fallback",
+        decision_class="recover_current_branch",
+        action_ref="execute_recovery",
+        authoritative_snapshot_version="fact-v2",
+        snapshot_epoch="session-seq:2",
+        goal_contract_version="goal-v7",
+        suppression_reason="recovery_in_flight",
+        continuation_identity=continuation_identity,
+        route_key=f"{continuation_identity}:fact-v2",
+        source_packet_id="packet:handoff-v9",
+        lineage_refs=["recovery-tx:repo-a", "packet:handoff-v9"],
+        correlation_id="corr:recovery-suppressed:repo-a:txn-1",
+    )
+
+    events = service.list_events(
+        session_id="session:repo-a",
+        event_type="continuation_gate_evaluated",
+    )
+
+    assert first.event_id != second.event_id
+    assert [event.payload["authoritative_snapshot_version"] for event in events] == [
+        "fact-v1",
+        "fact-v2",
+    ]
+    assert [event.related_ids["route_key"] for event in events] == [
+        f"{continuation_identity}:fact-v1",
+        f"{continuation_identity}:fact-v2",
+    ]

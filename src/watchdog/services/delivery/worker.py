@@ -13,7 +13,6 @@ from watchdog.services.delivery.models import DeliveryAttemptResult
 from watchdog.services.delivery.store import DeliveryOutboxRecord, DeliveryOutboxStore
 from watchdog.services.session_service.service import SessionService
 from watchdog.services.session_spine.store import SessionSpineStore
-from watchdog.services.session_spine.task_state import DEFAULT_ACTIVE_SESSION_STALE_AFTER_SECONDS
 from watchdog.settings import Settings
 
 
@@ -472,22 +471,6 @@ class DeliveryWorker:
             if str(getattr(fact, "fact_code", "") or "").strip()
         }
 
-    @staticmethod
-    def _record_latest_activity_at(session_record: object) -> datetime | None:
-        progress = getattr(session_record, "progress", None)
-        candidates = (
-            getattr(session_record, "last_local_manual_activity_at", None),
-            getattr(progress, "last_progress_at", None),
-        )
-        parsed = [
-            timestamp
-            for timestamp in (_parse_iso(str(candidate or "")) for candidate in candidates)
-            if timestamp is not None
-        ]
-        if not parsed:
-            return None
-        return max(timestamp.astimezone(UTC) for timestamp in parsed)
-
     def _inactive_project_suppression_reason(
         self,
         *,
@@ -508,16 +491,6 @@ class DeliveryWorker:
         fact_codes = self._record_fact_codes(session_record)
         if "project_not_active" in fact_codes:
             return "project_not_active"
-        session = getattr(session_record, "session", None)
-        session_state = str(getattr(session, "session_state", "") or "").strip().lower()
-        if session_state and session_state != "active":
-            return "session_not_active"
-        latest_activity_at = self._record_latest_activity_at(session_record)
-        if latest_activity_at is None:
-            return None
-        inactive_seconds = (now.astimezone(UTC) - latest_activity_at).total_seconds()
-        if inactive_seconds > DEFAULT_ACTIVE_SESSION_STALE_AFTER_SECONDS:
-            return "no_recent_project_activity"
         return None
 
     @staticmethod
