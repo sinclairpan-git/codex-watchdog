@@ -61,7 +61,7 @@ def test_projection_builds_awaiting_approval_session_and_pending_approval_fact()
     assert projected_approvals[0].native_thread_id == "thr_native_1"
 
 
-def test_projection_ignores_stale_pending_approval_flag_without_actionable_approvals() -> None:
+def test_projection_marks_orphaned_pending_approval_flag_as_unavailable_state() -> None:
     raw_task = {
         "project_id": "repo-a",
         "thread_id": "thr_native_1",
@@ -81,11 +81,11 @@ def test_projection_ignores_stale_pending_approval_flag_without_actionable_appro
     session = build_session_projection(project_id="repo-a", task=raw_task, approvals=[], facts=facts)
     progress = build_task_progress_view(project_id="repo-a", task=raw_task, facts=facts)
 
-    assert facts == []
-    assert session.session_state == "active"
-    assert session.attention_state == "normal"
+    assert [fact.fact_code for fact in facts] == ["approval_state_unavailable"]
+    assert session.session_state == "blocked"
+    assert session.attention_state == "critical"
     assert session.pending_approval_count == 0
-    assert progress.blocker_fact_codes == []
+    assert progress.blocker_fact_codes == ["approval_state_unavailable"]
 
 
 def test_projection_marks_done_session_complete_and_omits_continue_intent() -> None:

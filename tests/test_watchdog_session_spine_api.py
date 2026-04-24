@@ -880,6 +880,121 @@ def test_session_route_prefers_runtime_over_optional_interaction_events(tmp_path
     assert data["snapshot"]["read_source"] == "live_query_fallback"
 
 
+def test_persisted_session_and_approval_reads_prefer_live_runtime_over_orphaned_persisted_approval(
+    tmp_path,
+) -> None:
+    _seed_persisted_session_spine(tmp_path)
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "runtime already cleared the stale approval",
+                "files_touched": ["src/example.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-24T05:00:00Z",
+            },
+            approvals=[],
+        ),
+    )
+    app.state.session_service.record_event(
+        event_type="notification_delivery_succeeded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:notification-delivered:repo-a",
+        related_ids={
+            "native_thread_id": "thr_native_1",
+            "envelope_id": "notification-envelope:repo-a",
+            "notification_event_id": "event:notification-delivered:repo-a",
+        },
+        payload={
+            "notification_kind": "decision_result",
+            "delivery_status": "delivered",
+        },
+        occurred_at="2026-04-24T05:01:00Z",
+    )
+    c = TestClient(app)
+
+    session_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a",
+        headers={"Authorization": "Bearer wt"},
+    )
+    approvals_response = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_response.status_code == 200
+    assert approvals_response.status_code == 200
+
+    session_data = session_response.json()["data"]
+    approvals_data = approvals_response.json()["data"]
+
+    assert session_data["session"]["session_state"] == "active"
+    assert session_data["session"]["pending_approval_count"] == 0
+    assert session_data["progress"]["summary"] == "runtime already cleared the stale approval"
+    assert session_data["snapshot"]["read_source"] == "live_query_fallback"
+    assert "approval_pending" not in [fact["fact_code"] for fact in session_data["facts"]]
+
+    assert approvals_data["approvals"] == []
+
+
+def test_session_directory_route_marks_runtime_pending_approval_without_queue_as_inconsistent(
+    tmp_path,
+) -> None:
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=FakeAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_for_approval",
+                "phase": "planning",
+                "pending_approval": True,
+                "approval_risk": "L2",
+                "last_summary": "Awaiting approval: git tag -a v0.7.0 -m \"AI-SDLC v0.7.0\"",
+                "files_touched": [],
+                "context_pressure": "medium",
+                "stuck_level": 4,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-24T06:21:10Z",
+            },
+            approvals=[],
+        ),
+    )
+    c = TestClient(app)
+
+    response = c.get("/api/v1/watchdog/sessions", headers={"Authorization": "Bearer wt"})
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    session = data["sessions"][0]
+    progress = data["progresses"][0]
+
+    assert session["project_id"] == "repo-a"
+    assert session["session_state"] == "blocked"
+    assert session["attention_state"] == "critical"
+    assert session["pending_approval_count"] == 0
+    assert "approve_approval" not in session["available_intents"]
+    assert progress["blocker_fact_codes"] == ["approval_state_unavailable"]
+
+
 def test_persisted_session_route_merges_recovery_suppression_fact_from_session_events(tmp_path) -> None:
     _seed_persisted_session_spine(tmp_path)
     a_client = BrokenAClient()
@@ -1154,8 +1269,6 @@ def test_persisted_session_route_updates_native_thread_from_child_event_only_fal
     assert session_data["session"]["native_thread_id"] == "thr_child_1"
     assert session_data["progress"]["native_thread_id"] == "thr_child_1"
     assert [fact["fact_code"] for fact in facts_data["facts"]] == [
-        "approval_pending",
-        "awaiting_human_direction",
         "interaction_window_expired",
     ]
     assert a_client.get_envelope_calls == []
@@ -6604,6 +6717,168 @@ def test_watchdog_restart_preserves_pending_approvals_on_stable_read_surfaces(tm
     ]
 
 
+def test_watchdog_read_surfaces_suppress_stale_canonical_approval_behind_newer_progress(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    app = create_app(settings, runtime_client=BrokenAClient())
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "runtime has moved past the old approval",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "medium",
+        "stuck_level": 2,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-07T00:10:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=session,
+        progress=progress,
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:10:05Z",
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v10"),
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(
+            update={
+                "created_at": "2026-04-07T00:00:00Z",
+            }
+        )
+    )
+
+    c = TestClient(app)
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    session_data = session_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+    assert session_data["session"]["session_state"] == "blocked"
+    assert session_data["session"]["pending_approval_count"] == 0
+    assert [fact["fact_code"] for fact in session_data["facts"]] == [
+        "stuck_no_progress",
+        "recovery_available",
+    ]
+    assert approvals_data["approvals"] == []
+
+
+def test_watchdog_read_surfaces_keep_newer_persisted_progress_over_older_session_events(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    app = create_app(settings, runtime_client=BrokenAClient())
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "persisted progress is newer than session events",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "medium",
+        "stuck_level": 2,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-07T00:10:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=session,
+        progress=progress,
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:10:05Z",
+    )
+    approval = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v10"),
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.canonical_approval_store.update(
+        approval.model_copy(
+            update={
+                "created_at": "2026-04-07T00:00:00Z",
+            }
+        )
+    )
+    app.state.session_service.record_event(
+        event_type="notification_announced",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:notification:repo-a:stale-approval",
+        related_ids={
+            "native_thread_id": "thr_native_1",
+            "notification_event_id": "event:notification:repo-a",
+        },
+        payload={
+            "notification_kind": "decision_result",
+            "delivery_status": "pending",
+        },
+        occurred_at="2026-04-07T00:05:00Z",
+    )
+
+    c = TestClient(app)
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    session_data = session_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+    assert session_data["session"]["session_state"] == "blocked"
+    assert session_data["session"]["pending_approval_count"] == 0
+    assert session_data["progress"]["last_progress_at"] == "2026-04-07T00:10:00Z"
+    assert approvals_data["approvals"] == []
+
+
 def test_watchdog_restart_preserves_action_receipt_lookup_without_reexecution(tmp_path: Path) -> None:
     settings = Settings(
         api_token="wt",
@@ -6817,6 +7092,9 @@ def test_seam_smoke_deferred_approval_delivery_survives_restart_and_updates_stab
     assert session_response.json()["data"]["session"]["pending_approval_count"] == 0
     assert approvals_response.json()["data"]["approvals"] == []
     assert [fact["fact_code"] for fact in facts_response.json()["data"]["facts"]] == [
+        "stuck_no_progress",
+        "context_critical",
+        "recovery_available",
         "human_override_recorded",
         "notification_receipt_recorded",
     ]

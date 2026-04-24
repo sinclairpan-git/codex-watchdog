@@ -1019,6 +1019,7 @@ def build_ops_summary(
     delivery_store: DeliveryOutboxStore | None = None,
     receipt_store: ActionReceiptStore | None = None,
     runtime_pending_approvals: list[dict[str, object]] | None = None,
+    fetch_runtime_pending_approvals: bool = True,
 ) -> OpsSummary:
     now = now or datetime.now(UTC)
 
@@ -1032,8 +1033,10 @@ def build_ops_summary(
     approvals = approval_store.list_records()
     deliveries = delivery_store.list_records()
     receipt_items = receipt_store.list_items()
-    if runtime_pending_approvals is None:
+    if runtime_pending_approvals is None and fetch_runtime_pending_approvals:
         runtime_pending_approvals = _fetch_runtime_pending_approvals(settings)
+    if runtime_pending_approvals is None:
+        runtime_pending_approvals = []
 
     blocked_too_long = _count_blocked_too_long(
         decisions,
@@ -1189,120 +1192,21 @@ def build_ops_health_summary(
     receipt_store: ActionReceiptStore | None = None,
     runtime_pending_approvals: list[dict[str, object]] | None = None,
 ) -> dict[str, int | str]:
-    now = now or datetime.now(UTC)
-    decision_store = decision_store or PolicyDecisionStore(data_dir / "policy_decisions.json")
-    approval_store = approval_store or CanonicalApprovalStore(data_dir / "canonical_approvals.json")
-    delivery_store = delivery_store or DeliveryOutboxStore(data_dir / "delivery_outbox.json")
-    receipt_store = receipt_store or ActionReceiptStore(data_dir / "action_receipts.json")
-    session_spine_store = SessionSpineStore(data_dir / "session_spine.json")
-
-    decision_rows = decision_store.snapshot_rows()
-    delivery_rows = delivery_store.snapshot_rows()
-    receipt_rows = receipt_store.snapshot_rows()
-    decision_records = decision_store.list_records()
-    provider_degrade_reason_counts = _provider_degrade_reason_counts(
-        decision_records,
-        session_spine_store=session_spine_store,
+    summary = build_ops_summary(
+        data_dir=data_dir,
+        settings=settings,
         now=now,
-        threshold_seconds=settings.ops_provider_degrade_alert_window_seconds,
+        decision_store=decision_store,
+        approval_store=approval_store,
+        delivery_store=delivery_store,
+        receipt_store=receipt_store,
+        runtime_pending_approvals=runtime_pending_approvals,
+        fetch_runtime_pending_approvals=runtime_pending_approvals is not None,
     )
-
-    blocked_too_long = _count_blocked_too_long(
-        decision_records,
-        session_spine_store=session_spine_store,
-        now=now,
-        threshold_seconds=settings.ops_blocked_too_long_seconds,
-    )
-    approval_pending_too_long = _count_overdue_pending_approvals(
-        approval_store.list_records(),
-        now=now,
-        threshold_seconds=settings.ops_approval_pending_too_long_seconds,
-        runtime_pending_rows=runtime_pending_approvals,
-    )
-    delivery_failed = sum(
-        1
-        for row in delivery_rows
-        if row.delivery_status == "delivery_failed"
-        and str(row.failure_code or "") not in _NON_ALERTING_DELIVERY_FAILURE_CODES
-        and _is_recent_enough(
-            row.updated_at or row.created_at,
-            now=now,
-            threshold_seconds=settings.ops_delivery_failed_alert_window_seconds,
-        )
-    )
-    mapping_incomplete = sum(
-        1
-        for row in decision_rows
-        if "mapping_incomplete" in list(row.get("uncertainty_reasons") or [])
-    )
-    runtime_gate_reason_counts: dict[str, int] = {}
-    latest_release_gate_by_session: dict[tuple[str, str], tuple[datetime, dict[str, Any], Any]] = {}
-    resident_expert_stale = sum(
-        1
-        for view in ResidentExpertRuntimeService.from_data_dir(
-            data_dir,
-            stale_after_seconds=settings.resident_expert_stale_after_seconds,
-        ).list_runtime_views(now=now)
-        if view.status == "stale"
-    )
-    for row in decision_rows:
-        matched_policy_rules = list(row.get("matched_policy_rules") or [])
-        if any(rule in _RUNTIME_GATE_ALERT_RULES for rule in matched_policy_rules):
-            reasons = [
-                str(item).strip()
-                for item in list(row.get("uncertainty_reasons") or [])
-                if str(item).strip()
-            ]
-            normalized = normalize_runtime_gate_reason(reasons[0] if reasons else "")
-            runtime_gate_reason_counts[normalized] = runtime_gate_reason_counts.get(normalized, 0) + 1
-        release_gate = read_release_gate_decision_evidence(
-            row.get("evidence") if isinstance(row.get("evidence"), dict) else None
-        )
-        verdict = release_gate.verdict
-        if verdict is not None:
-            key = (str(row.get("project_id") or ""), str(row.get("session_id") or ""))
-            created_at = _parse_iso8601(str(row.get("created_at") or "")) or datetime.min.replace(
-                tzinfo=UTC
-            )
-            current = latest_release_gate_by_session.get(key)
-            if current is None or created_at >= current[0]:
-                latest_release_gate_by_session[key] = (created_at, row, release_gate)
-    release_gate_blockers = sum(
-        1
-        for _, _, release_gate in latest_release_gate_by_session.values()
-        if release_gate.verdict is not None
-        and release_gate.verdict.status not in {"pass", "not_applicable"}
-    )
-    recovery_suppression_reason_counts = _active_recovery_suppression_reason_counts(
-        data_dir=data_dir
-    )
-    recovery_failed = sum(
-        1
-        for _, row in receipt_rows
-        if str(row.get("action_code") or "") == ActionCode.EXECUTE_RECOVERY
-        and str(row.get("action_status") or "")
-        not in {ActionStatus.COMPLETED, ActionStatus.NOOP}
-    )
-
-    active_alerts = sum(
-        1
-        for value in (
-            approval_pending_too_long,
-            blocked_too_long,
-            delivery_failed,
-            mapping_incomplete,
-            recovery_failed,
-            resident_expert_stale,
-        )
-        if value
-    ) + sum(1 for count in runtime_gate_reason_counts.values() if count)
-    active_alerts += sum(1 for count in provider_degrade_reason_counts.values() if count)
-    active_alerts += sum(1 for count in recovery_suppression_reason_counts.values() if count)
-
     return {
-        "status": "degraded" if active_alerts or release_gate_blockers else "ok",
-        "active_alerts": active_alerts,
-        "release_gate_blockers": release_gate_blockers,
+        "status": summary.status,
+        "active_alerts": summary.active_alerts,
+        "release_gate_blockers": len(summary.release_gate_blockers),
     }
 
 

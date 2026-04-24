@@ -371,7 +371,9 @@ def _build_available_intents(
 ) -> list[str]:
     intents = ["get_session"]
     autonomous_continuation_blocked = bool(
-        fact_codes.intersection({"project_not_active", "project_state_unavailable"})
+        fact_codes.intersection(
+            {"project_not_active", "project_state_unavailable", "approval_state_unavailable"}
+        )
     )
     if has_task and not is_terminal and not autonomous_continuation_blocked:
         intents.append("continue_session")
@@ -418,6 +420,12 @@ def build_session_projection(
         attention_state = AttentionState.NEEDS_HUMAN
         headline = sanitize_session_summary(
             str(_task_value(task, "last_summary", "waiting for approval"))
+        )
+    elif "approval_state_unavailable" in fact_codes:
+        session_state = SessionState.BLOCKED
+        attention_state = AttentionState.CRITICAL
+        headline = sanitize_session_summary(
+            str(_task_value(task, "last_summary", "approval state unavailable"))
         )
     elif "project_not_active" in fact_codes:
         session_state = SessionState.BLOCKED
