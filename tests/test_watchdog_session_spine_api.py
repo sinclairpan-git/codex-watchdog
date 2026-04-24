@@ -7103,6 +7103,96 @@ def test_watchdog_read_uses_approval_thread_when_persisted_thread_is_stale(
     ]
 
 
+def test_watchdog_read_ignores_stale_thread_match_before_affinity_filter(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    app = create_app(settings, runtime_client=BrokenAClient())
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_old",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "old thread had a stale approval",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-07T00:10:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    app.state.session_spine_store.put(
+        project_id="repo-a",
+        session=build_session_projection(
+            project_id="repo-a",
+            task=task,
+            approvals=[],
+            facts=facts,
+        ),
+        progress=build_task_progress_view(
+            project_id="repo-a",
+            task=task,
+            facts=facts,
+        ),
+        facts=facts,
+        approval_queue=[],
+        last_refreshed_at="2026-04-07T00:10:05Z",
+    )
+    stale_old_thread = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v1").model_copy(
+            update={"native_thread_id": "thr_old"}
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    fresh_new_thread = materialize_canonical_approval(
+        _decision_record(project_id="repo-a", fact_snapshot_version="fact-v2").model_copy(
+            update={"native_thread_id": "thr_new"}
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+    app.state.canonical_approval_store.update(
+        stale_old_thread.model_copy(update={"created_at": "2026-04-07T00:00:00Z"})
+    )
+    app.state.canonical_approval_store.update(
+        fresh_new_thread.model_copy(update={"created_at": "2026-04-07T00:11:00Z"})
+    )
+    app.state.session_service.record_event(
+        event_type="notification_delivery_succeeded",
+        project_id="repo-a",
+        session_id="session:repo-a",
+        correlation_id="corr:notification:repo-a:stale-thread-affinity",
+        related_ids={"notification_event_id": "event:notification:repo-a"},
+        payload={
+            "notification_kind": "decision_result",
+            "delivery_status": "delivered",
+        },
+        occurred_at="2026-04-07T00:12:00Z",
+    )
+
+    c = TestClient(app)
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    session_data = session_resp.json()["data"]
+    approvals_data = approvals_resp.json()["data"]
+    assert session_data["session"]["native_thread_id"] == "thr_new"
+    assert session_data["session"]["pending_approval_count"] == 1
+    assert [item["approval_id"] for item in approvals_data["approvals"]] == [
+        fresh_new_thread.approval_id
+    ]
+
+
 def test_watchdog_restart_preserves_action_receipt_lookup_without_reexecution(tmp_path: Path) -> None:
     settings = Settings(
         api_token="wt",

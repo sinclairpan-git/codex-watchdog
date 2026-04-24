@@ -1603,22 +1603,26 @@ def _build_session_read_bundle_from_session_events(
             else None
         ),
     )
+    non_stale_approvals = [
+        approval
+        for approval in approvals
+        if not _approval_row_is_stale_after_progress_at(stale_approval_progress_at, approval)
+    ]
     has_projected_thread_approval = any(
         _approval_row_matches_native_thread(approval, projected_native_thread_id)
         and str(approval.get("native_thread_id") or "").strip()
-        for approval in approvals
+        for approval in non_stale_approvals
     )
     require_projected_thread_approval = bool(
         projected_native_thread_id and _has_event_only_fallback_events(events)
     )
     filtered_approvals = [
         approval
-        for approval in approvals
+        for approval in non_stale_approvals
         if (
             not (require_projected_thread_approval or has_projected_thread_approval)
             or _approval_row_matches_native_thread(approval, projected_native_thread_id)
         )
-        and not _approval_row_is_stale_after_progress_at(stale_approval_progress_at, approval)
     ]
     if filtered_approvals != approvals:
         approvals = filtered_approvals
