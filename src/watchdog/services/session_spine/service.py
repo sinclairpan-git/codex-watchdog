@@ -1115,6 +1115,23 @@ def _latest_session_event_native_thread_id(events: list[SessionEventRecord]) -> 
     return None
 
 
+def _event_projection_identity_native_thread_id(
+    *,
+    task: dict[str, Any] | None,
+    persisted_record: PersistedSessionRecord | None,
+    events: list[SessionEventRecord],
+) -> str | None:
+    task_thread_id = task_native_thread_id(task)
+    if task_thread_id:
+        return task_thread_id
+    event_thread_id = _latest_session_event_native_thread_id(events)
+    if event_thread_id and (persisted_record is None or _has_event_only_fallback_events(events)):
+        return event_thread_id
+    if persisted_record is not None and persisted_record.effective_native_thread_id:
+        return persisted_record.effective_native_thread_id
+    return event_thread_id
+
+
 def _project_session_events_for_native_thread(
     session_service: SessionService,
     native_thread_id: str,
@@ -1326,11 +1343,10 @@ def _build_event_projection_task(
     )
     event_native_thread_id = _latest_session_event_native_thread_id(events)
     native_thread_id = str(
-        task_native_thread_id(task)
-        or (
-            event_native_thread_id
-            if persisted_record is None or _has_event_only_fallback_events(events)
-            else ""
+        _event_projection_identity_native_thread_id(
+            task=task,
+            persisted_record=persisted_record,
+            events=events,
         )
         or ""
     ).strip()
@@ -1573,7 +1589,11 @@ def _build_session_read_bundle_from_session_events(
         persisted_record=persisted_record,
         task=task,
     )
-    projected_native_thread_id = task_native_thread_id(projected_task)
+    projected_native_thread_id = _event_projection_identity_native_thread_id(
+        task=task,
+        persisted_record=persisted_record,
+        events=events,
+    )
     stale_approval_progress_at = _max_iso8601_timestamp(
         str((task or {}).get("last_progress_at") or "").strip() or None,
         (
@@ -1582,10 +1602,21 @@ def _build_session_read_bundle_from_session_events(
             else None
         ),
     )
+    has_projected_thread_approval = any(
+        _approval_row_matches_native_thread(approval, projected_native_thread_id)
+        and str(approval.get("native_thread_id") or "").strip()
+        for approval in approvals
+    )
+    require_projected_thread_approval = bool(
+        projected_native_thread_id and _has_event_only_fallback_events(events)
+    )
     filtered_approvals = [
         approval
         for approval in approvals
-        if _approval_row_matches_native_thread(approval, projected_native_thread_id)
+        if (
+            not (require_projected_thread_approval or has_projected_thread_approval)
+            or _approval_row_matches_native_thread(approval, projected_native_thread_id)
+        )
         and not _approval_row_is_stale_after_progress_at(stale_approval_progress_at, approval)
     ]
     if filtered_approvals != approvals:
