@@ -537,7 +537,6 @@ class DeliveryWorker:
                     str(record.effective_native_thread_id or ""),
                     str(payload.get("receive_id") or "").strip(),
                     str(payload.get("receive_id_type") or "").strip(),
-                    str(payload.get("approval_id") or "").strip(),
                     str(payload.get("requested_action") or "").strip(),
                     action_args if isinstance(action_args, dict) else {},
                     str(payload.get("reason") or payload.get("summary") or "").strip(),

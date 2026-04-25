@@ -1821,7 +1821,7 @@ def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
     assert client.calls == [record.envelope_id]
 
 
-def test_delivery_worker_allows_new_approval_prompt_with_distinct_approval_id(
+def test_delivery_worker_suppresses_duplicate_approval_prompt_with_distinct_approval_id(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1843,6 +1843,64 @@ def test_delivery_worker_allows_new_approval_prompt_with_distinct_approval_id(
         action_ref="continue_session",
         approval_id="approval:repo-a:v8",
     )
+    (first_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="awaiting_approval",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+    (second_record,) = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))
+    resent = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 2, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == first_record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert resent is not None
+    assert resent.envelope_id == second_record.envelope_id
+    assert resent.delivery_status == "delivery_failed"
+    assert resent.failure_code == "duplicate_delivery_notice"
+    assert client.calls == [first_record.envelope_id]
+
+
+def test_delivery_worker_allows_new_approval_prompt_when_action_args_change(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a:v7",
+    )
+    first_decision.evidence["requested_action_args"] = {"mode": "safe"}
+    second_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v8",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a:v8",
+    )
+    second_decision.evidence["requested_action_args"] = {"mode": "force"}
     (first_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
 
     client = _OrderedClient("never-match")
