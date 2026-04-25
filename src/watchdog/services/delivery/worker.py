@@ -603,13 +603,13 @@ class DeliveryWorker:
             return ""
         return str(payload.get("approval_id") or "").strip()
 
-    def _current_pending_approval_ids(self, record: DeliveryOutboxRecord) -> set[str]:
+    def _current_pending_approval_ids(self, record: DeliveryOutboxRecord) -> set[str] | None:
         if self._session_spine_store is None:
             return set()
         try:
             session_record = self._session_spine_store.get(record.project_id)
         except Exception:
-            return set()
+            return None
         if session_record is None:
             return set()
         approval_queue = getattr(session_record, "approval_queue", None)
@@ -623,7 +623,7 @@ class DeliveryWorker:
                 pending_ids.add(approval_id)
         return pending_ids
 
-    def _approval_candidate_is_superseded(
+    def _approval_duplicate_suppression_should_be_skipped(
         self,
         *,
         record: DeliveryOutboxRecord,
@@ -636,6 +636,8 @@ class DeliveryWorker:
         if record_approval_id == candidate_approval_id:
             return False
         pending_ids = self._current_pending_approval_ids(record)
+        if pending_ids is None:
+            return True
         if not pending_ids:
             return False
         return record_approval_id in pending_ids and candidate_approval_id not in pending_ids
@@ -655,7 +657,7 @@ class DeliveryWorker:
                     candidate=candidate,
                 ):
                     continue
-                if self._approval_candidate_is_superseded(
+                if self._approval_duplicate_suppression_should_be_skipped(
                     record=record,
                     candidate=candidate,
                 ):
