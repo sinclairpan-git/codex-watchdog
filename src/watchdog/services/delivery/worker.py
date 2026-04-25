@@ -402,6 +402,30 @@ class DeliveryWorker:
         )
         return self._store.update_delivery_record(updated)
 
+    def _apply_duplicate_delivery_suppression(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        duplicate_of: str,
+        now: datetime,
+    ) -> DeliveryOutboxRecord:
+        notes = list(record.operator_notes)
+        notes.append(
+            "delivery_skipped "
+            "failure_code=duplicate_delivery_notice "
+            f"duplicate_of={duplicate_of}"
+        )
+        updated = record.model_copy(
+            update={
+                "delivery_status": "delivery_failed",
+                "failure_code": "duplicate_delivery_notice",
+                "next_retry_at": None,
+                "operator_notes": notes,
+                "updated_at": _iso_z(now),
+            }
+        )
+        return self._store.update_delivery_record(updated)
+
     def _apply_local_manual_activity_deferral(
         self,
         *,
@@ -480,17 +504,165 @@ class DeliveryWorker:
         if self._session_spine_store is None:
             return None
         payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
-        if str(payload.get("envelope_type") or "").strip() != "approval":
+        envelope_type = str(payload.get("envelope_type") or "").strip()
+        notification_kind = str(payload.get("notification_kind") or "").strip()
+        if envelope_type != "approval" and not (
+            envelope_type == "notification" and notification_kind == "decision_result"
+        ):
             return None
         try:
             session_record = self._session_spine_store.get(record.project_id)
         except Exception:
             return None
         if session_record is None:
+            if envelope_type == "notification" and notification_kind == "decision_result":
+                return None
             return "project_record_missing"
         fact_codes = self._record_fact_codes(session_record)
         if "project_not_active" in fact_codes:
             return "project_not_active"
+        return None
+
+    @staticmethod
+    def _duplicate_delivery_fingerprint(record: DeliveryOutboxRecord) -> str | None:
+        payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+        envelope_type = str(payload.get("envelope_type") or "").strip()
+        if envelope_type == "approval":
+            action_args = payload.get("requested_action_args")
+            return json.dumps(
+                [
+                    "approval",
+                    record.project_id,
+                    record.session_id,
+                    str(record.effective_native_thread_id or ""),
+                    str(payload.get("receive_id") or "").strip(),
+                    str(payload.get("receive_id_type") or "").strip(),
+                    str(payload.get("requested_action") or "").strip(),
+                    action_args if isinstance(action_args, dict) else {},
+                    str(payload.get("reason") or payload.get("summary") or "").strip(),
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        if envelope_type == "notification":
+            notification_kind = str(payload.get("notification_kind") or "").strip()
+            if notification_kind != "decision_result":
+                return None
+            action_args = payload.get("action_args")
+            return json.dumps(
+                [
+                    "notification",
+                    notification_kind,
+                    record.project_id,
+                    record.session_id,
+                    str(record.effective_native_thread_id or ""),
+                    str(payload.get("receive_id") or "").strip(),
+                    str(payload.get("receive_id_type") or "").strip(),
+                    str(payload.get("decision_result") or "").strip(),
+                    str(payload.get("action_name") or "").strip(),
+                    action_args if isinstance(action_args, dict) else {},
+                    str(payload.get("reason") or payload.get("summary") or "").strip(),
+                    payload.get("facts") if isinstance(payload.get("facts"), list) else [],
+                    payload.get("recommended_actions")
+                    if isinstance(payload.get("recommended_actions"), list)
+                    else [],
+                ],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        return None
+
+    def _within_duplicate_suppression_window(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        candidate: DeliveryOutboxRecord,
+    ) -> bool:
+        window_seconds = max(
+            self._settings.delivery_duplicate_suppression_window_seconds,
+            0.0,
+        )
+        if window_seconds <= 0:
+            return False
+        record_created_at = _parse_iso(record.created_at)
+        candidate_created_at = _parse_iso(candidate.created_at)
+        if record_created_at is None or candidate_created_at is None:
+            return False
+        elapsed = abs(
+            (
+                record_created_at.astimezone(UTC)
+                - candidate_created_at.astimezone(UTC)
+            ).total_seconds()
+        )
+        return elapsed <= window_seconds
+
+    @staticmethod
+    def _approval_id(record: DeliveryOutboxRecord) -> str:
+        payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+        if str(payload.get("envelope_type") or "").strip() != "approval":
+            return ""
+        return str(payload.get("approval_id") or "").strip()
+
+    def _current_pending_approval_ids(self, record: DeliveryOutboxRecord) -> set[str] | None:
+        if self._session_spine_store is None:
+            return set()
+        try:
+            session_record = self._session_spine_store.get(record.project_id)
+        except Exception:
+            return None
+        if session_record is None:
+            return set()
+        approval_queue = getattr(session_record, "approval_queue", None)
+        if not isinstance(approval_queue, list):
+            return set()
+        pending_ids: set[str] = set()
+        for approval in approval_queue:
+            approval_id = str(getattr(approval, "approval_id", "") or "").strip()
+            status = str(getattr(approval, "status", "pending") or "").strip()
+            if approval_id and status == "pending":
+                pending_ids.add(approval_id)
+        return pending_ids
+
+    def _approval_duplicate_suppression_should_be_skipped(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        candidate: DeliveryOutboxRecord,
+    ) -> bool:
+        record_approval_id = self._approval_id(record)
+        candidate_approval_id = self._approval_id(candidate)
+        if not record_approval_id or not candidate_approval_id:
+            return False
+        if record_approval_id == candidate_approval_id:
+            return False
+        pending_ids = self._current_pending_approval_ids(record)
+        if pending_ids is None:
+            return True
+        if not pending_ids:
+            return False
+        return record_approval_id in pending_ids and candidate_approval_id not in pending_ids
+
+    def _duplicate_delivered_record(self, record: DeliveryOutboxRecord) -> str | None:
+        fingerprint = self._duplicate_delivery_fingerprint(record)
+        if fingerprint is None:
+            return None
+        for candidate in self._store.list_records():
+            if candidate.envelope_id == record.envelope_id:
+                continue
+            if candidate.delivery_status != "delivered":
+                continue
+            if self._duplicate_delivery_fingerprint(candidate) == fingerprint:
+                if not self._within_duplicate_suppression_window(
+                    record=record,
+                    candidate=candidate,
+                ):
+                    continue
+                if self._approval_duplicate_suppression_should_be_skipped(
+                    record=record,
+                    candidate=candidate,
+                ):
+                    continue
+                return candidate.envelope_id
         return None
 
     @staticmethod
@@ -582,17 +754,41 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         now: datetime,
     ) -> DeliveryOutboxRecord:
-        if self._session_service is None:
-            return record
         transport = str(self._settings.delivery_transport or "").strip().lower()
         if transport not in {"feishu", "feishu-app"}:
-            return record
-        if str(self._settings.feishu_receive_id or "").strip():
             return record
         payload = dict(record.envelope_payload)
         existing_receive_id = str(payload.get("receive_id") or "").strip()
         existing_receive_id_type = str(payload.get("receive_id_type") or "").strip()
+        static_receive_id = str(self._settings.feishu_receive_id or "").strip()
+        if static_receive_id:
+            receive_id_type = str(self._settings.feishu_receive_id_type or "").strip()
+            if not receive_id_type:
+                return record
+            if (
+                existing_receive_id == static_receive_id
+                and existing_receive_id_type == receive_id_type
+            ):
+                return record
+            payload["receive_id"] = static_receive_id
+            payload["receive_id_type"] = receive_id_type
+            notes = list(record.operator_notes)
+            notes.append(
+                "delivery_route_resolved "
+                "source=settings "
+                f"receive_id_type={receive_id_type}"
+            )
+            updated = record.model_copy(
+                update={
+                    "envelope_payload": payload,
+                    "operator_notes": notes,
+                    "updated_at": _iso_z(now),
+                }
+            )
+            return self._store.update_delivery_record(updated)
         if existing_receive_id and existing_receive_id_type:
+            return record
+        if self._session_service is None:
             return record
         resolved = self._resolve_dynamic_delivery_route(record)
         if resolved is None:
@@ -827,6 +1023,13 @@ class DeliveryWorker:
             )
         record = self._apply_dynamic_delivery_route(record=record, now=now)
         notification_payload = self._notification_payload(record)
+        duplicate_of = self._duplicate_delivered_record(record)
+        if duplicate_of is not None:
+            return self._apply_duplicate_delivery_suppression(
+                record=record,
+                duplicate_of=duplicate_of,
+                now=now,
+            )
         if notification_payload is not None:
             self._record_notification_announced(record=record, payload=notification_payload)
         result = self._delivery_client.deliver_record(record)

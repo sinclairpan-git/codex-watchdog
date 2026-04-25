@@ -38,6 +38,8 @@ _NON_ALERTING_DELIVERY_FAILURE_CODES = {
     "suppressed_local_manual_activity",
     "stale_progress_summary",
     "stale_auto_execute_notification",
+    "inactive_project",
+    "duplicate_delivery_notice",
 }
 
 _RUNTIME_GATE_ALERT_RULES = {
