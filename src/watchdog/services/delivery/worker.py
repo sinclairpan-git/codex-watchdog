@@ -596,6 +596,50 @@ class DeliveryWorker:
         )
         return elapsed <= window_seconds
 
+    @staticmethod
+    def _approval_id(record: DeliveryOutboxRecord) -> str:
+        payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+        if str(payload.get("envelope_type") or "").strip() != "approval":
+            return ""
+        return str(payload.get("approval_id") or "").strip()
+
+    def _current_pending_approval_ids(self, record: DeliveryOutboxRecord) -> set[str]:
+        if self._session_spine_store is None:
+            return set()
+        try:
+            session_record = self._session_spine_store.get(record.project_id)
+        except Exception:
+            return set()
+        if session_record is None:
+            return set()
+        approval_queue = getattr(session_record, "approval_queue", None)
+        if not isinstance(approval_queue, list):
+            return set()
+        pending_ids: set[str] = set()
+        for approval in approval_queue:
+            approval_id = str(getattr(approval, "approval_id", "") or "").strip()
+            status = str(getattr(approval, "status", "pending") or "").strip()
+            if approval_id and status == "pending":
+                pending_ids.add(approval_id)
+        return pending_ids
+
+    def _approval_candidate_is_superseded(
+        self,
+        *,
+        record: DeliveryOutboxRecord,
+        candidate: DeliveryOutboxRecord,
+    ) -> bool:
+        record_approval_id = self._approval_id(record)
+        candidate_approval_id = self._approval_id(candidate)
+        if not record_approval_id or not candidate_approval_id:
+            return False
+        if record_approval_id == candidate_approval_id:
+            return False
+        pending_ids = self._current_pending_approval_ids(record)
+        if not pending_ids:
+            return False
+        return record_approval_id in pending_ids and candidate_approval_id not in pending_ids
+
     def _duplicate_delivered_record(self, record: DeliveryOutboxRecord) -> str | None:
         fingerprint = self._duplicate_delivery_fingerprint(record)
         if fingerprint is None:
@@ -607,6 +651,11 @@ class DeliveryWorker:
                 continue
             if self._duplicate_delivery_fingerprint(candidate) == fingerprint:
                 if not self._within_duplicate_suppression_window(
+                    record=record,
+                    candidate=candidate,
+                ):
+                    continue
+                if self._approval_candidate_is_superseded(
                     record=record,
                     candidate=candidate,
                 ):

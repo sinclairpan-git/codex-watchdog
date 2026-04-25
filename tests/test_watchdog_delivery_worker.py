@@ -598,12 +598,14 @@ class _SessionSpineStoreStub:
         last_refreshed_at: str = "2026-04-07T00:20:00Z",
         last_progress_at: str | None = "2026-04-07T00:20:00Z",
         fact_codes: list[str] | None = None,
+        pending_approval_ids: list[str] | None = None,
     ) -> None:
         self._last_local_manual_activity_at = last_local_manual_activity_at
         self._session_state = session_state
         self._last_refreshed_at = last_refreshed_at
         self._last_progress_at = last_progress_at
         self._fact_codes = list(fact_codes or [])
+        self._pending_approval_ids = list(pending_approval_ids or [])
 
     def get(self, project_id: str):
         if project_id != "repo-a":
@@ -618,6 +620,7 @@ class _SessionSpineStoreStub:
                 last_refreshed_at: str,
                 last_progress_at: str | None,
                 fact_codes: list[str],
+                pending_approval_ids: list[str],
             ) -> None:
                 self.last_local_manual_activity_at = last_local_manual_activity_at
                 self.last_refreshed_at = last_refreshed_at
@@ -626,6 +629,14 @@ class _SessionSpineStoreStub:
                 self.facts = [
                     type("_Fact", (), {"fact_code": fact_code})() for fact_code in fact_codes
                 ]
+                self.approval_queue = [
+                    type(
+                        "_Approval",
+                        (),
+                        {"approval_id": approval_id, "status": "pending"},
+                    )()
+                    for approval_id in pending_approval_ids
+                ]
 
         return _Record(
             last_local_manual_activity_at=self._last_local_manual_activity_at,
@@ -633,6 +644,7 @@ class _SessionSpineStoreStub:
             last_refreshed_at=self._last_refreshed_at,
             last_progress_at=self._last_progress_at,
             fact_codes=self._fact_codes,
+            pending_approval_ids=self._pending_approval_ids,
         )
 
 
@@ -1875,6 +1887,70 @@ def test_delivery_worker_suppresses_duplicate_approval_prompt_with_distinct_appr
     assert resent.delivery_status == "delivery_failed"
     assert resent.failure_code == "duplicate_delivery_notice"
     assert client.calls == [first_record.envelope_id]
+
+
+def test_delivery_worker_delivers_current_approval_when_previous_prompt_was_superseded(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    first_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a:v7",
+    )
+    second_decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v8",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-a:v8",
+    )
+    (first_record,) = store.enqueue_envelopes(build_envelopes_for_decision(first_decision))
+
+    client = _OrderedClient("never-match")
+    first_worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="awaiting_approval",
+            pending_approval_ids=["approval:repo-a:v7"],
+        ),
+        settings=_settings(tmp_path),
+    )
+    second_worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="awaiting_approval",
+            pending_approval_ids=["approval:repo-a:v8"],
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    delivered = first_worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+    (second_record,) = store.enqueue_envelopes(build_envelopes_for_decision(second_decision))
+    resent = second_worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 2, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == first_record.envelope_id
+    assert delivered.delivery_status == "delivered"
+    assert resent is not None
+    assert resent.envelope_id == second_record.envelope_id
+    assert resent.delivery_status == "delivered"
+    assert resent.failure_code is None
+    assert client.calls == [first_record.envelope_id, second_record.envelope_id]
 
 
 def test_delivery_worker_allows_new_approval_prompt_when_action_args_change(
