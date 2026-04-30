@@ -279,6 +279,12 @@ class BrainDecisionService:
             completion_signals=completion_signals,
         )
 
+    def decision_context_for_evidence(
+        self,
+        record: PersistedSessionRecord,
+    ) -> dict[str, object]:
+        return self._build_decision_context(record).model_dump(mode="json")
+
     def _build_decision_context(
         self,
         record: PersistedSessionRecord,

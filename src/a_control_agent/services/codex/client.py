@@ -223,7 +223,7 @@ class LocalCodexClient:
     def _filter_visible_threads(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         active_roots = self._load_active_workspaces()
         if not active_roots:
-            return rows
+            return []
         visible: list[dict[str, Any]] = []
         for row in rows:
             cwd = _normalize_path(str(row.get("cwd") or ""))

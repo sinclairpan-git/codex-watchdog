@@ -215,6 +215,39 @@ def test_local_codex_client_does_not_fallback_to_all_threads_when_active_workspa
     assert client.list_threads() == []
 
 
+def test_local_codex_client_does_not_fallback_to_all_threads_when_active_workspaces_are_empty(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo-a"
+    repo.mkdir()
+    codex_home = tmp_path / ".codex"
+    rollout = codex_home / "sessions/2026/04/05/rollout-empty-active-roots.jsonl"
+    _seed_codex_home(
+        codex_home,
+        active_workspaces=[],
+        threads=[
+            {
+                "thread_id": "thr_repo_a",
+                "cwd": str(repo),
+                "task_title": "Old repo-a task",
+                "updated_at": 200,
+                "rollout_path": rollout,
+                "events": [
+                    {
+                        "timestamp": "2026-04-05T00:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "thr_repo_a", "cwd": str(repo)},
+                    }
+                ],
+            }
+        ],
+    )
+
+    client = LocalCodexClient(codex_home=codex_home)
+
+    assert client.list_threads() == []
+
+
 def test_local_codex_client_does_not_use_home_directory_name_as_project_id(
     tmp_path: Path,
 ) -> None:

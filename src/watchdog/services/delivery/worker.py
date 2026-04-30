@@ -524,6 +524,40 @@ class DeliveryWorker:
         return None
 
     @staticmethod
+    def _semantic_fact_signature(facts: Any) -> list[dict[str, str]]:
+        if not isinstance(facts, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            related_ids = fact.get("related_ids") if isinstance(fact.get("related_ids"), dict) else {}
+            normalized.append(
+                {
+                    "fact_code": str(fact.get("fact_code") or "").strip(),
+                    "fact_kind": str(fact.get("fact_kind") or "").strip(),
+                    "severity": str(fact.get("severity") or "").strip(),
+                    "summary": str(fact.get("summary") or "").strip(),
+                    "detail": str(fact.get("detail") or "").strip(),
+                    "source": str(fact.get("source") or "").strip(),
+                    "project_execution_state": str(
+                        related_ids.get("project_execution_state") or ""
+                    ).strip(),
+                }
+            )
+        return sorted(
+            normalized,
+            key=lambda item: (
+                item["fact_code"],
+                item["severity"],
+                item["summary"],
+                item["detail"],
+                item["source"],
+                item["project_execution_state"],
+            ),
+        )
+
+    @staticmethod
     def _duplicate_delivery_fingerprint(record: DeliveryOutboxRecord) -> str | None:
         payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
         envelope_type = str(payload.get("envelope_type") or "").strip()
@@ -562,7 +596,7 @@ class DeliveryWorker:
                     str(payload.get("action_name") or "").strip(),
                     action_args if isinstance(action_args, dict) else {},
                     str(payload.get("reason") or payload.get("summary") or "").strip(),
-                    payload.get("facts") if isinstance(payload.get("facts"), list) else [],
+                    DeliveryWorker._semantic_fact_signature(payload.get("facts")),
                     payload.get("recommended_actions")
                     if isinstance(payload.get("recommended_actions"), list)
                     else [],
@@ -578,6 +612,8 @@ class DeliveryWorker:
         record: DeliveryOutboxRecord,
         candidate: DeliveryOutboxRecord,
     ) -> bool:
+        if self._uses_sticky_duplicate_suppression(record):
+            return True
         window_seconds = max(
             self._settings.delivery_duplicate_suppression_window_seconds,
             0.0,
@@ -595,6 +631,21 @@ class DeliveryWorker:
             ).total_seconds()
         )
         return elapsed <= window_seconds
+
+    @staticmethod
+    def _uses_sticky_duplicate_suppression(record: DeliveryOutboxRecord) -> bool:
+        payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
+        if str(payload.get("envelope_type") or "").strip() != "notification":
+            return False
+        if str(payload.get("notification_kind") or "").strip() != "decision_result":
+            return False
+        if str(payload.get("decision_result") or "").strip() != "block_and_alert":
+            return False
+        reason = str(payload.get("reason") or payload.get("summary") or "").strip()
+        return reason in {
+            "brain observed state without proposing execution",
+            "brain suggested a non-executing follow-up",
+        }
 
     @staticmethod
     def _approval_id(record: DeliveryOutboxRecord) -> str:

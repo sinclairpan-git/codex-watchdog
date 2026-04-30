@@ -2017,6 +2017,100 @@ def test_provider_runtime_accepts_request_recovery_alias(tmp_path: Path) -> None
     assert intent.goal_coverage == "0.3"
 
 
+def test_provider_runtime_accepts_request_approval_alias(tmp_path: Path) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-minimax-approval-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "continuation_decision": "request_approval",
+                                    "routing_preference": "operator_guidance",
+                                    "goal_coverage": "blocked",
+                                    "remaining_work_hypothesis": "needs a human decision",
+                                    "completion_confidence": 0.1,
+                                    "decision_reason": "approval required before continuing",
+                                    "evidence_codes": ["approval_pending"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    intent = provider.decide(
+        record=_record(),
+        session_truth={"status": "blocked", "activity_phase": "editing_source"},
+        memory_advisory_context=None,
+    )
+
+    assert intent.intent == "require_approval"
+    assert intent.continuation_decision == "await_human"
+
+
+def test_provider_runtime_rejects_non_decision_routing_as_continuation(
+    tmp_path: Path,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-minimax-invalid-continuation-1",
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "continuation_decision": "operator_guidance",
+                                    "routing_preference": "same_thread",
+                                    "goal_coverage": "partial",
+                                    "remaining_work_hypothesis": ["keep going"],
+                                    "completion_confidence": 0.4,
+                                    "decision_reason": "misused routing as decision",
+                                    "evidence_codes": ["invalid_decision"],
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAICompatibleBrainProvider(
+        settings=Settings(
+            data_dir=str(tmp_path),
+            brain_provider_name="openai-compatible",
+            brain_provider_base_url="https://provider.example/v1",
+            brain_provider_api_key="sk-provider",
+            brain_provider_model="minimax-m2.7",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ValueError):
+        provider.decide(
+            record=_record(),
+            session_truth={"status": "blocked", "activity_phase": "editing_source"},
+            memory_advisory_context=None,
+        )
+
+
 def test_provider_runtime_treats_block_with_recovery_routing_as_recovery(
     tmp_path: Path,
 ) -> None:
