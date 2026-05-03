@@ -718,6 +718,39 @@ def test_task_list_returns_empty_when_active_native_sync_finds_no_threads(
     assert stale["thread_id"] == "thr_stale"
 
 
+def test_project_lookup_hides_stale_native_thread_after_empty_active_sync(
+    tmp_path: Path,
+) -> None:
+    stale_repo = tmp_path / "repo-stale"
+    stale_repo.mkdir()
+    app = create_app(
+        Settings(api_token="test-token", data_dir=str(tmp_path / "agent-data")),
+        codex_client=FakeCodexClient([]),
+        start_background_workers=False,
+    )
+    c = TestClient(app)
+    h = {"Authorization": "Bearer test-token"}
+    app.state.task_store.upsert_native_thread(
+        {
+            "project_id": "repo-stale",
+            "thread_id": "thr_stale",
+            "cwd": str(stale_repo),
+            "task_title": "Old Native Session",
+            "status": "running",
+            "phase": "planning",
+            "last_summary": "old work",
+        }
+    )
+
+    asyncio.run(_sync_codex_threads(app))
+
+    project = c.get("/api/v1/tasks/repo-stale", headers=h).json()
+    assert project["success"] is False
+    assert project["error"]["code"] == "NOT_FOUND"
+    by_thread = c.get("/api/v1/tasks/by-thread/thr_stale", headers=h).json()["data"]
+    assert by_thread["thread_id"] == "thr_stale"
+
+
 def test_registered_thread_remains_visible_between_active_native_sync_ticks(
     tmp_path: Path,
 ) -> None:

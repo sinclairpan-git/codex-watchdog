@@ -506,8 +506,19 @@ class DeliveryWorker:
         payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
         envelope_type = str(payload.get("envelope_type") or "").strip()
         notification_kind = str(payload.get("notification_kind") or "").strip()
+        project_level_notification_kinds = {
+            "approval_result",
+            "decision_result",
+            "progress_summary",
+        }
         if envelope_type != "approval" and not (
-            envelope_type == "notification" and notification_kind == "decision_result"
+            envelope_type == "notification"
+            and notification_kind in project_level_notification_kinds
+        ):
+            return None
+        if (
+            record.project_id == SESSION_DIRECTORY_PROJECT_ID
+            and record.session_id == SESSION_DIRECTORY_SESSION_ID
         ):
             return None
         try:
@@ -515,8 +526,6 @@ class DeliveryWorker:
         except Exception:
             return None
         if session_record is None:
-            if envelope_type == "notification" and notification_kind == "decision_result":
-                return None
             return "project_record_missing"
         fact_codes = self._record_fact_codes(session_record)
         if "project_not_active" in fact_codes:

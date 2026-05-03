@@ -3308,6 +3308,66 @@ def test_session_spine_runtime_reconciles_missing_persisted_project_via_workspac
     assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
 
 
+def test_session_spine_runtime_fail_closes_missing_runtime_task_even_with_recent_workspace_activity(
+    tmp_path: Path,
+) -> None:
+    seed_store = SessionSpineStore(tmp_path / SESSION_SPINE_STORE_FILENAME)
+    seed_runtime = SessionSpineRuntime(
+        client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "handoff",
+                "pending_approval": False,
+                "last_summary": "runtime task used to be alive",
+                "files_touched": [],
+                "context_pressure": "critical",
+                "stuck_level": 4,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-07T00:00:00Z",
+            }
+        ),
+        store=seed_store,
+    )
+    seed_runtime.refresh_all()
+
+    class MissingRuntimeTaskWithRecentWorkspaceClient:
+        def list_tasks(self) -> list[dict[str, object]]:
+            return []
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
+        def get_workspace_activity_envelope(
+            self,
+            project_id: str,
+            *,
+            recent_minutes: int = 15,
+        ) -> dict[str, object]:
+            _ = (project_id, recent_minutes)
+            raise AssertionError("missing runtime tasks must not scan workspace activity")
+
+    reconcile_runtime = SessionSpineRuntime(
+        client=MissingRuntimeTaskWithRecentWorkspaceClient(),
+        store=seed_store,
+    )
+    reconcile_runtime.refresh_all()
+
+    reconciled_record = seed_store.get("repo-a")
+    assert reconciled_record is not None
+    assert reconciled_record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
+
+
 def test_session_spine_runtime_refresh_all_uses_direct_project_fetch_when_task_list_omits_project(
     tmp_path: Path,
 ) -> None:

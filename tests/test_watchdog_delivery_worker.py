@@ -1762,7 +1762,7 @@ def test_delivery_worker_suppresses_decision_notification_for_inactive_project_w
     assert client.calls == []
 
 
-def test_delivery_worker_delivers_decision_notification_when_project_record_is_missing(
+def test_delivery_worker_suppresses_decision_notification_when_project_record_is_missing(
     tmp_path: Path,
 ) -> None:
     from datetime import datetime, timezone
@@ -1785,16 +1785,103 @@ def test_delivery_worker_delivers_decision_notification_when_project_record_is_m
         settings=_settings(tmp_path),
     )
 
-    delivered = worker.process_next_ready(
+    suppressed = worker.process_next_ready(
         now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
         session_id="session:repo-missing",
     )
 
-    assert delivered is not None
-    assert delivered.envelope_id == record.envelope_id
-    assert delivered.delivery_status == "delivered"
-    assert delivered.failure_code is None
-    assert client.calls == [record.envelope_id]
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "inactive_project"
+    assert suppressed.delivery_attempt == 0
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=inactive_project reason=project_record_missing"
+    )
+    assert client.calls == []
+
+
+def test_delivery_worker_suppresses_approval_when_project_record_is_missing(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-missing",
+        session_id="session:repo-missing",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="continue_session",
+        approval_id="approval:repo-missing",
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-missing",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "inactive_project"
+    assert suppressed.delivery_attempt == 0
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=inactive_project reason=project_record_missing"
+    )
+    assert client.calls == []
+
+
+def test_delivery_worker_suppresses_progress_summary_when_project_record_is_missing(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    progress_summary = _notification(
+        envelope_id="notification-envelope:missing-progress",
+        correlation_id="progress-summary:repo-missing",
+        session_id="session:repo-missing",
+        project_id="repo-missing",
+        native_thread_id="thr_missing",
+        notification_kind="progress_summary",
+        title="progress update for repo-missing",
+        summary="stale progress",
+        reason="phase=handoff; context=critical; stuck=4",
+    )
+    (record,) = store.enqueue_envelopes([progress_summary])
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-missing",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "inactive_project"
+    assert suppressed.delivery_attempt == 0
+    assert suppressed.operator_notes[-1] == (
+        "delivery_skipped failure_code=inactive_project reason=project_record_missing"
+    )
+    assert client.calls == []
 
 
 def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(

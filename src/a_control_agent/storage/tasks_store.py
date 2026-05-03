@@ -128,6 +128,7 @@ def _canonicalize_task_record(
     rec["current_phase_goal"] = str(rec.get("current_phase_goal", ""))
     rec["last_summary"] = str(rec.get("last_summary", ""))
     rec["goal_contract_version"] = _normalize_optional_text(rec.get("goal_contract_version"))
+    rec["record_source"] = str(rec.get("record_source") or "legacy")
     return rec
 
 
@@ -323,6 +324,7 @@ class TaskStore:
             "approval_risk": body.get("approval_risk"),
             "last_error_signature": body.get("last_error_signature"),
             "goal_contract_version": str(body.get("goal_contract_version", "")).strip() or None,
+            "record_source": str(body.get("record_source") or "manual"),
             "last_progress_at": str(body.get("last_progress_at", now) or now),
             "created_at": str(body.get("created_at", now) or now),
             "last_local_manual_activity_at": body.get("last_local_manual_activity_at"),
@@ -416,6 +418,32 @@ class TaskStore:
         task = data.get("tasks", {}).get(thread_id)
         return dict(task) if isinstance(task, dict) else None
 
+    @staticmethod
+    def _task_visible_in_active_native_view(
+        data: dict[str, Any],
+        task: dict[str, Any],
+    ) -> bool:
+        raw_active = data.get("active_native_thread_ids")
+        if not isinstance(raw_active, list):
+            return True
+        thread_id = str(task.get("thread_id") or "").strip()
+        active_ids = {str(item).strip() for item in raw_active if str(item).strip()}
+        if thread_id and thread_id in active_ids:
+            return True
+        return str(task.get("record_source") or "").strip() == "manual"
+
+    def _get_current_visible_task(
+        self,
+        data: dict[str, Any],
+        project_id: str,
+    ) -> dict[str, Any] | None:
+        task = self._get_current_task(data, project_id)
+        if task is None:
+            return None
+        if not self._task_visible_in_active_native_view(data, task):
+            return None
+        return task
+
     def _write_task(self, data: dict[str, Any], rec: dict[str, Any]) -> None:
         project_id = str(rec["project_id"])
         thread_id = str(rec["thread_id"])
@@ -467,7 +495,7 @@ class TaskStore:
 
     def get(self, project_id: str) -> TaskRecord | None:
         with self._lock:
-            rec = self._get_current_task(self._read(), project_id)
+            rec = self._get_current_visible_task(self._read(), project_id)
             return TaskRecord(rec) if rec else None
 
     def get_by_thread(self, thread_id: str) -> TaskRecord | None:
@@ -481,15 +509,11 @@ class TaskStore:
             tasks = data.get("tasks", {})
             if active_only:
                 if "active_native_thread_ids" in data:
-                    active_ids = [
-                        str(thread_id)
-                        for thread_id in data.get("active_native_thread_ids", [])
-                        if str(thread_id).strip()
-                    ]
                     rows = [
-                        tasks[thread_id]
-                        for thread_id in active_ids
-                        if isinstance(tasks.get(thread_id), dict)
+                        row
+                        for row in tasks.values()
+                        if isinstance(row, dict)
+                        and self._task_visible_in_active_native_view(data, row)
                     ]
                 else:
                     rows = tasks.values()
@@ -552,6 +576,7 @@ class TaskStore:
             fallback_phase = str(rec.get("phase") or "planning")
             rec["project_id"] = project_id
             rec["thread_id"] = thread_id
+            rec["record_source"] = "native_codex"
             for key in (
                 "cwd",
                 "task_title",

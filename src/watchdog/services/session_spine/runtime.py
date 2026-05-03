@@ -211,10 +211,11 @@ class SessionSpineRuntime:
             synthesized_task["runtime_task_missing"] = True
             task = synthesized_task
 
-        task = self._task_with_workspace_manual_activity(
-            project_id=record.project_id,
-            task=task,
-        )
+        if not bool(task.get("runtime_task_missing")):
+            task = self._task_with_workspace_manual_activity(
+                project_id=record.project_id,
+                task=task,
+            )
         approvals = self._merge_local_approvals(
             project_id=record.project_id,
             approvals=approvals or [],
