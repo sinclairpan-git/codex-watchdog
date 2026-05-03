@@ -1951,13 +1951,22 @@ class ResidentOrchestrator:
         evidence: dict[str, object] = {"brain_rationale": brain_intent.rationale}
         if requested_action_args:
             evidence["requested_action_args"] = dict(requested_action_args)
+        decision_input: dict[str, object] = {}
+        context_builder = getattr(self._brain_service, "decision_context_for_evidence", None)
+        if callable(context_builder):
+            try:
+                context_payload = context_builder(record)
+            except Exception:
+                context_payload = None
+            if isinstance(context_payload, dict):
+                decision_input["decision_context"] = context_payload
         summary_builder = getattr(self._brain_service, "progress_summary_for_decision_context", None)
         if callable(summary_builder):
             provider_input_progress_summary = str(summary_builder(record) or "").strip()
             if provider_input_progress_summary:
-                evidence["decision_input"] = {
-                    "current_progress_summary": provider_input_progress_summary,
-                }
+                decision_input["current_progress_summary"] = provider_input_progress_summary
+        if decision_input:
+            evidence["decision_input"] = decision_input
         brain_output: dict[str, object] = {}
         if brain_intent.confidence is not None:
             brain_output["confidence"] = brain_intent.confidence

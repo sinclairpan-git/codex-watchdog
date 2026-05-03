@@ -189,15 +189,7 @@ def derive_project_execution_state_liveness_override(
     runtime_task_missing = bool(task.get("runtime_task_missing"))
 
     if runtime_task_missing:
-        latest_development_activity_at = _max_timestamp(
-            manual_activity_at,
-            workspace_latest_mtime_at,
-        )
-        if latest_development_activity_at is None:
-            return "paused"
-        inactive_seconds = max((current - latest_development_activity_at).total_seconds(), 0.0)
-        if inactive_seconds > stale_after_seconds:
-            return "paused"
+        return "paused"
 
     if (
         claims_live_session

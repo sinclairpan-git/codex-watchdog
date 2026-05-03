@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -207,6 +208,31 @@ def test_watchdog_healthz_does_not_fetch_runtime_pending_approvals(
 
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
+
+
+def test_watchdog_healthz_returns_timeout_fallback_when_summary_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import watchdog.main as watchdog_main
+
+    def slow_health_summary(**_: object) -> dict[str, int | str]:
+        time.sleep(0.1)
+        return {"status": "ok", "active_alerts": 0, "release_gate_blockers": 0}
+
+    monkeypatch.setattr(watchdog_main, "HEALTHZ_SUMMARY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(watchdog_main, "build_ops_health_summary", slow_health_summary)
+
+    app = create_app(Settings(api_token="wt", data_dir=str(tmp_path)))
+    response = TestClient(app).get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "degraded",
+        "active_alerts": 0,
+        "release_gate_blockers": 0,
+        "health_error": "summary_timeout",
+    }
 
 
 def test_watchdog_ops_can_requeue_historical_transport_failures(tmp_path: Path) -> None:

@@ -23,7 +23,7 @@ if [ -z "$UV_BIN" ]; then
   exit 1
 fi
 
-exec "$UV_BIN" run uvicorn a_control_agent.main:app \
+exec "$UV_BIN" run python -m uvicorn a_control_agent.main:app \
   --host "$A_AGENT_HOST" \
   --port "$A_AGENT_PORT" \
   --app-dir src

@@ -47,12 +47,20 @@ def _normalize_path(raw: str) -> str:
     return str(Path(raw).expanduser().resolve(strict=False))
 
 
-def _project_id_from_cwd(cwd: str) -> str:
+def _same_path_casefold(left: Path, right: Path) -> bool:
+    return str(left.resolve(strict=False)).casefold() == str(right.resolve(strict=False)).casefold()
+
+
+def _project_id_from_cwd(cwd: str, *, codex_home: Path | None = None) -> str:
     normalized = str(cwd or "").strip()
     if not normalized:
         return "unknown-project"
     path = Path(normalized).expanduser().resolve(strict=False)
-    if path == Path.home().resolve(strict=False):
+    if _same_path_casefold(path, Path.home()):
+        return "unknown-project"
+    if codex_home is not None and _same_path_casefold(path, codex_home):
+        return "unknown-project"
+    if path.name.strip().casefold() in {"codex", ".codex", Path.home().name.casefold()}:
         return "unknown-project"
     return canonicalize_project_id(path.name)
 
@@ -223,7 +231,7 @@ class LocalCodexClient:
     def _filter_visible_threads(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         active_roots = self._load_active_workspaces()
         if not active_roots:
-            return rows
+            return []
         visible: list[dict[str, Any]] = []
         for row in rows:
             cwd = _normalize_path(str(row.get("cwd") or ""))
@@ -236,7 +244,7 @@ class LocalCodexClient:
     def _summarize_thread(self, row: dict[str, Any]) -> dict[str, Any]:
         cwd = str(rewrite_legacy_project_aliases(str(row.get("cwd") or "")))
         rollout_path = Path(str(row.get("rollout_path") or ""))
-        project_id = _project_id_from_cwd(cwd)
+        project_id = _project_id_from_cwd(cwd, codex_home=self._codex_home)
         session = {
             "thread_id": str(row.get("id") or ""),
             "project_id": project_id,

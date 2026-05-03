@@ -60,6 +60,8 @@ from watchdog.storage.action_receipts import ActionReceiptStore
 from watchdog.api.ops import build_ops_health_summary
 
 logger = logging.getLogger(__name__)
+HEALTHZ_SUMMARY_TIMEOUT_SECONDS = 1.0
+STARTUP_BACKGROUND_STEP_TIMEOUT_SECONDS = 5.0
 
 
 def _run_background_step(step_name: str, fn, /, *args, **kwargs):
@@ -115,6 +117,16 @@ def _start_feishu_long_connection_runtime(app: FastAPI) -> threading.Thread | No
 
 async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
     return await asyncio.to_thread(_run_background_step, step_name, fn, *args, **kwargs)
+
+
+async def _run_startup_background_step(step_name: str, fn, /, *args, **kwargs):
+    try:
+        await asyncio.wait_for(
+            _run_background_step_async(step_name, fn, *args, **kwargs),
+            timeout=STARTUP_BACKGROUND_STEP_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("watchdog startup step timed out; continuing startup: %s", step_name)
 
 
 def _delivery_run_lock(app: FastAPI) -> asyncio.Lock:
@@ -299,21 +311,21 @@ def create_app(
         feishu_long_connection_thread: threading.Thread | None = None
         if start_background_workers:
             startup_reconcile_task = asyncio.create_task(
-                _run_background_step_async(
+                _run_startup_background_step(
                     "canonical_approval_store.reconcile_pending_records_against_decisions",
                     _reconcile_stale_pending_approvals,
                     app,
                 )
             )
-            await _run_background_step_async(
+            await _run_startup_background_step(
                 "session_spine_runtime.refresh_all",
                 app.state.session_spine_runtime.refresh_all,
             )
-            await _run_background_step_async(
+            await _run_startup_background_step(
                 "memory_ingest_queue.recover_inflight",
                 app.state.memory_ingest_queue_store.recover_inflight,
             )
-            await _run_background_step_async(
+            await _run_startup_background_step(
                 "memory_ingest_drain_queue",
                 _drain_memory_ingest_queue,
                 app,
@@ -482,15 +494,28 @@ def create_app(
     app.include_router(metrics_routes.router)
 
     @app.get("/healthz")
-    def healthz() -> dict[str, int | str]:
-        return build_ops_health_summary(
-            data_dir=Path(app.state.settings.data_dir),
-            settings=app.state.settings,
-            decision_store=app.state.policy_decision_store,
-            approval_store=app.state.canonical_approval_store,
-            delivery_store=app.state.delivery_outbox_store,
-            receipt_store=app.state.action_receipt_store,
-        )
+    async def healthz() -> dict[str, int | str]:
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    build_ops_health_summary,
+                    data_dir=Path(app.state.settings.data_dir),
+                    settings=app.state.settings,
+                    decision_store=app.state.policy_decision_store,
+                    approval_store=app.state.canonical_approval_store,
+                    delivery_store=app.state.delivery_outbox_store,
+                    receipt_store=app.state.action_receipt_store,
+                ),
+                timeout=HEALTHZ_SUMMARY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning("watchdog healthz summary timed out")
+            return {
+                "status": "degraded",
+                "active_alerts": 0,
+                "release_gate_blockers": 0,
+                "health_error": "summary_timeout",
+            }
 
     return app
 

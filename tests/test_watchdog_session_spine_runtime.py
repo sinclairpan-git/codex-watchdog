@@ -3308,6 +3308,66 @@ def test_session_spine_runtime_reconciles_missing_persisted_project_via_workspac
     assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
 
 
+def test_session_spine_runtime_fail_closes_missing_runtime_task_even_with_recent_workspace_activity(
+    tmp_path: Path,
+) -> None:
+    seed_store = SessionSpineStore(tmp_path / SESSION_SPINE_STORE_FILENAME)
+    seed_runtime = SessionSpineRuntime(
+        client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "running",
+                "phase": "handoff",
+                "pending_approval": False,
+                "last_summary": "runtime task used to be alive",
+                "files_touched": [],
+                "context_pressure": "critical",
+                "stuck_level": 4,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-07T00:00:00Z",
+            }
+        ),
+        store=seed_store,
+    )
+    seed_runtime.refresh_all()
+
+    class MissingRuntimeTaskWithRecentWorkspaceClient:
+        def list_tasks(self) -> list[dict[str, object]]:
+            return []
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return []
+
+        def get_workspace_activity_envelope(
+            self,
+            project_id: str,
+            *,
+            recent_minutes: int = 15,
+        ) -> dict[str, object]:
+            _ = (project_id, recent_minutes)
+            raise AssertionError("missing runtime tasks must not scan workspace activity")
+
+    reconcile_runtime = SessionSpineRuntime(
+        client=MissingRuntimeTaskWithRecentWorkspaceClient(),
+        store=seed_store,
+    )
+    reconcile_runtime.refresh_all()
+
+    reconciled_record = seed_store.get("repo-a")
+    assert reconciled_record is not None
+    assert reconciled_record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
+
+
 def test_session_spine_runtime_refresh_all_uses_direct_project_fetch_when_task_list_omits_project(
     tmp_path: Path,
 ) -> None:
@@ -5264,6 +5324,70 @@ def test_resident_orchestrator_embeds_recorded_resident_expert_opinions_for_exte
     assert consultation["synthesis"]["chosen_next_slice"] == (
         "tighten lineage plus concise operator guidance"
     )
+
+
+def test_resident_orchestrator_records_full_decision_context_in_evidence(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "continue implementation",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 2,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="invoice assistant",
+        task_prompt="Build the invoice assistant end to end",
+        last_user_instruction="Continue the export audit refresh work",
+        phase="editing_source",
+        last_summary="continue implementation",
+        current_phase_goal="Refresh the export audit surface",
+        explicit_deliverables=["export audit surface", "verification evidence"],
+        completion_signals=["export audit refresh merged", "targeted tests green"],
+        active_goal="Refresh the export audit surface",
+    )
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        steer_mock.return_value = {"success": True, "data": {"accepted": True}}
+        app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    decision = app.state.policy_decision_store.list_records()[0]
+    decision_input = decision.evidence["decision_input"]
+    decision_context = decision_input["decision_context"]
+
+    assert decision_input["current_progress_summary"] == (
+        decision_context["progress_ref"]["current_progress_summary"]
+    )
+    assert decision_context["packet_version"] == "pcdi:v1"
+    assert decision_context["project_ref"]["project_id"] == "repo-a"
+    assert decision_context["branch_ref"]["branch_goal"] != "goal-contract:missing"
+    assert decision_context["progress_ref"]["files_touched"] == ["src/example.py"]
+    assert decision_context["session_ref"]["native_thread_id"] == "thr_native_1"
+    assert decision_context["governance_ref"]["goal_contract_version"] == "goal-v1"
+    assert isinstance(decision_context["completion_ref"]["next_branch_available"], bool)
+    assert isinstance(decision_context["decision_scope_ref"]["can_continue_current_branch"], bool)
 
 
 def test_resident_orchestrator_reuses_existing_decision_lifecycle_events_on_identical_replay(

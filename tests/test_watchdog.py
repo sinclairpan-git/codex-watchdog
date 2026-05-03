@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -14,6 +15,32 @@ def test_watchdog_healthz() -> None:
     c = TestClient(app)
     r = c.get("/healthz")
     assert r.status_code == 200
+
+
+def test_watchdog_startup_continues_when_session_spine_refresh_is_slow(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import watchdog.main as watchdog_main
+
+    monkeypatch.setattr(watchdog_main, "STARTUP_BACKGROUND_STEP_TIMEOUT_SECONDS", 0.01)
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_base_url="http://127.0.0.1:9",
+            data_dir=str(tmp_path),
+        ),
+        start_background_workers=True,
+    )
+
+    def slow_refresh() -> None:
+        time.sleep(0.1)
+
+    app.state.session_spine_runtime.refresh_all = slow_refresh
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
 
 
 @patch("watchdog.services.runtime_client.client.httpx.Client")

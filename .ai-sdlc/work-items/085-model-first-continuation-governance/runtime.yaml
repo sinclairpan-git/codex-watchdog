@@ -4,10 +4,10 @@ current_stage: completed
 current_batch: 8
 current_task: ''
 last_committed_task: ''
-current_branch: codex/085-model-first-continuation-governance
+current_branch: codex/reconcile-continuity-runtime
 ai_decisions_count: 0
 execution_mode: auto
 started_at: '2026-04-20T15:20:03Z'
-last_updated: '2026-04-21T02:15:30Z'
+last_updated: '2026-04-30T03:57:46Z'
 debug_rounds: {}
 consecutive_halts: 0

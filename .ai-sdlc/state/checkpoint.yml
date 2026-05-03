@@ -1,12 +1,12 @@
 pipeline_started_at: '2026-04-20T15:20:03Z'
-pipeline_last_updated: '2026-04-23T11:17:26+00:00'
-current_stage: execute
+pipeline_last_updated: '2026-04-30T03:57:46Z'
+current_stage: completed
 feature:
   id: 085-model-first-continuation-governance
   spec_dir: specs/085-model-first-continuation-governance
   design_branch: design/085-model-first-continuation-governance
   feature_branch: feature/085-model-first-continuation-governance
-  current_branch: main
+  current_branch: codex/reconcile-continuity-runtime
   docs_baseline_ref: ''
   docs_baseline_at: ''
 multi_agent:
@@ -40,4 +40,4 @@ ai_decisions_count: 0
 execution_mode: auto
 linked_wi_id: 085-model-first-continuation-governance
 linked_plan_uri: null
-last_synced_at: '2026-04-21T02:15:30Z'
+last_synced_at: '2026-04-30T03:57:46Z'

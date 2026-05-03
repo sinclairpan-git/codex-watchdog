@@ -2160,6 +2160,44 @@ def _build_session_read_bundle_from_persisted_record(
     liveness_now: datetime | None = None,
 ) -> SessionReadBundle:
     approval_fact_codes = {"approval_pending", "awaiting_human_direction"}
+    if any(fact.fact_code == "project_not_active" for fact in record.facts):
+        effective_approval_queue = _filter_persisted_approval_projections(
+            record.approval_queue,
+            approval_store=approval_store,
+            project_id=record.project_id,
+        )
+        effective_facts = list(record.facts)
+        effective_session = record.session
+        if effective_approval_queue != list(record.approval_queue):
+            if not effective_approval_queue:
+                effective_facts = [
+                    fact for fact in record.facts if fact.fact_code not in approval_fact_codes
+                ]
+            projected_task = _task_from_persisted_record(
+                record,
+                approvals=effective_approval_queue,
+            )
+            effective_session = build_session_projection(
+                project_id=record.project_id,
+                task=projected_task,
+                approvals=[
+                    approval.model_dump(mode="json") for approval in effective_approval_queue
+                ],
+                facts=effective_facts,
+            )
+        return SessionReadBundle(
+            project_id=record.project_id,
+            task=None,
+            approvals=[],
+            facts=effective_facts,
+            session=effective_session,
+            progress=record.progress,
+            approval_queue=effective_approval_queue,
+            snapshot=_build_snapshot_read_semantics_from_persisted_record(
+                record,
+                freshness_window_seconds=freshness_window_seconds,
+            ),
+        )
     session_events = (
         _list_project_session_events(
             session_service,

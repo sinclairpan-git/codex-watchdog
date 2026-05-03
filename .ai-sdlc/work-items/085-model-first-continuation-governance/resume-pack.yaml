@@ -72,10 +72,10 @@ working_set_snapshot:
 
     - `WI-085` 已闭环；后续若继续扩 continuation governance，请直接在 `WI-086` 或新的 follow-on work
     item 上推进，不要再把新需求或新缺口回写到 `WI-085`。'
-current_branch: codex/085-model-first-continuation-governance
+current_branch: codex/reconcile-continuity-runtime
 docs_baseline_ref: ''
 docs_baseline_at: ''
-timestamp: '2026-04-23T11:17:26+00:00'
+timestamp: '2026-04-30T03:57:46Z'
 checkpoint_path: .ai-sdlc/state/checkpoint.yml
-checkpoint_last_updated: '2026-04-23T11:17:26+00:00'
-checkpoint_fingerprint: 065fcbec590db121fed58f8ee638070c2b57dea124f85b1d2c3d8cb794db9414
+checkpoint_last_updated: '2026-04-30T03:57:46Z'
+checkpoint_fingerprint: cb9185c0fd2db1bf4bbb1799b5bcad580a8f4d69076351bb4d0dc93ffebfae21

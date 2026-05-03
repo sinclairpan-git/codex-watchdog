@@ -28,6 +28,7 @@ from watchdog.services.session_spine.events import list_session_events as list_p
 from watchdog.services.session_spine.service import (
     DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
     SessionSpineUpstreamError,
+    _build_session_read_bundle_from_persisted_record,
     build_approval_inbox_bundle,
     build_session_directory_bundle,
     build_session_read_bundle,
@@ -57,35 +58,35 @@ def _disambiguate_synthetic_event_ids(events):
     return disambiguated
 
 
-def get_client(request: Request) -> CodexRuntimeClient:
+async def get_client(request: Request) -> CodexRuntimeClient:
     return request.app.state.runtime_client
 
 
-def get_receipt_store(request: Request) -> ActionReceiptStore:
+async def get_receipt_store(request: Request) -> ActionReceiptStore:
     return request.app.state.action_receipt_store
 
 
-def get_session_spine_store(request: Request) -> SessionSpineStore:
+async def get_session_spine_store(request: Request) -> SessionSpineStore:
     return request.app.state.session_spine_store
 
 
-def get_resident_orchestration_state_store(request: Request) -> ResidentOrchestrationStateStore:
+async def get_resident_orchestration_state_store(request: Request) -> ResidentOrchestrationStateStore:
     return request.app.state.resident_orchestration_state_store
 
 
-def get_canonical_approval_store(request: Request) -> Any:
+async def get_canonical_approval_store(request: Request) -> Any:
     return request.app.state.canonical_approval_store
 
 
-def get_decision_store(request: Request) -> Any:
+async def get_decision_store(request: Request) -> Any:
     return request.app.state.policy_decision_store
 
 
-def get_session_service(request: Request) -> SessionService:
+async def get_session_service(request: Request) -> SessionService:
     return request.app.state.session_service
 
 
-def get_resident_expert_runtime_service(request: Request) -> ResidentExpertRuntimeService:
+async def get_resident_expert_runtime_service(request: Request) -> ResidentExpertRuntimeService:
     return request.app.state.resident_expert_runtime_service
 
 
@@ -108,6 +109,13 @@ def _parse_action_receipt_query(payload: dict[str, object]) -> ActionReceiptQuer
         return ActionReceiptQuery.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _record_has_project_not_active_fact(record: object) -> bool:
+    return any(
+        str(getattr(fact, "fact_code", "") or "") == "project_not_active"
+        for fact in getattr(record, "facts", []) or []
+    )
 
 
 @router.get(
@@ -241,7 +249,7 @@ def get_session_by_native_thread(
         "versioned ReplyModel carrying SessionProjection and FactRecord data."
     ),
 )
-def get_session(
+async def get_session(
     project_id: str,
     request: Request,
     client: CodexRuntimeClient = Depends(get_client),
@@ -257,6 +265,19 @@ def get_session(
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
     freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
+    fast_record = store.get_best_effort(project_id)
+    if fast_record is not None and _record_has_project_not_active_fact(fast_record):
+        bundle = _build_session_read_bundle_from_persisted_record(
+            fast_record,
+            approval_store=approval_store,
+            freshness_window_seconds=freshness_window_seconds,
+            session_service=None,
+            decision_store=None,
+            receipt_store=None,
+            orchestration_state_store=None,
+            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
+        )
+        return ok(rid, build_session_reply(bundle).model_dump(mode="json"))
     try:
         bundle = build_session_read_bundle(
             client,

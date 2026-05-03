@@ -141,6 +141,16 @@ class SessionSpineStore:
             data = self._read()
             return data.sessions.get(project_id)
 
+    def get_best_effort(self, project_id: str) -> PersistedSessionRecord | None:
+        try:
+            raw = self._path.read_text(encoding="utf-8")
+            if not raw.strip():
+                return None
+            data = PersistedSessionSpineFile.model_validate_json(raw)
+        except (OSError, ValueError):
+            return None
+        return data.sessions.get(project_id)
+
     def get_by_native_thread(self, native_thread_id: str) -> PersistedSessionRecord | None:
         with self._guard_io():
             data = self._read()

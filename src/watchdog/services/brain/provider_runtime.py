@@ -60,6 +60,44 @@ PROVIDER_UNAVAILABLE_DEGRADE_REASON = "provider_unavailable"
 PROVIDER_RATE_LIMITED_DEGRADE_REASON = "provider_rate_limited"
 _RETRYABLE_PROVIDER_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 _PROVIDER_RETRY_ATTEMPTS = 2
+_CANONICAL_CONTINUATION_DECISIONS = frozenset(
+    {
+        "continue_current_branch",
+        "recover_current_branch",
+        "branch_complete_switch",
+        "await_human",
+        "project_complete",
+        "blocked",
+    }
+)
+_CONTINUATION_DECISION_ALIASES = {
+    "continue": "continue_current_branch",
+    "continue_branch": "continue_current_branch",
+    "proceed": "continue_current_branch",
+    "propose_execute": "continue_current_branch",
+    "recover": "recover_current_branch",
+    "recover_and_proceed": "recover_current_branch",
+    "execute_recovery": "recover_current_branch",
+    "propose_recovery": "recover_current_branch",
+    "route_to_recovery": "recover_current_branch",
+    "request_recovery": "recover_current_branch",
+    "recover_branch": "recover_current_branch",
+    "switch_branch": "branch_complete_switch",
+    "branch_switch": "branch_complete_switch",
+    "switch_to_next_branch": "branch_complete_switch",
+    "move_to_next_branch": "branch_complete_switch",
+    "switch_branch_with_recovery_attempt": "branch_complete_switch",
+    "request_approval": "await_human",
+    "require_approval": "await_human",
+    "approval_required": "await_human",
+    "await_approval": "await_human",
+    "awaiting_approval": "await_human",
+    "human_approval": "await_human",
+    "request_human_approval": "await_human",
+    "complete": "project_complete",
+    "candidate_complete": "project_complete",
+    "close_session": "project_complete",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,27 +533,29 @@ class OpenAICompatibleBrainProvider:
                 )
         continuation_decision = str(normalized.get("continuation_decision") or "").strip().lower()
         routing_preference = str(normalized.get("routing_preference") or "").strip().lower()
-        if continuation_decision in {
-            "recover",
-            "recover_and_proceed",
-            "execute_recovery",
-            "propose_recovery",
-            "route_to_recovery",
-            "request_recovery",
-        }:
-            normalized["continuation_decision"] = "recover_current_branch"
+        if continuation_decision in _CONTINUATION_DECISION_ALIASES:
+            normalized["continuation_decision"] = _CONTINUATION_DECISION_ALIASES[
+                continuation_decision
+            ]
         elif continuation_decision in {"block", "blocked"} and any(
             token in routing_preference for token in ("recover", "recovery")
         ):
             normalized["continuation_decision"] = "recover_current_branch"
-        elif continuation_decision in {
-            "switch_branch",
-            "branch_switch",
-            "switch_to_next_branch",
-            "move_to_next_branch",
-            "switch_branch_with_recovery_attempt",
-        }:
-            normalized["continuation_decision"] = "branch_complete_switch"
+        elif continuation_decision == "block":
+            normalized["continuation_decision"] = "blocked"
+        elif "continuation_decision" in normalized:
+            normalized["continuation_decision"] = continuation_decision
+        normalized_continuation_decision = str(
+            normalized.get("continuation_decision") or ""
+        ).strip()
+        if (
+            "continuation_decision" in normalized
+            and normalized_continuation_decision
+            and normalized_continuation_decision not in _CANONICAL_CONTINUATION_DECISIONS
+        ):
+            raise ProviderOutputSchemaError(
+                schema_ref=PROVIDER_CONTINUATION_DECISION_OUTPUT_SCHEMA_REF
+            )
         return normalized
 
     @staticmethod
