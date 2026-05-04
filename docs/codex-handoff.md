@@ -6,7 +6,7 @@ Production hotfix for Watchdog Feishu notification pollution. Feishu must not re
 
 ## AI SDLC Snapshot
 
-- Active git branch: `codex/fix-feishu-guidance-confirmation`
+- Active git branch: `main`
 - AI SDLC checkpoint path: `.ai-sdlc/state/checkpoint.yml`
 - Top-level resume-pack path: `.ai-sdlc/state/resume-pack.yaml`
 - Checkpoint/resume stage: `completed`
@@ -32,8 +32,10 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - Production data check found no currently pending `Ai_AutoSDLC` invalid canonical approvals and no pending invalid delivery outbox records; already delivered Feishu history cannot be recalled.
 - LaunchAgent `com.codex.watchdog` runs from `/Users/sinclairpan/project/codex-watchdog/scripts/start_watchdog.sh` with working directory `/Users/sinclairpan/project/codex-watchdog`.
 - Full local regression is green after the final non-active observe-only suppression.
-- Production service has been restarted with this branch loaded. Post-restart `Ai_AutoSDLC` API reports pending approval count `0`, approval queue length `0`, and pending approvals endpoint count `0`.
+- Production service has been restarted with the hotfix loaded. Post-restart `Ai_AutoSDLC` API reports pending approval count `0`, approval queue length `0`, and pending approvals endpoint count `0`.
 - Post-restart production scans show no `Ai_AutoSDLC` policy decisions or delivery outbox rows created after `2026-05-04T15:50:00Z`.
+- PR #21 was squash-merged to `main` at `2026-05-04T16:06:04Z` with merge commit `3ccce872f9e924597964f615ccabf2684adcfdc7`.
+- Local hotfix branch `codex/fix-feishu-guidance-confirmation` was deleted; local `main` is fast-forwarded to `origin/main`.
 
 ## Changed Files
 
@@ -72,6 +74,10 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - Post-restart Watchdog API `/api/v1/watchdog/sessions/Ai_AutoSDLC/pending-approvals` -> `success=true`, count `0`
 - Post-restart production scan for `Ai_AutoSDLC` delivery outbox rows created after `2026-05-04T15:50:00Z` -> `[]`
 - Post-restart production scan for `Ai_AutoSDLC` policy decisions created after `2026-05-04T15:50:00Z` -> `[]`
+- PR #21 checks -> `verify-constraints`, `lint`, and `test` all passed
+- `@codex review` comment posted on PR #21; it reacted with eyes but did not post review findings during the wait window
+- PR #21 squash merge -> `MERGED`, merge commit `3ccce872f9e924597964f615ccabf2684adcfdc7`
+- `git fetch origin --prune && git switch main && git merge --ff-only origin/main && git branch -d codex/fix-feishu-guidance-confirmation` -> local branch cleanup complete
 
 ## Blockers, Risks, Assumptions
 
@@ -82,7 +88,5 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Exact Next Steps
 
-1. Commit the hotfix.
-2. Push `codex/fix-feishu-guidance-confirmation`.
-3. Open PR, request `@codex review`, monitor checks/review, address issues, and merge to `main`.
-4. After merge, keep watching production delivery/policy stores for new invalid approval prompts.
+1. Keep watching production delivery/policy stores for new invalid approval prompts.
+2. If Feishu shows a new bad message, compare its timestamp against post-merge store rows and capture the exact envelope/decision id before changing code.
