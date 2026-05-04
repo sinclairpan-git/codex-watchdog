@@ -409,6 +409,79 @@ def test_feishu_render_text_includes_next_step_and_key_facts_for_approval(tmp_pa
     assert "关键依据：飞书控制链路未闭环；验证结果尚未回写" in text
 
 
+def test_feishu_render_text_suppresses_operator_guidance_message(tmp_path: Path) -> None:
+    envelope = build_envelopes_for_decision(
+        _decision().model_copy(
+            update={
+                "decision_result": "require_user_decision",
+                "risk_class": "human_gate",
+                "approval_id": "appr_001",
+                "action_ref": "post_operator_guidance",
+                "decision_reason": "operator guidance blocked by resident expert dual gate",
+                "why_not_escalated": None,
+                "why_escalated": "resident expert gate degraded",
+                "evidence": {
+                    "facts": [],
+                    "matched_policy_rules": ["resident_expert_dual_gate"],
+                    "requested_action_args": {
+                        "message": (
+                            "项目总目标：release 0.7.4\n"
+                            "当前进度：PR #39 merged\n"
+                            "::git-push{cwd=\"/tmp/repo\" branch=\"codex/x\"}\n"
+                            "后续任务：继续发布"
+                        ),
+                        "reason_code": "branch_complete_switch",
+                    },
+                    "decision": {},
+                },
+            }
+        )
+    )[0]
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "建议下一步：" not in text
+    assert "::git-push" not in text
+    assert "PR #39" not in text
+    assert "后续任务" not in text
+
+
+def test_feishu_render_text_drops_unsafe_long_next_step(tmp_path: Path) -> None:
+    envelope = DecisionEnvelope(
+        envelope_id="decision-envelope:unsafe-next-step",
+        correlation_id="decision:unsafe-next-step",
+        session_id="session:codex-watchdog",
+        project_id="codex-watchdog",
+        native_thread_id="thr_native_unsafe",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v1",
+        idempotency_key="idem:unsafe-next-step",
+        audit_ref="audit:unsafe-next-step",
+        created_at="2026-04-22T12:20:00Z",
+        occurred_at="2026-04-22T12:20:00Z",
+        decision_id="decision:unsafe-next-step",
+        decision_result="block_and_alert",
+        action_name="continue_session",
+        action_args={
+            "message": (
+                "建议下一步：当前进度：PR #39 已 merge，GitHub Actions 全绿，"
+                "::git-stage{cwd=\"/tmp/repo\"} 后续任务：发布补丁版本。"
+            )
+        },
+        risk_class="hard_block",
+        decision_reason="brain observed state without proposing execution",
+        facts=[],
+        matched_policy_rules=["brain_observe_only"],
+        why_not_escalated=None,
+    )
+
+    text = FeishuAppDeliveryClient(settings=_settings(tmp_path))._render_text(envelope)
+
+    assert "建议下一步：" not in text
+    assert "::git-stage" not in text
+    assert "GitHub Actions" not in text
+
+
 def test_feishu_render_text_formats_decision_notification_for_human_reading(
     tmp_path: Path,
 ) -> None:

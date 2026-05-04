@@ -64,6 +64,7 @@ from watchdog.services.policy.rules import (
     DECISION_BLOCK_AND_ALERT,
     DECISION_REQUIRE_USER_DECISION,
     POLICY_VERSION,
+    RISK_CLASS_HARD_BLOCK,
     RISK_CLASS_HUMAN_GATE,
 )
 from watchdog.services.resident_experts.service import ResidentExpertRuntimeService
@@ -88,6 +89,7 @@ _DUAL_RESIDENT_EXPERT_IDS = (
     "managed-agent-expert",
     "hermes-agent-expert",
 )
+_OPERATOR_GUIDANCE_ACTION_REF = "post_operator_guidance"
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -724,6 +726,85 @@ class ResidentOrchestrator:
         }
         if not self._resident_expert_gate_applies(decision) or gate_bundle["gate_status"] == "eligible":
             return decision.model_copy(update={"evidence": base_evidence})
+
+        if decision.action_ref == _OPERATOR_GUIDANCE_ACTION_REF:
+            decision_result = DECISION_BLOCK_AND_ALERT
+            matched_policy_rules = list(decision.matched_policy_rules)
+            if "resident_expert_dual_gate" not in matched_policy_rules:
+                matched_policy_rules.append("resident_expert_dual_gate")
+            why_not_escalated = (
+                "operator guidance is informational; watchdog must not create "
+                "a human approval prompt for posting guidance"
+            )
+            operator_notes = self._operator_notes_for_decision(
+                decision=decision,
+                decision_result=decision_result,
+                risk_class=RISK_CLASS_HARD_BLOCK,
+                matched_policy_rules=matched_policy_rules,
+                why_not_escalated=why_not_escalated,
+                why_escalated=None,
+                uncertainty_reasons=list(decision.uncertainty_reasons),
+            )
+            decision_key = build_decision_key(
+                session_id=decision.session_id,
+                fact_snapshot_version=decision.fact_snapshot_version,
+                policy_version=decision.policy_version,
+                decision_result=decision_result,
+                brain_intent=decision.brain_intent,
+                action_ref=decision.action_ref,
+                approval_id=decision.approval_id,
+            )
+            updated_governance = None
+            if continuation_governance is not None:
+                updated_governance = {
+                    **continuation_governance,
+                    "gate_status": "suppressed",
+                    "suppression_reason": "resident_expert_dual_gate",
+                }
+            updated_evidence = {
+                **base_evidence,
+                "matched_policy_rules": matched_policy_rules,
+                "risk_class": RISK_CLASS_HARD_BLOCK,
+                "decision_reason": "operator guidance blocked by resident expert dual gate",
+                "why_not_escalated": why_not_escalated,
+                "why_escalated": None,
+                "idempotency_key": decision_key,
+                "operator_notes": operator_notes,
+                "decision": {
+                    **(
+                        evidence.get("decision")
+                        if isinstance(evidence.get("decision"), dict)
+                        else {}
+                    ),
+                    "brain_intent": decision.brain_intent,
+                    "runtime_disposition": decision_result,
+                    "decision_result": decision_result,
+                    "decision_reason": "operator guidance blocked by resident expert dual gate",
+                    "why_not_escalated": why_not_escalated,
+                    "why_escalated": None,
+                    "uncertainty_reasons": list(decision.uncertainty_reasons),
+                    "action_ref": decision.action_ref,
+                    "approval_id": decision.approval_id,
+                },
+            }
+            if updated_governance is not None:
+                updated_evidence["continuation_governance"] = updated_governance
+            return decision.model_copy(
+                update={
+                    "decision_id": self._decision_id_for_key(decision_key),
+                    "decision_key": decision_key,
+                    "runtime_disposition": decision_result,
+                    "decision_result": decision_result,
+                    "risk_class": RISK_CLASS_HARD_BLOCK,
+                    "decision_reason": "operator guidance blocked by resident expert dual gate",
+                    "matched_policy_rules": matched_policy_rules,
+                    "why_not_escalated": why_not_escalated,
+                    "why_escalated": None,
+                    "idempotency_key": decision_key,
+                    "operator_notes": operator_notes,
+                    "evidence": updated_evidence,
+                }
+            )
 
         decision_result = DECISION_REQUIRE_USER_DECISION
         matched_policy_rules = list(decision.matched_policy_rules)
@@ -1794,6 +1875,8 @@ class ResidentOrchestrator:
             "propose_recovery",
             "branch_complete_switch",
             "candidate_closure",
+            "suggest_only",
+            "observe_only",
         }:
             return None
         if brain_intent in {"propose_execute", "require_approval", "suggest_only", "observe_only"}:
@@ -1813,6 +1896,9 @@ class ResidentOrchestrator:
                         policy_version=POLICY_VERSION,
                     ):
                         return requested_action
+                if self._active_projected_approvals(record):
+                    return "continue_session"
+                return None
             if brain_intent == "propose_execute" and "continue_session" not in available_intents:
                 return None
             return "continue_session"

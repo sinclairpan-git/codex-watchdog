@@ -395,7 +395,39 @@ class FeishuAppDeliveryClient:
         return normalized
 
     @staticmethod
-    def _render_next_step(action_args: dict[str, object] | None) -> str:
+    @staticmethod
+    def _next_step_is_delivery_safe(message: str) -> bool:
+        if not message:
+            return False
+        if len(message) > 220:
+            return False
+        unsafe_markers = (
+            "::git-",
+            "@Codex review",
+            "GitHub Actions",
+            "merge commit",
+            "Pull Request",
+            "PR #",
+            "后续任务：",
+            "项目总目标：",
+            "当前分支目标：",
+            "当前进度：",
+        )
+        if any(marker in message for marker in unsafe_markers):
+            return False
+        if message.count("`") >= 4:
+            return False
+        return True
+
+    @classmethod
+    def _render_next_step(
+        cls,
+        action_args: dict[str, object] | None,
+        *,
+        action_name: str | None = None,
+    ) -> str:
+        if str(action_name or "").strip() == "post_operator_guidance":
+            return ""
         if not isinstance(action_args, dict):
             return ""
         message = str(action_args.get("message") or "").strip()
@@ -435,6 +467,8 @@ class FeishuAppDeliveryClient:
                 message = message[len(prefix) :].strip()
                 break
         message = message.strip(" |；。，,")
+        if not cls._next_step_is_delivery_safe(message):
+            return ""
         return message
 
     @staticmethod
@@ -466,7 +500,10 @@ class FeishuAppDeliveryClient:
         reason = cls._humanize_reason(envelope.reason or envelope.why_escalated)
         if reason:
             lines.append(f"原因：{reason}")
-        next_step = cls._render_next_step(envelope.requested_action_args)
+        next_step = cls._render_next_step(
+            envelope.requested_action_args,
+            action_name=envelope.requested_action,
+        )
         if next_step:
             lines.append(f"建议下一步：{next_step}")
         key_facts = cls._render_key_facts(envelope.facts)
@@ -485,7 +522,10 @@ class FeishuAppDeliveryClient:
         decision_reason = str(envelope.decision_reason or envelope.reason or "").strip()
         if decision_reason:
             lines.append(f"决策依据：{decision_reason}")
-        next_step = cls._render_next_step(envelope.action_args)
+        next_step = cls._render_next_step(
+            envelope.action_args,
+            action_name=envelope.action_name,
+        )
         if next_step:
             lines.append(f"建议下一步：{next_step}")
         key_facts = cls._render_key_facts(envelope.facts)
@@ -504,7 +544,10 @@ class FeishuAppDeliveryClient:
         reason = str(envelope.reason or "").strip()
         if reason:
             lines.append(f"决策依据：{reason}")
-        next_step = cls._render_next_step(envelope.action_args)
+        next_step = cls._render_next_step(
+            envelope.action_args,
+            action_name=envelope.action_name,
+        )
         if next_step:
             lines.append(f"建议下一步：{next_step}")
         key_facts = cls._render_key_facts(envelope.facts)

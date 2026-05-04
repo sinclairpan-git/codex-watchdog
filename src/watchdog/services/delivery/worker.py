@@ -734,12 +734,22 @@ class DeliveryWorker:
         envelope_type = str(payload.get("envelope_type") or "").strip()
         if envelope_type == "decision":
             return "suppressed_notification_policy"
+        if envelope_type == "approval" and str(
+            payload.get("requested_action") or ""
+        ).strip() == "post_operator_guidance":
+            return "suppressed_notification_policy"
         if envelope_type != "notification":
             return None
         notification_kind = str(payload.get("notification_kind") or "").strip()
         if notification_kind == "decision_result" and not str(
             payload.get("decision_result") or ""
         ).strip():
+            return "suppressed_notification_policy"
+        if (
+            notification_kind == "decision_result"
+            and str(payload.get("decision_result") or "").strip() == "block_and_alert"
+            and str(payload.get("action_name") or "").strip() == "post_operator_guidance"
+        ):
             return "suppressed_notification_policy"
         return None
 
