@@ -1895,7 +1895,7 @@ def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
         session_id="session:repo-a",
         fact_snapshot_version="fact-v7",
         decision_result="require_user_decision",
-        action_ref="post_operator_guidance",
+        action_ref="continue_session",
         approval_id="approval:repo-a",
     )
     (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
@@ -1922,6 +1922,86 @@ def test_delivery_worker_delivers_approval_when_session_is_awaiting_approval(
     assert delivered.delivery_status == "delivered"
     assert delivered.failure_code is None
     assert client.calls == [record.envelope_id]
+
+
+def test_delivery_worker_suppresses_operator_guidance_approval_prompt(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="require_user_decision",
+        action_ref="post_operator_guidance",
+        approval_id="approval:repo-a",
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="awaiting_approval",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "suppressed_notification_policy"
+    assert client.calls == []
+
+
+def test_delivery_worker_suppresses_blocked_operator_guidance_notification(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    decision = _decision(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        fact_snapshot_version="fact-v7",
+        decision_result="block_and_alert",
+        action_ref="post_operator_guidance",
+        approval_id=None,
+    )
+    (record,) = store.enqueue_envelopes(build_envelopes_for_decision(decision))
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(
+        store=store,
+        delivery_client=client,
+        session_spine_store=_SessionSpineStoreStub(
+            session_state="running",
+            last_refreshed_at="2026-04-01T00:00:00Z",
+            last_progress_at="2026-04-01T00:00:00Z",
+        ),
+        settings=_settings(tmp_path),
+    )
+
+    suppressed = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 0, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert suppressed is not None
+    assert suppressed.envelope_id == record.envelope_id
+    assert suppressed.delivery_status == "delivery_failed"
+    assert suppressed.failure_code == "suppressed_notification_policy"
+    assert client.calls == []
 
 
 def test_delivery_worker_suppresses_duplicate_approval_prompt_with_distinct_approval_id(

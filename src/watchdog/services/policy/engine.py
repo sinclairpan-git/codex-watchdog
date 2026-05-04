@@ -172,14 +172,16 @@ def evaluate_persisted_session_policy(
     if brain_intent == "candidate_closure":
         return build_canonical_decision_record(
             persisted_record=persisted_record,
-            decision_result=DECISION_REQUIRE_USER_DECISION,
+            decision_result=DECISION_BLOCK_AND_ALERT,
             brain_intent=brain_intent,
-            risk_class=RISK_CLASS_HUMAN_GATE,
+            risk_class=RISK_CLASS_HARD_BLOCK,
             action_ref=action_ref,
             matched_policy_rules=["task_completion_candidate"],
-            decision_reason="session completion requires explicit closure review",
-            why_not_escalated=None,
-            why_escalated="candidate closure requires explicit human confirmation",
+            decision_reason="session completion candidate recorded for operator review",
+            why_not_escalated=(
+                "candidate closure is informational; no executable approval prompt was created"
+            ),
+            why_escalated=None,
             uncertainty_reasons=[],
             policy_version=policy_version,
             trigger=trigger,

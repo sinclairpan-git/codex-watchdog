@@ -25,6 +25,7 @@ _WHITESPACE_RE = re.compile(r"[ \t]+")
 _MULTIBLANK_RE = re.compile(r"\n{3,}")
 _INLINE_CITATION_RE = re.compile(r"【[^】]+】")
 _CONVERSATIONAL_FOLLOWUP_RE = re.compile(r"\n*\s*如果你要，我下一条可以[^\n]*", re.DOTALL)
+_CODEX_APP_GIT_DIRECTIVE_RE = re.compile(r"^\s*::git-[^\n]*\s*$", re.MULTILINE)
 
 
 def sanitize_session_summary(text: str | None) -> str:
@@ -32,6 +33,7 @@ def sanitize_session_summary(text: str | None) -> str:
     if not normalized:
         return ""
     normalized = _INLINE_CITATION_RE.sub("", normalized).strip()
+    normalized = _CODEX_APP_GIT_DIRECTIVE_RE.sub("", normalized).strip()
     if _CONTINUE_PROGRESS_TEMPLATE_RE.match(normalized):
         return "当前进展待汇总；需要先返回已完成内容、阻塞点和下一步动作。"
     if normalized.startswith("因为这个聊天界面对“文件链接”的支持比“文件夹链接”稳定"):

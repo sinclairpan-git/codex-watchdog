@@ -2392,7 +2392,7 @@ def test_resident_orchestrator_does_not_execute_when_brain_observes_only(
     steer_mock.assert_not_called()
 
 
-def test_resident_orchestrator_routes_brain_require_approval_to_human_gate(
+def test_resident_orchestrator_suppresses_brain_require_approval_without_trusted_approval(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -2416,6 +2416,63 @@ def test_resident_orchestrator_routes_brain_require_approval_to_human_gate(
             "failure_count": 0,
             "last_progress_at": "2026-04-05T05:20:00Z",
         }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
+    app.state.session_spine_runtime.refresh_all()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert app.state.policy_decision_store.list_records() == []
+    assert app.state.canonical_approval_store.list_records() == []
+    assert app.state.delivery_outbox_store.list_records() == []
+    assert app.state.command_lease_store.list_events() == []
+    steer_mock.assert_not_called()
+
+
+def test_resident_orchestrator_routes_trusted_runtime_approval_to_human_gate(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "waiting_human",
+            "phase": "approval",
+            "pending_approval": True,
+            "approval_risk": "L2",
+            "last_summary": "waiting for approval",
+            "files_touched": ["src/example.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        },
+        approvals=[
+            {
+                "approval_id": "appr_001",
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "risk_level": "L2",
+                "command": "continue_session",
+                "reason": "runtime approval requested",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2026-04-05T05:21:00Z",
+            }
+        ],
     )
     app = create_app(settings, runtime_client=a_client, start_background_workers=False)
     app.state.resident_orchestrator._brain_service = StaticBrainService(intent="require_approval")
@@ -2603,11 +2660,11 @@ def test_resident_orchestrator_cooldown_only_suppresses_propose_execute(
 
     assert [outcome.action_ref for outcome in suggest_outcomes] == ["continue_session"]
     assert [outcome.decision_result for outcome in suggest_outcomes] == ["block_and_alert"]
-    assert [outcome.action_ref for outcome in require_outcomes] == ["continue_session"]
-    assert [outcome.decision_result for outcome in require_outcomes] == ["require_user_decision"]
+    assert [outcome.action_ref for outcome in require_outcomes] == [None]
+    assert [outcome.decision_result for outcome in require_outcomes] == [None]
 
 
-def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
+def test_resident_orchestrator_routes_done_session_to_candidate_closure_notice(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -2642,7 +2699,7 @@ def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
 
     snapshot = _read_store(tmp_path)
     assert [outcome.action_ref for outcome in outcomes] == ["post_operator_guidance"]
-    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
     assert len(snapshot["sessions"]["repo-a"]["facts"]) == 1
     assert snapshot["sessions"]["repo-a"]["facts"][0]["fact_id"] == "repo-a:task_completed"
     assert snapshot["sessions"]["repo-a"]["facts"][0]["fact_code"] == "task_completed"
@@ -2652,12 +2709,13 @@ def test_resident_orchestrator_routes_done_session_to_candidate_closure_review(
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     assert decisions[0].brain_intent == "candidate_closure"
-    assert decisions[0].runtime_disposition == "require_user_decision"
+    assert decisions[0].runtime_disposition == "block_and_alert"
     assert decisions[0].action_ref == "post_operator_guidance"
     assert "task_completion_candidate" in decisions[0].matched_policy_rules
-    approvals = app.state.canonical_approval_store.list_records()
-    assert len(approvals) == 1
-    assert approvals[0].requested_action == "post_operator_guidance"
+    assert app.state.canonical_approval_store.list_records() == []
+    outbox = app.state.delivery_outbox_store.list_records()
+    assert len(outbox) == 1
+    assert outbox[0].envelope_type == "notification"
     assert steer_mock.call_count == 0
 
 
@@ -2789,6 +2847,91 @@ def test_resident_orchestrator_auto_executes_branch_complete_switch_as_operator_
     )
     assert checkpoint is not None
     assert checkpoint.status == "completed"
+
+
+def test_resident_orchestrator_blocks_branch_guidance_without_human_approval_prompt(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "completed continuation governance on current branch",
+            "files_touched": ["src/watchdog/services/session_spine/orchestrator.py"],
+            "context_pressure": "low",
+            "stuck_level": 0,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-05T05:20:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_spine_runtime.refresh_all()
+
+    GoalContractService(app.state.session_service).bootstrap_contract(
+        project_id="repo-a",
+        session_id="session:repo-a",
+        task_title="Model-first continuation governance",
+        task_prompt="Build model-first continuation governance for the watchdog.",
+        last_user_instruction="Continue landing the next branch routing path.",
+        phase="editing_source",
+        last_summary="completed continuation governance on current branch",
+        current_phase_goal="Land branch-complete routing for the current work item",
+        explicit_deliverables=["branch switch governance", "runtime coverage"],
+        completion_signals=["branch switch guidance emitted", "targeted tests green"],
+        active_goal="Land branch-complete routing for the current work item",
+    )
+
+    class StructuredBrainService:
+        def evaluate_session(self, **_: object) -> DecisionIntent:
+            return DecisionIntent(
+                intent="branch_complete_switch",
+                rationale="current branch goal is complete",
+                continuation_decision="branch_complete_switch",
+                routing_preference="next_branch_session",
+                next_branch_hypothesis="086-next-branch-routing",
+                target_work_item_seq=86,
+                branch_switch_token="branch-switch:repo-a:86:fact-v1",
+                goal_coverage="complete",
+                remaining_work_hypothesis=[],
+                provider="openai-compatible",
+                model="gpt-5.4",
+                prompt_schema_ref="prompt:brain-continuation-decision-v3",
+                output_schema_ref="schema:provider-continuation-decision-v3",
+                provider_output_schema_ref="schema:provider-continuation-decision-v3",
+            )
+
+    app.state.resident_orchestrator._brain_service = StructuredBrainService()
+
+    with patch("watchdog.services.session_spine.actions.post_steer") as steer_mock:
+        outcomes = app.state.resident_orchestrator.orchestrate_all(
+            now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+        )
+
+    assert [outcome.action_ref for outcome in outcomes] == ["post_operator_guidance"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
+    steer_mock.assert_not_called()
+
+    decisions = app.state.policy_decision_store.list_records()
+    assert len(decisions) == 1
+    decision = decisions[0]
+    assert decision.action_ref == "post_operator_guidance"
+    assert decision.decision_result == "block_and_alert"
+    assert decision.decision_reason == "operator guidance blocked by resident expert dual gate"
+    assert "resident_expert_dual_gate" in decision.matched_policy_rules
+    assert app.state.canonical_approval_store.list_records() == []
+    outbox = app.state.delivery_outbox_store.list_records()
+    assert len(outbox) == 1
+    assert outbox[0].envelope_type == "notification"
 
 
 def test_resident_orchestrator_blocks_branch_complete_switch_without_authoritative_target(
@@ -4824,7 +4967,50 @@ def test_resident_orchestrator_does_not_request_branch_switch_guidance_for_non_a
     assert pending == []
 
 
-def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_auto_continue(
+def test_resident_orchestrator_does_not_emit_observe_only_notice_for_non_active_project(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        auto_continue_cooldown_seconds=0.0,
+    )
+    a_client = FakeResidentAClient(
+        task={
+            "project_id": "meeting",
+            "thread_id": "019d757d-d272-7913-b4a2-a8adafe62bc5",
+            "status": "running",
+            "phase": "planning",
+            "project_execution_state": "archived",
+            "pending_approval": False,
+            "last_summary": "stale archived task",
+            "files_touched": [],
+            "context_pressure": "low",
+            "stuck_level": 1,
+            "failure_count": 0,
+            "last_progress_at": "2026-04-23T02:20:49Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="observe_only")
+
+    app.state.session_spine_runtime.refresh_all()
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 23, 3, 0, 0, tzinfo=UTC)
+    )
+
+    record = app.state.session_spine_store.get("meeting")
+    assert record is not None
+    assert "project_not_active" in [fact.fact_code for fact in record.facts]
+    assert [outcome.action_ref for outcome in outcomes] == [None]
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    assert app.state.policy_decision_store.list_records() == []
+    assert app.state.delivery_outbox_store.list_records() == []
+
+
+def test_resident_orchestrator_does_not_create_synthetic_approval_before_auto_continue(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -4903,34 +5089,17 @@ def test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_aut
         approval_store=app.state.canonical_approval_store,
     )
 
-    assert [outcome.action_ref for outcome in first] == ["continue_session"]
-    assert [outcome.decision_result for outcome in first] == ["require_user_decision"]
-    assert len(first_approvals) == 1
-    assert first_approvals[0].status == "pending"
-    assert first_approvals[0].requested_action == "continue_session"
+    assert [outcome.action_ref for outcome in first] == [None]
+    assert [outcome.decision_result for outcome in first] == [None]
+    assert first_approvals == []
     assert [outcome.action_ref for outcome in second] == ["continue_session"]
     assert [outcome.decision_result for outcome in second] == ["auto_execute_and_notify"]
     assert steer_mock.call_count == 1
-    assert len(approvals) == 1
-    assert approvals[0].requested_action == "continue_session"
-    assert approvals[0].status == "superseded"
-    assert approvals[0].decided_by == "policy-supersede"
-    assert any(
-        note.startswith("approval_superseded_by_decision ")
-        for note in approvals[0].operator_notes
-    )
-    assert session_bundle.session.session_state == "blocked"
+    assert approvals == []
     assert session_bundle.session.pending_approval_count == 0
     assert session_bundle.approvals == []
     assert inbox_bundle.approvals == []
     assert event_inbox_bundle.approvals == []
-    approval_delivery = app.state.delivery_outbox_store.get_delivery_record(first_approvals[0].envelope_id)
-    assert approval_delivery is not None
-    assert approval_delivery.delivery_status == "superseded"
-    assert any(
-        note.startswith("delivery_superseded reason=approval_superseded_by_decision ")
-        for note in approval_delivery.operator_notes
-    )
     assert [fact.fact_code for fact in session_bundle.facts] == [
         "stuck_no_progress",
         "recovery_available",

@@ -2,11 +2,11 @@
 
 ## Current Goal
 
-Production hotfix for Watchdog notification spam: stale or nonexistent runtime projects such as `Ai_AutoSDLC` must not be converted into approval prompts, auto-decision notices, or recovery/continue actions.
+Production hotfix for Watchdog Feishu notification pollution. Feishu must not receive approval prompts or long "next step" text generated from internal handoff/recovery/PR state. Human approval prompts are allowed only when there is a real actionable runtime approval or explicit recovery decision, not when the brain merely says "require approval" or when the action is informational operator guidance.
 
 ## AI SDLC Snapshot
 
-- Active git branch: `codex/fix-ai-autosdlc-stale-notifications`
+- Active git branch: `codex/fix-feishu-guidance-confirmation`
 - AI SDLC checkpoint path: `.ai-sdlc/state/checkpoint.yml`
 - Top-level resume-pack path: `.ai-sdlc/state/resume-pack.yaml`
 - Checkpoint/resume stage: `completed`
@@ -20,71 +20,69 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Current State
 
-- Root cause confirmed: when A-Agent reported a project as missing, Watchdog synthesized a missing-runtime task but carried stale pending approval state into the projection.
-- `build_fact_records()` evaluated approval facts before missing-runtime/non-active facts, so stale `pending_approval` data masked `project_not_active` as `approval_state_unavailable`.
-- The decision module then acted on the wrong fact and emitted invalid "continue current task" approval/decision notifications.
-- Second root cause confirmed: A-Agent can expose multiple native Codex threads under the same project id. Watchdog merged pending approvals by `project_id` only, so old approvals from a previous native thread were applied to the current `Ai_AutoSDLC` native thread.
-- The runtime projection now clears approvals for missing runtime tasks and skips local approval merge/workspace activity scanning for those tasks.
-- Missing runtime tasks now fail closed immediately as `project_not_active`, regardless of stale pending approval state.
-- Active runtime tasks now only merge approvals whose `native_thread_id` / `thread_id` matches the current task's native thread; old cross-thread approvals are ignored.
-- Live read root cause confirmed: active `Ai_AutoSDLC` reads can still time out while rebuilding projections from large historical event stores even after the persisted spine is fresh.
-- Inactive session read surfaces now use a best-effort persisted fast path for session/progress/facts/pending approvals, so operator/UI reads do not scan session events or touch runtime for non-active projects.
-- Inactive persisted reads now drop stale approval projections even if older rows still contain `approval_queue` or stale pending approval counts.
-- Empty pending-approval reads now return from persisted spine without scanning events or runtime. Other session read routes build projections in a worker with a bounded timeout and fall back to persisted spine if the expensive projection path stalls.
-- Startup non-critical background steps now use a short startup budget, while approval reconciliation remains a startup gate before delivery/orchestrator loops.
-- Full local validation is green.
-- Production service has been restarted with the hotfix, and a one-shot refresh was run against production data.
-- Production `Ai_AutoSDLC` Watchdog API now returns quickly with `pending_approval_count=0` and `approval_queue_len=0`; `pending-approvals` returns count `0`.
-- A-Agent still exposes two stale `Ai_AutoSDLC` pending approvals on old native thread `019dcd5c-ed24-7ec3-b1ed-d83623dc3ca4`, while the current active task reports a different native thread and `pending_approval=false`; Watchdog filters those stale approvals out.
+- Root cause confirmed from production data: `Ai_AutoSDLC` delivered an approval prompt for `post_operator_guidance` at `2026-05-04T15:28:24Z`, with `requested_action_args.message` containing PR #39 status, merge commit, GitHub Actions, `@Codex review`, Codex app git directives, and next work-item instructions.
+- Root cause confirmed in code: `post_operator_guidance` is informational guidance for the managed agent, but the resident expert dual gate converted a degraded guidance path into `require_user_decision`, which materialized a canonical approval and Feishu approval prompt.
+- Second root cause confirmed in code: `brain_intent=require_approval` fell back to `continue_session` even when no real active projected approval existed, creating synthetic "brain requested explicit human approval" prompts.
+- Third root cause confirmed in Feishu renderer: delivery rendered raw `action_args.message` as "建议下一步" after only whitespace cleanup, so internal handoff and git directive text could leak into Feishu.
+- Hotfix now blocks operator guidance when the resident expert gate is degraded without creating a human approval prompt.
+- Hotfix now suppresses `require_approval` when no active projected approval exists; it still preserves reminting when a real runtime approval projection exists.
+- Hotfix now changes candidate closure from a human approval prompt to a non-executable review notice.
+- Hotfix now prevents Feishu from rendering `post_operator_guidance` messages as next-step text and drops unsafe/long next-step text containing git directives, PR metadata, GitHub Actions, or branch handoff markers.
+- Delivery worker now suppresses any old/new `post_operator_guidance` approval prompts and blocked operator-guidance notifications before they reach Feishu.
+- Production data check found no currently pending `Ai_AutoSDLC` invalid canonical approvals and no pending invalid delivery outbox records; already delivered Feishu history cannot be recalled.
+- LaunchAgent `com.codex.watchdog` runs from `/Users/sinclairpan/project/codex-watchdog/scripts/start_watchdog.sh` with working directory `/Users/sinclairpan/project/codex-watchdog`.
+- Full local regression is green after the final non-active observe-only suppression.
+- Production service has been restarted with this branch loaded. Post-restart `Ai_AutoSDLC` API reports pending approval count `0`, approval queue length `0`, and pending approvals endpoint count `0`.
+- Post-restart production scans show no `Ai_AutoSDLC` policy decisions or delivery outbox rows created after `2026-05-04T15:50:00Z`.
 
 ## Changed Files
 
-- `src/watchdog/services/session_spine/runtime.py`: missing runtime reconciliation now clears approval state and skips local approval/workspace liveness enrichment.
-- `src/watchdog/services/session_spine/runtime.py`: runtime/canonical approval overlays now require matching native thread identity before contributing to the current task projection.
-- `src/watchdog/services/session_spine/facts.py`: `runtime_task_missing` now wins before approval fact derivation and returns only `project_not_active`.
-- `src/watchdog/services/session_spine/service.py`: persisted `project_not_active` bundles force an empty approval queue and rebuild the session projection with zero pending approvals; approval row thread matching also considers raw `thread_id`.
-- `src/watchdog/api/session_spine_queries.py`: session/progress/facts/pending-approvals read routes now share the inactive-project fast path; progress/facts/pending-approvals are async routes; expensive read projection work runs in a worker with timeout fallback to persisted spine.
-- `src/watchdog/main.py`: non-critical startup refresh/recover/drain steps have a short timeout budget; approval reconcile keeps the existing guarded startup behavior.
-- `tests/test_watchdog_session_spine_api.py`: added coverage proving inactive read surfaces drop stale approvals, empty pending reads avoid event/runtime scans, and existing canonical approval read semantics are preserved.
-- `tests/test_watchdog_session_spine_runtime.py`: added regression coverage for missing runtime tasks with stale pending approval state; existing startup tests cover the non-critical startup budget.
+- `src/watchdog/services/session_spine/orchestrator.py`: removed synthetic `continue_session` fallback for `require_approval` unless an active projected approval exists; degraded resident expert gate for `post_operator_guidance` now records `block_and_alert` instead of `require_user_decision`.
+- `src/watchdog/services/policy/engine.py`: candidate closure is now a non-executable review notice (`block_and_alert`) instead of a human approval prompt.
+- `src/watchdog/services/policy/decisions.py`: updated candidate-closure runtime disposition mapping to `block_and_alert`.
+- `src/watchdog/services/delivery/feishu_client.py`: added next-step safety filtering and never renders `post_operator_guidance` message content as Feishu "建议下一步".
+- `src/watchdog/services/delivery/worker.py`: suppresses operator-guidance approval prompts and blocked operator-guidance notifications as a delivery safety net.
+- `src/watchdog/services/session_spine/text.py`: strips Codex app `::git-*` directives from sanitized session summaries.
+- `tests/test_watchdog_session_spine_runtime.py`: added/updated coverage for no synthetic approvals, real runtime approval reminting, candidate-closure notices, and degraded branch guidance without approval prompts.
+- `tests/test_watchdog_feishu_delivery.py`: added coverage that operator-guidance/internal handoff messages and unsafe next-step text are not rendered to Feishu.
+- `tests/test_watchdog_delivery_worker.py`: added worker suppression coverage for operator-guidance approval and notification envelopes.
 - `docs/codex-handoff.md`: updated with the current hotfix state.
 
 ## Key Decisions
 
-- Treat A-Agent `NOT_FOUND` / missing runtime task as authoritative for notification safety. Stale local approval state cannot override that.
-- Treat native thread identity as part of approval identity. Same `project_id` is not enough to attach a pending approval to the current task.
-- Keep the project visible as `blocked` with `project_not_active` for diagnostics, but with an empty approval queue and zero pending approval count.
-- Treat inactive project operator reads as diagnostic-only persisted reads, not as an opportunity to reconstruct approval state from old events.
-- Treat fresh persisted spine as a safe fallback for read-only UI/operator surfaces when full projection rebuild is too slow.
-- Preserve approval reconciliation as a startup gate so delivery/orchestrator loops do not run before stale approvals are reconciled.
-- Bound only non-critical startup refresh/drain steps so slow projection work cannot block process startup.
+- Feishu approval cards must represent real operator decisions, not model uncertainty, degraded guidance paths, or internal handoff instructions.
+- `post_operator_guidance` is informational. If Watchdog cannot safely post it automatically, it must not ask the user to approve "posting guidance".
+- "建议下一步" in Feishu must be concise and action-scoped. It must not be derived from raw handoff text, PR summaries, merge metadata, Codex app git directives, or branch-switch packets.
+- Keep real runtime approval reminting intact: when A-Agent exposes an active projected approval, Watchdog may still mint a clean canonical approval even if stale local approval records need superseding.
 
 ## Commands And Results
 
-- `.venv/bin/python -m pytest -q tests/test_watchdog_session_spine_runtime.py::test_startup_does_not_wait_for_full_delivery_drain tests/test_watchdog_session_spine_runtime.py::test_startup_waits_for_approval_reconcile_before_starting_delivery_loop tests/test_watchdog_session_spine_runtime.py::test_startup_waits_for_approval_reconcile_before_starting_orchestrators tests/test_watchdog_session_spine_runtime.py::test_startup_does_not_start_background_loops_when_reconcile_fails tests/test_watchdog_session_spine_runtime.py::test_startup_does_not_wait_for_initial_orchestrator tests/test_watchdog.py::test_watchdog_startup_continues_when_session_spine_refresh_is_slow` -> `6 passed`
-- `.venv/bin/python -m pytest -q tests/test_watchdog_session_spine_runtime.py::test_session_spine_runtime_fail_closes_missing_runtime_task_with_stale_pending_approval_state tests/test_watchdog_session_spine_runtime.py::test_session_spine_runtime_fail_closes_missing_runtime_task_even_with_recent_workspace_activity tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_skips_phantom_approval_when_only_pending_flag_is_set tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_supersedes_stale_pending_approval_after_newer_auto_continue tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_does_not_auto_continue_non_active_project_execution_state tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_does_not_auto_recover_non_active_project_execution_state` -> `6 passed`
-- `.venv/bin/python -m pytest -q tests/test_watchdog_session_spine_api.py::test_inactive_persisted_read_surfaces_drop_stale_approval_state_without_event_scan` -> `1 passed`
-- `.venv/bin/python -m pytest -q tests/test_watchdog_session_spine_api.py::test_empty_pending_approvals_route_uses_persisted_record_without_event_scan ...` -> `3 passed`
-- `.venv/bin/python -m pytest -q tests/test_watchdog_session_spine_runtime.py::test_session_spine_runtime_ignores_pending_approvals_from_stale_native_thread` -> `1 passed`
-- `.venv/bin/python -m pytest -q tests/test_watchdog_session_spine_api.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog.py tests/test_watchdog_ops.py tests/test_watchdog_brain_provider_runtime.py tests/test_watchdog_policy_decisions.py tests/test_watchdog_policy_engine.py` -> `470 passed`
-- `.venv/bin/python -m ruff check` -> passed
-- `git diff --check` -> passed
-- `.venv/bin/python -m pytest -q` -> `1196 passed`
-- Production restart: `launchctl kickstart -k gui/502/com.codex.watchdog` -> succeeded
-- Production one-shot spine refresh -> `Ai_AutoSDLC` projected as `blocked`, pending `0`, queue `0`, facts `context_critical,recovery_available`
-- Watchdog API `/api/v1/watchdog/sessions/Ai_AutoSDLC` -> `success=true`, pending `0`, queue `0`
-- Watchdog API `/api/v1/watchdog/sessions/Ai_AutoSDLC/pending-approvals` -> `success=true`, count `0`
-- Delivery outbox pending/retrying count -> `0`
-- Global persisted spine approval-state scan -> no sessions with pending approval queue/count or `approval_state_unavailable`
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_brain_require_approval_without_trusted_approval ... test_resident_orchestrator_blocks_branch_guidance_without_human_approval_prompt` -> `4 passed`
+- `.venv/bin/python -m pytest tests/test_watchdog_feishu_delivery.py::test_feishu_render_text_includes_next_step_and_key_facts_for_approval ... test_feishu_render_text_sanitizes_recursive_rule_based_next_step_message` -> `4 passed`
+- `.venv/bin/python -m pytest tests/test_watchdog_delivery_worker.py::test_delivery_worker_delivers_approval_when_session_is_awaiting_approval ... test_delivery_worker_suppresses_blocked_operator_guidance_notification` -> `3 passed`
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_feishu_delivery.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_policy_engine.py tests/test_watchdog_approval_loop.py` -> `267 passed`
+- `uv run ruff check src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/policy/engine.py src/watchdog/services/policy/decisions.py src/watchdog/services/delivery/feishu_client.py src/watchdog/services/delivery/worker.py src/watchdog/services/session_spine/text.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_feishu_delivery.py tests/test_watchdog_delivery_worker.py` -> passed
+- `uv run ruff check .` -> passed
+- `.venv/bin/python -m pytest` -> `1203 passed`
+- Production data scan: pending invalid `Ai_AutoSDLC` canonical approvals -> `[]`
+- Production data scan: pending invalid `Ai_AutoSDLC` delivery outbox records -> `[]`
+- `launchctl print gui/$(id -u)/com.codex.watchdog` -> service running from this repository, pid `90967` at time of check
+- Restarted production service with `launchctl kickstart -k gui/502/com.codex.watchdog`; service running from this repository, pid `47325` at post-restart check.
+- Post-restart Watchdog API `/api/v1/watchdog/sessions/Ai_AutoSDLC` -> `success=true`, pending `0`, queue `0`, facts `project_not_active`
+- Post-restart Watchdog API `/api/v1/watchdog/sessions/Ai_AutoSDLC/pending-approvals` -> `success=true`, count `0`
+- Post-restart production scan for `Ai_AutoSDLC` delivery outbox rows created after `2026-05-04T15:50:00Z` -> `[]`
+- Post-restart production scan for `Ai_AutoSDLC` policy decisions created after `2026-05-04T15:50:00Z` -> `[]`
 
 ## Blockers, Risks, Assumptions
 
-- The local `.venv/bin/pytest` script previously had a stale interpreter path; continue using `.venv/bin/python -m pytest`.
+- Already delivered Feishu messages cannot be recalled; the fix prevents new emissions.
+- Already delivered Feishu history remains visible in the chat; this change stops new emissions and stops new internal outbox churn for the covered paths.
 - AI SDLC checkpoint/resume still represent completed WI-085, not this hotfix branch.
 - Do not record or paste runtime secrets from `.env.a`, `.env.w`, Keychain, or shell output.
 
 ## Exact Next Steps
 
 1. Commit the hotfix.
-2. Push `codex/fix-ai-autosdlc-stale-notifications`.
-3. Open a PR, request `@codex review`, monitor checks/review, address any issues, and merge to `main`.
+2. Push `codex/fix-feishu-guidance-confirmation`.
+3. Open PR, request `@codex review`, monitor checks/review, address issues, and merge to `main`.
+4. After merge, keep watching production delivery/policy stores for new invalid approval prompts.
