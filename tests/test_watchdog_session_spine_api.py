@@ -1334,6 +1334,162 @@ def test_persisted_session_event_only_fallback_keeps_nonterminal_task_status(tmp
     assert a_client.list_approvals_calls == []
 
 
+def test_inactive_persisted_read_surfaces_drop_stale_approval_state_without_event_scan(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _seed_persisted_session_spine(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    session_record = payload["sessions"]["repo-a"]
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "approval",
+        "pending_approval": False,
+        "runtime_task_missing": True,
+        "project_execution_state": "paused",
+        "last_summary": "stale approval state from missing runtime task",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "critical",
+        "stuck_level": 3,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    session_record["session"] = session.model_dump(mode="json")
+    session_record["session"]["pending_approval_count"] = 1
+    session_record["progress"] = progress.model_dump(mode="json")
+    session_record["facts"] = [fact.model_dump(mode="json") for fact in facts]
+    # Keep the old approval projection in the persisted row to prove inactive reads drop it.
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=a_client,
+    )
+
+    def fail_event_scan(*args, **kwargs):
+        _ = (args, kwargs)
+        raise AssertionError("inactive persisted reads must not scan session events")
+
+    monkeypatch.setattr(app.state.session_service, "list_events", fail_event_scan)
+    c = TestClient(app)
+
+    session_resp = c.get("/api/v1/watchdog/sessions/repo-a", headers={"Authorization": "Bearer wt"})
+    progress_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/progress",
+        headers={"Authorization": "Bearer wt"},
+    )
+    facts_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/facts",
+        headers={"Authorization": "Bearer wt"},
+    )
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert session_resp.status_code == 200
+    assert progress_resp.status_code == 200
+    assert facts_resp.status_code == 200
+    assert approvals_resp.status_code == 200
+    assert session_resp.json()["data"]["session"]["pending_approval_count"] == 0
+    assert [fact["fact_code"] for fact in progress_resp.json()["data"]["facts"]] == [
+        "project_not_active"
+    ]
+    assert [fact["fact_code"] for fact in facts_resp.json()["data"]["facts"]] == [
+        "project_not_active"
+    ]
+    assert approvals_resp.json()["data"]["approvals"] == []
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
+def test_empty_pending_approvals_route_uses_persisted_record_without_event_scan(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _seed_persisted_session_spine(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    session_record = payload["sessions"]["repo-a"]
+    task = {
+        "project_id": "repo-a",
+        "thread_id": "thr_native_1",
+        "status": "running",
+        "phase": "editing_source",
+        "pending_approval": False,
+        "last_summary": "current task has no approvals",
+        "files_touched": ["src/example.py"],
+        "context_pressure": "low",
+        "stuck_level": 0,
+        "failure_count": 0,
+        "last_progress_at": "2026-04-05T05:20:00Z",
+    }
+    facts = build_fact_records(project_id="repo-a", task=task, approvals=[])
+    session = build_session_projection(
+        project_id="repo-a",
+        task=task,
+        approvals=[],
+        facts=facts,
+    )
+    progress = build_task_progress_view(
+        project_id="repo-a",
+        task=task,
+        facts=facts,
+    )
+    session_record["session"] = session.model_dump(mode="json")
+    session_record["progress"] = progress.model_dump(mode="json")
+    session_record["facts"] = [fact.model_dump(mode="json") for fact in facts]
+    session_record["approval_queue"] = []
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    a_client = BrokenAClient()
+    app = create_app(
+        Settings(
+            api_token="wt",
+            codex_runtime_token="at",
+            codex_runtime_base_url="http://a.test",
+            data_dir=str(tmp_path),
+        ),
+        runtime_client=a_client,
+    )
+
+    def fail_event_scan(*args, **kwargs):
+        _ = (args, kwargs)
+        raise AssertionError("empty approval reads must not scan session events")
+
+    monkeypatch.setattr(app.state.session_service, "list_events", fail_event_scan)
+    c = TestClient(app)
+
+    approvals_resp = c.get(
+        "/api/v1/watchdog/sessions/repo-a/pending-approvals",
+        headers={"Authorization": "Bearer wt"},
+    )
+
+    assert approvals_resp.status_code == 200
+    assert approvals_resp.json()["data"]["approvals"] == []
+    assert a_client.get_envelope_calls == []
+    assert a_client.list_approvals_calls == []
+
+
 def test_persisted_session_projection_facts_preserve_source_state_summary_and_context(tmp_path) -> None:
     path = _seed_persisted_session_spine(tmp_path)
     payload = json.loads(path.read_text(encoding="utf-8"))

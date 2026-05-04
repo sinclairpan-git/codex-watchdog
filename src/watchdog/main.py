@@ -62,6 +62,7 @@ from watchdog.api.ops import build_ops_health_summary
 logger = logging.getLogger(__name__)
 HEALTHZ_SUMMARY_TIMEOUT_SECONDS = 1.0
 STARTUP_BACKGROUND_STEP_TIMEOUT_SECONDS = 5.0
+STARTUP_NONCRITICAL_STEP_TIMEOUT_SECONDS = 0.01
 
 
 def _run_background_step(step_name: str, fn, /, *args, **kwargs):
@@ -119,11 +120,23 @@ async def _run_background_step_async(step_name: str, fn, /, *args, **kwargs):
     return await asyncio.to_thread(_run_background_step, step_name, fn, *args, **kwargs)
 
 
-async def _run_startup_background_step(step_name: str, fn, /, *args, **kwargs):
+async def _run_startup_background_step(
+    step_name: str,
+    fn,
+    /,
+    *args,
+    timeout_seconds: float | None = None,
+    **kwargs,
+):
+    timeout = (
+        STARTUP_BACKGROUND_STEP_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(float(timeout_seconds), 0.0)
+    )
     try:
         await asyncio.wait_for(
             _run_background_step_async(step_name, fn, *args, **kwargs),
-            timeout=STARTUP_BACKGROUND_STEP_TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except TimeoutError:
         logger.warning("watchdog startup step timed out; continuing startup: %s", step_name)
@@ -320,15 +333,18 @@ def create_app(
             await _run_startup_background_step(
                 "session_spine_runtime.refresh_all",
                 app.state.session_spine_runtime.refresh_all,
+                timeout_seconds=STARTUP_NONCRITICAL_STEP_TIMEOUT_SECONDS,
             )
             await _run_startup_background_step(
                 "memory_ingest_queue.recover_inflight",
                 app.state.memory_ingest_queue_store.recover_inflight,
+                timeout_seconds=STARTUP_NONCRITICAL_STEP_TIMEOUT_SECONDS,
             )
             await _run_startup_background_step(
                 "memory_ingest_drain_queue",
                 _drain_memory_ingest_queue,
                 app,
+                timeout_seconds=STARTUP_NONCRITICAL_STEP_TIMEOUT_SECONDS,
             )
             await startup_reconcile_task
             session_spine_loop_task = asyncio.create_task(_run_session_spine_refresh_loop(app))

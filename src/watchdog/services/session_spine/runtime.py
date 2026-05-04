@@ -11,6 +11,7 @@ from watchdog.services.session_spine.service import (
     _load_approvals_or_raise,
     _task_from_persisted_record,
 )
+from watchdog.services.session_spine.projection import task_native_thread_id
 from watchdog.services.session_spine.store import PersistedSessionRecord, SessionSpineStore
 
 if TYPE_CHECKING:
@@ -207,7 +208,8 @@ class SessionSpineRuntime:
                 task = data
 
         if task is None:
-            synthesized_task = _task_from_persisted_record(record, approvals=approvals or [])
+            approvals = []
+            synthesized_task = _task_from_persisted_record(record, approvals=[])
             synthesized_task["runtime_task_missing"] = True
             task = synthesized_task
 
@@ -216,11 +218,13 @@ class SessionSpineRuntime:
                 project_id=record.project_id,
                 task=task,
             )
-        approvals = self._merge_local_approvals(
-            project_id=record.project_id,
-            approvals=approvals or [],
-            task=task,
-        )
+            approvals = self._merge_local_approvals(
+                project_id=record.project_id,
+                approvals=approvals or [],
+                task=task,
+            )
+        else:
+            approvals = []
         bundle = _build_session_read_bundle(
             project_id=record.project_id,
             task=task,
@@ -247,6 +251,8 @@ class SessionSpineRuntime:
     ) -> list[dict[str, Any]]:
         rows_by_id: dict[str, dict[str, Any]] = {}
         for approval in approvals:
+            if not self._approval_matches_task_thread(task=task, approval=approval):
+                continue
             approval_id = str(approval.get("approval_id") or "").strip()
             if not approval_id:
                 continue
@@ -255,6 +261,8 @@ class SessionSpineRuntime:
             self._approval_store,
             project_id=project_id,
         ):
+            if not self._approval_matches_task_thread(task=task, approval=approval):
+                continue
             approval_id = str(approval.get("approval_id") or "").strip()
             if not approval_id:
                 continue
@@ -274,6 +282,22 @@ class SessionSpineRuntime:
                 str(row.get("approval_id") or ""),
             ),
         )
+
+    @staticmethod
+    def _approval_matches_task_thread(
+        *,
+        task: dict[str, Any] | None,
+        approval: dict[str, Any],
+    ) -> bool:
+        target = task_native_thread_id(task)
+        if not target:
+            return True
+        approval_thread = str(
+            approval.get("native_thread_id") or approval.get("thread_id") or ""
+        ).strip()
+        if not approval_thread or approval_thread.startswith("session:"):
+            return True
+        return approval_thread == target
 
     @classmethod
     def _canonical_overlay_is_stale_for_task(
