@@ -466,8 +466,10 @@ def _approval_row_matches_native_thread(
     target = str(native_thread_id or "").strip()
     if not target:
         return True
-    approval_thread = str(approval.get("native_thread_id") or "").strip()
-    return not approval_thread or approval_thread == target
+    approval_thread = str(
+        approval.get("native_thread_id") or approval.get("thread_id") or ""
+    ).strip()
+    return not approval_thread or approval_thread.startswith("session:") or approval_thread == target
 
 
 def _directory_human_activity_reference_time(task: dict[str, Any] | None) -> datetime | None:
@@ -1900,6 +1902,10 @@ def _build_session_read_bundle(
     if liveness_now is None:
         liveness_now = _task_liveness_reference_time(task)
     task = _task_with_authoritative_project_execution_state(task, now=liveness_now)
+    native_thread_id = task_native_thread_id(task)
+    approvals = [
+        approval for approval in approvals if _approval_row_matches_native_thread(approval, native_thread_id)
+    ]
     task_facts = build_fact_records(project_id=project_id, task=task, approvals=approvals)
     if any(fact.fact_code == "project_not_active" for fact in task_facts):
         approvals = []
@@ -1919,7 +1925,6 @@ def _build_session_read_bundle(
         else []
     )
     facts = _merge_fact_records(task_facts, event_facts)
-    native_thread_id = task_native_thread_id(task)
     recovery = _build_recovery_projection(
         session_service=session_service,
         project_id=project_id,
@@ -2161,30 +2166,18 @@ def _build_session_read_bundle_from_persisted_record(
 ) -> SessionReadBundle:
     approval_fact_codes = {"approval_pending", "awaiting_human_direction"}
     if any(fact.fact_code == "project_not_active" for fact in record.facts):
-        effective_approval_queue = _filter_persisted_approval_projections(
-            record.approval_queue,
-            approval_store=approval_store,
+        effective_approval_queue: list[ApprovalProjection] = []
+        effective_facts = [
+            fact for fact in record.facts if fact.fact_code not in approval_fact_codes
+        ]
+        projected_task = _task_from_persisted_record(record, approvals=[])
+        projected_task["runtime_task_missing"] = True
+        effective_session = build_session_projection(
             project_id=record.project_id,
+            task=projected_task,
+            approvals=[],
+            facts=effective_facts,
         )
-        effective_facts = list(record.facts)
-        effective_session = record.session
-        if effective_approval_queue != list(record.approval_queue):
-            if not effective_approval_queue:
-                effective_facts = [
-                    fact for fact in record.facts if fact.fact_code not in approval_fact_codes
-                ]
-            projected_task = _task_from_persisted_record(
-                record,
-                approvals=effective_approval_queue,
-            )
-            effective_session = build_session_projection(
-                project_id=record.project_id,
-                task=projected_task,
-                approvals=[
-                    approval.model_dump(mode="json") for approval in effective_approval_queue
-                ],
-                facts=effective_facts,
-            )
         return SessionReadBundle(
             project_id=record.project_id,
             task=None,

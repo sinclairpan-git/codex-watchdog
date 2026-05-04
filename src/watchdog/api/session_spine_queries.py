@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -29,6 +30,7 @@ from watchdog.services.session_spine.service import (
     DEFAULT_SESSION_SPINE_FRESHNESS_WINDOW_SECONDS,
     SessionSpineUpstreamError,
     _build_session_read_bundle_from_persisted_record,
+    _list_actionable_canonical_approval_rows,
     build_approval_inbox_bundle,
     build_session_directory_bundle,
     build_session_read_bundle,
@@ -40,6 +42,7 @@ from watchdog.services.session_spine.orchestration_store import ResidentOrchestr
 from watchdog.storage.action_receipts import ActionReceiptStore
 
 router = APIRouter(prefix="/watchdog", tags=["session-spine"])
+SESSION_READ_BUILD_TIMEOUT_SECONDS = 1.0
 
 
 def _disambiguate_synthetic_event_ids(events):
@@ -116,6 +119,118 @@ def _record_has_project_not_active_fact(record: object) -> bool:
         str(getattr(fact, "fact_code", "") or "") == "project_not_active"
         for fact in getattr(record, "facts", []) or []
     )
+
+
+def _record_has_approval_state(record: object) -> bool:
+    session = getattr(record, "session", None)
+    if int(getattr(session, "pending_approval_count", 0) or 0) > 0:
+        return True
+    if len(getattr(record, "approval_queue", []) or []) > 0:
+        return True
+    return any(
+        str(getattr(fact, "fact_code", "") or "")
+        in {"approval_pending", "awaiting_human_direction", "approval_state_unavailable"}
+        for fact in getattr(record, "facts", []) or []
+    )
+
+
+def _build_fast_persisted_bundle(
+    *,
+    project_id: str,
+    request: Request,
+    store: SessionSpineStore,
+):
+    fast_record = store.get_best_effort(project_id)
+    if fast_record is None:
+        return None
+    return _build_session_read_bundle_from_persisted_record(
+        fast_record,
+        approval_store=None,
+        freshness_window_seconds=_get_session_spine_freshness_window_seconds(request),
+        session_service=None,
+        decision_store=None,
+        receipt_store=None,
+        orchestration_state_store=None,
+        dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
+    )
+
+
+def _build_fast_project_not_active_bundle(
+    *,
+    project_id: str,
+    request: Request,
+    store: SessionSpineStore,
+):
+    fast_record = store.get_best_effort(project_id)
+    if fast_record is None or not _record_has_project_not_active_fact(fast_record):
+        return None
+    return _build_fast_persisted_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+    )
+
+
+def _build_fast_empty_approval_bundle(
+    *,
+    project_id: str,
+    request: Request,
+    store: SessionSpineStore,
+    approval_store: Any,
+):
+    fast_record = store.get_best_effort(project_id)
+    if fast_record is None or _record_has_approval_state(fast_record):
+        return None
+    if _list_actionable_canonical_approval_rows(approval_store, project_id=project_id):
+        return None
+    return _build_fast_persisted_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+    )
+
+
+async def _build_session_read_bundle_for_route(
+    *,
+    client: CodexRuntimeClient,
+    project_id: str,
+    request: Request,
+    session_service: SessionService,
+    store: SessionSpineStore,
+    approval_store: Any,
+    decision_store: Any,
+    receipt_store: ActionReceiptStore,
+    orchestration_state_store: ResidentOrchestrationStateStore,
+):
+    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                build_session_read_bundle,
+                client,
+                project_id,
+                session_service=session_service,
+                store=store,
+                approval_store=approval_store,
+                decision_store=decision_store,
+                receipt_store=receipt_store,
+                orchestration_state_store=orchestration_state_store,
+                dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
+                freshness_window_seconds=freshness_window_seconds,
+            ),
+            timeout=SESSION_READ_BUILD_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        fallback = _build_fast_persisted_bundle(
+            project_id=project_id,
+            request=request,
+            store=store,
+        )
+        if fallback is not None:
+            return fallback
+        raise SessionSpineUpstreamError(
+            {"code": "SESSION_READ_TIMEOUT", "message": "session projection read timed out"}
+        ) from None
 
 
 @router.get(
@@ -264,32 +379,24 @@ async def get_session(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
-    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
-    fast_record = store.get_best_effort(project_id)
-    if fast_record is not None and _record_has_project_not_active_fact(fast_record):
-        bundle = _build_session_read_bundle_from_persisted_record(
-            fast_record,
-            approval_store=approval_store,
-            freshness_window_seconds=freshness_window_seconds,
-            session_service=None,
-            decision_store=None,
-            receipt_store=None,
-            orchestration_state_store=None,
-            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
-        )
-        return ok(rid, build_session_reply(bundle).model_dump(mode="json"))
+    fast_bundle = _build_fast_project_not_active_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+    )
+    if fast_bundle is not None:
+        return ok(rid, build_session_reply(fast_bundle).model_dump(mode="json"))
     try:
-        bundle = build_session_read_bundle(
-            client,
-            project_id,
+        bundle = await _build_session_read_bundle_for_route(
+            client=client,
+            project_id=project_id,
+            request=request,
             session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
-            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
-            freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
@@ -304,7 +411,7 @@ async def get_session(
         "versioned ReplyModel carrying TaskProgressView and supporting facts."
     ),
 )
-def get_progress(
+async def get_progress(
     project_id: str,
     request: Request,
     client: CodexRuntimeClient = Depends(get_client),
@@ -319,19 +426,24 @@ def get_progress(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
-    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
+    fast_bundle = _build_fast_project_not_active_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+    )
+    if fast_bundle is not None:
+        return ok(rid, build_progress_reply(fast_bundle).model_dump(mode="json"))
     try:
-        bundle = build_session_read_bundle(
-            client,
-            project_id,
+        bundle = await _build_session_read_bundle_for_route(
+            client=client,
+            project_id=project_id,
+            request=request,
             session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
-            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
-            freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
@@ -347,7 +459,7 @@ def get_progress(
         "changing the explanation surfaces."
     ),
 )
-def get_session_facts(
+async def get_session_facts(
     project_id: str,
     request: Request,
     client: CodexRuntimeClient = Depends(get_client),
@@ -362,19 +474,24 @@ def get_session_facts(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
-    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
+    fast_bundle = _build_fast_project_not_active_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+    )
+    if fast_bundle is not None:
+        return ok(rid, build_session_facts_reply(fast_bundle).model_dump(mode="json"))
     try:
-        bundle = build_session_read_bundle(
-            client,
-            project_id,
+        bundle = await _build_session_read_bundle_for_route(
+            client=client,
+            project_id=project_id,
+            request=request,
             session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
-            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
-            freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)
@@ -417,7 +534,7 @@ def get_workspace_activity(
         "ReplyModel instead of the raw legacy approvals payload."
     ),
 )
-def get_pending_approvals(
+async def get_pending_approvals(
     project_id: str,
     request: Request,
     client: CodexRuntimeClient = Depends(get_client),
@@ -432,19 +549,32 @@ def get_pending_approvals(
     _: None = Depends(require_token),
 ) -> dict[str, object]:
     rid = request.headers.get("x-request-id")
-    freshness_window_seconds = _get_session_spine_freshness_window_seconds(request)
+    fast_bundle = _build_fast_project_not_active_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+    )
+    if fast_bundle is not None:
+        return ok(rid, build_approval_queue_reply(fast_bundle).model_dump(mode="json"))
+    fast_bundle = _build_fast_empty_approval_bundle(
+        project_id=project_id,
+        request=request,
+        store=store,
+        approval_store=approval_store,
+    )
+    if fast_bundle is not None:
+        return ok(rid, build_approval_queue_reply(fast_bundle).model_dump(mode="json"))
     try:
-        bundle = build_session_read_bundle(
-            client,
-            project_id,
+        bundle = await _build_session_read_bundle_for_route(
+            client=client,
+            project_id=project_id,
+            request=request,
             session_service=session_service,
             store=store,
             approval_store=approval_store,
             decision_store=decision_store,
             receipt_store=receipt_store,
             orchestration_state_store=orchestration_state_store,
-            dispatch_cooldown_seconds=_get_auto_dispatch_cooldown_seconds(request),
-            freshness_window_seconds=freshness_window_seconds,
         )
     except SessionSpineUpstreamError as exc:
         return err(rid, exc.error)

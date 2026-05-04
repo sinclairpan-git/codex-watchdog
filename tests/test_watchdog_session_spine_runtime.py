@@ -1957,6 +1957,93 @@ def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
     assert [approval.approval_id for approval in records["repo-b"].approval_queue] == ["appr_002"]
 
 
+def test_session_spine_runtime_ignores_pending_approvals_from_stale_native_thread(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+    )
+    a_client = MultiProjectResidentAClient(
+        tasks=[
+            {
+                "project_id": "repo-a",
+                "thread_id": "thr_current",
+                "status": "running",
+                "phase": "editing_source",
+                "pending_approval": False,
+                "last_summary": "current native task is running",
+                "files_touched": ["src/a.py"],
+                "context_pressure": "low",
+                "stuck_level": 0,
+                "failure_count": 0,
+                "last_progress_at": "2099-01-01T00:10:00Z",
+            },
+        ],
+        approvals=[
+            {
+                "approval_id": "appr_old_runtime",
+                "project_id": "repo-a",
+                "thread_id": "thr_old",
+                "risk_level": "L2",
+                "command": "git checkout old-file",
+                "reason": "old native task approval",
+                "alternative": "",
+                "status": "pending",
+                "requested_at": "2099-01-01T00:00:30Z",
+            }
+        ],
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    materialize_canonical_approval(
+        CanonicalDecisionRecord(
+            decision_id="decision:stale-native-thread",
+            decision_key=(
+                "session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|"
+                "appr_old_canonical"
+            ),
+            session_id="session:repo-a",
+            project_id="repo-a",
+            thread_id="session:repo-a",
+            native_thread_id="thr_old",
+            approval_id="appr_old_canonical",
+            action_ref="continue_session",
+            trigger="resident_orchestrator",
+            decision_result="require_user_decision",
+            risk_class="human_gate",
+            decision_reason="old native task approval",
+            matched_policy_rules=["brain_requires_approval"],
+            why_not_escalated=None,
+            why_escalated="manual decision required",
+            uncertainty_reasons=[],
+            policy_version="policy-v1",
+            fact_snapshot_version="fact-v1",
+            idempotency_key=(
+                "session:repo-a|fact-v1|policy-v1|require_user_decision|continue_session|"
+                "appr_old_canonical"
+            ),
+            created_at="2099-01-01T00:00:40Z",
+            operator_notes=[],
+            evidence={},
+        ),
+        approval_store=app.state.canonical_approval_store,
+    )
+
+    app.state.session_spine_runtime.refresh_all()
+
+    record = app.state.session_spine_store.get("repo-a")
+    assert record is not None
+    assert record.session.pending_approval_count == 0
+    assert record.approval_queue == []
+    assert {
+        "approval_pending",
+        "awaiting_human_direction",
+        "approval_state_unavailable",
+    }.isdisjoint({fact.fact_code for fact in record.facts})
+
+
 def test_session_spine_runtime_refresh_all_preserves_existing_approval_state_when_project_fetch_fails(
     tmp_path: Path,
 ) -> None:
@@ -3365,6 +3452,83 @@ def test_session_spine_runtime_fail_closes_missing_runtime_task_even_with_recent
     reconciled_record = seed_store.get("repo-a")
     assert reconciled_record is not None
     assert reconciled_record.session.session_state == "blocked"
+    assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
+
+
+def test_session_spine_runtime_fail_closes_missing_runtime_task_with_stale_pending_approval_state(
+    tmp_path: Path,
+) -> None:
+    seed_store = SessionSpineStore(tmp_path / SESSION_SPINE_STORE_FILENAME)
+    seed_runtime = SessionSpineRuntime(
+        client=FakeResidentAClient(
+            task={
+                "project_id": "repo-a",
+                "thread_id": "thr_native_1",
+                "status": "waiting_human",
+                "phase": "approval",
+                "pending_approval": True,
+                "last_summary": "runtime used to report a pending approval",
+                "files_touched": [],
+                "context_pressure": "critical",
+                "stuck_level": 4,
+                "failure_count": 0,
+                "last_progress_at": "2026-04-07T00:00:00Z",
+            }
+        ),
+        store=seed_store,
+    )
+    seed_runtime.refresh_all()
+
+    seeded_record = seed_store.get("repo-a")
+    assert seeded_record is not None
+    assert [fact.fact_code for fact in seeded_record.facts] == ["approval_state_unavailable"]
+
+    class MissingRuntimeTaskWithStaleApprovalClient:
+        def list_tasks(self) -> list[dict[str, object]]:
+            return []
+
+        def list_approvals(
+            self,
+            *,
+            status: str | None = None,
+            project_id: str | None = None,
+            decided_by: str | None = None,
+            callback_status: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (status, project_id, decided_by, callback_status)
+            return [
+                {
+                    "approval_id": "approval:repo-a:stale",
+                    "project_id": "repo-a",
+                    "thread_id": "thr_native_1",
+                    "risk_level": "L2",
+                    "command": "continue",
+                    "reason": "stale shadow approval",
+                    "status": "pending",
+                    "requested_at": "2026-04-07T00:00:05Z",
+                }
+            ]
+
+        def get_workspace_activity_envelope(
+            self,
+            project_id: str,
+            *,
+            recent_minutes: int = 15,
+        ) -> dict[str, object]:
+            _ = (project_id, recent_minutes)
+            raise AssertionError("missing runtime tasks must not scan workspace activity")
+
+    reconcile_runtime = SessionSpineRuntime(
+        client=MissingRuntimeTaskWithStaleApprovalClient(),
+        store=seed_store,
+    )
+    reconcile_runtime.refresh_all()
+
+    reconciled_record = seed_store.get("repo-a")
+    assert reconciled_record is not None
+    assert reconciled_record.session.session_state == "blocked"
+    assert reconciled_record.session.pending_approval_count == 0
+    assert reconciled_record.approval_queue == []
     assert {fact.fact_code for fact in reconciled_record.facts} == {"project_not_active"}
 
 

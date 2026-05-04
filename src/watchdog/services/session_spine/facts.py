@@ -116,6 +116,24 @@ def build_fact_records(
 
     pending_approvals = [approval for approval in approvals if is_actionable_approval(approval)]
     task_pending_approval = bool(_task_value(task, "pending_approval", False))
+    project_execution_state = normalize_project_execution_state(task)
+    if bool(_task_value(task, "runtime_task_missing", False)):
+        return [
+            _build_fact(
+                project_id,
+                fact_code="project_not_active",
+                fact_kind="blocker",
+                severity="info",
+                summary="project is not active",
+                detail=(
+                    "autonomous continuation is blocked because "
+                    f"project_execution_state={project_execution_state}"
+                ),
+                source="watchdog_projection",
+                observed_at=observed_at,
+                related_ids={"project_execution_state": project_execution_state},
+            )
+        ]
     if is_terminal_task(task) and not pending_approvals:
         return [
             _build_fact(
@@ -173,7 +191,6 @@ def build_fact_records(
             )
         ]
 
-    project_execution_state = normalize_project_execution_state(task)
     if bool(_task_value(task, "authoritative_project_execution_state_missing", False)):
         facts.append(
             _build_fact(
