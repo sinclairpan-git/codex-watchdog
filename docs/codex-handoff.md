@@ -103,6 +103,9 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - Local API `/api/v1/watchdog/sessions/Ai_AutoSDLC` after restart -> `success=true`, pending approvals `0`, facts contain `project_not_active`.
 - Local API `/api/v1/watchdog/sessions/Ai_AutoSDLC/pending-approvals` after restart -> `success=true`, message `0 pending approval(s)`.
 - Structured jq scans over runtime `delivery_outbox.json` and `policy_decisions.json` since `2026-05-06T02:08:00Z` -> `[]`; pending/retrying delivery outbox scan -> `[]`.
+- PR #23 (`codex/suppress-nonactionable-approval-prompts`) received Codex Review feedback: "Didn't find any major issues."
+- PR #23 checks (`lint`, `test`, `verify-constraints`) passed, and the PR was squash-merged into `main` at `2026-05-06T02:26:45Z` with merge commit `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`.
+- Local `main` is aligned with `origin/main` at `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`; the remote hotfix branch was deleted during PR cleanup.
 
 ## Blockers, Risks, Assumptions
 
@@ -113,5 +116,6 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Exact Next Steps
 
-1. Monitor Feishu and runtime stores for any new bad approval prompt after `2026-05-06T02:08:00Z`.
+1. Continue monitoring Feishu and runtime stores for any new bad approval prompt after `2026-05-06T02:08:00Z`.
 2. If Feishu still shows a new bad message after restart, capture its delivery envelope id and decision id before changing code again.
+3. For any follow-up fix, start from `main` at or after merge commit `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`.
