@@ -1380,7 +1380,7 @@ def test_resident_orchestrator_filters_locally_superseded_projection_before_poli
     assert approvals[0].status == "superseded"
 
 
-def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_projection_missing(
+def test_resident_orchestrator_suppresses_locally_pending_canonical_approval_when_projection_missing(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -1452,13 +1452,16 @@ def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_pr
     decisions = app.state.policy_decision_store.list_records()
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
-    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
     assert len(decisions) == 1
     assert decisions[0].approval_id == prior_approval.approval_id
+    assert decisions[0].decision_reason == (
+        "brain approval request suppressed without actionable approval"
+    )
     assert len(approvals) == 1
     assert approvals[0].approval_id == prior_approval.approval_id
-    assert approvals[0].status == "pending"
-    assert approvals[0].fact_snapshot_version == decisions[0].fact_snapshot_version
+    assert approvals[0].status == "superseded"
+    assert approvals[0].fact_snapshot_version == prior_approval.fact_snapshot_version
     assert decisions[0].decision_id != prior_decision.decision_id
     approval_events = app.state.session_service.list_events(
         session_id=prior_approval.session_id,
@@ -1467,7 +1470,7 @@ def test_resident_orchestrator_reuses_locally_pending_canonical_approval_when_pr
     assert len(approval_events) == 1
 
 
-def test_resident_orchestrator_remints_approval_when_projected_command_conflicts(
+def test_resident_orchestrator_suppresses_approval_when_projected_command_conflicts(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -1562,28 +1565,28 @@ def test_resident_orchestrator_remints_approval_when_projected_command_conflicts
     )
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
-    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
     assert len(decisions) == 1
     assert decisions[0].approval_id is None
     assert decisions[0].action_ref == "continue_session"
+    assert decisions[0].decision_reason == (
+        "brain approval request suppressed without actionable approval"
+    )
     assert decisions[0].evidence["decision_trace"]["approval_read"] is None
-    assert len(approvals) == 2
+    assert len(approvals) == 1
     assert approvals[0].approval_id == "appr_001"
     assert approvals[0].requested_action == "execute_recovery"
     assert approvals[0].status == "superseded"
-    assert approvals[1].approval_id != "appr_001"
-    assert approvals[1].requested_action == "continue_session"
-    assert approvals[1].status == "pending"
     assert len(outbox) == 2
     assert outbox[0].envelope_id == approvals[0].envelope_id
     assert outbox[0].delivery_status == "superseded"
-    assert outbox[1].envelope_id == approvals[1].envelope_id
+    assert outbox[1].envelope_type == "notification"
     assert outbox[1].delivery_status == "pending"
     approval_events = app.state.session_service.list_events(
         session_id="session:repo-a",
         event_type="approval_requested",
     )
-    assert len(approval_events) == 2
+    assert len(approval_events) == 1
 
 
 def test_resident_orchestrator_ignores_orphaned_stale_canonical_approval_when_runtime_has_none(
@@ -1756,7 +1759,7 @@ def test_resident_orchestrator_blocks_orphaned_runtime_pending_flag_without_remi
     steer_mock.assert_not_called()
 
 
-def test_resident_orchestrator_remints_approval_when_projected_goal_contract_drifts(
+def test_resident_orchestrator_suppresses_approval_when_projected_goal_contract_drifts(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -1850,29 +1853,28 @@ def test_resident_orchestrator_remints_approval_when_projected_goal_contract_dri
     )
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
-    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
     assert len(decisions) == 1
     assert decisions[0].approval_id is None
     assert decisions[0].action_ref == "continue_session"
+    assert decisions[0].decision_reason == (
+        "brain approval request suppressed without actionable approval"
+    )
     assert decisions[0].evidence["decision_trace"]["approval_read"] is None
-    assert len(approvals) == 2
+    assert len(approvals) == 1
     assert approvals[0].approval_id == "appr_001"
     assert approvals[0].goal_contract_version is None
     assert approvals[0].status == "superseded"
-    assert approvals[1].approval_id != "appr_001"
-    assert approvals[1].requested_action == "continue_session"
-    assert approvals[1].goal_contract_version == "goal-contract:unknown"
-    assert approvals[1].status == "pending"
     assert len(outbox) == 2
     assert outbox[0].envelope_id == approvals[0].envelope_id
     assert outbox[0].delivery_status == "superseded"
-    assert outbox[1].envelope_id == approvals[1].envelope_id
+    assert outbox[1].envelope_type == "notification"
     assert outbox[1].delivery_status == "pending"
     approval_events = app.state.session_service.list_events(
         session_id="session:repo-a",
         event_type="approval_requested",
     )
-    assert len(approval_events) == 2
+    assert len(approval_events) == 1
 
 
 def test_session_spine_runtime_refresh_all_reuses_shared_approval_snapshot(
@@ -5405,15 +5407,24 @@ def test_resident_orchestrator_requires_dual_resident_expert_gate_for_external_a
         )
 
     assert [outcome.action_ref for outcome in outcomes] == ["continue_session"]
-    assert [outcome.decision_result for outcome in outcomes] == ["require_user_decision"]
+    assert [outcome.decision_result for outcome in outcomes] == ["block_and_alert"]
     execute_mock.assert_not_called()
     steer_mock.assert_not_called()
 
     decisions = app.state.policy_decision_store.list_records()
     assert len(decisions) == 1
     decision = decisions[0]
-    assert decision.runtime_disposition == "require_user_decision"
+    assert decision.runtime_disposition == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert decision.decision_reason == (
+        "resident expert gate blocked autonomous external-model execution"
+    )
     assert "resident_expert_dual_gate" in decision.matched_policy_rules
+    assert decision.why_not_escalated == (
+        "resident expert degradation is an internal model-safety condition; "
+        "watchdog must not create human approval prompts for autonomous execution"
+    )
+    assert decision.why_escalated is None
     assert decision.evidence["resident_expert_gate"]["gate_status"] == "suppressed"
     assert decision.evidence["resident_expert_gate"]["missing_expert_ids"] == []
     assert decision.evidence["resident_expert_gate"]["unhealthy_expert_ids"] == [
@@ -5427,7 +5438,7 @@ def test_resident_orchestrator_requires_dual_resident_expert_gate_for_external_a
         "unavailable",
         "unavailable",
     ]
-    assert len(app.state.canonical_approval_store.list_records()) == 1
+    assert app.state.canonical_approval_store.list_records() == []
 
 
 def test_resident_orchestrator_allows_external_auto_execute_with_healthy_dual_resident_experts(

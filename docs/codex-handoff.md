@@ -20,6 +20,17 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Current State
 
+- Fresh user report shows the previous hotfix did not stop Feishu approval spam: repeated approval prompts still render `brain requested explicit human approval` and `resident expert dual gate requires explicit human decision` for `continue_session` / `execute_recovery` while key facts are only `context pressure is critical; recovery may be requested`.
+- Current branch is `codex/suppress-nonactionable-approval-prompts`; it currently points at `origin/main` with no local diff before this investigation.
+- New root cause: policy still treats `brain_intent=require_approval` as a canonical user decision even when no actionable runtime approval fact is present, so local/canonical approval overlays can feed the brain a pending-approval signal and regenerate fresh approval envelopes across fact snapshots.
+- New root cause: resident expert dual gate still converts degraded external-model auto-execute decisions into human approvals for actions such as `continue_session` and `execute_recovery`; the earlier fix only special-cased `post_operator_guidance`.
+- New root cause: delivery duplicate suppression can intentionally allow a new approval id when the session spine says that new id is current, so it cannot be the primary defense for non-actionable approval prompts.
+- Current branch hotfix now changes `brain_intent=require_approval` without actionable approval facts from `require_user_decision` to `block_and_alert`, with no new canonical approval materialized.
+- Current branch hotfix now changes degraded resident expert dual gate for all external-model auto-execute actions from human approval to internal `block_and_alert`; the existing `post_operator_guidance` behavior remains non-approval.
+- Delivery worker now suppresses old and new non-actionable approval envelopes for `brain_requires_approval`, resident expert dual gate, and the matching block notifications before they reach Feishu.
+- Restarted LaunchAgent `com.codex.watchdog`; it is running from this repository with pid `73895` and uvicorn child pid `73927` listening on `127.0.0.1:8720`.
+- Post-restart API read for `Ai_AutoSDLC` reports `pending_approval_count=0`, pending approvals endpoint message `0 pending approval(s)`, and only `project_not_active` facts because project execution state is paused.
+- Post-restart structured scans since `2026-05-06T02:08:00Z` found no new delivery outbox rows, no new policy decision rows, and no pending/retrying delivery outbox rows.
 - Root cause confirmed from production data: `Ai_AutoSDLC` delivered an approval prompt for `post_operator_guidance` at `2026-05-04T15:28:24Z`, with `requested_action_args.message` containing PR #39 status, merge commit, GitHub Actions, `@Codex review`, Codex app git directives, and next work-item instructions.
 - Root cause confirmed in code: `post_operator_guidance` is informational guidance for the managed agent, but the resident expert dual gate converted a degraded guidance path into `require_user_decision`, which materialized a canonical approval and Feishu approval prompt.
 - Second root cause confirmed in code: `brain_intent=require_approval` fell back to `continue_session` even when no real active projected approval existed, creating synthetic "brain requested explicit human approval" prompts.
@@ -49,6 +60,10 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - `tests/test_watchdog_feishu_delivery.py`: added coverage that operator-guidance/internal handoff messages and unsafe next-step text are not rendered to Feishu.
 - `tests/test_watchdog_delivery_worker.py`: added worker suppression coverage for operator-guidance approval and notification envelopes.
 - `docs/codex-handoff.md`: updated with the current hotfix state.
+- Current branch update: `src/watchdog/services/policy/engine.py` now suppresses non-actionable brain approval requests instead of minting approvals.
+- Current branch update: `src/watchdog/services/session_spine/orchestrator.py` now blocks degraded resident expert dual gate paths without human approval prompts.
+- Current branch update: `src/watchdog/services/delivery/worker.py` now suppresses old/new non-actionable brain approval and resident-expert gate envelopes.
+- Current branch update: `tests/test_watchdog_policy_engine.py`, `tests/test_watchdog_session_spine_runtime.py`, and `tests/test_watchdog_delivery_worker.py` now cover the screenshot class and adjusted stale/remint behavior.
 
 ## Key Decisions
 
@@ -78,6 +93,16 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - `@codex review` comment posted on PR #21; it reacted with eyes but did not post review findings during the wait window
 - PR #21 squash merge -> `MERGED`, merge commit `3ccce872f9e924597964f615ccabf2684adcfdc7`
 - `git fetch origin --prune && git switch main && git merge --ff-only origin/main && git branch -d codex/fix-feishu-guidance-confirmation` -> local branch cleanup complete
+- `.venv/bin/python -m pytest tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_requires_dual_resident_expert_gate_for_external_auto_execute tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_locally_pending_canonical_approval_when_projection_missing tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_brain_require_approval_without_trusted_approval tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_operator_guidance_approval_prompt tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_brain_approval_prompt_without_actionable_fact tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_resident_expert_gate_approval_prompt tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_resident_expert_gate_block_notification tests/test_watchdog_delivery_worker.py::test_delivery_worker_delivers_approval_when_session_is_awaiting_approval` -> `28 passed`
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py tests/test_watchdog_policy_engine.py tests/test_watchdog_policy_decisions.py` -> `248 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/policy/engine.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_watchdog_policy_engine.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
+- `.venv/bin/python -m pytest` -> `1207 passed`
+- `.venv/bin/python -m ruff check .` -> passed
+- `launchctl kickstart -k gui/502/com.codex.watchdog` -> restarted service; `launchctl print gui/502/com.codex.watchdog` shows state `running`, pid `73895`.
+- Local API health check after restart -> HTTP reachable, health status `degraded` due `summary_timeout` but `active_alerts=0` and `release_gate_blockers=0`.
+- Local API `/api/v1/watchdog/sessions/Ai_AutoSDLC` after restart -> `success=true`, pending approvals `0`, facts contain `project_not_active`.
+- Local API `/api/v1/watchdog/sessions/Ai_AutoSDLC/pending-approvals` after restart -> `success=true`, message `0 pending approval(s)`.
+- Structured jq scans over runtime `delivery_outbox.json` and `policy_decisions.json` since `2026-05-06T02:08:00Z` -> `[]`; pending/retrying delivery outbox scan -> `[]`.
 
 ## Blockers, Risks, Assumptions
 
@@ -88,5 +113,5 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Exact Next Steps
 
-1. Keep watching production delivery/policy stores for new invalid approval prompts.
-2. If Feishu shows a new bad message, compare its timestamp against post-merge store rows and capture the exact envelope/decision id before changing code.
+1. Monitor Feishu and runtime stores for any new bad approval prompt after `2026-05-06T02:08:00Z`.
+2. If Feishu still shows a new bad message after restart, capture its delivery envelope id and decision id before changing code again.
