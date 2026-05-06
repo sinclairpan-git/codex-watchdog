@@ -168,6 +168,29 @@ def test_policy_engine_does_not_let_require_approval_override_controlled_uncerta
     assert "controlled_uncertainty" in decision.matched_policy_rules
 
 
+def test_policy_engine_suppresses_brain_approval_without_actionable_approval_fact() -> None:
+    record = _record(facts=[_fact("context_critical", fact_kind="risk", severity="critical")])
+
+    decision = evaluate_persisted_session_policy(
+        record,
+        action_ref="continue_session",
+        trigger="resident_supervision",
+        brain_intent="require_approval",
+    )
+
+    assert decision.decision_result == "block_and_alert"
+    assert decision.risk_class == "hard_block"
+    assert decision.decision_reason == (
+        "brain approval request suppressed without actionable approval"
+    )
+    assert "brain_requires_approval" in decision.matched_policy_rules
+    assert decision.why_not_escalated == (
+        "approval prompts require an actionable runtime approval projection; "
+        "brain intent alone is not a product action"
+    )
+    assert decision.why_escalated is None
+
+
 def test_policy_engine_requires_user_decision_for_manual_execute_recovery() -> None:
     record = _record(facts=[_fact("recovery_available", fact_kind="action")])
 

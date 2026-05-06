@@ -191,15 +191,18 @@ def evaluate_persisted_session_policy(
     if brain_intent == "require_approval":
         return build_canonical_decision_record(
             persisted_record=persisted_record,
-            decision_result=DECISION_REQUIRE_USER_DECISION,
+            decision_result=DECISION_BLOCK_AND_ALERT,
             brain_intent=brain_intent,
-            risk_class=RISK_CLASS_HUMAN_GATE,
+            risk_class=RISK_CLASS_HARD_BLOCK,
             action_ref=action_ref,
             matched_policy_rules=["brain_requires_approval"],
-            decision_reason="brain requested explicit human approval",
-            why_not_escalated=None,
-            why_escalated="brain intent requires explicit human approval",
-            uncertainty_reasons=[],
+            decision_reason="brain approval request suppressed without actionable approval",
+            why_not_escalated=(
+                "approval prompts require an actionable runtime approval projection; "
+                "brain intent alone is not a product action"
+            ),
+            why_escalated=None,
+            uncertainty_reasons=["approval_not_actionable"],
             policy_version=policy_version,
             trigger=trigger,
             extra_evidence=extra_evidence,

@@ -33,6 +33,24 @@ def _iso_z(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_APPROVAL_FACT_CODES = {"approval_pending", "awaiting_human_direction"}
+_NONACTIONABLE_APPROVAL_REASONS = {
+    "brain requested explicit human approval",
+    "brain approval request suppressed without actionable approval",
+    "resident expert dual gate requires explicit human decision",
+    "resident expert gate blocked autonomous external-model execution",
+}
+_NONACTIONABLE_BLOCK_REASONS = {
+    "brain approval request suppressed without actionable approval",
+    "operator guidance blocked by resident expert dual gate",
+    "resident expert gate blocked autonomous external-model execution",
+}
+_NONACTIONABLE_APPROVAL_RULES = {
+    "brain_requires_approval",
+    "resident_expert_dual_gate",
+}
+
+
 class DeliveryWorker:
     def __init__(
         self,
@@ -657,6 +675,59 @@ class DeliveryWorker:
         }
 
     @staticmethod
+    def _payload_fact_codes(payload: dict[str, Any]) -> set[str]:
+        facts = payload.get("facts")
+        if not isinstance(facts, list):
+            return set()
+        return {
+            str(fact.get("fact_code") or "").strip()
+            for fact in facts
+            if isinstance(fact, dict) and str(fact.get("fact_code") or "").strip()
+        }
+
+    @staticmethod
+    def _matched_policy_rules(payload: dict[str, Any]) -> set[str]:
+        rules = payload.get("matched_policy_rules")
+        if not isinstance(rules, list):
+            return set()
+        return {
+            str(rule or "").strip()
+            for rule in rules
+            if str(rule or "").strip()
+        }
+
+    @classmethod
+    def _approval_prompt_is_nonactionable(cls, payload: dict[str, Any]) -> bool:
+        if str(payload.get("envelope_type") or "").strip() != "approval":
+            return False
+        requested_action = str(payload.get("requested_action") or "").strip()
+        if requested_action == "post_operator_guidance":
+            return True
+        matched_rules = cls._matched_policy_rules(payload)
+        if "resident_expert_dual_gate" in matched_rules:
+            return True
+        fact_codes = cls._payload_fact_codes(payload)
+        if matched_rules.intersection(_NONACTIONABLE_APPROVAL_RULES) and not fact_codes.intersection(
+            _APPROVAL_FACT_CODES
+        ):
+            return True
+        reason = str(payload.get("reason") or payload.get("summary") or "").strip()
+        return reason in _NONACTIONABLE_APPROVAL_REASONS and not fact_codes.intersection(
+            _APPROVAL_FACT_CODES
+        )
+
+    @staticmethod
+    def _decision_notification_is_nonactionable(payload: dict[str, Any]) -> bool:
+        if str(payload.get("envelope_type") or "").strip() != "notification":
+            return False
+        if str(payload.get("notification_kind") or "").strip() != "decision_result":
+            return False
+        if str(payload.get("decision_result") or "").strip() != "block_and_alert":
+            return False
+        reason = str(payload.get("reason") or payload.get("summary") or "").strip()
+        return reason in _NONACTIONABLE_BLOCK_REASONS
+
+    @staticmethod
     def _approval_id(record: DeliveryOutboxRecord) -> str:
         payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
         if str(payload.get("envelope_type") or "").strip() != "approval":
@@ -734,9 +805,7 @@ class DeliveryWorker:
         envelope_type = str(payload.get("envelope_type") or "").strip()
         if envelope_type == "decision":
             return "suppressed_notification_policy"
-        if envelope_type == "approval" and str(
-            payload.get("requested_action") or ""
-        ).strip() == "post_operator_guidance":
+        if DeliveryWorker._approval_prompt_is_nonactionable(payload):
             return "suppressed_notification_policy"
         if envelope_type != "notification":
             return None
@@ -750,6 +819,8 @@ class DeliveryWorker:
             and str(payload.get("decision_result") or "").strip() == "block_and_alert"
             and str(payload.get("action_name") or "").strip() == "post_operator_guidance"
         ):
+            return "suppressed_notification_policy"
+        if DeliveryWorker._decision_notification_is_nonactionable(payload):
             return "suppressed_notification_policy"
         return None
 
