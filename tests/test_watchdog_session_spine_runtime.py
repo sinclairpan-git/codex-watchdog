@@ -4096,24 +4096,31 @@ def test_background_runtime_auto_executes_context_critical_recovery(
 
     with TestClient(app):
         assert wait_until(
+            lambda: a_client.handoff_calls == [("repo-a", "context_critical")]
+            and a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")],
+            timeout_s=0.5,
+        )
+        assert wait_until(
             lambda: any(
-                record.get("envelope_type") == "notification"
-                and record.get("notification_kind") == "decision_result"
-                and record.get("action_name") == "execute_recovery"
-                and record.get("decision_result") == "auto_execute_and_notify"
-                for record in delivery_client.records
+                record.envelope_type == "notification"
+                and record.delivery_status == "delivery_failed"
+                and record.failure_code == "suppressed_notification_policy"
+                and record.envelope_payload.get("action_name") == "execute_recovery"
+                for record in app.state.delivery_outbox_store.list_records()
             ),
             timeout_s=0.5,
         )
 
     assert a_client.handoff_calls == [("repo-a", "context_critical")]
     assert a_client.resume_calls == [("repo-a", "resume_or_new_thread", "")]
+    assert delivery_client.records == []
+    delivery_records = app.state.delivery_outbox_store.list_records()
     assert any(
-        record.get("envelope_type") == "notification"
-        and record.get("notification_kind") == "decision_result"
-        and record.get("action_name") == "execute_recovery"
-        and record.get("decision_result") == "auto_execute_and_notify"
-        for record in delivery_client.records
+        record.envelope_type == "notification"
+        and record.delivery_status == "delivery_failed"
+        and record.failure_code == "suppressed_notification_policy"
+        and record.envelope_payload.get("action_name") == "execute_recovery"
+        for record in delivery_records
     )
     assert not any(
         record.get("envelope_type") == "approval"
@@ -4243,6 +4250,7 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
         auto_recovery_cooldown_seconds=0.0,
+        local_manual_activity_auto_execute_quiet_window_seconds=0.0,
     )
     a_client = UniqueRecoveryResidentAClient(
         task={
@@ -4253,6 +4261,202 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
             "pending_approval": False,
             "last_summary": "context exhausted again",
             "files_touched": ["src/example.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+            "last_local_manual_activity_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == [("repo-a", "context_critical")]
+
+
+def test_resident_orchestrator_suppresses_same_thread_recovery_without_substantive_progress(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "only the recovery packet was posted",
+            "files_touched": ["src/stale-before-recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    outcomes = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.decision_result for outcome in outcomes] == [None]
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    assert len(suppressed_events) == 1
+    assert suppressed_events[0].payload["suppression_reason"] == (
+        "same_thread_resume_without_substantive_progress"
+    )
+
+
+def test_resident_orchestrator_rearms_same_thread_recovery_after_autonomous_progress(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "only the recovery packet was posted",
+            "files_touched": ["src/stale-before-recovery.py"],
+            "context_pressure": "critical",
+            "stuck_level": 2,
+            "failure_count": 3,
+            "last_progress_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    app = create_app(settings, runtime_client=a_client, start_background_workers=False)
+    app.state.session_service.record_recovery_execution(
+        project_id="repo-a",
+        parent_session_id="session:repo-a",
+        parent_native_thread_id="thr_native_1",
+        recovery_reason="context_critical",
+        failure_family="context_pressure",
+        failure_signature="critical",
+        handoff={
+            "handoff_file": "/tmp/repo-a.handoff.md",
+            "summary": "handoff",
+        },
+        resume={
+            "project_id": "repo-a",
+            "status": "running",
+            "mode": "resume_or_new_thread",
+            "thread_id": "thr_native_1",
+        },
+        resume_outcome="same_thread_resume",
+    )
+    app.state.resident_orchestrator._brain_service = StaticBrainService(intent="propose_recovery")
+    app.state.session_spine_runtime.refresh_all()
+
+    first = app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 0, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == []
+    assert [outcome.decision_result for outcome in first] == [None]
+
+    a_client._task.update(
+        {
+            "last_summary": "autonomous agent made progress after recovery",
+            "last_progress_at": "2099-01-01T00:01:00Z",
+        }
+    )
+    app.state.session_spine_runtime.refresh_all()
+
+    app.state.resident_orchestrator.orchestrate_all(
+        now=datetime(2026, 4, 7, 0, 1, 0, tzinfo=UTC)
+    )
+
+    assert a_client.handoff_calls == [("repo-a", "context_critical")]
+
+
+def test_resident_orchestrator_treats_first_autonomous_progress_after_recovery_as_substantive(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        api_token="wt",
+        codex_runtime_token="at",
+        codex_runtime_base_url="http://a.test",
+        data_dir=str(tmp_path),
+        recover_auto_resume=False,
+        auto_continue_cooldown_seconds=0.0,
+        auto_recovery_cooldown_seconds=0.0,
+    )
+    a_client = UniqueRecoveryResidentAClient(
+        task={
+            "project_id": "repo-a",
+            "thread_id": "thr_native_1",
+            "status": "running",
+            "phase": "editing_source",
+            "pending_approval": False,
+            "last_summary": "autonomous agent updated the implementation after recovery",
+            "files_touched": ["src/stale-before-recovery.py"],
             "context_pressure": "critical",
             "stuck_level": 2,
             "failure_count": 3,
@@ -4287,6 +4491,11 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
     )
 
     assert a_client.handoff_calls == [("repo-a", "context_critical")]
+    suppressed_events = app.state.session_service.list_events(
+        session_id="session:repo-a",
+        event_type="recovery_execution_suppressed",
+    )
+    assert suppressed_events == []
 
 
 def test_resident_orchestrator_treats_preflight_recovery_dispatch_as_in_flight(

@@ -6,7 +6,7 @@ Production hotfix for Watchdog Feishu notification pollution. Feishu must not re
 
 ## AI SDLC Snapshot
 
-- Active git branch: `main`
+- Active git branch: `codex/suppress-raw-recovery-packets`
 - AI SDLC checkpoint path: `.ai-sdlc/state/checkpoint.yml`
 - Top-level resume-pack path: `.ai-sdlc/state/resume-pack.yaml`
 - Checkpoint/resume stage: `completed`
@@ -20,6 +20,11 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Current State
 
+- New user report on 2026-05-12 shows `AgentOps` Codex threads receiving raw `# Recovery continuation packet` messages and Feishu receiving repeated routine `execute_recovery` auto-decision notifications. Runtime data confirms this was Watchdog-triggered automatic recovery, not manual user input.
+- Root cause: A-Control rendered `ContinuationPacket` as the same verbose markdown used for handoff files and injected it into Codex resume turns. This exposed internal packet metadata instead of an actionable continuation prompt.
+- Root cause: same-thread recovery could re-arm after the injected service input advanced the apparent progress timestamp, even when there was no substantive work, no manual activity, and no file changes.
+- Root cause: Feishu delivery still emitted routine `auto_execute_and_notify` notifications for internal `execute_recovery` decisions, which are not actionable product events.
+- Hotfix in progress changes resume prompt rendering to a concise executable instruction, suppresses routine auto-recovery Feishu notifications, and blocks same-thread recovery reentry when there is no substantive progress after the last recovery.
 - Fresh user report shows the previous hotfix did not stop Feishu approval spam: repeated approval prompts still render `brain requested explicit human approval` and `resident expert dual gate requires explicit human decision` for `continue_session` / `execute_recovery` while key facts are only `context pressure is critical; recovery may be requested`.
 - Current branch is `codex/suppress-nonactionable-approval-prompts`; it currently points at `origin/main` with no local diff before this investigation.
 - New root cause: policy still treats `brain_intent=require_approval` as a canonical user decision even when no actionable runtime approval fact is present, so local/canonical approval overlays can feed the brain a pending-approval signal and regenerate fresh approval envelopes across fact snapshots.
@@ -64,6 +69,17 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - Current branch update: `src/watchdog/services/session_spine/orchestrator.py` now blocks degraded resident expert dual gate paths without human approval prompts.
 - Current branch update: `src/watchdog/services/delivery/worker.py` now suppresses old/new non-actionable brain approval and resident-expert gate envelopes.
 - Current branch update: `tests/test_watchdog_policy_engine.py`, `tests/test_watchdog_session_spine_runtime.py`, and `tests/test_watchdog_delivery_worker.py` now cover the screenshot class and adjusted stale/remint behavior.
+- Current branch update: `src/watchdog/services/session_spine/continuation_packet.py` now renders Codex resume prompts as concise actionable instructions instead of raw packet markdown.
+- Current branch update: `src/watchdog/services/session_spine/orchestrator.py` now suppresses repeated same-thread recovery when the only newer activity is the recovery injection itself.
+- Current branch update: `src/watchdog/services/delivery/worker.py` now suppresses routine `execute_recovery` auto-decision notifications before Feishu delivery.
+- Current branch update: `tests/test_m4_agent_recovery.py`, `tests/test_watchdog_session_spine_runtime.py`, and `tests/test_watchdog_delivery_worker.py` cover actionable resume prompts, same-thread recovery reentry suppression, and routine recovery notification suppression.
+- PR #25 Codex Review found one P1 issue: the same-thread reentry guard still trusted stale `files_touched`, so a session that edited files before recovery could re-arm recovery with no post-recovery work.
+- Current branch follow-up: same-thread recovery now re-arms only when `last_local_manual_activity_at` is after the last same-thread recovery transaction; stale non-empty `files_touched` no longer counts as substantive post-recovery progress.
+- Current branch follow-up: `tests/test_watchdog_session_spine_runtime.py` now covers stale pre-recovery `files_touched` and the explicit local-manual-activity path that still permits re-arming.
+- PR #25 second Codex Review found a P1 issue in that follow-up: relying only on local manual activity could indefinitely suppress unattended sessions that make real autonomous progress after same-thread recovery.
+- Current branch second follow-up: after one same-thread recovery suppression is recorded for a given `last_progress_at`, a later strictly newer `last_progress_at` is treated as post-recovery autonomous progress and can re-arm recovery.
+- PR #25 third Codex Review found a P1 issue in the second follow-up: suppressing the first post-recovery progress until a later timestamp bump can still strand genuine autonomous work if it stalls after one real update.
+- Current branch third follow-up: first `last_progress_at > recovery_updated_at` is treated as substantive unless the progress summary clearly looks like the recovery/continuation packet injection itself.
 
 ## Key Decisions
 
@@ -106,6 +122,24 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - PR #23 (`codex/suppress-nonactionable-approval-prompts`) received Codex Review feedback: "Didn't find any major issues."
 - PR #23 checks (`lint`, `test`, `verify-constraints`) passed, and the PR was squash-merged into `main` at `2026-05-06T02:26:45Z` with merge commit `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`.
 - Local `main` is aligned with `origin/main` at `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`; the remote hotfix branch was deleted during PR cleanup.
+- Runtime inspection for `AgentOps` on 2026-05-12 found recovery transactions for packet ids `packet:continuation:eb895a0775e57181`, `packet:continuation:3e781b4cd517b0ef`, `packet:continuation:a94a53417af14d9e`, and `packet:continuation:4c753cfed20c02ee`. Later transactions completed as `same_thread_resume`, matching the user-visible raw packet screenshots.
+- Runtime inspection found Feishu notification envelopes for `AgentOps` routine `execute_recovery` decisions delivered at outbox seq 8865, 8869, 8874, and 8877. New code suppresses that class of notification.
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py::test_resume_prefers_continuation_packet_render_over_raw_handoff_summary tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_routine_auto_recovery_notification tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_legacy_decision_record_but_delivers_decision_result_notification tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_legacy_auto_execute_notification_without_payload_decision_result` -> `4 passed`
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery` -> passed with routine recovery notification suppressed in the delivery outbox.
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `243 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
+- PR #25 Codex Review comment `3231235958` -> actionable P1 on stale `files_touched`; fixed locally by comparing post-recovery local manual activity instead.
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last_recovery tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_same_thread_recovery_without_substantive_progress tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_routine_auto_recovery_notification` -> `4 passed`
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `243 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
+- PR #25 second Codex Review comment `3231361310` -> actionable P1 on autonomous progress being suppressed indefinitely; fixed locally by comparing current progress against the recorded same-thread suppression progress.
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last_recovery tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_same_thread_recovery_without_substantive_progress tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_rearms_same_thread_recovery_after_autonomous_progress tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_routine_auto_recovery_notification` -> `5 passed`
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `244 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
+- PR #25 third Codex Review comment `3231393944` -> actionable P1 on first post-recovery autonomous progress; fixed locally by allowing first post-recovery progress unless the summary matches recovery packet/prompt injection markers.
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last_recovery tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_same_thread_recovery_without_substantive_progress tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_rearms_same_thread_recovery_after_autonomous_progress tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_treats_first_autonomous_progress_after_recovery_as_substantive tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_routine_auto_recovery_notification` -> `6 passed`
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `245 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
 
 ## Blockers, Risks, Assumptions
 
@@ -116,6 +150,6 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Exact Next Steps
 
-1. Continue monitoring Feishu and runtime stores for any new bad approval prompt after `2026-05-06T02:08:00Z`.
-2. If Feishu still shows a new bad message after restart, capture its delivery envelope id and decision id before changing code again.
-3. For any follow-up fix, start from `main` at or after merge commit `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`.
+1. Commit and push the PR #25 Codex Review follow-up fix.
+2. Ask `@Codex review` to re-review PR #25 and wait for required GitHub checks.
+3. If Codex Review reports no major issues and checks pass, merge PR #25 into `main`, delete the PR branch if allowed, sync local `main`, and delete the review-monitor heartbeat.

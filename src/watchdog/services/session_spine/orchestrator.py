@@ -1517,7 +1517,97 @@ class ResidentOrchestrator:
             return details
         if progress_at <= recovery_updated_at:
             return details
+        if (
+            str(latest.metadata.get("resume_outcome") or "").strip() == "same_thread_resume"
+            and not self._has_substantive_progress_after_same_thread_recovery(
+                record,
+                recovery_updated_at=recovery_updated_at,
+                progress_at=progress_at,
+                recovery_transaction_id=latest.recovery_transaction_id,
+            )
+        ):
+            details["suppression_reason"] = "same_thread_resume_without_substantive_progress"
+            return details
         return None
+
+    def _has_substantive_progress_after_same_thread_recovery(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        recovery_updated_at: datetime,
+        progress_at: datetime,
+        recovery_transaction_id: str,
+    ) -> bool:
+        manual_at = _parse_iso(record.last_local_manual_activity_at)
+        if manual_at is not None and manual_at > recovery_updated_at:
+            return True
+        previous_suppressed_progress_at = (
+            self._latest_same_thread_recovery_suppression_progress_at(
+                record,
+                recovery_transaction_id=recovery_transaction_id,
+            )
+        )
+        if (
+            previous_suppressed_progress_at is not None
+            and progress_at > previous_suppressed_progress_at
+        ):
+            return True
+        if self._progress_summary_looks_like_recovery_injection(record.progress.summary):
+            return False
+        if progress_at > recovery_updated_at:
+            return True
+        return False
+
+    @staticmethod
+    def _progress_summary_looks_like_recovery_injection(summary: str | None) -> bool:
+        normalized = str(summary or "").strip().lower()
+        if not normalized:
+            return False
+        return (
+            "recovery continuation packet" in normalized
+            or "only the recovery packet was posted" in normalized
+            or "不要复述 continuation packet" in normalized
+            or (
+                "continuation packet" in normalized
+                and (
+                    "packet metadata" in normalized
+                    or "不要只输出元数据" in normalized
+                    or "恢复阶段" in normalized
+                )
+            )
+        )
+
+    def _latest_same_thread_recovery_suppression_progress_at(
+        self,
+        record: PersistedSessionRecord,
+        *,
+        recovery_transaction_id: str,
+    ) -> datetime | None:
+        if self._session_service is None:
+            return None
+        events = self._session_service.list_events(
+            session_id=record.thread_id,
+            event_type="recovery_execution_suppressed",
+        )
+        matching = [
+            event
+            for event in events
+            if str((event.payload or {}).get("suppression_reason") or "").strip()
+            == "same_thread_resume_without_substantive_progress"
+            and str((event.related_ids or {}).get("recovery_transaction_id") or "").strip()
+            == recovery_transaction_id
+        ]
+        if not matching:
+            return None
+        latest = max(
+            matching,
+            key=lambda event: (
+                event.log_seq or 0,
+                _parse_iso(event.occurred_at) or datetime.min.replace(tzinfo=UTC),
+                event.event_id,
+            ),
+        )
+        return _parse_iso(str((latest.payload or {}).get("last_progress_at") or "").strip())
 
     def _recovery_cooldown_suppression_details(
         self,

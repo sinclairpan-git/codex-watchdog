@@ -226,7 +226,49 @@ def render_continuation_packet_markdown(
 def render_continuation_packet_prompt(
     value: ContinuationPacket | Mapping[str, Any],
 ) -> str:
-    return render_continuation_packet_markdown(value)
+    packet = model_validate_continuation_packet(value)
+    source_refs = packet.source_refs
+    resume_target_phase = (
+        str(packet.action_args.get("resume_target_phase") or "planning").strip() or "planning"
+    )
+    completed_work = packet.completed_work or [packet.current_progress_summary]
+    remaining_tasks = packet.remaining_tasks or ["继续当前分支内最小可执行任务。"]
+    stop_conditions = packet.stop_conditions or ["遇到新的人工审批或目标边界不清时停止。"]
+    files_touched = packet.files_touched or ["(无)"]
+    lines = [
+        "继续当前任务。不要复述 continuation packet，不要只输出元数据。",
+        "",
+        f"项目总目标：{packet.project_total_goal}",
+        f"当前分支目标：{packet.branch_goal}",
+        f"恢复阶段：{resume_target_phase}",
+        f"当前进度：{packet.current_progress_summary}",
+        "",
+        "第一步动作：",
+        packet.first_action,
+        "",
+        "已完成：",
+    ]
+    lines.extend(f"- {item}" for item in completed_work)
+    lines.extend(["", "剩余任务："])
+    lines.extend(f"- {item}" for item in remaining_tasks)
+    lines.extend(["", "最近修改文件：", ", ".join(files_touched), "", "执行边界："])
+    lines.extend(
+        [
+            f"- 只在当前目标边界内继续：{packet.continue_boundary}",
+            f"- 操作边界：{packet.operator_boundary}",
+            f"- goal_contract_version={source_refs.goal_contract_version}",
+            f"- authoritative_snapshot_version={source_refs.authoritative_snapshot_version or '(none)'}",
+        ]
+    )
+    lines.extend(["", "停止条件："])
+    lines.extend(f"- {item}" for item in stop_conditions)
+    lines.extend(
+        [
+            "",
+            "如果无法继续，直接说明具体阻塞和唯一需要人工决定的动作。",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_recovery_continuation_packet(
