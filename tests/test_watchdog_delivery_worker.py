@@ -3305,3 +3305,76 @@ def test_delivery_worker_suppresses_legacy_auto_execute_notification_without_pay
     assert delivered.failure_code == "suppressed_notification_policy"
     assert delivered.delivery_attempt == 0
     assert client.calls == []
+
+
+def test_delivery_worker_suppresses_routine_auto_recovery_notification(
+    tmp_path: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    store = DeliveryOutboxStore(tmp_path / "delivery_outbox.json")
+    notification = NotificationEnvelope(
+        envelope_id="notification-envelope:routine-recovery",
+        correlation_id="decision:repo-a:fact-v7:auto_execute_and_notify",
+        session_id="session:repo-a",
+        project_id="repo-a",
+        native_thread_id="thr_native_1",
+        policy_version="policy-v1",
+        fact_snapshot_version="fact-v7",
+        idempotency_key=(
+            "session:repo-a|fact-v7|policy-v1|auto_execute_and_notify|execute_recovery||"
+            "decision_result"
+        ),
+        audit_ref="decision:repo-a:fact-v7:auto_execute_and_notify",
+        created_at="2026-04-07T00:20:00Z",
+        event_id="event:routine-recovery",
+        severity="info",
+        notification_kind="decision_result",
+        occurred_at="2026-04-07T00:00:00Z",
+        decision_result="auto_execute_and_notify",
+        action_name="execute_recovery",
+        title="decision auto_execute_and_notify",
+        summary="registered action and complete evidence",
+        reason="registered action and complete evidence",
+        facts=[
+            {
+                "fact_id": "repo-a:context_critical",
+                "fact_code": "context_critical",
+                "fact_kind": "risk",
+                "severity": "critical",
+                "summary": "context pressure is critical",
+                "detail": "remaining context is too constrained for safe continuation",
+                "source": "watchdog_projection",
+                "observed_at": "2026-04-07T00:00:00Z",
+                "related_ids": {},
+            },
+            {
+                "fact_id": "repo-a:recovery_available",
+                "fact_code": "recovery_available",
+                "fact_kind": "advisory",
+                "severity": "info",
+                "summary": "recovery may be requested",
+                "detail": "watchdog can execute recovery",
+                "source": "watchdog_projection",
+                "observed_at": "2026-04-07T00:00:00Z",
+                "related_ids": {},
+            },
+        ],
+        recommended_actions=[],
+    )
+    (record,) = store.enqueue_envelopes([notification])
+
+    client = _OrderedClient("never-match")
+    worker = DeliveryWorker(store=store, delivery_client=client, settings=_settings(tmp_path))
+
+    delivered = worker.process_next_ready(
+        now=datetime(2026, 4, 7, 0, 20, 1, tzinfo=timezone.utc),
+        session_id="session:repo-a",
+    )
+
+    assert delivered is not None
+    assert delivered.envelope_id == record.envelope_id
+    assert delivered.delivery_status == "delivery_failed"
+    assert delivered.failure_code == "suppressed_notification_policy"
+    assert delivered.delivery_attempt == 0
+    assert client.calls == []

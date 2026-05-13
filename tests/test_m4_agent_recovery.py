@@ -432,8 +432,11 @@ def test_resume_prefers_continuation_packet_render_over_raw_handoff_summary(
     assert len(bridge.started_turns) == 1
     prompt = bridge.started_turns[0][1]
     assert "IGNORE THIS RAW SUMMARY" not in prompt
+    assert "# Recovery continuation packet" not in prompt
+    assert "## Packet metadata" not in prompt
+    assert "不要复述 continuation packet" in prompt
     assert "项目总目标：把 watchdog 自动推进收口为 model-first continuation governance" in prompt
-    assert "第一步动作：先读取 recovery packet，并只继续当前分支内的 recovery/handoff 改造。" in prompt
+    assert "先读取 recovery packet，并只继续当前分支内的 recovery/handoff 改造。" in prompt
 
 
 def test_resume_rejects_malformed_continuation_packet_without_side_effects(tmp_path: Path) -> None:

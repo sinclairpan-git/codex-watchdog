@@ -20,6 +20,11 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Current State
 
+- New user report on 2026-05-12 shows `AgentOps` Codex threads receiving raw `# Recovery continuation packet` messages and Feishu receiving repeated routine `execute_recovery` auto-decision notifications. Runtime data confirms this was Watchdog-triggered automatic recovery, not manual user input.
+- Root cause: A-Control rendered `ContinuationPacket` as the same verbose markdown used for handoff files and injected it into Codex resume turns. This exposed internal packet metadata instead of an actionable continuation prompt.
+- Root cause: same-thread recovery could re-arm after the injected service input advanced the apparent progress timestamp, even when there was no substantive work, no manual activity, and no file changes.
+- Root cause: Feishu delivery still emitted routine `auto_execute_and_notify` notifications for internal `execute_recovery` decisions, which are not actionable product events.
+- Hotfix in progress changes resume prompt rendering to a concise executable instruction, suppresses routine auto-recovery Feishu notifications, and blocks same-thread recovery reentry when there is no substantive progress after the last recovery.
 - Fresh user report shows the previous hotfix did not stop Feishu approval spam: repeated approval prompts still render `brain requested explicit human approval` and `resident expert dual gate requires explicit human decision` for `continue_session` / `execute_recovery` while key facts are only `context pressure is critical; recovery may be requested`.
 - Current branch is `codex/suppress-nonactionable-approval-prompts`; it currently points at `origin/main` with no local diff before this investigation.
 - New root cause: policy still treats `brain_intent=require_approval` as a canonical user decision even when no actionable runtime approval fact is present, so local/canonical approval overlays can feed the brain a pending-approval signal and regenerate fresh approval envelopes across fact snapshots.
@@ -64,6 +69,10 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - Current branch update: `src/watchdog/services/session_spine/orchestrator.py` now blocks degraded resident expert dual gate paths without human approval prompts.
 - Current branch update: `src/watchdog/services/delivery/worker.py` now suppresses old/new non-actionable brain approval and resident-expert gate envelopes.
 - Current branch update: `tests/test_watchdog_policy_engine.py`, `tests/test_watchdog_session_spine_runtime.py`, and `tests/test_watchdog_delivery_worker.py` now cover the screenshot class and adjusted stale/remint behavior.
+- Current branch update: `src/watchdog/services/session_spine/continuation_packet.py` now renders Codex resume prompts as concise actionable instructions instead of raw packet markdown.
+- Current branch update: `src/watchdog/services/session_spine/orchestrator.py` now suppresses repeated same-thread recovery when the only newer activity is the recovery injection itself.
+- Current branch update: `src/watchdog/services/delivery/worker.py` now suppresses routine `execute_recovery` auto-decision notifications before Feishu delivery.
+- Current branch update: `tests/test_m4_agent_recovery.py`, `tests/test_watchdog_session_spine_runtime.py`, and `tests/test_watchdog_delivery_worker.py` cover actionable resume prompts, same-thread recovery reentry suppression, and routine recovery notification suppression.
 
 ## Key Decisions
 
@@ -106,6 +115,12 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - PR #23 (`codex/suppress-nonactionable-approval-prompts`) received Codex Review feedback: "Didn't find any major issues."
 - PR #23 checks (`lint`, `test`, `verify-constraints`) passed, and the PR was squash-merged into `main` at `2026-05-06T02:26:45Z` with merge commit `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`.
 - Local `main` is aligned with `origin/main` at `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`; the remote hotfix branch was deleted during PR cleanup.
+- Runtime inspection for `AgentOps` on 2026-05-12 found recovery transactions for packet ids `packet:continuation:eb895a0775e57181`, `packet:continuation:3e781b4cd517b0ef`, `packet:continuation:a94a53417af14d9e`, and `packet:continuation:4c753cfed20c02ee`. Later transactions completed as `same_thread_resume`, matching the user-visible raw packet screenshots.
+- Runtime inspection found Feishu notification envelopes for `AgentOps` routine `execute_recovery` decisions delivered at outbox seq 8865, 8869, 8874, and 8877. New code suppresses that class of notification.
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py::test_resume_prefers_continuation_packet_render_over_raw_handoff_summary tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_routine_auto_recovery_notification tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_legacy_decision_record_but_delivers_decision_result_notification tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_legacy_auto_execute_notification_without_payload_decision_result` -> `4 passed`
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery` -> passed with routine recovery notification suppressed in the delivery outbox.
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `243 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
 
 ## Blockers, Risks, Assumptions
 
@@ -116,6 +131,6 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Exact Next Steps
 
-1. Continue monitoring Feishu and runtime stores for any new bad approval prompt after `2026-05-06T02:08:00Z`.
-2. If Feishu still shows a new bad message after restart, capture its delivery envelope id and decision id before changing code again.
-3. For any follow-up fix, start from `main` at or after merge commit `a128ad53c1ec8914f3677f94ab08f6f3a2a1508a`.
+1. Restart `com.codex.watchdog` after the 2026-05-12 recovery-packet hotfix.
+2. Verify no new `AgentOps` raw packet resume input or routine `execute_recovery` Feishu notification is emitted after restart.
+3. If another user-visible message appears, capture its recovery transaction id, source packet id, delivery envelope id, and decision id before changing code again.

@@ -728,6 +728,22 @@ class DeliveryWorker:
         return reason in _NONACTIONABLE_BLOCK_REASONS
 
     @staticmethod
+    def _routine_recovery_notification_is_nonactionable(payload: dict[str, Any]) -> bool:
+        if str(payload.get("envelope_type") or "").strip() != "notification":
+            return False
+        if str(payload.get("notification_kind") or "").strip() != "decision_result":
+            return False
+        if str(payload.get("decision_result") or "").strip() != "auto_execute_and_notify":
+            return False
+        if str(payload.get("action_name") or "").strip() != "execute_recovery":
+            return False
+        reason = str(payload.get("reason") or payload.get("summary") or "").strip()
+        if reason != "registered action and complete evidence":
+            return False
+        fact_codes = DeliveryWorker._payload_fact_codes(payload)
+        return "context_critical" in fact_codes and "recovery_available" in fact_codes
+
+    @staticmethod
     def _approval_id(record: DeliveryOutboxRecord) -> str:
         payload = record.envelope_payload if isinstance(record.envelope_payload, dict) else {}
         if str(payload.get("envelope_type") or "").strip() != "approval":
@@ -821,6 +837,8 @@ class DeliveryWorker:
         ):
             return "suppressed_notification_policy"
         if DeliveryWorker._decision_notification_is_nonactionable(payload):
+            return "suppressed_notification_policy"
+        if DeliveryWorker._routine_recovery_notification_is_nonactionable(payload):
             return "suppressed_notification_policy"
         return None
 
