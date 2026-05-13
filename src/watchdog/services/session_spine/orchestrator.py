@@ -1552,7 +1552,30 @@ class ResidentOrchestrator:
             and progress_at > previous_suppressed_progress_at
         ):
             return True
+        if self._progress_summary_looks_like_recovery_injection(record.progress.summary):
+            return False
+        if progress_at > recovery_updated_at:
+            return True
         return False
+
+    @staticmethod
+    def _progress_summary_looks_like_recovery_injection(summary: str | None) -> bool:
+        normalized = str(summary or "").strip().lower()
+        if not normalized:
+            return False
+        return (
+            "recovery continuation packet" in normalized
+            or "only the recovery packet was posted" in normalized
+            or "不要复述 continuation packet" in normalized
+            or (
+                "continuation packet" in normalized
+                and (
+                    "packet metadata" in normalized
+                    or "不要只输出元数据" in normalized
+                    or "恢复阶段" in normalized
+                )
+            )
+        )
 
     def _latest_same_thread_recovery_suppression_progress_at(
         self,
