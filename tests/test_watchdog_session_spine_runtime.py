@@ -4250,6 +4250,7 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
         recover_auto_resume=False,
         auto_continue_cooldown_seconds=0.0,
         auto_recovery_cooldown_seconds=0.0,
+        local_manual_activity_auto_execute_quiet_window_seconds=0.0,
     )
     a_client = UniqueRecoveryResidentAClient(
         task={
@@ -4264,6 +4265,7 @@ def test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last
             "stuck_level": 2,
             "failure_count": 3,
             "last_progress_at": "2099-01-01T00:00:00Z",
+            "last_local_manual_activity_at": "2099-01-01T00:00:00Z",
         }
     )
     app = create_app(settings, runtime_client=a_client, start_background_workers=False)
@@ -4316,7 +4318,7 @@ def test_resident_orchestrator_suppresses_same_thread_recovery_without_substanti
             "phase": "editing_source",
             "pending_approval": False,
             "last_summary": "only the recovery packet was posted",
-            "files_touched": [],
+            "files_touched": ["src/stale-before-recovery.py"],
             "context_pressure": "critical",
             "stuck_level": 2,
             "failure_count": 3,

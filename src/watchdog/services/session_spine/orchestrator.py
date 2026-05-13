@@ -1522,7 +1522,6 @@ class ResidentOrchestrator:
             and not self._has_substantive_progress_after_same_thread_recovery(
                 record,
                 recovery_updated_at=recovery_updated_at,
-                progress_at=progress_at,
             )
         ):
             details["suppression_reason"] = "same_thread_resume_without_substantive_progress"
@@ -1534,14 +1533,11 @@ class ResidentOrchestrator:
         record: PersistedSessionRecord,
         *,
         recovery_updated_at: datetime,
-        progress_at: datetime,
     ) -> bool:
         manual_at = _parse_iso(record.last_local_manual_activity_at)
         if manual_at is not None and manual_at > recovery_updated_at:
             return True
-        if progress_at <= recovery_updated_at:
-            return False
-        return bool(record.progress.files_touched)
+        return False
 
     def _recovery_cooldown_suppression_details(
         self,

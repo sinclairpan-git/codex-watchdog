@@ -6,7 +6,7 @@ Production hotfix for Watchdog Feishu notification pollution. Feishu must not re
 
 ## AI SDLC Snapshot
 
-- Active git branch: `main`
+- Active git branch: `codex/suppress-raw-recovery-packets`
 - AI SDLC checkpoint path: `.ai-sdlc/state/checkpoint.yml`
 - Top-level resume-pack path: `.ai-sdlc/state/resume-pack.yaml`
 - Checkpoint/resume stage: `completed`
@@ -73,6 +73,9 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - Current branch update: `src/watchdog/services/session_spine/orchestrator.py` now suppresses repeated same-thread recovery when the only newer activity is the recovery injection itself.
 - Current branch update: `src/watchdog/services/delivery/worker.py` now suppresses routine `execute_recovery` auto-decision notifications before Feishu delivery.
 - Current branch update: `tests/test_m4_agent_recovery.py`, `tests/test_watchdog_session_spine_runtime.py`, and `tests/test_watchdog_delivery_worker.py` cover actionable resume prompts, same-thread recovery reentry suppression, and routine recovery notification suppression.
+- PR #25 Codex Review found one P1 issue: the same-thread reentry guard still trusted stale `files_touched`, so a session that edited files before recovery could re-arm recovery with no post-recovery work.
+- Current branch follow-up: same-thread recovery now re-arms only when `last_local_manual_activity_at` is after the last same-thread recovery transaction; stale non-empty `files_touched` no longer counts as substantive post-recovery progress.
+- Current branch follow-up: `tests/test_watchdog_session_spine_runtime.py` now covers stale pre-recovery `files_touched` and the explicit local-manual-activity path that still permits re-arming.
 
 ## Key Decisions
 
@@ -121,6 +124,10 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 - `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery` -> passed with routine recovery notification suppressed in the delivery outbox.
 - `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `243 passed`
 - `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
+- PR #25 Codex Review comment `3231235958` -> actionable P1 on stale `files_touched`; fixed locally by comparing post-recovery local manual activity instead.
+- `.venv/bin/python -m pytest tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_can_rearm_recovery_after_newer_progress_than_last_recovery tests/test_watchdog_session_spine_runtime.py::test_resident_orchestrator_suppresses_same_thread_recovery_without_substantive_progress tests/test_watchdog_session_spine_runtime.py::test_background_runtime_auto_executes_context_critical_recovery tests/test_watchdog_delivery_worker.py::test_delivery_worker_suppresses_routine_auto_recovery_notification` -> `4 passed`
+- `.venv/bin/python -m pytest tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py tests/test_watchdog_feishu_delivery.py` -> `243 passed`
+- `.venv/bin/python -m ruff check src/watchdog/services/session_spine/continuation_packet.py src/watchdog/services/session_spine/orchestrator.py src/watchdog/services/delivery/worker.py tests/test_m4_agent_recovery.py tests/test_watchdog_session_spine_runtime.py tests/test_watchdog_delivery_worker.py` -> passed
 
 ## Blockers, Risks, Assumptions
 
@@ -131,6 +138,6 @@ The current hotfix branch intentionally differs from the completed AI SDLC branc
 
 ## Exact Next Steps
 
-1. Restart `com.codex.watchdog` after the 2026-05-12 recovery-packet hotfix.
-2. Verify no new `AgentOps` raw packet resume input or routine `execute_recovery` Feishu notification is emitted after restart.
-3. If another user-visible message appears, capture its recovery transaction id, source packet id, delivery envelope id, and decision id before changing code again.
+1. Commit and push the PR #25 Codex Review follow-up fix.
+2. Ask `@Codex review` to re-review PR #25 and wait for required GitHub checks.
+3. If Codex Review reports no major issues and checks pass, merge PR #25 into `main`, delete the PR branch if allowed, sync local `main`, and delete the review-monitor heartbeat.
